@@ -2,7 +2,7 @@
 Authoritative Reproducible Verification Probe for Phase 2A (Holdout Containment & Trial Registry).
 
 Computes and prints exact verdicts for all Phase 2A gates (G2A-1 through G2A-5)
-and Audit §18 remediation findings (A-1 through A-18).
+and Audit §18 / §19 remediation findings (A-1 through A-18, B-1 through B-4).
 No hand-typed status labels. All verdicts are derived from runtime assertions and printed outputs.
 """
 
@@ -14,13 +14,11 @@ from pathlib import Path
 import shutil
 import sys
 import tempfile
-import time
 
 # Ensure src/ is on python path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from signal_core.research.containment import (
-    ContainmentError,
     HoldoutSealedError,
     PartitionRole,
     PartitionSpec,
@@ -28,10 +26,8 @@ from signal_core.research.containment import (
     WalkForwardFold,
     check_partition_access,
     compute_fold_spec_fingerprint,
-    compute_partition_fingerprint,
     filter_partition_observations,
     generate_walk_forward_folds,
-    verify_holdout_unlock,
 )
 from signal_core.research.trials import (
     DuplicateTrialError,
@@ -40,7 +36,6 @@ from signal_core.research.trials import (
     TrialRecord,
     TrialRegistry,
     TrialRegistryError,
-    _canonicalize_value,
     _compute_record_hash,
 )
 
@@ -115,7 +110,6 @@ def run_phase_2a_verification() -> bool:
         reg_ho = TrialRegistry(reg_file_ho)
         g2a1_5_ok = False
         try:
-            # Calling append_trial on HOLDOUT without partition_spec fails closed
             reg_ho.append_trial(
                 trial_id="T_HO_UNAUTH",
                 hypothesis="H",
@@ -145,18 +139,17 @@ def run_phase_2a_verification() -> bool:
         ]
         is_recs = filter_partition_observations(obs_stream, spec, PartitionRole.IN_SAMPLE)
         g2a1_6_ok = len(is_recs) == 1 and is_recs[0].v == 101
-        # Holdout read via accessor without sentinel fails closed
         try:
             filter_partition_observations(obs_stream, spec, PartitionRole.HOLDOUT)
             g2a1_6_ok = False
         except HoldoutSealedError:
             pass
-        # Holdout read with valid sentinel succeeds
+
         valid_sentinel = temp_dir / "HOLDOUT_UNLOCK_VALID"
         valid_sentinel.write_text(f"{token}\n", encoding="utf-8")
         ho_recs = filter_partition_observations(obs_stream, spec, PartitionRole.HOLDOUT, unlock_file_path=valid_sentinel)
         g2a1_6_ok = g2a1_6_ok and len(ho_recs) == 1 and ho_recs[0].v == 303
-        print(f"[{'PASS' if g2a1_6_ok else 'FAIL'}] G2A-1.6 (A-6): filter_partition_observations authoritative accessor enforces containment.")
+        print(f"[{'PASS' if g2a1_6_ok else 'FAIL'}] G2A-1.6 (A-6): filter_partition_observations enforces containment (unwired until 2C).")
         all_passed = all_passed and g2a1_6_ok
 
         # ----------------------------------------------------------------------
@@ -196,7 +189,7 @@ def run_phase_2a_verification() -> bool:
                 fold_index=0,
                 train_start=datetime.date(2023, 1, 1),
                 train_end=datetime.date(2023, 1, 10),
-                test_start=datetime.date(2023, 1, 11),  # Only 0 intervening days
+                test_start=datetime.date(2023, 1, 11),
                 test_end=datetime.date(2023, 1, 20),
                 embargo_sessions=5,
             )
@@ -239,9 +232,9 @@ def run_phase_2a_verification() -> bool:
         all_passed = all_passed and g2a2_5_ok
 
         # ----------------------------------------------------------------------
-        # GATE G2A-3: Parameter Hashing Independence & Cross-Platform Byte Identity
+        # GATE G2A-3: Canonical Hashing Independence & Cross-Platform Byte Identity
         # ----------------------------------------------------------------------
-        print("\n--- Gate G2A-3: Canonical Hashing & Byte-Identity Reproducibility ---")
+        print("\n--- Gate G2A-3: Canonical Hashing & Byte-Identity (Sweep Deferred to 2C) ---")
 
         dict_a = {"alpha": 1, "beta": 2, "gamma": 3}
         dict_b = {"gamma": 3, "alpha": 1, "beta": 2}
@@ -272,6 +265,7 @@ def run_phase_2a_verification() -> bool:
         g2a3_2_ok = crlf_count == 0 and lf_count > 0
         print(f"[{'PASS' if g2a3_2_ok else 'FAIL'}] G2A-3.2 (A-12): POSIX LF strictly enforced (CRLF={crlf_count}, LF={lf_count}).")
         all_passed = all_passed and g2a3_2_ok
+        print("[INFO] G2A-3: Strategy grid sweep unmeasured in 2A (deferred to Phase 2C strategy engine per B-6).")
 
         # ----------------------------------------------------------------------
         # GATE G2A-4: Chain Verifies, Truncation Detected, Concurrent Append Guard
@@ -309,6 +303,60 @@ def run_phase_2a_verification() -> bool:
         print(f"[{'PASS' if g2a4_2_ok else 'FAIL'}] G2A-4.2 (A-4): Truncation of 5 records to 2 detected fail-closed via manifest.")
         all_passed = all_passed and g2a4_2_ok
 
+        # B-1: Deleting manifest fails closed on non-empty registry
+        reg_file_b1 = temp_dir / "reg_b1.jsonl"
+        reg_b1 = TrialRegistry(reg_file_b1)
+        reg_b1.append_trial(
+            trial_id="T_B1",
+            hypothesis="H",
+            rationale="R",
+            partition="IN_SAMPLE",
+            canonical_params={"p": 1},
+            fold_spec_fingerprint="F1",
+            dataset_fingerprint="D1",
+            criteria_version="1.1.0",
+            timestamp_utc="2026-11-11T10:00:00Z",
+        )
+        reg_b1.manifest_path.unlink()
+        g2a4_b1_ok = False
+        try:
+            TrialRegistry(reg_file_b1)
+        except RegistryTamperedError as e:
+            if "Missing authoritative manifest anchor" in str(e):
+                g2a4_b1_ok = True
+        print(f"[{'PASS' if g2a4_b1_ok else 'FAIL'}] G2A-4.3 (B-1): Deleted manifest on non-empty registry fails closed.")
+        all_passed = all_passed and g2a4_b1_ok
+
+        # B-2: verify_integrity failure preserves in-memory trial_count
+        reg_file_b2 = temp_dir / "reg_b2.jsonl"
+        reg_b2 = TrialRegistry(reg_file_b2)
+        for i in range(1, 5):
+            reg_b2.append_trial(
+                trial_id=f"T_B2_{i}",
+                hypothesis=f"H{i}",
+                rationale=f"R{i}",
+                partition="IN_SAMPLE",
+                canonical_params={"p": i},
+                fold_spec_fingerprint="F1",
+                dataset_fingerprint="D1",
+                criteria_version="1.1.0",
+                timestamp_utc=f"2026-11-11T10:0{i}:00Z",
+            )
+        b2_lines = reg_file_b2.read_text(encoding="utf-8").splitlines()
+        b2_data = json.loads(b2_lines[1])
+        b2_data["hypothesis"] = "CORRUPTED"
+        b2_lines[1] = json.dumps(b2_data)
+        reg_file_b2.write_text("\n".join(b2_lines) + "\n", encoding="utf-8", newline="\n")
+        g2a4_b2_ok = False
+        try:
+            reg_b2.verify_integrity()
+        except RegistryTamperedError:
+            # Check trial count is still 4
+            if reg_b2.trial_count == 4:
+                g2a4_b2_ok = True
+        print(f"[{'PASS' if g2a4_b2_ok else 'FAIL'}] G2A-4.4 (B-2): Failed verify_integrity preserves in-memory count (N={reg_b2.trial_count}).")
+        all_passed = all_passed and g2a4_b2_ok
+
         # A-7: Concurrent appender corruption guard
         reg_file_conc = temp_dir / "reg_conc.jsonl"
         reg_c1 = TrialRegistry(reg_file_conc)
@@ -324,7 +372,7 @@ def run_phase_2a_verification() -> bool:
             criteria_version="1.1.0",
             timestamp_utc="2026-11-11T10:00:00Z",
         )
-        g2a4_3_ok = False
+        g2a4_5_ok = False
         try:
             reg_c2.append_trial(
                 trial_id="T_C2",
@@ -339,9 +387,9 @@ def run_phase_2a_verification() -> bool:
             )
         except RegistryTamperedError as e:
             if "Concurrent modification detected" in str(e):
-                g2a4_3_ok = True
-        print(f"[{'PASS' if g2a4_3_ok else 'FAIL'}] G2A-4.3 (A-7): Concurrent appender desynchronization detected fail-closed.")
-        all_passed = all_passed and g2a4_3_ok
+                g2a4_5_ok = True
+        print(f"[{'PASS' if g2a4_5_ok else 'FAIL'}] G2A-4.5 (A-7): Concurrent appender desynchronization detected fail-closed.")
+        all_passed = all_passed and g2a4_5_ok
 
         # A-8: Missing trailing newline fails closed
         reg_file_nl = temp_dir / "reg_nl.jsonl"
@@ -358,14 +406,14 @@ def run_phase_2a_verification() -> bool:
             timestamp_utc="2026-11-11T10:00:00Z",
         )
         reg_file_nl.write_bytes(reg_file_nl.read_bytes().rstrip(b"\r\n"))
-        g2a4_4_ok = False
+        g2a4_6_ok = False
         try:
             TrialRegistry(reg_file_nl)
         except RegistryTamperedError as e:
             if "missing trailing newline" in str(e):
-                g2a4_4_ok = True
-        print(f"[{'PASS' if g2a4_4_ok else 'FAIL'}] G2A-4.4 (A-8): Missing trailing newline detected fail-closed.")
-        all_passed = all_passed and g2a4_4_ok
+                g2a4_6_ok = True
+        print(f"[{'PASS' if g2a4_6_ok else 'FAIL'}] G2A-4.6 (A-8): Missing trailing newline detected fail-closed.")
+        all_passed = all_passed and g2a4_6_ok
 
         # ----------------------------------------------------------------------
         # GATE G2A-5: Phase 2B Schema Readiness, Exact Decimal Moments, Pinned N
@@ -381,7 +429,7 @@ def run_phase_2a_verification() -> bool:
             hypothesis="H1",
             rationale="R1",
             partition="IN_SAMPLE",
-            canonical_params={"thresh": Decimal("0.010")},  # A-15 parity check
+            canonical_params={"thresh": Decimal("0.010")},
             fold_spec_fingerprint="F1",
             dataset_fingerprint="D1",
             criteria_version="1.1.0",
@@ -405,7 +453,7 @@ def run_phase_2a_verification() -> bool:
             dataset_fingerprint="D1",
             criteria_version="1.1.0",
             timestamp_utc="2026-11-11T10:01:00Z",
-            sharpe_ratio=None,  # Unevaluated trial
+            sharpe_ratio=None,
         )
         reg_dsr.append_trial(
             trial_id="T_DSR_3",
@@ -424,10 +472,29 @@ def run_phase_2a_verification() -> bool:
         total_n = reg_dsr.total_trial_count
         eval_n = reg_dsr.evaluated_trial_count
         variance = reg_dsr.compute_trial_sharpe_variance()
-        # [1.50, 1.90]: mean = 1.70, diffs = -0.20, +0.20 -> sum sq diff = 0.08, var = 0.08 / 1 = 0.08
         g2a5_1_ok = total_n == 3 and eval_n == 2 and variance == Decimal("0.08")
         print(f"[{'PASS' if g2a5_1_ok else 'FAIL'}] G2A-5.1 (A-11): DSR N convention pinned: N={total_n}, N_eval={eval_n}, var={variance}.")
         all_passed = all_passed and g2a5_1_ok
+
+        # B-4: Boolean coercion rejection
+        g2a5_b4_ok = False
+        try:
+            reg_dsr.append_trial(
+                trial_id="T_BOOL_OBS",
+                hypothesis="H",
+                rationale="R",
+                partition="IN_SAMPLE",
+                canonical_params={},
+                fold_spec_fingerprint="F1",
+                dataset_fingerprint="D1",
+                criteria_version="1.1.0",
+                timestamp_utc="2026-11-11T10:03:00Z",
+                observation_count=True,
+            )
+        except TrialRegistryError:
+            g2a5_b4_ok = True
+        print(f"[{'PASS' if g2a5_b4_ok else 'FAIL'}] G2A-5.2 (B-4): observation_count=True rejected fail-closed.")
+        all_passed = all_passed and g2a5_b4_ok
 
         # A-13: Non-finite Decimals rejected
         g2a5_2_ok = False
@@ -441,30 +508,36 @@ def run_phase_2a_verification() -> bool:
                 fold_spec_fingerprint="F1",
                 dataset_fingerprint="D1",
                 criteria_version="1.1.0",
-                timestamp_utc="2026-11-11T10:03:00Z",
+                timestamp_utc="2026-11-11T10:04:00Z",
                 sharpe_ratio=Decimal("NaN"),
             )
         except TrialRegistryError:
             g2a5_2_ok = True
-        print(f"[{'PASS' if g2a5_2_ok else 'FAIL'}] G2A-5.2 (A-13): Non-finite Decimal('NaN') rejected fail-closed.")
+        print(f"[{'PASS' if g2a5_2_ok else 'FAIL'}] G2A-5.3 (A-13): Non-finite Decimal('NaN') rejected fail-closed.")
         all_passed = all_passed and g2a5_2_ok
 
         # A-14: Malformed record raises RegistryTamperedError not KeyError
         malformed_file = temp_dir / "malformed.jsonl"
         malformed_file.write_text('{"seq": 1, "trial_id": "M"}\n', encoding="utf-8", newline="\n")
+        (temp_dir / "malformed.jsonl.manifest").write_text(json.dumps({
+            "total_trials": 1,
+            "head_hash": "0" * 64,
+            "last_trial_id": "M",
+            "timestamp_utc": "2026-11-11T10:00:00Z",
+        }) + "\n", encoding="utf-8", newline="\n")
         g2a5_3_ok = False
         try:
             TrialRegistry(malformed_file)
         except RegistryTamperedError:
             g2a5_3_ok = True
-        print(f"[{'PASS' if g2a5_3_ok else 'FAIL'}] G2A-5.3 (A-14): Malformed JSON record raises RegistryTamperedError.")
+        print(f"[{'PASS' if g2a5_3_ok else 'FAIL'}] G2A-5.4 (A-14): Malformed JSON record raises RegistryTamperedError.")
         all_passed = all_passed and g2a5_3_ok
 
         # A-15: Canonical params equality on reload
         reloaded_dsr = TrialRegistry(reg_file_dsr)
         r0 = reloaded_dsr.get_trials()[0]
         g2a5_4_ok = r0.canonical_params == {"thresh": "0.010"} and r0.mean_return == Decimal("0.0015")
-        print(f"[{'PASS' if g2a5_4_ok else 'FAIL'}] G2A-5.4 (A-15): In-memory and reloaded records agree bit-for-bit on Decimal params.")
+        print(f"[{'PASS' if g2a5_4_ok else 'FAIL'}] G2A-5.5 (A-15): In-memory and reloaded records agree bit-for-bit on Decimal params.")
         all_passed = all_passed and g2a5_4_ok
 
         # A-18: Non-monotonic timestamp rejection
@@ -479,18 +552,18 @@ def run_phase_2a_verification() -> bool:
                 fold_spec_fingerprint="F1",
                 dataset_fingerprint="D1",
                 criteria_version="1.1.0",
-                timestamp_utc="2026-11-11T09:00:00Z",  # Back-dated before 10:02:00Z
+                timestamp_utc="2026-11-11T09:00:00Z",
             )
         except TrialRegistryError:
             g2a5_5_ok = True
-        print(f"[{'PASS' if g2a5_5_ok else 'FAIL'}] G2A-5.5 (A-18): Non-monotonic back-dated timestamp rejected fail-closed.")
+        print(f"[{'PASS' if g2a5_5_ok else 'FAIL'}] G2A-5.6 (A-18): Non-monotonic back-dated timestamp rejected fail-closed.")
         all_passed = all_passed and g2a5_5_ok
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
     print("\n" + "=" * 80)
-    print(f"PHASE 2A FINAL PROBE VERDICT: {'ALL 5 GATES PASSED (100%)' if all_passed else 'VERIFICATION FAILED'}")
+    print(f"PHASE 2A FINAL PROBE VERDICT: {'ALL MEASURED CHECKS PASSED (100%)' if all_passed else 'VERIFICATION FAILED'}")
     print("=" * 80)
     return all_passed
 

@@ -202,12 +202,14 @@ def test_trial_registry_detects_tampering_fail_closed(tmp_path: Path):
         )
 
     # 1. Tamper with record content in line 2
+    manifest_bytes = registry.manifest_path.read_bytes()
     lines = registry_file.read_text(encoding="utf-8").splitlines()
     data = json.loads(lines[1])
     data["hypothesis"] = "TAMPERED_HYPOTHESIS"
     lines[1] = json.dumps(data)
     tampered_file = tmp_path / "tampered_registry.jsonl"
     tampered_file.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    (tmp_path / "tampered_registry.jsonl.manifest").write_bytes(manifest_bytes)
 
     with pytest.raises(RegistryTamperedError, match="Tampered record hash"):
         TrialRegistry(tampered_file)
@@ -216,6 +218,7 @@ def test_trial_registry_detects_tampering_fail_closed(tmp_path: Path):
     lines_swapped = [lines[0], lines[2], lines[1]]
     swapped_file = tmp_path / "swapped_registry.jsonl"
     swapped_file.write_text("\n".join(lines_swapped) + "\n", encoding="utf-8", newline="\n")
+    (tmp_path / "swapped_registry.jsonl.manifest").write_bytes(manifest_bytes)
 
     with pytest.raises(DuplicateTrialError, match="Out-of-order sequence"):
         TrialRegistry(swapped_file)
@@ -227,6 +230,7 @@ def test_trial_registry_detects_tampering_fail_closed(tmp_path: Path):
     broken_chain_lines = [lines[0], json.dumps(data_broken_prev), lines[2]]
     broken_chain_file = tmp_path / "broken_chain_registry.jsonl"
     broken_chain_file.write_text("\n".join(broken_chain_lines) + "\n", encoding="utf-8", newline="\n")
+    (tmp_path / "broken_chain_registry.jsonl.manifest").write_bytes(manifest_bytes)
 
     with pytest.raises(RegistryTamperedError, match="Broken hash chain"):
         TrialRegistry(broken_chain_file)
@@ -524,7 +528,14 @@ def test_trial_registry_byte_identical_posix_lf(tmp_path: Path):
 def test_trial_registry_malformed_json_raises_registry_tampered_error(tmp_path: Path):
     """Verify malformed JSON or missing required key raises RegistryTamperedError not KeyError (A-14)."""
     registry_file = tmp_path / "trial_registry.jsonl"
+    manifest_file = registry_file.with_name(registry_file.name + ".manifest")
     registry_file.write_text('{"seq": 1, "trial_id": "M"}\n', encoding="utf-8", newline="\n")
+    manifest_file.write_text(json.dumps({
+        "total_trials": 1,
+        "head_hash": "0" * 64,
+        "last_trial_id": "M",
+        "timestamp_utc": "2026-11-11T10:00:00Z",
+    }) + "\n", encoding="utf-8", newline="\n")
 
     with pytest.raises(RegistryTamperedError, match="Malformed record structure"):
         TrialRegistry(registry_file)
@@ -599,3 +610,112 @@ def test_trial_registry_timestamp_validation_and_monotonicity(tmp_path: Path):
             criteria_version="1.1.0",
             timestamp_utc="2026-11-11T10:00:00Z",
         )
+
+
+def test_trial_registry_missing_manifest_rejected_fail_closed(tmp_path: Path):
+    """Verify that a non-empty registry missing its manifest fails closed (B-1)."""
+    registry_file = tmp_path / "trial_registry.jsonl"
+    registry = TrialRegistry(registry_file)
+    registry.append_trial(
+        trial_id="T_01",
+        hypothesis="H",
+        rationale="R",
+        partition="IN_SAMPLE",
+        canonical_params={"p": 1},
+        fold_spec_fingerprint="F1",
+        dataset_fingerprint="D1",
+        criteria_version="1.1.0",
+        timestamp_utc="2026-11-11T10:00:00Z",
+    )
+    assert registry.manifest_path.is_file()
+    # Delete manifest
+    registry.manifest_path.unlink()
+    with pytest.raises(RegistryTamperedError, match="Missing authoritative manifest anchor"):
+        TrialRegistry(registry_file)
+
+
+def test_trial_registry_failed_integrity_preserves_in_memory_state(tmp_path: Path):
+    """Verify that verify_integrity() does not mutate in-memory trial count on failure (B-2)."""
+    registry_file = tmp_path / "trial_registry.jsonl"
+    registry = TrialRegistry(registry_file)
+    for i in range(1, 5):
+        registry.append_trial(
+            trial_id=f"T_{i:02d}",
+            hypothesis=f"H{i}",
+            rationale=f"R{i}",
+            partition="IN_SAMPLE",
+            canonical_params={"p": i},
+            fold_spec_fingerprint="F1",
+            dataset_fingerprint="D1",
+            criteria_version="1.1.0",
+            timestamp_utc=f"2026-11-11T10:0{i}:00Z",
+        )
+    assert registry.trial_count == 4
+
+    # Tamper with record on disk at line 2
+    lines = registry_file.read_text(encoding="utf-8").splitlines()
+    data = json.loads(lines[1])
+    data["hypothesis"] = "TAMPERED"
+    lines[1] = json.dumps(data)
+    registry_file.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+    # verify_integrity raises RegistryTamperedError
+    with pytest.raises(RegistryTamperedError, match="Tampered record hash"):
+        registry.verify_integrity()
+
+    # In-memory trial count MUST remain 4, NOT 1 (B-2)
+    assert registry.trial_count == 4
+
+
+def test_trial_record_and_registry_rejects_boolean_coercion(tmp_path: Path):
+    """Verify observation_count=True and boolean string fields are rejected fail-closed (B-4)."""
+    registry_file = tmp_path / "trial_registry.jsonl"
+    registry = TrialRegistry(registry_file)
+
+    # 1. append_trial with observation_count=True raises TrialRegistryError
+    with pytest.raises(TrialRegistryError, match="observation_count must be a non-negative integer"):
+        registry.append_trial(
+            trial_id="T_BOOL_OBS",
+            hypothesis="H",
+            rationale="R",
+            partition="IN_SAMPLE",
+            canonical_params={"p": 1},
+            fold_spec_fingerprint="F1",
+            dataset_fingerprint="D1",
+            criteria_version="1.1.0",
+            timestamp_utc="2026-11-11T10:00:00Z",
+            observation_count=True,  # type: ignore
+        )
+
+    # 2. append_trial with returns_digest as boolean or non-string
+    with pytest.raises(TrialRegistryError, match="returns_digest must be a non-empty stripped string"):
+        registry.append_trial(
+            trial_id="T_BOOL_RD",
+            hypothesis="H",
+            rationale="R",
+            partition="IN_SAMPLE",
+            canonical_params={"p": 1},
+            fold_spec_fingerprint="F1",
+            dataset_fingerprint="D1",
+            criteria_version="1.1.0",
+            timestamp_utc="2026-11-11T10:00:00Z",
+            returns_digest=True,  # type: ignore
+        )
+
+    # 3. from_dict with observation_count=True raises RegistryTamperedError
+    with pytest.raises(RegistryTamperedError, match="Field 'observation_count' must be non-negative int"):
+        TrialRecord.from_dict({
+            "seq": 1,
+            "prev_hash": GENESIS_PREV_HASH,
+            "record_hash": "hash",
+            "trial_id": "T1",
+            "hypothesis": "H",
+            "rationale": "R",
+            "partition": "IN_SAMPLE",
+            "canonical_params": {},
+            "fold_spec_fingerprint": "F1",
+            "dataset_fingerprint": "D1",
+            "criteria_version": "1.1.0",
+            "timestamp_utc": "2026-11-11T10:00:00Z",
+            "observation_count": True,
+        })

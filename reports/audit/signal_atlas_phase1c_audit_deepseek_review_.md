@@ -6,7 +6,7 @@
 **Repository state audited:** commit `84c7501` (`feat(features): complete Phase 1C pure indicator formulas and subsegment engine`) with 4 files dirty (+1 line each, trailing newline only).
 **Code changes made by this audit:** none. This document is read-only review output.
 
-**Sections:** §1–§9 Phase 1A→1C audit · §10 Phase 1C re-audit · §11–§12 Phase 1D · §13–§18 Phase 1E / Phase 2A.
+**Sections:** §1–§9 Phase 1A→1C audit · §10 Phase 1C re-audit · §11–§12 Phase 1D · §13–§18 Phase 1E / Phase 2A · §19 Phase 2A re-audit.
 
 ---
 
@@ -1038,3 +1038,76 @@ The registry's tamper-evidence is real for content edits, and the fold geometry 
 7. Rewrite the 2A status claims in `CURRENT_STAGE_OF_WORK.md` to computed gate results, and commit the 2A probe that produces them.
 
 **Unchanged `NOT RUN` register:** all Phase 0–1B empirical items, and every Phase 2B/2C metric (no significance, strategy or walk-forward evaluation module exists).
+
+---
+
+## 19. Phase 2A Re-Audit — §18 Remediation (`3cbcba4`) (2026-11-11)
+
+**Commit audited:** `3cbcba4` — *"fix(research): remediate §18 audit findings A-1 through A-18 for Phase 2A"* (9 files, +1619/−185).
+**Working tree:** two uncommitted edits, a trailing blank line each in `probe_phase2a.py` and `scripts/verify_phase2a_containment_and_trials.py`; no behavioural content.
+**Suite (measured):** `163 passed in 1.53s`, exit 0, zero warnings (138 + 10 containment + 15 trials). The document states `1.67s`; timing only.
+**Committed probe (measured):** `python probe_phase2a.py` → exit 0, `ALL 5 GATES PASSED (100%)`. The probe now accumulates real booleans into `all_passed`, so its verdict is computed rather than typed — the A-5 mechanism is fixed.
+**Method:** each §18 finding was re-attacked with an independent probe, not re-read from the new tests.
+
+### 19.1 §18 findings — closure status
+
+| ID | Status | Independent evidence |
+|---|---|---|
+| A-1 arbitrary sentinel content | **CLOSED** | `verify_holdout_unlock(path)` → `TypeError: missing 1 required positional argument: 'expected_token_hash'`; `holdout_token_hash` is now a required 64-hex `PartitionSpec` field and is bound into `PART-SPEC-V1`; content `banana` against the human token hash → `HoldoutSealedError`. |
+| A-2 partition string bypass | **CLOSED** | `partition="holdout "` → `HoldoutSealedError` (normalised then enum-validated in both modules). |
+| A-3 `allow_holdout` bypass | **CLOSED** | Parameter no longer exists (`inspect.signature` → `False`); HOLDOUT without a `PartitionSpec` raises `HoldoutSealedError`; with spec + valid sentinel it appends, as intended. `trials.py` now imports `check_partition_access` — single authority. |
+| A-4 truncation | **PARTIAL — remains open in the versioned workflow** | Manifest present: 5→2 truncation → `RegistryTamperedError`. Manifest **absent**: loads with `count=2` and `verify_integrity()` → **`True`**. `.gitignore:30` is `*.manifest`, so any clone, restore or archive of a committed registry loses the anchor and silently restores the A-4 defect. See B-1. |
+| A-5 doc overclaim / typed verdict | **PARTIAL** | A probe is now committed and its verdict is computed. The two gate-basis sentences still overstate what is measured (B-6). |
+| A-6 advisory containment | **PARTIAL** | `check_partition_access` now consumes `spec`, and `filter_partition_observations` exists. It has **zero callers** — `grep -rn filter_partition_observations src --include=*.py` outside `research/` → no matches. Still advisory, now with an unused accessor. |
+| A-7 concurrent corruption | **CLOSED (detection)** | Second appender → `RegistryTamperedError: Concurrent modification detected: on-disk record count (1) disagrees with in-memory count (0)`. Check-then-write is still unlocked (TOCTOU window), which is acceptable for fail-closed detection. |
+| A-8 missing trailing newline | **CLOSED** | Rejected on load *and* on append. |
+| A-9 `auto_verify=False` | **CLOSED** | Parameter removed; all loads verify. |
+| A-10 declarative embargo | **PARTIAL** | A `WalkForwardFold` now rejects a 1-day gap claiming `embargo_sessions=5`; the generator's session-exact check is intact. The class-level check compares **calendar days** to a **session count** (B-5). |
+| A-11 `N` ambiguity | **CLOSED (documentation)** | `total_trial_count` (authoritative `N`) vs `evaluated_trial_count` (`N_eval`), stated in the property docstrings. Must still be pinned in the committed 2B config, not only in prose. |
+| A-12 CRLF | **CLOSED** | `CRLF=0, LF=1` on a fresh append; registry and manifest both use `newline="\n"`. |
+| A-13 non-finite Decimal | **CLOSED** | `sharpe_ratio=Decimal("NaN")` → `TrialRegistryError`. |
+| A-14 untyped `KeyError` | **CLOSED** | Record missing `prev_hash` → `RegistryTamperedError`. |
+| A-15 Decimal param parity | **CLOSED** | In-memory and reloaded `canonical_params` compare equal. |
+| A-16 calendar validation | **CLOSED** | Duplicate sessions and non-increasing order rejected. |
+| A-17 anchored over-rejection | **CLOSED** | Anchored mode no longer adds `train_sessions` to `min_required`. |
+| A-18 timestamp chronology | **CLOSED** | `2020-01-01T00:00:00Z` after a 2026 record → `Non-monotonic timestamp ... precedes previous record`. |
+
+Score: **13 closed, 5 partial (A-4, A-5, A-6, A-10, A-11), 0 unchanged.** The three P1 holdout bypasses that blocked §18 are genuinely closed.
+
+### 19.2 Remaining findings
+
+| ID | Sev | Finding | Measured evidence |
+|---|---|---|---|
+| **B-1** | **P1** | **The truncation anchor is optional and deliberately unversioned.** `_load_and_verify` treats a missing manifest as "no anchor" instead of "anchor missing"; `.gitignore` excludes `*.manifest`, so the file that makes truncation detectable is exactly the one git will not carry. A committed registry restored from git, cloned, or audited on another machine has no anchor and `verify_integrity()` certifies a truncated file as intact. | `truncate, manifest DELETED` → `LOADED count=2 verify_integrity=True`; `git check-ignore -v data/registry.jsonl.manifest` → `.gitignore:30:*.manifest`. |
+| **B-2** | **P2** | **`verify_integrity()` destroys in-memory state before verifying.** It clears `_records`/`_trial_ids` and re-populates them as it walks the file, so a raised `RegistryTamperedError` leaves the object holding the records read up to the failure. A caller that catches the error (the obvious pipeline pattern) then reads a silently reduced `total_trial_count` — the A-4 harm reached through a different door. | Registry with 4 records, record 2 tampered → `verify_integrity()` raises, `trial_count` becomes **1** (was 4). |
+| **B-3** | **P2** | **An interrupted append bricks the registry, and the only recovery is B-1.** The record is written first, the manifest second, so a crash between them leaves a valid file failing the anchor check; `_write_manifest` is documented as "atomic" but is a truncating `open("w")` with no temp-file rename and no `fsync`. Recovery means deleting the manifest, which re-opens B-1. | Manifest hand-set to `total_trials=2` with 3 records on disk → `RegistryTamperedError: registry has 3 records, but authoritative manifest specifies 2`. |
+| **B-4** | **P2** | **The write path accepts values that make the ledger unloadable.** `append_trial(observation_count=True)` is accepted and hashed; reload coerces with `int(...)` → `1`, the payload hash no longer matches, and the registry can never be opened again. `TrialRecord.__post_init__` validates the six Decimal fields but not `observation_count`/`returns_digest`, and `from_dict` coerces one but not the other. | Append accepted; reload → `RegistryTamperedError: Tampered record hash for trial 'B1'`. |
+| **B-5** | **P3** | **`embargo_sessions` is still checked as calendar days, not sessions.** The class-level guard is a lower bound: a fold claiming a 5-session embargo with only 4 trading sessions in the gap is accepted and receives a valid `FOLD-SPEC-V1` fingerprint. Trust therefore rests on the generator, which is correct. | `train_end=2023-01-06` (Fri), `test_start=2023-01-13` (Fri), `embargo_sessions=5`, 4 sessions between → accepted, `FOLD-SPEC-V1-4445647e3…`. |
+| **B-6** | **P3 (doc)** | **Two gate bases still overstate what the probe measures.** G2A-1 credits `filter_partition_observations` with enforcing containment "before observation streams can reach feature or evaluation logic" — the function has no callers (A-6). G2A-3 is titled "Shuffled parameter sweep reproducible & byte-identical", but measures key-order hashing and LF bytes only; no sweep is executed, so the gate as originally defined is still unmeasured. | `grep` → no callers; probe G2A-3.1/3.2 bodies assert hashing and newline counts. |
+| **B-7** | **Residual (design)** | **The seal's authority is the `PartitionSpec`, not cryptography.** `holdout_token_hash` and the unsigned manifest are both caller-authored, so any actor who can write code can bind a token it controls (`sha256("banana")`) and open the holdout; nothing distinguishes a human-authored spec from a generated one. No code fix exists locally — the control is that the spec and the committed criteria are human-reviewed. Worth stating in the doc instead of implying a cryptographic barrier. | `spec(holdout_token_hash=sha256("banana"))` + file containing `banana` → **admitted**; the human-token spec seals it. |
+
+### 19.3 Recomputed 2A gates
+
+| Gate | Result | Basis |
+|---|---|---|
+| G2A-1 · sealed read raises | **PASS** | Three original bypasses closed and re-attacked: A-1/A-2/A-3 all fail closed. Caveats: the accessor is unwired (A-6) and the token authority is the spec (B-7). |
+| G2A-2 · folds deterministic, disjoint, calendar-validated | **PASS** | Determinism, disjointness, calendar validation, anchored mode and exact session embargo in the generator all verified. Test windows still tile only the tail of IS — a design property to carry into 2C, not a defect. |
+| G2A-3 · shuffled sweep yields an identical registry file | **FAIL** | Not measured: no sweep is executed. Key-order hashing and LF byte-stability are verified; the gate as written remains unmet (B-6). |
+| G2A-4 · chain verifies; truncation fails closed | **PARTIAL** | True with the manifest present (content edits, reordering, head mismatch, concurrent desync, separator loss). False whenever the manifest is absent (B-1), and a failed check corrupts the in-memory count (B-2). |
+| G2A-5 · schema ready for 2B | **PASS** | All nine fields round-trip; `N` vs `N_eval` pinned in code; non-finite and malformed inputs rejected. |
+
+**Verdict: Phase 2A is not yet signed off. Two-P1-to-P2 closure set before Phase 2B.**
+
+The remediation is real work and most of it holds under attack: the holdout is no longer reachable by arbitrary content, whitespace, or a boolean flag, and the hash chain now detects reordering, chain breaks, concurrent desync and separator loss. What keeps 2A open is narrower: the anti-truncation anchor is a sibling file that is optional to the loader and excluded from version control, so the property that matters — "the trial count cannot be quietly reduced" — holds only on the one machine where the untracked file happens to survive. That is the number DSR consumes.
+
+**Closure set for 2B:**
+1. Make the manifest mandatory: a non-empty registry with no manifest raises `RegistryTamperedError` (B-1).
+2. Stop ignoring `*.manifest` in `.gitignore`, and commit registries together with their anchors (B-1).
+3. Verify into a temporary list and assign to `self._records` only after the walk succeeds, so a failed `verify_integrity()` leaves `trial_count` unchanged (B-2).
+4. Write the manifest via temp-file + `os.replace`, or write it before the record and treat a stale anchor as a recoverable state with an explicit repair API (B-3).
+5. Validate `observation_count` (int, not bool) and `returns_digest` (str) in `TrialRecord.__post_init__` (B-4).
+6. Restate G2A-1 and G2A-3 in the document to what is measured, and pin the DSR `N` convention in the committed 2B config rather than in prose (B-6, A-11).
+
+**Carried as accepted residuals:** `embargo_sessions` remains calendar-day-bounded at class level while the generator is session-exact (B-5); the holdout seal is only as strong as human authorship of `PartitionSpec` (B-7).
+
+**Unchanged `NOT RUN` register:** all Phase 0–1B empirical items, and every Phase 2B/2C metric.

@@ -17,7 +17,9 @@ import datetime
 from decimal import Decimal
 import hashlib
 import json
+import os
 from pathlib import Path
+import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from signal_core.research.containment import (
@@ -100,6 +102,24 @@ class TrialRecord:
     max_drawdown: Optional[Decimal] = None
 
     def __post_init__(self) -> None:
+        # B-4 Remediation: Validate observation_count (int, not bool, >= 0) and returns_digest (str, not bool)
+        if self.observation_count is not None:
+            if isinstance(self.observation_count, bool) or not isinstance(self.observation_count, int) or self.observation_count < 0:
+                raise TrialRegistryError(
+                    f"observation_count must be a non-negative integer, got {self.observation_count!r}"
+                )
+
+        if self.returns_digest is not None:
+            if (
+                isinstance(self.returns_digest, bool)
+                or not isinstance(self.returns_digest, str)
+                or not self.returns_digest.strip()
+                or self.returns_digest != self.returns_digest.strip()
+            ):
+                raise TrialRegistryError(
+                    f"returns_digest must be a non-empty stripped string, got {self.returns_digest!r}"
+                )
+
         # A-13 Remediation: Non-finite Decimals are strictly rejected
         for field_name in (
             "mean_return",
@@ -157,8 +177,38 @@ class TrialRecord:
             return d
 
         try:
+            raw_seq = data.get("seq")
+            if isinstance(raw_seq, bool) or not isinstance(raw_seq, int) or raw_seq < 1:
+                raise RegistryTamperedError(f"Field 'seq' must be a positive integer, got {raw_seq!r}")
+
+            for str_field in (
+                "prev_hash",
+                "record_hash",
+                "trial_id",
+                "hypothesis",
+                "rationale",
+                "partition",
+                "fold_spec_fingerprint",
+                "dataset_fingerprint",
+                "criteria_version",
+                "timestamp_utc",
+            ):
+                str_val = data.get(str_field)
+                if isinstance(str_val, bool) or not isinstance(str_val, str) or not str_val.strip():
+                    raise RegistryTamperedError(f"Field '{str_field}' must be a non-empty string, got {str_val!r}")
+
+            raw_obs = data.get("observation_count")
+            if raw_obs is not None:
+                if isinstance(raw_obs, bool) or not isinstance(raw_obs, int) or raw_obs < 0:
+                    raise RegistryTamperedError(f"Field 'observation_count' must be non-negative int, got {raw_obs!r}")
+
+            raw_rd = data.get("returns_digest")
+            if raw_rd is not None:
+                if isinstance(raw_rd, bool) or not isinstance(raw_rd, str) or not raw_rd.strip():
+                    raise RegistryTamperedError(f"Field 'returns_digest' must be non-empty string, got {raw_rd!r}")
+
             return cls(
-                seq=int(data["seq"]),
+                seq=raw_seq,
                 prev_hash=str(data["prev_hash"]),
                 record_hash=str(data["record_hash"]),
                 trial_id=str(data["trial_id"]),
@@ -170,8 +220,8 @@ class TrialRecord:
                 dataset_fingerprint=str(data["dataset_fingerprint"]),
                 criteria_version=str(data["criteria_version"]),
                 timestamp_utc=str(data["timestamp_utc"]),
-                returns_digest=data.get("returns_digest"),
-                observation_count=int(data["observation_count"]) if data.get("observation_count") is not None else None,
+                returns_digest=raw_rd,
+                observation_count=raw_obs,
                 mean_return=parse_dec("mean_return"),
                 std_return=parse_dec("std_return"),
                 skewness=parse_dec("skewness"),
@@ -236,7 +286,7 @@ class TrialRegistry:
             raise RegistryTamperedError(f"Malformed external head manifest at {self._manifest_path}: {e}") from e
 
     def _write_manifest(self, total_trials: int, head_hash: str, last_trial_id: str, timestamp_utc: str) -> None:
-        """Writes the external authoritative head manifest atomically with POSIX LF."""
+        """Writes the external authoritative head manifest atomically via temp-file replace with fsync (B-3)."""
         payload = {
             "total_trials": total_trials,
             "head_hash": head_hash,
@@ -245,15 +295,25 @@ class TrialRegistry:
         }
         manifest_json = json.dumps(payload, indent=2) + "\n"
         self._manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._manifest_path.open("w", encoding="utf-8", newline="\n") as f:
-            f.write(manifest_json)
-            f.flush()
+        temp_manifest = self._manifest_path.with_name(
+            f".{self._manifest_path.name}.tmp_{os.getpid()}_{time.time_ns()}"
+        )
+        try:
+            with temp_manifest.open("w", encoding="utf-8", newline="\n") as f:
+                f.write(manifest_json)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_manifest, self._manifest_path)
+        except Exception:
+            if temp_manifest.exists():
+                try:
+                    temp_manifest.unlink()
+                except Exception:
+                    pass
+            raise
 
     def _load_and_verify(self) -> None:
         """Loads all records from disk and verifies sequence, uniqueness, hash chain, and manifest anchor."""
-        self._records.clear()
-        self._trial_ids.clear()
-
         # Check trailing newline on existing non-empty file (A-8)
         raw_bytes = self._path.read_bytes()
         if raw_bytes and not raw_bytes.endswith(b"\n"):
@@ -261,14 +321,28 @@ class TrialRegistry:
                 f"Registry file {self._path} is corrupted: missing trailing newline on prior record."
             )
 
-        lines = raw_bytes.decode("utf-8").splitlines()
+        lines = [l for l in raw_bytes.decode("utf-8").splitlines() if l.strip()]
+
+        manifest = self._load_manifest()
+
+        # B-1 Remediation: Manifest is mandatory for non-empty registry
+        if lines and manifest is None:
+            raise RegistryTamperedError(
+                f"Missing authoritative manifest anchor at {self._manifest_path} for non-empty registry {self._path}. "
+                f"Registry files must be accompanied by their manifest anchor."
+            )
+
+        if not lines and manifest is not None and manifest.get("total_trials", 0) != 0:
+            raise RegistryTamperedError(
+                f"Empty registry {self._path} has non-empty manifest specifying {manifest.get('total_trials')} trials."
+            )
+
+        # B-2 Remediation: Verify into local temporary collections so failed verification does not mutate state
+        temp_records: List[TrialRecord] = []
+        temp_trial_ids: set[str] = set()
         last_ts: Optional[datetime.datetime] = None
 
-        for line_num, line in enumerate(lines, start=1):
-            line_str = line.strip()
-            if not line_str:
-                continue
-
+        for line_num, line_str in enumerate(lines, start=1):
             try:
                 data = json.loads(line_str)
             except Exception as e:
@@ -277,26 +351,26 @@ class TrialRegistry:
             record = TrialRecord.from_dict(data)
 
             # 1. Verify sequence (A-4)
-            expected_seq = len(self._records) + 1
+            expected_seq = len(temp_records) + 1
             if record.seq != expected_seq:
                 raise DuplicateTrialError(
                     f"Line {line_num}: Out-of-order sequence {record.seq}; expected {expected_seq}."
                 )
 
             # 2. Verify uniqueness of trial_id
-            if record.trial_id in self._trial_ids:
+            if record.trial_id in temp_trial_ids:
                 raise DuplicateTrialError(
                     f"Line {line_num}: Duplicate trial_id '{record.trial_id}' in trial registry."
                 )
 
             # 3. Verify prev_hash
-            if len(self._records) == 0:
+            if len(temp_records) == 0:
                 if record.prev_hash != GENESIS_PREV_HASH:
                     raise RegistryTamperedError(
                         f"Line {line_num}: Genesis block prev_hash must be {GENESIS_PREV_HASH}, got {record.prev_hash}"
                     )
             else:
-                expected_prev = self._records[-1].record_hash
+                expected_prev = temp_records[-1].record_hash
                 if record.prev_hash != expected_prev:
                     raise RegistryTamperedError(
                         f"Line {line_num}: Broken hash chain for trial '{record.trial_id}'. "
@@ -324,24 +398,33 @@ class TrialRegistry:
                 )
             last_ts = rec_ts
 
-            self._records.append(record)
-            self._trial_ids.add(record.trial_id)
+            temp_records.append(record)
+            temp_trial_ids.add(record.trial_id)
 
-        # 6. Verify external head manifest anchor (A-4 Truncation Detection)
-        manifest = self._load_manifest()
+        # 6. Verify external head manifest anchor (A-4 Truncation & State Anchor)
         if manifest is not None:
             expected_total = manifest.get("total_trials")
             expected_head = manifest.get("head_hash")
-            if len(self._records) != expected_total:
+            expected_last_id = manifest.get("last_trial_id")
+            if len(temp_records) != expected_total:
                 raise RegistryTamperedError(
-                    f"Registry truncation detected: registry has {len(self._records)} records, "
+                    f"Registry truncation detected: registry has {len(temp_records)} records, "
                     f"but authoritative manifest specifies {expected_total} trials."
                 )
-            if self._records and self._records[-1].record_hash != expected_head:
+            if temp_records and temp_records[-1].record_hash != expected_head:
                 raise RegistryTamperedError(
-                    f"Registry head mismatch: last record hash '{self._records[-1].record_hash}' "
+                    f"Registry head mismatch: last record hash '{temp_records[-1].record_hash}' "
                     f"does not match manifest head '{expected_head}'."
                 )
+            if temp_records and temp_records[-1].trial_id != expected_last_id:
+                raise RegistryTamperedError(
+                    f"Registry head trial_id mismatch: last record '{temp_records[-1].trial_id}' "
+                    f"does not match manifest last_trial_id '{expected_last_id}'."
+                )
+
+        # B-2 Remediation: Commit atomically only after all lines and manifest are verified
+        self._records = temp_records
+        self._trial_ids = temp_trial_ids
 
     def verify_integrity(self) -> bool:
         """
@@ -395,6 +478,24 @@ class TrialRegistry:
 
         if isinstance(rationale, bool) or not isinstance(rationale, str) or not rationale.strip():
             raise TrialRegistryError(f"rationale must be non-empty string, got {rationale!r}")
+
+        # B-4: Validate observation_count (int, not bool, >= 0) and returns_digest (str, not bool)
+        if observation_count is not None:
+            if isinstance(observation_count, bool) or not isinstance(observation_count, int) or observation_count < 0:
+                raise TrialRegistryError(
+                    f"observation_count must be a non-negative integer, got {observation_count!r}"
+                )
+
+        if returns_digest is not None:
+            if (
+                isinstance(returns_digest, bool)
+                or not isinstance(returns_digest, str)
+                or not returns_digest.strip()
+                or returns_digest != returns_digest.strip()
+            ):
+                raise TrialRegistryError(
+                    f"returns_digest must be a non-empty stripped string, got {returns_digest!r}"
+                )
 
         # 3. Validate and normalize partition role (A-2)
         if isinstance(partition, str):
@@ -521,12 +622,13 @@ class TrialRegistry:
             max_drawdown=max_drawdown,
         )
 
-        # 8. Write atomically with strict POSIX LF (newline="\n") (A-12)
+        # 8. Write atomically with strict POSIX LF and fsync (A-12, B-3)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         serialized_line = json.dumps(record.to_dict(), separators=(",", ":")) + "\n"
         with self._path.open("a", encoding="utf-8", newline="\n") as f:
             f.write(serialized_line)
             f.flush()
+            os.fsync(f.fileno())
 
         # 9. Update external head manifest anchor (A-4)
         self._write_manifest(

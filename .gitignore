@@ -27,7 +27,6 @@ share/python-wheels/
 MANIFEST
 
 # PyInstaller
-*.manifest
 *.spec
 
 # Unit test / coverage reports

@@ -14,6 +14,10 @@ anti_overfitting_and_significance:
   min_deflated_sharpe_ratio: "0.95"
   # Minimum Haircut Sharpe Ratio net of statutory costs and trial count haircut
   min_haircut_sharpe_ratio: "1.25"
+  # Deflated Sharpe Ratio trial count N convention: total trials attempted across search space (A-11 pinned)
+  dsr_trial_count_basis: "TOTAL_ATTEMPTED_TRIALS"
+  # Sharpe ratio sample variance divisor convention: evaluated trials minus one (N_eval - 1)
+  dsr_sharpe_variance_divisor: "EVALUATED_TRIALS_MINUS_ONE"
   # Minimum number of out-of-sample trades across evaluation sample
   min_total_trades: 100
   # Maximum allowable annual portfolio turnover

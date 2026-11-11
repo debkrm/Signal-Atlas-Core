@@ -90,6 +90,8 @@ class GoNoGoCriteria:
     # Anti-overfitting & significance
     min_deflated_sharpe_ratio: Decimal
     min_haircut_sharpe_ratio: Decimal
+    dsr_trial_count_basis: str
+    dsr_sharpe_variance_divisor: str
     min_total_trades: int
     max_annual_turnover: Decimal
     min_positive_walk_forward_fold_ratio: Decimal
@@ -166,6 +168,8 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         currency=str(meta.get("currency", "INR")),
         min_deflated_sharpe_ratio=_to_decimal(anti_ov["min_deflated_sharpe_ratio"], "min_deflated_sharpe_ratio"),
         min_haircut_sharpe_ratio=_to_decimal(anti_ov["min_haircut_sharpe_ratio"], "min_haircut_sharpe_ratio"),
+        dsr_trial_count_basis=str(anti_ov.get("dsr_trial_count_basis", "TOTAL_ATTEMPTED_TRIALS")),
+        dsr_sharpe_variance_divisor=str(anti_ov.get("dsr_sharpe_variance_divisor", "EVALUATED_TRIALS_MINUS_ONE")),
         min_total_trades=int(anti_ov["min_total_trades"]),
         max_annual_turnover=_to_decimal(anti_ov["max_annual_turnover"], "max_annual_turnover"),
         min_positive_walk_forward_fold_ratio=_to_decimal(anti_ov["min_positive_walk_forward_fold_ratio"], "min_positive_walk_forward_fold_ratio"),

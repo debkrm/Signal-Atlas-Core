@@ -28,6 +28,8 @@ def test_load_committed_go_no_go_criteria():
     # Anti-overfitting thresholds
     assert criteria.min_deflated_sharpe_ratio == Decimal("0.95")
     assert criteria.min_haircut_sharpe_ratio == Decimal("1.25")
+    assert criteria.dsr_trial_count_basis == "TOTAL_ATTEMPTED_TRIALS"
+    assert criteria.dsr_sharpe_variance_divisor == "EVALUATED_TRIALS_MINUS_ONE"
     assert criteria.min_total_trades == 100
     assert criteria.max_annual_turnover == Decimal("12.0")
     assert criteria.min_positive_walk_forward_fold_ratio == Decimal("0.80")
