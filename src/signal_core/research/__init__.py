@@ -23,6 +23,22 @@ from signal_core.research.trials import (
     TrialRegistry,
     TrialRegistryError,
 )
+from signal_core.research.significance import (
+    DeflatedSharpeResult,
+    HaircutSharpeResult,
+    InvalidSampleError,
+    SignificanceError,
+    SignificanceReport,
+    annualized_sharpe,
+    compute_deflated_sharpe_ratio,
+    compute_haircut_sharpe_ratio,
+    evaluate_strategy_significance,
+    sample_kurtosis,
+    sample_mean,
+    sample_skewness,
+    sample_std,
+    sample_variance,
+)
 
 __all__ = [
     "ContainmentError",
@@ -42,5 +58,19 @@ __all__ = [
     "TrialRecord",
     "TrialRegistry",
     "TrialRegistryError",
+    "DeflatedSharpeResult",
+    "HaircutSharpeResult",
+    "InvalidSampleError",
+    "SignificanceError",
+    "SignificanceReport",
+    "annualized_sharpe",
+    "compute_deflated_sharpe_ratio",
+    "compute_haircut_sharpe_ratio",
+    "evaluate_strategy_significance",
+    "sample_kurtosis",
+    "sample_mean",
+    "sample_skewness",
+    "sample_std",
+    "sample_variance",
 ]
 

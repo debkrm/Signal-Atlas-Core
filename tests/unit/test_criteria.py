@@ -30,6 +30,9 @@ def test_load_committed_go_no_go_criteria():
     assert criteria.min_haircut_sharpe_ratio == Decimal("1.25")
     assert criteria.dsr_trial_count_basis == "TOTAL_ATTEMPTED_TRIALS"
     assert criteria.dsr_sharpe_variance_divisor == "EVALUATED_TRIALS_MINUS_ONE"
+    assert criteria.sessions_per_year == 250
+    assert criteria.kurtosis_convention == "RAW_NORMAL_THREE"
+    assert criteria.haircut_variant == "BONFERRONI"
     assert criteria.min_total_trades == 100
     assert criteria.max_annual_turnover == Decimal("12.0")
     assert criteria.min_positive_walk_forward_fold_ratio == Decimal("0.80")
@@ -100,8 +103,32 @@ def test_effective_dated_nse_fee_schedule_resolution():
     assert p5.ipft_rate == Decimal("0.000000001")
 
 
-def test_criteria_loader_rejections():
+def test_criteria_loader_rejections(tmp_path: Path):
     """Verify that criteria loader fails closed on missing files or invalid types."""
     with pytest.raises(FileNotFoundError):
         load_go_no_go_criteria(Path("non_existent_criteria.yaml"))
+
+    # Test invalid methodology constants
+    valid_yaml = Path("configs/go_no_go_criteria.yaml").read_text(encoding="utf-8")
+
+    # Invalid sessions_per_year (boolean or non-positive)
+    bad_yaml = valid_yaml.replace("sessions_per_year: 250", "sessions_per_year: true")
+    bad_file = tmp_path / "bad1.yaml"
+    bad_file.write_text(bad_yaml, encoding="utf-8")
+    with pytest.raises(CriteriaValidationError, match="sessions_per_year"):
+        load_go_no_go_criteria(bad_file)
+
+    # Invalid kurtosis_convention
+    bad_yaml2 = valid_yaml.replace("kurtosis_convention: \"RAW_NORMAL_THREE\"", "kurtosis_convention: \"UNKNOWN\"")
+    bad_file2 = tmp_path / "bad2.yaml"
+    bad_file2.write_text(bad_yaml2, encoding="utf-8")
+    with pytest.raises(CriteriaValidationError, match="kurtosis_convention"):
+        load_go_no_go_criteria(bad_file2)
+
+    # Invalid haircut_variant
+    bad_yaml3 = valid_yaml.replace("haircut_variant: \"BONFERRONI\"", "haircut_variant: \"INVALID_VARIANT\"")
+    bad_file3 = tmp_path / "bad3.yaml"
+    bad_file3.write_text(bad_yaml3, encoding="utf-8")
+    with pytest.raises(CriteriaValidationError, match="haircut_variant"):
+        load_go_no_go_criteria(bad_file3)
 

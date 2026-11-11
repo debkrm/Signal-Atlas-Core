@@ -18,6 +18,12 @@ anti_overfitting_and_significance:
   dsr_trial_count_basis: "TOTAL_ATTEMPTED_TRIALS"
   # Sharpe ratio sample variance divisor convention: evaluated trials minus one (N_eval - 1)
   dsr_sharpe_variance_divisor: "EVALUATED_TRIALS_MINUS_ONE"
+  # Number of trading sessions per year for Sharpe annualization (NSE cash market convention)
+  sessions_per_year: 250
+  # Kurtosis calculation convention: RAW_NORMAL_THREE (standard normal kurtosis = 3.0)
+  kurtosis_convention: "RAW_NORMAL_THREE"
+  # Haircut Sharpe ratio adjustment methodology: BONFERRONI (Harvey & Liu family-wise error rate)
+  haircut_variant: "BONFERRONI"
   # Minimum number of out-of-sample trades across evaluation sample
   min_total_trades: 100
   # Maximum allowable annual portfolio turnover

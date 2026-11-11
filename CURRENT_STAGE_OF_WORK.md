@@ -4,9 +4,9 @@
 
 | Attribute | Current Status |
 |---|---|
-| **Active Project Phase** | **Phase 2A Complete & Verified** (Holdout Containment & Trial Registry) · **Phase 2B next** — Statistical Significance Engine (DSR & Haircut Sharpe) |
-| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash book, multi-fill position accounting, mark-to-market portfolio valuation, committed risk tracker, holdout containment, and tamper-evident trial registry complete |
-| **Offline Test Suite** | **151 passed in 1.99s** (100% pass rate, zero warnings) |
+| **Active Project Phase** | **Phase 2B Complete & Verified** (Statistical Significance Engine: DSR & Haircut Sharpe) · **Phase 2C next** — Strategy Contract & Next-Session Walk-Forward Engine |
+| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash book, multi-fill position accounting, mark-to-market portfolio valuation, committed risk tracker, holdout containment, tamper-evident trial registry, and statistical significance engine complete |
+| **Offline Test Suite** | **180 passed in 1.86s** (100% pass rate, zero warnings) |
 | **External Dependencies** | Zero live database connections, zero external network calls, zero shadow simulators |
 | **Historical Provenance** | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` (Strictly maintained, zero false promotions) |
 | **Holdout Containment** | `HOLDOUT_UNLOCK` is strictly **ABSENT**; out-of-sample data remains completely sealed |
@@ -166,9 +166,11 @@ Signal-Atlas-Core/
 ├── scripts/
 │   ├── reconcile_bhavcopy_series.py         # Reproducible Bhavcopy audit tool (strict explicit CLI root)
 │   ├── verify_historical_snapshot.py        # Snapshot loader & SHA-256 / canonical fingerprint verifier
-│   └── verify_phase2a_containment_and_trials.py # Phase 2A containment & trial registry verification probe
+│   ├── verify_phase2a_containment_and_trials.py # Phase 2A containment & trial registry verification probe
+│   └── verify_phase2b_significance.py       # Phase 2B statistical significance engine verification probe
 ├── probe_b7bd8ba.py                         # Phase 1E independent audit probe
 ├── probe_phase2a.py                         # Phase 2A independent audit probe
+├── probe_phase2b.py                         # Phase 2B independent audit probe
 ├── reports/
 │   ├── audit/
 │   │   └── signal_atlas_phase1c_audit_deepseek_review_.md # Independent external audit report
@@ -200,9 +202,10 @@ Signal-Atlas-Core/
 │       │   ├── position.py                  # Multi-fill Position accounting with fee allocation & short delivery ban
 │       │   └── portfolio.py                 # Portfolio mark-to-market valuation, drawdown & risk limit tracker
 │       ├── research/
-│       │   ├── __init__.py                  # Public research & containment exports
+│       │   ├── __init__.py                  # Public research, containment & significance exports
 │       │   ├── containment.py               # PartitionSpec, holdout sealing, human unlock verifier, walk-forward folds
-│       │   └── trials.py                    # Append-only tamper-evident TrialRegistry with SHA-256 hash chaining
+│       │   ├── trials.py                    # Append-only tamper-evident TrialRegistry with SHA-256 hash chaining
+│       │   └── significance.py              # DSR (Bailey & Lopez de Prado) & Haircut Sharpe (Harvey & Liu) with SIG-FLOAT-BOUNDARY
 │       ├── features/
 │       │   ├── __init__.py                  # Public feature & indicator exports
 │       │   ├── indicators.py                # Pure Decimal mathematical indicator formulas (EMA, ATR, RSI, etc.)
@@ -226,8 +229,9 @@ Signal-Atlas-Core/
         ├── test_execution_simulator.py      # Next-session invariant, circuits, volume cap, slippage, latency (11 tests)
         ├── test_portfolio.py                # Exact Decimal cash ledger, positions, MTM, drawdown, risk caps, R-1..R-7, N-1..N-13 (29 tests)
         ├── test_containment.py              # Sealed holdout access, human unlock verification, fold generation (10 tests)
-        └── test_trials.py                   # Append-only hash chain, manifest anchor, tamper detection, variance (18 tests)
-                                             # Total: 166 passing unit tests in 1.60s
+        ├── test_trials.py                   # Append-only hash chain, manifest anchor, tamper detection, variance (18 tests)
+        └── test_significance.py             # DSR golden vector, decay, bit-for-bit, haircut, SIG-FLOAT-BOUNDARY (14 tests)
+                                             # Total: 180 passing unit tests in 1.86s
 ```
 
 ---
@@ -251,10 +255,11 @@ Signal-Atlas-Core/
                                           │
                                           ▼
  [2A: Containment + Trial Registry] ──► [2B: Significance (DSR/Haircut)]
-          (COMPLETED)                             (NEXT SLICE)
+          (COMPLETED)                             (COMPLETED)
                                           │
                                           ▼
  [2C: Strategy + Walk-Forward Engine] ──► [2D: Computed Verdict Engine]
+          (NEXT SLICE)
 ```
 
 ### Phase 1E: Exact Decimal Portfolio Ledger & Accounting (Completed & Verified)
@@ -312,16 +317,39 @@ Authoritative committed probe: [`scripts/verify_phase2a_containment_and_trials.p
 | **G2A-4** · Cryptographic chain verifies & tampering/truncation fails closed | **PASS** | Hash chaining verified across consecutive records; missing manifest anchor rejected fail-closed (`RegistryTamperedError`) (B-1); truncation from 5 to 2 records detected via manifest anchor (`RegistryTamperedError`); failed verification preserves in-memory state (B-2); manifest written via atomic temp-file replace + fsync (B-3); concurrent appender desync rejected; missing trailing newline fails closed. |
 | **G2A-5** · Schema ready for Phase 2B & DSR conventions pinned | **PASS** | All 9 statistical fields present; exact Decimal sample variance matches closed form (`0.0800`); boolean coercion rejected fail-closed (B-4); non-finite Decimals rejected; malformed JSON raises typed error; canonical params agree bit-for-bit on reload; timestamps strictly monotonic; $N=3$ vs $N_{eval}=2$ convention pinned in committed criteria config (A-11, A-13, A-14, A-15, A-18). |
 
-#### Phase 2B — Statistical Significance Engine
-Module: `src/signal_core/research/significance.py`.
+#### Phase 2B — Statistical Significance Engine (Completed & Verified)
+Module: [`src/signal_core/research/significance.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/research/significance.py).
+Authoritative committed probe: [`scripts/verify_phase2b_significance.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/scripts/verify_phase2b_significance.py) (and root runner [`probe_phase2b.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/probe_phase2b.py)).
 
-- Exact Decimal estimators for mean, sample standard deviation, skewness and kurtosis, with the bias-correction convention stated in the config rather than chosen in code.
-- **DSR** per Bailey & López de Prado, consuming the registry's full trial count `N`, the variance of trial Sharpe ratios, and the strategy's own skew/kurtosis/observation count. **Haircut Sharpe** computed under a named variant recorded in the config — no implicit variant, no post-hoc choice of method.
-- **Computation never touches the holdout**; DSR and haircut are evaluated on IS/validation series only.
-- **Explicit float boundary (`SIG-FLOAT-BOUNDARY`)**: returns, PnL and moments remain `Decimal`; the standard-normal CDF/quantile required by DSR is the only floating-point computation, confined to one function and pinned against fixed reference vectors. No float may reach ledger, cost or PnL code.
-- Methodology constants (`sessions_per_year`, kurtosis convention, haircut variant, annualization basis) are committed under `anti_overfitting_and_significance` before any run.
+- **Exact Decimal Estimators**:
+  * Pure Decimal implementations for `sample_mean`, `sample_variance`, `sample_std`, `sample_skewness`, and `sample_kurtosis`.
+  * Kurtosis supports `RAW_NORMAL_THREE` (standard normal = 3.0) and `EXCESS_NORMAL_ZERO` (standard normal = 0.0), committed in criteria.
+  * Annualized Sharpe ratio evaluated strictly in exact Decimal with annualization factor $\sqrt{sessions\_per\_year}$.
+  * Zero tolerance for floats, booleans, or non-finite Decimals (`NaN`, `Infinity`); all fail closed with `InvalidSampleError`.
+- **Deflated Sharpe Ratio (DSR)**:
+  * Implemented per Bailey & López de Prado (2014) accounting for trial count $N$, variance $V$ across trials, track record length $T$, skewness, and kurtosis.
+  * Expected maximum Sharpe under null ($SR^*$) evaluates to 0.0 when $N = 1$, reducing DSR smoothly to the single-trial Probabilistic Sharpe Ratio (PSR(0)).
+  * Integrates with `TrialRegistry`: consumes `total_trial_count` as authoritative $N$ and `compute_trial_sharpe_variance` as $V$ per committed criteria conventions.
+- **Haircut Sharpe Ratio**:
+  * Implemented per Harvey & Liu (2015) under the Bonferroni multiple-testing adjustment ($p_{adj} = \min(1.0, N \cdot p)$).
+  * Discount decreases monotonically to 0% at $N = 1$ ($SR_{haircut} = SR_{orig}$). When $p_{adj} \ge 1.0$, haircut is strictly 100% ($SR_{haircut} = 0.0$).
+- **Strict Isolated Float Boundary (`SIG-FLOAT-BOUNDARY`)**:
+  * Returns, moments, and final results remain exact `Decimal`. Floating-point operations are strictly isolated to standard normal CDF and quantile functions (`statistics.NormalDist`).
+  * No float values ever leak outward into ledger, position, or execution simulator code (proven by AST inspection test).
+- **Residual C-2 & Auditor Conditions**:
+  * C-2 explicitly documented in `significance.py`: registry wiping is detected via version control (git diff / commit history); $N$ originates from committed registry.
+  * Every result object (`DeflatedSharpeResult`, `HaircutSharpeResult`, `SignificanceReport`) is explicitly tagged with `trial_count_n`.
+  * Methodology constants (`sessions_per_year: 250`, `kurtosis_convention: RAW_NORMAL_THREE`, `haircut_variant: BONFERRONI`) are committed in `configs/go_no_go_criteria.yaml` and loaded into `GoNoGoCriteria`.
 
-**2B gates:** DSR reproduces published worked examples within a stated tolerance; DSR decays monotonically as `N` grows at fixed Sharpe; identical inputs give identical Decimal output; haircut Sharpe decreases monotonically in `N`; a test proves no `float` enters the PnL path.
+- **Phase 2B Computed Gate Verdicts (measured via `scripts/verify_phase2b_significance.py`)**:
+
+| Gate | Status | Computed Measurement Basis |
+|---|---|---|
+| **G2B-1** · DSR reproduces published worked examples within stated tolerance | **PASS** | Bailey & López de Prado (2014) Treasury seasonality setup ($N=100, V=0.50, T=1250, SR=2.50, \gamma_3=-3.0, \gamma_4=10.0, q=250$): computed DSR = `0.900397` (rounded: `0.9004`), matching published paper bit-for-bit at 4 decimal places; expected max $SR^* = 1.789406$. |
+| **G2B-2** · DSR decays monotonically as N grows at fixed Sharpe | **PASS** | Evaluated at $SR=1.50, V=0.25, T=500$: $N=1 \to 0.982761$, $N=5 \to 0.898648$, $N=20 \to 0.780770$, $N=100 \to 0.629617$, $N=500 \to 0.485234$. Strictly decreasing across every step. |
+| **G2B-3** · Identical inputs yield bit-for-bit identical Decimal output | **PASS** | Repeated calls across identical parameters produce bit-for-bit identical Decimal string representations and values for all fields (DSR: `0.975268`, Haircut SR: `1.225063`). |
+| **G2B-4** · Haircut Sharpe decreases monotonically as N grows | **PASS** | Harvey & Liu (2015) Bonferroni haircut at $SR=2.00, T=1250$: $N=1 \to 2.000000$ (0.0% haircut), $N=5 \to 1.840276$ (8.0%), $N=20 \to 1.691856$ (15.4%), $N=100 \to 1.503433$ (24.8%), $N=1000 \to 1.190940$ (40.5%). Strictly decreasing Sharpe, strictly increasing haircut %. |
+| **G2B-5** · Float boundary isolation (SIG-FLOAT-BOUNDARY) | **PASS** | All result attributes are exact `Decimal`, `int`, or `str` (zero float leakage); float inputs to moments fail closed with `InvalidSampleError`; AST inspection confirms `ledger`, `position`, and `portfolio` modules never import significance math. |
 
 #### Phase 2C — Strategy Contract & Next-Session Walk-Forward Engine
 Modules: `src/signal_core/strategy/base.py`, `src/signal_core/research/walkforward.py`.

@@ -92,6 +92,9 @@ class GoNoGoCriteria:
     min_haircut_sharpe_ratio: Decimal
     dsr_trial_count_basis: str
     dsr_sharpe_variance_divisor: str
+    sessions_per_year: int
+    kurtosis_convention: str
+    haircut_variant: str
     min_total_trades: int
     max_annual_turnover: Decimal
     min_positive_walk_forward_fold_ratio: Decimal
@@ -161,6 +164,28 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         effective_dated_exchange_fees=tuple(fee_periods),
     )
 
+    # Validate anti-overfitting methodology constants
+    sessions_raw = anti_ov.get("sessions_per_year", 250)
+    if isinstance(sessions_raw, bool) or not isinstance(sessions_raw, int) or sessions_raw <= 0:
+        raise CriteriaValidationError(f"sessions_per_year must be a positive integer, got {sessions_raw!r}")
+    sessions_per_year = sessions_raw
+
+    kurtosis_conv = str(anti_ov.get("kurtosis_convention", "RAW_NORMAL_THREE")).strip()
+    if kurtosis_conv not in ("RAW_NORMAL_THREE", "EXCESS_NORMAL_ZERO"):
+        raise CriteriaValidationError(f"Unsupported kurtosis_convention: {kurtosis_conv!r}")
+
+    haircut_var = str(anti_ov.get("haircut_variant", "BONFERRONI")).strip()
+    if haircut_var not in ("BONFERRONI", "HOLM", "BHY"):
+        raise CriteriaValidationError(f"Unsupported haircut_variant: {haircut_var!r}")
+
+    dsr_n_basis = str(anti_ov.get("dsr_trial_count_basis", "TOTAL_ATTEMPTED_TRIALS")).strip()
+    if dsr_n_basis not in ("TOTAL_ATTEMPTED_TRIALS", "EVALUATED_TRIALS"):
+        raise CriteriaValidationError(f"Unsupported dsr_trial_count_basis: {dsr_n_basis!r}")
+
+    dsr_var_div = str(anti_ov.get("dsr_sharpe_variance_divisor", "EVALUATED_TRIALS_MINUS_ONE")).strip()
+    if dsr_var_div not in ("EVALUATED_TRIALS_MINUS_ONE", "TOTAL_TRIALS_MINUS_ONE"):
+        raise CriteriaValidationError(f"Unsupported dsr_sharpe_variance_divisor: {dsr_var_div!r}")
+
     return GoNoGoCriteria(
         version=str(meta.get("version", "1.0.0")),
         effective_date=datetime.date.fromisoformat(str(meta.get("effective_date", "2026-11-11"))),
@@ -168,8 +193,11 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         currency=str(meta.get("currency", "INR")),
         min_deflated_sharpe_ratio=_to_decimal(anti_ov["min_deflated_sharpe_ratio"], "min_deflated_sharpe_ratio"),
         min_haircut_sharpe_ratio=_to_decimal(anti_ov["min_haircut_sharpe_ratio"], "min_haircut_sharpe_ratio"),
-        dsr_trial_count_basis=str(anti_ov.get("dsr_trial_count_basis", "TOTAL_ATTEMPTED_TRIALS")),
-        dsr_sharpe_variance_divisor=str(anti_ov.get("dsr_sharpe_variance_divisor", "EVALUATED_TRIALS_MINUS_ONE")),
+        dsr_trial_count_basis=dsr_n_basis,
+        dsr_sharpe_variance_divisor=dsr_var_div,
+        sessions_per_year=sessions_per_year,
+        kurtosis_convention=kurtosis_conv,
+        haircut_variant=haircut_var,
         min_total_trades=int(anti_ov["min_total_trades"]),
         max_annual_turnover=_to_decimal(anti_ov["max_annual_turnover"], "max_annual_turnover"),
         min_positive_walk_forward_fold_ratio=_to_decimal(anti_ov["min_positive_walk_forward_fold_ratio"], "min_positive_walk_forward_fold_ratio"),
