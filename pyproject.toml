@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "signal-core"
+version = "0.1.0"
+description = "Deterministic, offline-first quantitative research and market data foundation for Signal Atlas."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Signal Atlas Project" }
+]
+license = { text = "MIT" }
+keywords = ["quantitative-finance", "backtesting", "market-data", "provenance"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Risk Analysts",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = ["src", "."]
+addopts = "-v --strict-markers"
+filterwarnings = [
+    "error",
+]
+

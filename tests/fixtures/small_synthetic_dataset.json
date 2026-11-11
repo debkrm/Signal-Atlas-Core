@@ -1,0 +1,166 @@
+{
+  "metadata": {
+    "dataset_id": "SYNTHETIC-TEST-2024-V1",
+    "schema_version": "v1",
+    "price_convention": "UNADJUSTED_RAW",
+    "start_date": "2024-01-01",
+    "end_date": "2024-01-03",
+    "session_count": 3,
+    "instrument_count": 3,
+    "total_price_records": 9,
+    "benchmark_record_count": 3,
+    "source_identity": "SYNTHETIC_TEST_PROVIDER",
+    "source_provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+    "content_fingerprint": "DATA-CTNT-V2-a614a80bb4552a322ad2945502bac5c9",
+    "universe_fingerprint": "UNIV-SCHED-V1-c120e21fc4b4bb6397bd9b664ac8f63c"
+  },
+  "prices_by_instrument": {
+    "INFY": [
+      {
+        "trade_date": "2024-01-01",
+        "open": "1500.00",
+        "high": "1520.00",
+        "low": "1495.00",
+        "close": "1510.00",
+        "volume": 100000,
+        "traded_value": "151000000.00",
+        "currency": "INR"
+      },
+      {
+        "trade_date": "2024-01-02",
+        "open": "1512.00",
+        "high": "1535.00",
+        "low": "1505.00",
+        "close": "1530.00",
+        "volume": 120000,
+        "traded_value": "183600000.00",
+        "currency": "INR"
+      },
+      {
+        "trade_date": "2024-01-03",
+        "open": "1530.00",
+        "high": "1540.00",
+        "low": "1515.00",
+        "close": "1525.00",
+        "volume": 95000,
+        "traded_value": "144875000.00",
+        "currency": "INR"
+      }
+    ],
+    "TCS": [
+      {
+        "trade_date": "2024-01-01",
+        "open": "3800.00",
+        "high": "3850.00",
+        "low": "3790.00",
+        "close": "3820.00",
+        "volume": 50000,
+        "traded_value": "191000000.00",
+        "currency": "INR"
+      },
+      {
+        "trade_date": "2024-01-02",
+        "open": "3825.00",
+        "high": "3860.00",
+        "low": "3810.00",
+        "close": "3840.00",
+        "volume": 45000,
+        "traded_value": "172800000.00",
+        "currency": "INR"
+      },
+      {
+        "trade_date": "2024-01-03",
+        "open": "3840.00",
+        "high": "3870.00",
+        "low": "3820.00",
+        "close": "3855.00",
+        "volume": 60000,
+        "traded_value": "231300000.00",
+        "currency": "INR"
+      }
+    ],
+    "RELIANCE": [
+      {
+        "trade_date": "2024-01-01",
+        "open": "2500.00",
+        "high": "2540.00",
+        "low": "2490.00",
+        "close": "2530.00",
+        "volume": 80000,
+        "traded_value": "202400000.00",
+        "currency": "INR"
+      },
+      {
+        "trade_date": "2024-01-02",
+        "open": "2535.00",
+        "high": "2550.00",
+        "low": "2510.00",
+        "close": "2520.00",
+        "volume": 85000,
+        "traded_value": "214200000.00",
+        "currency": "INR"
+      },
+      {
+        "trade_date": "2024-01-03",
+        "open": "2520.00",
+        "high": "2560.00",
+        "low": "2515.00",
+        "close": "2550.00",
+        "volume": 90000,
+        "traded_value": "229500000.00",
+        "currency": "INR"
+      }
+    ]
+  },
+  "benchmark_prices": [
+    {
+      "instrument_id": "NIFTYBEES",
+      "trade_date": "2024-01-01",
+      "open": "230.00",
+      "high": "232.50",
+      "low": "229.00",
+      "close": "231.80",
+      "volume": 500000,
+      "traded_value": "115900000.00",
+      "currency": "INR"
+    },
+    {
+      "instrument_id": "NIFTYBEES",
+      "trade_date": "2024-01-02",
+      "open": "232.00",
+      "high": "233.80",
+      "low": "231.20",
+      "close": "233.00",
+      "volume": 480000,
+      "traded_value": "111840000.00",
+      "currency": "INR"
+    },
+    {
+      "instrument_id": "NIFTYBEES",
+      "trade_date": "2024-01-03",
+      "open": "233.50",
+      "high": "235.00",
+      "low": "232.80",
+      "close": "234.20",
+      "volume": 520000,
+      "traded_value": "121784000.00",
+      "currency": "INR"
+    }
+  ],
+  "universe_schedule": {
+    "2024-01-01": [
+      "INFY",
+      "RELIANCE",
+      "TCS"
+    ],
+    "2024-01-02": [
+      "INFY",
+      "RELIANCE",
+      "TCS"
+    ],
+    "2024-01-03": [
+      "INFY",
+      "TCS"
+    ]
+  }
+}
