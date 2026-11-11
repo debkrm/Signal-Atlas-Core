@@ -180,3 +180,4 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         min_execution_latency_sessions=int(exec_liq["min_execution_latency_sessions"]),
         statutory_costs=costs,
     )
+

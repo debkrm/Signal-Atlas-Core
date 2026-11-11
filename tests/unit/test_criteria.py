@@ -102,3 +102,4 @@ def test_criteria_loader_rejections():
     """Verify that criteria loader fails closed on missing files or invalid types."""
     with pytest.raises(FileNotFoundError):
         load_go_no_go_criteria(Path("non_existent_criteria.yaml"))
+

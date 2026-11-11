@@ -8,7 +8,7 @@ All calculations enforce zero-lookahead: at index t, only records from 0..t are 
 from dataclasses import dataclass
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, List, Optional, Sequence, Set, Tuple, Union
 
 from signal_core.contracts.exchange_series import ExchangeSessionObservation
 from signal_core.contracts.price_bar import PriceBar
@@ -534,8 +534,9 @@ def aggregate_daily_to_weekly(
         if key != current_key:
             # Emit previous bar if exists
             if current_key is not None:
-                assert w_start is not None and w_end is not None
-                assert w_open is not None and w_high is not None and w_low is not None and w_close is not None
+                if (w_start is None or w_end is None or w_open is None or 
+                        w_high is None or w_low is None or w_close is None):
+                    raise IndicatorValidationError("Incomplete weekly bar aggregation state.")
                 weekly_bars.append(
                     WeeklyBar(
                         year=current_key[0],
@@ -562,7 +563,8 @@ def aggregate_daily_to_weekly(
             w_count = 1
         else:
             w_end = bar.trade_date
-            assert w_high is not None and w_low is not None
+            if w_high is None or w_low is None:
+                raise IndicatorValidationError("Incomplete weekly high/low state during aggregation.")
             w_high = max(w_high, bar.high)
             w_low = min(w_low, bar.low)
             w_close = bar.close
@@ -571,8 +573,9 @@ def aggregate_daily_to_weekly(
 
     # Emit final bar
     if current_key is not None:
-        assert w_start is not None and w_end is not None
-        assert w_open is not None and w_high is not None and w_low is not None and w_close is not None
+        if (w_start is None or w_end is None or w_open is None or 
+                w_high is None or w_low is None or w_close is None):
+            raise IndicatorValidationError("Incomplete final weekly bar aggregation state.")
         weekly_bars.append(
             WeeklyBar(
                 year=current_key[0],

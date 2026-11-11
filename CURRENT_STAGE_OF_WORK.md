@@ -4,14 +4,15 @@
 
 | Attribute | Current Status |
 |---|---|
-| **Active Project Phase** | **Phase 1C Completed & Hardened** (All DeepSeek Audit Recommendations Remediated) — Ready for **Phase 1D** |
-| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, and typed criteria loader complete |
-| **Offline Test Suite** | **91 passed in 0.79s** (100% pass rate, zero warnings) |
+| **Active Project Phase** | **Phase 1D Completed & Verified** — Ready for **Phase 1E** (Exact Decimal Portfolio Ledger & Accounting) |
+| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, and authoritative execution simulator complete |
+| **Offline Test Suite** | **106 passed in 0.60s** (100% pass rate, zero warnings) |
 | **External Dependencies** | Zero live database connections, zero external network calls, zero shadow simulators |
 | **Historical Provenance** | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` (Strictly maintained, zero false promotions) |
 | **Holdout Containment** | `HOLDOUT_UNLOCK` is strictly **ABSENT**; out-of-sample data remains completely sealed |
 | **Authoritative Criteria** | Committed in [`configs/go_no_go_criteria.yaml`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/configs/go_no_go_criteria.yaml), typed loader in [`criteria.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/criteria.py) (DSR, Haircut Sharpe, Max Drawdown, Effective-Dated Indian Statutory Cost Schedule) |
 | **Approved Strategy Policy** | [`APPROVED_EQ_ONLY_POLICY`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py#L141) (Strict rolling cash equity; Trade-to-Trade `BE` excluded from trade entry) |
+| **Single Execution Engine** | [`ExecutionFillSimulator`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/execution/simulator.py) & [`TransactionCostModel`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/execution/costs.py) (Shared identical engine across backtest and simulation) |
 | **Legacy `Signal-Atlas`** | 100% untouched (`historical_dev_dataset_2022_2024.json` SHA-256: `502c6424c79f4856...`) |
 
 ---
@@ -77,7 +78,37 @@
   * **F-11 (P3)**: Enriched `InstrumentTechnicalFeatures` with `raw_series_code`, `series_classification`, and `isin`.
   * **F-12 (P3)**: Optimized feature engine by partitioning subsegments and validating continuity once upfront per instrument.
   * **Section 5 / S-1..S-3**: Configured effective-dated historical NSE fee schedule in `go_no_go_criteria.yaml` and implemented typed contract loader [`criteria.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/criteria.py).
-  * Comprehensive regression test suite expanded to **91 passing tests in 0.79s**; all 5 external audit probes pass 100%.
+  * **Independent Re-Audit Outcome (§10)**: 10 findings closed, 1 mitigated (F-08 dual-engine test parity), 1 partial (F-06/R-1 intra-week calendar gap), 1 open (F-10/R-2 scale-sensitive byte-identity fingerprint). Residuals documented: R-1 (to be closed before strategy-level weekly consumption), R-2 (byte-identity semantics), R-4 (pre-Oct-2024 slab flattening disclosed in cost engine). Conditional GO approved for Phase 1D.
+  * Comprehensive regression test suite verified at **91 passing tests in 0.46s** (100% pass rate, zero warnings).
+
+### Phase 1D: Statutory Indian Cost Engine & Execution Fill Simulator (Completed)
+- **Indian Statutory Transaction Cost Engine** ([`src/signal_core/execution/costs.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/execution/costs.py)):
+  * Implemented [`TransactionCostModel`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/execution/costs.py) consuming authoritative criteria from committed `configs/go_no_go_criteria.yaml`.
+  * Computes exact `Decimal` statutory levies for cash equities:
+    - Securities Transaction Tax (STT): Delivery (0.1% on buy and sell), Intraday (0.025% on sell, 0% on buy).
+    - Exchange Turnover Charges: Date-aware resolution across historical circulars (`NSE/FA/46730`, `NSE/FA/56129`, `NSE/FA/61137`, `NSE/FA/64323`, `NSE/FA/73061`).
+    - Investor Protection Fund Trust (IPFT): Effective-dated rate resolution (e.g. ₹0.01/cr vs ₹10/cr).
+    - SEBI Turnover Fees: Exact ₹10 per crore (0.0001%).
+    - Indian Stamp Duty: Levied strictly on buyer legs (0.015% delivery buy, 0.003% intraday buy, ₹0 on sell).
+    - Goods & Services Tax (GST): 18% applied on taxable base (brokerage + exchange charges + SEBI charges + IPFT).
+    - Brokerage: Configurable flat fee (default ₹20/order) or basis points.
+  * Emits [`TransactionCostBreakdown`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/execution/costs.py) with net cash impact and basis points.
+  * Honors Audit Condition 2 & Residual R-4: Automatically attaches slab flattening disclosure to all trades before Oct 1, 2024.
+- **Non-Linear Slippage & Liquidity Impact Model** ([`src/signal_core/execution/slippage.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/execution/slippage.py)):
+  * Implemented [`SlippageModel`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/execution/slippage.py) enforcing the square-root market impact law:
+    $$\text{Slippage} \ge \frac{\text{Spread}}{2} + \kappa \cdot \left(\frac{\text{Order Value}}{\text{ADT}}\right)^\alpha$$
+  * Evaluated using exact `Decimal.sqrt()` arithmetic; adverse price slippage upwards on BUY and downwards on SELL, clamped to session High/Low.
+- **Single Authoritative Execution Fill Simulator** ([`src/signal_core/execution/simulator.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/execution/simulator.py)):
+  * Enforces next-session zero-lookahead invariant ($T+1$ execution; rejects $T \le T_{signal}$).
+  * Enforces [`SeriesEligibilityPolicy`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py): Rejects trade entry in `BE` instruments under [`APPROVED_EQ_ONLY_POLICY`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py#L141).
+  * Enforces Circuit Freeze Invariants (Rule 5.3 & 7):
+    - Prohibits BUY fill if session High equals or exceeds Upper Circuit limit (`REJECTED_UPPER_CIRCUIT`).
+    - Prohibits SELL or stop-loss fill if session Low equals or falls below Lower Circuit limit (`REJECTED_LOWER_CIRCUIT`).
+  * Enforces Volume Participation Cap (Rule 7.3): Caps order fills at 3.0% of session volume (`TOTTRDQTY`); rejects zero-liquidity sessions or fills partially when authorized.
+  * Price & Gap Realism: Stop-loss gap-down fills at session Open (not stop price) minus slippage.
+- **Audit Hardening & Zero-Assertion Invariant**:
+  * Remediated residual R-3: Replaced all `assert` statements across `indicators.py` and `execution/` with explicit domain validation exceptions (`IndicatorValidationError`, `ExecutionOrderValidationError`).
+  * Unit test suite expanded from 91 to **106 tests**; 100% passing in 0.60s.
 
 ---
 
@@ -113,6 +144,12 @@ Signal-Atlas-Core/
 │       │   ├── dataset.py                   # DatasetSnapshot & validation engine
 │       │   ├── exchange_series.py           # Series enum, ExchangeSessionObservation, ContinuityValidator
 │       │   └── legacy_compat.py             # Historical loader & legacy fingerprint adapter
+│       ├── execution/
+│       │   ├── __init__.py                  # Public execution domain exports
+│       │   ├── types.py                     # ExecutionOrder, OrderSide, OrderProduct, FillStatus
+│       │   ├── costs.py                     # TransactionCostModel & TransactionCostBreakdown
+│       │   ├── slippage.py                  # SlippageModel & SlippageResult (non-linear impact)
+│       │   └── simulator.py                 # Single authoritative ExecutionFillSimulator
 │       ├── features/
 │       │   ├── __init__.py                  # Public feature & indicator exports
 │       │   ├── indicators.py                # Pure Decimal mathematical indicator formulas (EMA, ATR, RSI, etc.)
@@ -131,18 +168,10 @@ Signal-Atlas-Core/
         ├── test_historical_loader.py        # Snapshot parsing, diagnostics, duplicate rejection (11 tests)
         ├── test_bhavcopy_reconciliation.py  # Series preservation, continuity, subsegments, Cases 1-4 (14 tests)
         ├── test_indicators.py               # Indicators, subsegment isolation, audit probes (22 tests)
-        └── test_criteria.py                 # Go/No-Go criteria & effective-dated fee resolution (3 tests)
-                                             # Total: 91 passing unit tests in 0.79s
-```
-    └── unit/
-        ├── test_price_bar.py                # OHLCV invariants, float rejection, decimal validation (10 tests)
-        ├── test_universe.py                 # Universe schedules, date queries, immutability (9 tests)
-        ├── test_provenance.py               # Golden vectors, determinism, delimiter rejection (10 tests)
-        ├── test_dataset.py                  # Snapshot construction, immutability, date ranges (10 tests)
-        ├── test_historical_loader.py        # Snapshot parsing, diagnostics, duplicate rejection (11 tests)
-        ├── test_bhavcopy_reconciliation.py  # Series preservation, continuity, subsegments, Cases 1-4 (14 tests)
-        └── test_indicators.py               # Pure math indicators, zero lookahead, subsegment isolation (15 tests)
-                                             # Total: 79 passing unit tests in 0.69s
+        ├── test_criteria.py                 # Go/No-Go criteria & effective-dated fee resolution (3 tests)
+        ├── test_costs.py                    # Statutory Indian cost engine, circulars, GST base (5 tests)
+        └── test_execution_simulator.py      # Next-session invariant, circuits, volume cap, slippage (10 tests)
+                                             # Total: 106 passing unit tests in 0.60s
 ```
 
 ---
@@ -156,29 +185,32 @@ Signal-Atlas-Core/
                          [Phase 1C: Feature & Indicator Engine]            (COMPLETED)
                                           │
                                           ▼
-                         [Phase 1D: Indian Execution & Cost Model]         (NEXT IMMEDIATE TASK)
+                         [Phase 1D: Indian Execution & Cost Model]         (COMPLETED)
                                           │
                                           ▼
-                         [Phase 1E: Exact Decimal Portfolio Ledger]
+                         [Phase 1E: Exact Decimal Portfolio Ledger]        (NEXT IMMEDIATE TASK)
                                           │
                                           ▼
                          [Phase 2: Strategy Validation & Walk-Forward]
 ```
 
-### Phase 1D: Statutory Indian Cost Engine & Execution Fill Simulator (Next Immediate Task)
-- **Indian Statutory Transaction Cost Engine**:
-  * Securities Transaction Tax (STT): 0.1% delivery buy/sell, 0.025% intraday sell.
-  * NSE cash equity turnover charges (~0.00325%).
-  * SEBI turnover fee (₹10 per crore = 0.0001%).
-  * Indian Stamp Duty (0.015% delivery buy, 0.003% intraday buy).
-  * Goods & Services Tax (GST): 18% on (brokerage + exchange charges + SEBI charges).
-  * Investor Protection Fund Trust (IPFT) charges.
-  * Brokerage: Fixed ₹20/order or basis points.
-- **Execution Fill Simulator**:
-  * Next-session execution ($T+1$ open or $T+1$ TWAP).
-  * Circuit filter fill restrictions: Prohibit BUY fill at Upper Circuit (ask depth = 0); prohibit SELL fill at Lower Circuit (bid depth = 0).
-  * Liquidity & Slippage model: Non-linear impact parameterized by Average Daily Turnover (ADT) and bid-ask spread.
-  * Volume participation cap: Order size capped at 2.5% to 5.0% of session's traded volume (`TOTTRDQTY`).
+### Phase 1E: Exact Decimal Portfolio Ledger & Accounting (Next Immediate Task)
+- **Exact Decimal Cash Ledger**:
+  * Double-entry cash ledger tracking cash inflows, cash outflows, statutory tax disbursements, brokerage charges, and accrued balances.
+  * Complete prohibition of binary floats.
+- **Position & Portfolio Tracker**:
+  * Multi-instrument open position accounting: cost basis, average purchase price, unrealized PnL, mark-to-market equity curve.
+  * Realized PnL calculation net of statutory Indian transaction costs.
+- **Portfolio Constraints & Risk Limits**:
+  * Max single-position weight check (10% allocation cap per `configs/go_no_go_criteria.yaml`).
+  * Max portfolio drawdown tracking ($25\%$ threshold).
+  * Drawdown duration tracking in trading sessions.
+
+### Phase 2: Walk-Forward Strategy Engine & Deflated Sharpe Evaluation
+- Multi-hypothesis trial registry logging every sweep.
+- Walk-forward parameter stability evaluation across market regimes.
+- Automated generation of computed verdicts (PASS/FAIL) against committed `configs/go_no_go_criteria.yaml`.
+- Computation of Deflated Sharpe Ratio (DSR) and Haircut Sharpe ratio.
 
 ### Phase 1E: Exact Decimal Portfolio Ledger & Accounting
 - Implement exact `Decimal` cash ledger, mark-to-market equity tracker, gross/net PnL accounting, and position tracking.
