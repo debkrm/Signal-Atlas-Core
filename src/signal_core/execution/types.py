@@ -37,6 +37,7 @@ class FillStatus(str, Enum):
     REJECTED_UPPER_CIRCUIT = "REJECTED_UPPER_CIRCUIT"
     REJECTED_LOWER_CIRCUIT = "REJECTED_LOWER_CIRCUIT"
     REJECTED_VOLUME_CAP = "REJECTED_VOLUME_CAP"
+    REJECTED_INSUFFICIENT_TURNOVER = "REJECTED_INSUFFICIENT_TURNOVER"
     REJECTED_INELIGIBLE_SERIES = "REJECTED_INELIGIBLE_SERIES"
     REJECTED_INVALID_LATENCY = "REJECTED_INVALID_LATENCY"
     REJECTED_LOOKAHEAD = "REJECTED_LOOKAHEAD"
@@ -93,13 +94,6 @@ class ExecutionOrder:
                 f"target_date must be exact datetime.date, got {type(self.target_date).__name__}"
             )
         
-        # Zero-lookahead & next-session invariant: target_date MUST be strictly greater than signal_date
-        if self.target_date <= self.signal_date:
-            raise ExecutionOrderValidationError(
-                f"Next-session invariant violated: target_date ({self.target_date}) "
-                f"must be strictly after signal_date ({self.signal_date}). Same-session execution is prohibited."
-            )
-        
         # Order type specific validations
         if self.order_type == OrderType.LIMIT:
             if self.limit_price is None or not isinstance(self.limit_price, Decimal) or not self.limit_price.is_finite() or self.limit_price <= 0:
@@ -108,3 +102,4 @@ class ExecutionOrder:
         if self.order_type == OrderType.STOP_LOSS:
             if self.stop_price is None or not isinstance(self.stop_price, Decimal) or not self.stop_price.is_finite() or self.stop_price <= 0:
                 raise ExecutionOrderValidationError(f"Stop loss order requires finite positive Decimal stop_price, got {self.stop_price!r}")
+

@@ -132,9 +132,8 @@ class SlippageModel:
         if self._impact_alpha == Decimal("0.5"):
             impact_rate = self._impact_kappa * participation_ratio.sqrt()
         else:
-            # General power using float intermediate only if non-standard alpha requested
-            # but preserve Decimal accuracy
-            impact_rate = Decimal(str(float(self._impact_kappa) * (float(participation_ratio) ** float(self._impact_alpha))))
+            # Exact Decimal exponentiation without binary float intermediate
+            impact_rate = self._impact_kappa * (participation_ratio ** self._impact_alpha)
 
         slippage_rate = half_spread_rate + impact_rate
         slippage_per_share = reference_price * slippage_rate
@@ -164,3 +163,4 @@ class SlippageModel:
             slippage_per_share=slippage_per_share,
             adjusted_price=adjusted_price,
         )
+

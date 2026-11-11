@@ -199,3 +199,47 @@ def test_cost_model_fail_closed_rejections():
     # 4. Reject unmapped historical date before 2021
     with pytest.raises(CriteriaValidationError, match="No governing NSE exchange fee schedule found"):
         model.compute_costs(datetime.date(2019, 1, 1), OrderSide.BUY, OrderProduct.DELIVERY, 10, Decimal("100"))
+
+
+def test_paise_rounding_policy_at_breakdown_boundary_e6():
+    """
+    Verify E-6 remediation:
+    Explicit paise rounding policy at the breakdown boundary quantizes
+    all financial amounts to 2 decimal places (0.01 INR) for ledger reconciliation.
+    """
+    model = TransactionCostModel()
+    trade_date = datetime.date(2026, 11, 11)
+
+    # 1. Raw breakdown retains full mathematical precision
+    raw = model.compute_costs(
+        trade_date=trade_date,
+        side=OrderSide.BUY,
+        product=OrderProduct.DELIVERY,
+        quantity=100,
+        price=Decimal("1000.00"),
+        round_to_paise=False,
+    )
+    assert raw.total_charges == Decimal("142.3406000000000")
+    assert raw.total_charges.as_tuple().exponent <= -11
+
+    # 2. to_paise() rounds currency values to paise (exponent -2)
+    paise_rounded = raw.to_paise()
+    assert paise_rounded.total_charges.as_tuple().exponent == -2
+    assert paise_rounded.net_cash_flow.as_tuple().exponent == -2
+    assert paise_rounded.gross_amount.as_tuple().exponent == -2
+    assert paise_rounded.total_charges == Decimal("142.34")
+    assert paise_rounded.net_cash_flow == Decimal("-100142.34")
+
+    # 3. Direct round_to_paise=True produces identical paise-rounded breakdown
+    direct_paise = model.compute_costs(
+        trade_date=trade_date,
+        side=OrderSide.BUY,
+        product=OrderProduct.DELIVERY,
+        quantity=100,
+        price=Decimal("1000.00"),
+        round_to_paise=True,
+    )
+    assert direct_paise.total_charges == Decimal("142.34")
+    assert direct_paise.total_charges.as_tuple().exponent == -2
+
+

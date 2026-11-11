@@ -10,6 +10,7 @@ Defines the formal data contracts separating three distinct domain concepts:
 
 from dataclasses import dataclass
 import datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
@@ -176,6 +177,8 @@ class ExchangeSessionObservation:
     isin: str
     price_bar: PriceBar
     source_provenance: str = "EXCHANGE_BHAVCOPY"
+    upper_circuit_limit: Optional[Decimal] = None
+    lower_circuit_limit: Optional[Decimal] = None
 
     def __post_init__(self):
         validated = validate_raw_series_code(self.raw_series_code)
@@ -194,6 +197,19 @@ class ExchangeSessionObservation:
             raise ValueError(
                 f"instrument_id {self.instrument_id!r} does not match price_bar.instrument_id {self.price_bar.instrument_id!r}"
             )
+        if self.upper_circuit_limit is not None:
+            if isinstance(self.upper_circuit_limit, bool) or not isinstance(self.upper_circuit_limit, Decimal) or not self.upper_circuit_limit.is_finite() or self.upper_circuit_limit <= 0:
+                raise ValueError(f"upper_circuit_limit must be a finite positive Decimal, got {self.upper_circuit_limit!r}")
+            if self.upper_circuit_limit < self.price_bar.high:
+                raise ValueError(f"upper_circuit_limit ({self.upper_circuit_limit}) cannot be less than session high ({self.price_bar.high})")
+        if self.lower_circuit_limit is not None:
+            if isinstance(self.lower_circuit_limit, bool) or not isinstance(self.lower_circuit_limit, Decimal) or not self.lower_circuit_limit.is_finite() or self.lower_circuit_limit <= 0:
+                raise ValueError(f"lower_circuit_limit must be a finite positive Decimal, got {self.lower_circuit_limit!r}")
+            if self.lower_circuit_limit > self.price_bar.low:
+                raise ValueError(f"lower_circuit_limit ({self.lower_circuit_limit}) cannot be greater than session low ({self.price_bar.low})")
+        if self.upper_circuit_limit is not None and self.lower_circuit_limit is not None:
+            if self.lower_circuit_limit > self.upper_circuit_limit:
+                raise ValueError(f"lower_circuit_limit ({self.lower_circuit_limit}) cannot exceed upper_circuit_limit ({self.upper_circuit_limit})")
 
     @property
     def series(self) -> ExchangeSeries:

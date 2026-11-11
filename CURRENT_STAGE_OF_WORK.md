@@ -6,7 +6,7 @@
 |---|---|
 | **Active Project Phase** | **Phase 1D Completed & Verified** — Ready for **Phase 1E** (Exact Decimal Portfolio Ledger & Accounting) |
 | **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, and authoritative execution simulator complete |
-| **Offline Test Suite** | **106 passed in 0.60s** (100% pass rate, zero warnings) |
+| **Offline Test Suite** | **108 passed in 0.60s** (100% pass rate, zero warnings) |
 | **External Dependencies** | Zero live database connections, zero external network calls, zero shadow simulators |
 | **Historical Provenance** | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` (Strictly maintained, zero false promotions) |
 | **Holdout Containment** | `HOLDOUT_UNLOCK` is strictly **ABSENT**; out-of-sample data remains completely sealed |
@@ -94,21 +94,32 @@
     - Brokerage: Configurable flat fee (default ₹20/order) or basis points.
   * Emits [`TransactionCostBreakdown`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/execution/costs.py) with net cash impact and basis points.
   * Honors Audit Condition 2 & Residual R-4: Automatically attaches slab flattening disclosure to all trades before Oct 1, 2024.
+  * **Paise Rounding Policy at Boundary (E-6 Remediated)**: Provides `.to_paise()` and `round_to_paise=True` on `TransactionCostModel` to quantize all currency fields to 2 decimal places (`0.01` INR, `ROUND_HALF_UP`) for contract note and ledger reconciliation.
 - **Non-Linear Slippage & Liquidity Impact Model** ([`src/signal_core/execution/slippage.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/execution/slippage.py)):
   * Implemented [`SlippageModel`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/execution/slippage.py) enforcing the square-root market impact law:
     $$\text{Slippage} \ge \frac{\text{Spread}}{2} + \kappa \cdot \left(\frac{\text{Order Value}}{\text{ADT}}\right)^\alpha$$
   * Evaluated using exact `Decimal.sqrt()` arithmetic; adverse price slippage upwards on BUY and downwards on SELL, clamped to session High/Low.
+  * **Pure Decimal Exponentiation (E-5 Remediated)**: Removed binary float conversions from non-default alpha paths; evaluated entirely in standard library Decimal arithmetic.
 - **Single Authoritative Execution Fill Simulator** ([`src/signal_core/execution/simulator.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/execution/simulator.py)):
-  * Enforces next-session zero-lookahead invariant ($T+1$ execution; rejects $T \le T_{signal}$).
-  * Enforces [`SeriesEligibilityPolicy`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py): Rejects trade entry in `BE` instruments under [`APPROVED_EQ_ONLY_POLICY`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py#L141).
-  * Enforces Circuit Freeze Invariants (Rule 5.3 & 7):
-    - Prohibits BUY fill if session High equals or exceeds Upper Circuit limit (`REJECTED_UPPER_CIRCUIT`).
-    - Prohibits SELL or stop-loss fill if session Low equals or falls below Lower Circuit limit (`REJECTED_LOWER_CIRCUIT`).
-  * Enforces Volume Participation Cap (Rule 7.3): Caps order fills at 3.0% of session volume (`TOTTRDQTY`); rejects zero-liquidity sessions or fills partially when authorized.
-  * Price & Gap Realism: Stop-loss gap-down fills at session Open (not stop price) minus slippage.
+  * **Calendar Latency Measurement & Lookahead Gate (E-3 Remediated)**:
+    - Measures elapsed trading sessions between `signal_date` and `target_date` using the trading calendar (or business days).
+    - Emits `FillStatus.REJECTED_LOOKAHEAD` when `target_date <= signal_date`.
+    - Enforces `min_execution_latency_sessions` against measured latency (rejects T+1 when latency=2 is configured; records `latency_sessions` on every `ExecutionFillResult`).
+  * **Fail-Closed Series Evidence Gate (E-2 Remediated)**:
+    - Rejects bare `PriceBar` entry orders without explicit series evidence (`FillStatus.REJECTED_INELIGIBLE_SERIES`). Banned silent coercion to `EQ`.
+    - Enforces [`SeriesEligibilityPolicy`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py): Rejects trade entry in `BE` instruments under [`APPROVED_EQ_ONLY_POLICY`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py#L141).
+  * **Circuit Freeze Invariants Without Lookahead (E-1 Remediated)**:
+    - Added `upper_circuit_limit` and `lower_circuit_limit` directly to [`ExchangeSessionObservation`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py#L172).
+    - Freeze gate is evaluated strictly on the **fill reference price** (e.g. Open), eliminating lookahead leakage from end-of-day High/Low. Legal open fills proceed even if session High touches circuit later in the day.
+    - Rejects BUY when Open is at/through Upper Circuit, or on whole-day locked bars (`high == low`).
+    - Rejects SELL/stop when Open is at/through Lower Circuit, or on whole-day locked bars.
+  * **Minimum Daily Turnover Gate (E-4 Remediated)**:
+    - Enforces `min_daily_turnover_crore` (₹5.0 Crore) threshold from criteria; illiquid scrips fail closed with `FillStatus.REJECTED_INSUFFICIENT_TURNOVER`.
+  * **Volume Participation Cap (Rule 7.3)**: Caps order fills at 3.0% of session volume (`TOTTRDQTY`); rejects zero-liquidity sessions or fills partially when authorized.
+  * **Price & Gap Realism**: Stop-loss gap-down fills at session Open (not stop price) minus slippage.
 - **Audit Hardening & Zero-Assertion Invariant**:
   * Remediated residual R-3: Replaced all `assert` statements across `indicators.py` and `execution/` with explicit domain validation exceptions (`IndicatorValidationError`, `ExecutionOrderValidationError`).
-  * Unit test suite expanded from 91 to **106 tests**; 100% passing in 0.60s.
+  * Unit test suite expanded to **108 tests**; 100% passing in 0.60s.
 
 ---
 
@@ -169,9 +180,9 @@ Signal-Atlas-Core/
         ├── test_bhavcopy_reconciliation.py  # Series preservation, continuity, subsegments, Cases 1-4 (14 tests)
         ├── test_indicators.py               # Indicators, subsegment isolation, audit probes (22 tests)
         ├── test_criteria.py                 # Go/No-Go criteria & effective-dated fee resolution (3 tests)
-        ├── test_costs.py                    # Statutory Indian cost engine, circulars, GST base (5 tests)
-        └── test_execution_simulator.py      # Next-session invariant, circuits, volume cap, slippage (10 tests)
-                                             # Total: 106 passing unit tests in 0.60s
+        ├── test_costs.py                    # Statutory Indian cost engine, circulars, GST base, paise rounding (6 tests)
+        └── test_execution_simulator.py      # Next-session invariant, circuits, volume cap, slippage, latency (11 tests)
+                                             # Total: 108 passing unit tests in 0.60s
 ```
 
 ---
@@ -205,16 +216,6 @@ Signal-Atlas-Core/
   * Max single-position weight check (10% allocation cap per `configs/go_no_go_criteria.yaml`).
   * Max portfolio drawdown tracking ($25\%$ threshold).
   * Drawdown duration tracking in trading sessions.
-
-### Phase 2: Walk-Forward Strategy Engine & Deflated Sharpe Evaluation
-- Multi-hypothesis trial registry logging every sweep.
-- Walk-forward parameter stability evaluation across market regimes.
-- Automated generation of computed verdicts (PASS/FAIL) against committed `configs/go_no_go_criteria.yaml`.
-- Computation of Deflated Sharpe Ratio (DSR) and Haircut Sharpe ratio.
-
-### Phase 1E: Exact Decimal Portfolio Ledger & Accounting
-- Implement exact `Decimal` cash ledger, mark-to-market equity tracker, gross/net PnL accounting, and position tracking.
-- Strict rejection of binary floating-point numbers.
 
 ### Phase 2: Walk-Forward Strategy Engine & Deflated Sharpe Evaluation
 - Multi-hypothesis trial registry logging every sweep.

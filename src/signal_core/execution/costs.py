@@ -64,6 +64,55 @@ class TransactionCostBreakdown:
     circular_ref: str
     disclosures: Tuple[str, ...]
 
+    def to_paise(self) -> "TransactionCostBreakdown":
+        """
+        Rounds all monetary currency fields to paise (2 decimal places, ROUND_HALF_UP)
+        per Indian contract note accounting standard, ensuring exact ledger reconciliation.
+        """
+        gross_rounded = self.gross_amount.quantize(PRECISION_2, rounding=ROUND_HALF_UP)
+        brokerage_rounded = self.brokerage.quantize(PRECISION_2, rounding=ROUND_HALF_UP)
+        stt_rounded = self.stt.quantize(PRECISION_2, rounding=ROUND_HALF_UP)
+        exch_rounded = self.exchange_turnover_fee.quantize(PRECISION_2, rounding=ROUND_HALF_UP)
+        ipft_rounded = self.ipft.quantize(PRECISION_2, rounding=ROUND_HALF_UP)
+        sebi_rounded = self.sebi_turnover_fee.quantize(PRECISION_2, rounding=ROUND_HALF_UP)
+        stamp_rounded = self.stamp_duty.quantize(PRECISION_2, rounding=ROUND_HALF_UP)
+        gst_rounded = self.gst.quantize(PRECISION_2, rounding=ROUND_HALF_UP)
+
+        statutory_taxes_rounded = (
+            stt_rounded + exch_rounded + ipft_rounded + sebi_rounded + stamp_rounded + gst_rounded
+        ).quantize(PRECISION_2, rounding=ROUND_HALF_UP)
+
+        total_charges_rounded = (brokerage_rounded + statutory_taxes_rounded).quantize(PRECISION_2, rounding=ROUND_HALF_UP)
+
+        if self.side == OrderSide.BUY:
+            net_cash_flow_rounded = -(gross_rounded + total_charges_rounded)
+        else:
+            net_cash_flow_rounded = gross_rounded - total_charges_rounded
+
+        bps_rounded = ((total_charges_rounded / gross_rounded) * Decimal("10000")).quantize(PRECISION_4, rounding=ROUND_HALF_UP)
+
+        return TransactionCostBreakdown(
+            trade_date=self.trade_date,
+            side=self.side,
+            product=self.product,
+            quantity=self.quantity,
+            price=self.price.quantize(PRECISION_2, rounding=ROUND_HALF_UP),
+            gross_amount=gross_rounded,
+            brokerage=brokerage_rounded,
+            stt=stt_rounded,
+            exchange_turnover_fee=exch_rounded,
+            ipft=ipft_rounded,
+            sebi_turnover_fee=sebi_rounded,
+            stamp_duty=stamp_rounded,
+            gst=gst_rounded,
+            total_statutory_taxes=statutory_taxes_rounded,
+            total_charges=total_charges_rounded,
+            net_cash_flow=net_cash_flow_rounded,
+            effective_cost_bps=bps_rounded,
+            circular_ref=self.circular_ref,
+            disclosures=self.disclosures,
+        )
+
 
 class TransactionCostModel:
     """
@@ -97,6 +146,7 @@ class TransactionCostModel:
         price: Decimal,
         is_brokerage_applicable: bool = True,
         custom_brokerage: Optional[Decimal] = None,
+        round_to_paise: bool = False,
     ) -> TransactionCostBreakdown:
         """
         Computes the complete, statutory Indian transaction cost schedule for a trade.
@@ -109,6 +159,7 @@ class TransactionCostModel:
             price: Executed price (positive Decimal).
             is_brokerage_applicable: Whether to charge broker commission.
             custom_brokerage: Optional override for brokerage fee.
+            round_to_paise: Whether to quantize all monetary values to paise (0.01 INR).
         
         Returns:
             TransactionCostBreakdown with all taxes, levies, and net cash flow.
@@ -209,7 +260,7 @@ class TransactionCostModel:
         else:
             disclosures = ()
 
-        return TransactionCostBreakdown(
+        breakdown = TransactionCostBreakdown(
             trade_date=trade_date,
             side=side,
             product=product,
@@ -230,3 +281,8 @@ class TransactionCostModel:
             circular_ref=fee_info.circular_ref,
             disclosures=disclosures,
         )
+
+        if round_to_paise:
+            return breakdown.to_paise()
+        return breakdown
+
