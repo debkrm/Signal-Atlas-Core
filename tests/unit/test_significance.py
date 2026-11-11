@@ -457,3 +457,131 @@ def test_c2_docstring_and_tagging_invariants():
     # Every public dataclass must carry trial_count_n
     for cls in (DeflatedSharpeResult, HaircutSharpeResult, SignificanceReport):
         assert "trial_count_n" in cls.__slots__
+
+
+def test_d1_zero_variance_and_insufficient_n_eval_rejection():
+    """
+    D-1 Remediation: When trial_count_n > 1, computing DSR requires at least 2 evaluated trials
+    and strictly positive trial Sharpe variance (V > 0).
+    Verifies that N=50, V=0.00 fails closed rather than silently manufacturing DSR 0.966639 PASS.
+    """
+    sr = Decimal("1.30")
+    t_obs = 500
+    q = 250
+    n = 50
+
+    # 1. Zero variance when N=50 must raise InvalidSampleError fail-closed
+    with pytest.raises(InvalidSampleError, match="strictly positive trial Sharpe variance"):
+        compute_deflated_sharpe_ratio(
+            annualized_sharpe=sr,
+            trial_sharpe_variance=Decimal("0.00"),
+            observation_count=t_obs,
+            trial_count_n=n,
+            sessions_per_year=q,
+            evaluated_trial_count=50,
+        )
+
+    # 2. Insufficient evaluated trials (N_eval < 2) must raise InvalidSampleError
+    with pytest.raises(InvalidSampleError, match="at least 2 evaluated trials"):
+        compute_deflated_sharpe_ratio(
+            annualized_sharpe=sr,
+            trial_sharpe_variance=Decimal("0.25"),
+            observation_count=t_obs,
+            trial_count_n=n,
+            sessions_per_year=q,
+            evaluated_trial_count=1,
+        )
+
+    # 3. Valid variance V=0.3367 yields the true penalized DSR 0.488273 (FAIL against 0.95)
+    res_valid = compute_deflated_sharpe_ratio(
+        annualized_sharpe=sr,
+        trial_sharpe_variance=Decimal("0.3367"),
+        observation_count=t_obs,
+        trial_count_n=n,
+        sessions_per_year=q,
+        evaluated_trial_count=50,
+    )
+    assert res_valid.deflated_sharpe_ratio == Decimal("0.488273")
+    assert res_valid.deflated_sharpe_ratio < Decimal("0.95")  # True FAIL, penalty applied
+
+
+def test_d2_non_positive_mertens_variance_term_raises():
+    """
+    D-2 Remediation: Non-positive Mertens asymptotic variance term must raise SignificanceError
+    rather than silently substituting denom = 1e-6 and manufacturing a false 1.000000 PASS.
+    """
+    # Auditor probe: SR_ann = 4.74, skewness = 5.00, kurtosis = 3.00, q = 250 -> var_term = -0.45398 <= 0
+    with pytest.raises(SignificanceError, match="Mertens asymptotic Sharpe variance term is non-positive"):
+        compute_deflated_sharpe_ratio(
+            annualized_sharpe=Decimal("4.74"),
+            trial_sharpe_variance=Decimal("0.25"),
+            observation_count=500,
+            trial_count_n=10,
+            sessions_per_year=250,
+            skewness=Decimal("5.00"),
+            kurtosis=Decimal("3.00"),
+        )
+
+    # Mirror skewness -5.00 has valid positive variance term and evaluates cleanly
+    mirror_res = compute_deflated_sharpe_ratio(
+        annualized_sharpe=Decimal("4.74"),
+        trial_sharpe_variance=Decimal("0.25"),
+        observation_count=500,
+        trial_count_n=10,
+        sessions_per_year=250,
+        skewness=Decimal("-5.00"),
+        kurtosis=Decimal("3.00"),
+    )
+    assert mirror_res.deflated_sharpe_ratio > Decimal("0.00")
+    assert mirror_res.z_score > Decimal("0.00")
+
+
+def test_d3_kurtosis_convention_dsr_invariance():
+    """
+    D-3 Remediation: DSR must be mathematically invariant whether raw kurtosis (3.00 for normal)
+    or excess kurtosis (0.00 for normal) is specified.
+    """
+    # Raw kurtosis = 4.50 (normal = 3.00) vs Excess kurtosis = 1.50 (normal = 0.00)
+    res_raw = compute_deflated_sharpe_ratio(
+        annualized_sharpe=Decimal("1.80"),
+        trial_sharpe_variance=Decimal("0.20"),
+        observation_count=500,
+        trial_count_n=15,
+        sessions_per_year=250,
+        skewness=Decimal("-0.30"),
+        kurtosis=Decimal("4.50"),
+        kurtosis_convention="RAW_NORMAL_THREE",
+    )
+
+    res_excess = compute_deflated_sharpe_ratio(
+        annualized_sharpe=Decimal("1.80"),
+        trial_sharpe_variance=Decimal("0.20"),
+        observation_count=500,
+        trial_count_n=15,
+        sessions_per_year=250,
+        skewness=Decimal("-0.30"),
+        kurtosis=Decimal("1.50"),
+        kurtosis_convention="EXCESS_NORMAL_ZERO",
+    )
+
+    # Both must agree bit-for-bit on all statistical fields
+    assert res_raw.deflated_sharpe_ratio == res_excess.deflated_sharpe_ratio
+    assert res_raw.z_score == res_excess.z_score
+    assert res_raw.expected_max_sharpe == res_excess.expected_max_sharpe
+    assert res_raw.p_value == res_excess.p_value
+    assert res_raw.kurtosis == Decimal("4.50")
+    assert res_excess.kurtosis == Decimal("4.50")  # Effective raw kurtosis
+
+
+def test_d5_evaluated_trial_count_cannot_exceed_total():
+    """
+    D-5 Remediation: evaluated_trial_count > trial_count_n must be rejected with SignificanceError.
+    """
+    with pytest.raises(SignificanceError, match="cannot exceed total trial_count_n"):
+        compute_deflated_sharpe_ratio(
+            annualized_sharpe=Decimal("1.50"),
+            trial_sharpe_variance=Decimal("0.20"),
+            observation_count=500,
+            trial_count_n=2,
+            evaluated_trial_count=50,
+        )

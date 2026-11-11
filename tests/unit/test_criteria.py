@@ -132,3 +132,10 @@ def test_criteria_loader_rejections(tmp_path: Path):
     with pytest.raises(CriteriaValidationError, match="haircut_variant"):
         load_go_no_go_criteria(bad_file3)
 
+    # D-4: TOTAL_TRIALS_MINUS_ONE rejected by loader (EVALUATED_TRIALS_MINUS_ONE is pinned authority)
+    bad_yaml4 = valid_yaml.replace("dsr_sharpe_variance_divisor: \"EVALUATED_TRIALS_MINUS_ONE\"", "dsr_sharpe_variance_divisor: \"TOTAL_TRIALS_MINUS_ONE\"")
+    bad_file4 = tmp_path / "bad4.yaml"
+    bad_file4.write_text(bad_yaml4, encoding="utf-8")
+    with pytest.raises(CriteriaValidationError, match="dsr_sharpe_variance_divisor"):
+        load_go_no_go_criteria(bad_file4)
+

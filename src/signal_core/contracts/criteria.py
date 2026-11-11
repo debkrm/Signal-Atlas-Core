@@ -183,8 +183,11 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         raise CriteriaValidationError(f"Unsupported dsr_trial_count_basis: {dsr_n_basis!r}")
 
     dsr_var_div = str(anti_ov.get("dsr_sharpe_variance_divisor", "EVALUATED_TRIALS_MINUS_ONE")).strip()
-    if dsr_var_div not in ("EVALUATED_TRIALS_MINUS_ONE", "TOTAL_TRIALS_MINUS_ONE"):
-        raise CriteriaValidationError(f"Unsupported dsr_sharpe_variance_divisor: {dsr_var_div!r}")
+    if dsr_var_div != "EVALUATED_TRIALS_MINUS_ONE":
+        raise CriteriaValidationError(
+            f"Unsupported dsr_sharpe_variance_divisor: {dsr_var_div!r}. "
+            f"Must be 'EVALUATED_TRIALS_MINUS_ONE'."
+        )
 
     return GoNoGoCriteria(
         version=str(meta.get("version", "1.0.0")),

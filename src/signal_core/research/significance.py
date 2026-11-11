@@ -240,12 +240,15 @@ def _compute_dsr_float(
     sr_daily = sr_ann / math.sqrt(q)
     sr0_daily = expected_max_sr_ann / math.sqrt(q)
 
-    # Mertens (2002) variance of Sharpe ratio under non-normality
+    # Mertens (2002) variance of Sharpe ratio under non-normality (D-2 Remediated: fail closed on non-positive term)
     variance_term = 1.0 - skewness * sr_daily + ((kurtosis - 1.0) / 4.0) * (sr_daily ** 2)
     if variance_term <= 0.0:
-        denom = 1e-6
-    else:
-        denom = math.sqrt(variance_term)
+        raise SignificanceError(
+            f"Mertens asymptotic Sharpe variance term is non-positive ({variance_term:.6e}); "
+            f"DSR cannot be evaluated for extreme non-normal return moments "
+            f"(skewness={skewness}, kurtosis={kurtosis}, sr_daily={sr_daily:.6e})."
+        )
+    denom = math.sqrt(variance_term)
 
     numerator = (sr_daily - sr0_daily) * math.sqrt(t - 1)
     z = numerator / denom
@@ -320,9 +323,10 @@ class DeflatedSharpeResult:
     trial_sharpe_variance: Decimal      # Variance V of trial Sharpe ratios
     observation_count: int              # T (number of return observations)
     skewness: Decimal                   # gamma_3
-    kurtosis: Decimal                   # gamma_4 (raw kurtosis, normal = 3)
+    kurtosis: Decimal                   # gamma_4 (effective raw kurtosis, normal = 3)
     sessions_per_year: int              # Annualization factor q
     p_value: Decimal                    # 1 - DSR (tail probability under H0)
+    kurtosis_convention: str = "RAW_NORMAL_THREE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,6 +378,7 @@ def compute_deflated_sharpe_ratio(
     skewness: Decimal = Decimal("0.00"),
     kurtosis: Decimal = Decimal("3.00"),
     evaluated_trial_count: Optional[int] = None,
+    kurtosis_convention: str = "RAW_NORMAL_THREE",
 ) -> DeflatedSharpeResult:
     """
     Computes the Deflated Sharpe Ratio (DSR) per Bailey & Lopez de Prado (2014).
@@ -385,8 +390,9 @@ def compute_deflated_sharpe_ratio(
     - trial_count_n: Total attempted trials N (int >= 1).
     - sessions_per_year: Annualization factor (int >= 1, default 250).
     - skewness: Return series sample skewness gamma_3 (Decimal, default 0.00).
-    - kurtosis: Return series sample raw kurtosis gamma_4 (Decimal, default 3.00 for normal).
+    - kurtosis: Return series sample kurtosis (Decimal, default 3.00 for raw normal).
     - evaluated_trial_count: Optional count of evaluated trials (int, defaults to trial_count_n).
+    - kurtosis_convention: "RAW_NORMAL_THREE" (default) or "EXCESS_NORMAL_ZERO" (D-3 invariant).
 
     Returns:
     - DeflatedSharpeResult tagged with trial_count_n and exact Decimal metrics.
@@ -403,18 +409,50 @@ def compute_deflated_sharpe_ratio(
         raise SignificanceError(f"sessions_per_year must be an integer >= 1, got {sessions_per_year!r}")
     if isinstance(skewness, bool) or not isinstance(skewness, Decimal) or not skewness.is_finite():
         raise SignificanceError(f"skewness must be a finite Decimal, got {skewness!r}")
-    if isinstance(kurtosis, bool) or not isinstance(kurtosis, Decimal) or not kurtosis.is_finite() or kurtosis <= 0:
-        raise SignificanceError(f"kurtosis must be a positive finite Decimal, got {kurtosis!r}")
+    if isinstance(kurtosis, bool) or not isinstance(kurtosis, Decimal) or not kurtosis.is_finite():
+        raise SignificanceError(f"kurtosis must be a finite Decimal, got {kurtosis!r}")
+
+    # D-3: Normalize kurtosis to raw kurtosis (where standard normal = 3.0) for the Mertens formula
+    if kurtosis_convention == "RAW_NORMAL_THREE":
+        raw_kurt = kurtosis
+    elif kurtosis_convention == "EXCESS_NORMAL_ZERO":
+        raw_kurt = kurtosis + Decimal("3.00")
+    else:
+        raise SignificanceError(
+            f"Unsupported kurtosis_convention '{kurtosis_convention}'. "
+            f"Must be 'RAW_NORMAL_THREE' or 'EXCESS_NORMAL_ZERO'."
+        )
+    if raw_kurt <= Decimal("0.00"):
+        raise SignificanceError(f"Effective raw kurtosis must be positive, got {raw_kurt!r}")
 
     n_eval = evaluated_trial_count if evaluated_trial_count is not None else trial_count_n
     if isinstance(n_eval, bool) or not isinstance(n_eval, int) or n_eval < 0:
         raise SignificanceError(f"evaluated_trial_count must be a non-negative integer, got {n_eval!r}")
 
+    # D-5 Remediation: Consistency check between N and N_eval
+    if n_eval > trial_count_n:
+        raise SignificanceError(
+            f"evaluated_trial_count ({n_eval}) cannot exceed total trial_count_n ({trial_count_n})."
+        )
+
+    # D-1 Remediation: Require N_eval >= 2 and V > 0 when N > 1 to prevent false PASS
+    if trial_count_n > 1:
+        if n_eval < 2:
+            raise InvalidSampleError(
+                f"When trial_count_n ({trial_count_n}) > 1, computing DSR requires at least 2 evaluated trials "
+                f"to establish empirical variance, got evaluated_trial_count={n_eval}."
+            )
+        if trial_sharpe_variance <= Decimal("0.00"):
+            raise InvalidSampleError(
+                f"When trial_count_n ({trial_count_n}) > 1, computing DSR requires strictly positive trial Sharpe "
+                f"variance (trial_sharpe_variance > 0), got {trial_sharpe_variance}."
+            )
+
     # Enter SIG-FLOAT-BOUNDARY
     sr_ann_fl = float(annualized_sharpe)
     var_ann_fl = float(trial_sharpe_variance)
     skew_fl = float(skewness)
-    kurt_fl = float(kurtosis)
+    kurt_fl = float(raw_kurt)
 
     sr0_fl = _compute_expected_max_sharpe_float(var_ann_fl, trial_count_n)
     dsr_fl, z_fl, p_val_fl = _compute_dsr_float(
@@ -437,9 +475,10 @@ def compute_deflated_sharpe_ratio(
         trial_sharpe_variance=trial_sharpe_variance,
         observation_count=observation_count,
         skewness=skewness,
-        kurtosis=kurtosis,
+        kurtosis=raw_kurt,
         sessions_per_year=sessions_per_year,
         p_value=Decimal(f"{p_val_fl:.6f}"),
+        kurtosis_convention=kurtosis_convention,
     )
 
 
@@ -558,6 +597,7 @@ def evaluate_strategy_significance(
         skewness=skew,
         kurtosis=kurt,
         evaluated_trial_count=n_eval,
+        kurtosis_convention=kurt_conv,
     )
 
     hc_res = compute_haircut_sharpe_ratio(

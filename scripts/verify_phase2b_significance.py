@@ -246,6 +246,143 @@ def run_phase_2b_verification() -> bool:
         all_passed = all_passed and g2b5_passed
 
         # ----------------------------------------------------------------------
+        # GATE G2B-6: Audit §21 Remediation — Fail-Closed Anti-Overfitting Guards
+        # ----------------------------------------------------------------------
+        print("\n--- Gate G2B-6: Multi-Hypothesis Realism & Fail-Closed Anti-Overfitting Guards ---")
+        g2b6_passed = True
+
+        # G2B-6.1 (D-1): Zero variance & N_eval < 2 rejection when N > 1
+        d1_zero_v_rejected = False
+        try:
+            compute_deflated_sharpe_ratio(
+                annualized_sharpe=Decimal("1.30"),
+                trial_sharpe_variance=Decimal("0.00"),
+                observation_count=500,
+                trial_count_n=50,
+                sessions_per_year=250,
+                evaluated_trial_count=50,
+            )
+        except InvalidSampleError:
+            d1_zero_v_rejected = True
+
+        d1_low_neval_rejected = False
+        try:
+            compute_deflated_sharpe_ratio(
+                annualized_sharpe=Decimal("1.30"),
+                trial_sharpe_variance=Decimal("0.25"),
+                observation_count=500,
+                trial_count_n=50,
+                sessions_per_year=250,
+                evaluated_trial_count=1,
+            )
+        except InvalidSampleError:
+            d1_low_neval_rejected = True
+
+        # Valid V=0.3367 yields true penalty DSR 0.488273 FAIL
+        d1_valid_res = compute_deflated_sharpe_ratio(
+            annualized_sharpe=Decimal("1.30"),
+            trial_sharpe_variance=Decimal("0.3367"),
+            observation_count=500,
+            trial_count_n=50,
+            sessions_per_year=250,
+            evaluated_trial_count=50,
+        )
+        d1_valid_ok = d1_valid_res.deflated_sharpe_ratio == Decimal("0.488273")
+
+        if d1_zero_v_rejected and d1_low_neval_rejected and d1_valid_ok:
+            print(f"[PASS] G2B-6.1 (D-1): Zero variance and N_eval < 2 fail closed when N > 1 (no silent penalty deletion).")
+            print(f"       Valid V=0.3367 applies true penalty: DSR={d1_valid_res.deflated_sharpe_ratio} < 0.95 (FAIL).")
+        else:
+            print(f"[FAIL] G2B-6.1 (D-1): Zero variance guard failed: zero_v={d1_zero_v_rejected}, low_n={d1_low_neval_rejected}")
+            g2b6_passed = False
+
+        # G2B-6.2 (D-2): Non-positive Mertens variance term raises SignificanceError
+        d2_raised = False
+        try:
+            compute_deflated_sharpe_ratio(
+                annualized_sharpe=Decimal("4.74"),
+                trial_sharpe_variance=Decimal("0.25"),
+                observation_count=500,
+                trial_count_n=10,
+                sessions_per_year=250,
+                skewness=Decimal("5.00"),
+                kurtosis=Decimal("3.00"),
+            )
+        except SignificanceError:
+            d2_raised = True
+
+        if d2_raised:
+            print(f"[PASS] G2B-6.2 (D-2): Non-positive Mertens variance term raises SignificanceError (no false 1.000000 PASS).")
+        else:
+            print(f"[FAIL] G2B-6.2 (D-2): Non-positive Mertens term did not raise SignificanceError.")
+            g2b6_passed = False
+
+        # G2B-6.3 (D-3): Kurtosis convention DSR invariance
+        res_raw_k = compute_deflated_sharpe_ratio(
+            annualized_sharpe=Decimal("1.80"),
+            trial_sharpe_variance=Decimal("0.20"),
+            observation_count=500,
+            trial_count_n=15,
+            sessions_per_year=250,
+            skewness=Decimal("-0.30"),
+            kurtosis=Decimal("4.50"),
+            kurtosis_convention="RAW_NORMAL_THREE",
+        )
+        res_exc_k = compute_deflated_sharpe_ratio(
+            annualized_sharpe=Decimal("1.80"),
+            trial_sharpe_variance=Decimal("0.20"),
+            observation_count=500,
+            trial_count_n=15,
+            sessions_per_year=250,
+            skewness=Decimal("-0.30"),
+            kurtosis=Decimal("1.50"),
+            kurtosis_convention="EXCESS_NORMAL_ZERO",
+        )
+        d3_invariant = (
+            res_raw_k.deflated_sharpe_ratio == res_exc_k.deflated_sharpe_ratio
+            and res_raw_k.z_score == res_exc_k.z_score
+        )
+
+        if d3_invariant:
+            print(f"[PASS] G2B-6.3 (D-3): DSR is bit-for-bit invariant across RAW_NORMAL_THREE and EXCESS_NORMAL_ZERO.")
+            print(f"       DSR (raw 4.50) = {res_raw_k.deflated_sharpe_ratio} == DSR (excess 1.50) = {res_exc_k.deflated_sharpe_ratio}")
+        else:
+            print(f"[FAIL] G2B-6.3 (D-3): Kurtosis convention shifted DSR.")
+            g2b6_passed = False
+
+        # G2B-6.4 (D-4): Loader and engine agree on variance divisor
+        import signal_core.contracts.criteria as crit_mod
+        criteria_src = inspect.getsource(crit_mod)
+        d4_loader_pinned = "TOTAL_TRIALS_MINUS_ONE" not in criteria_src
+
+        if d4_loader_pinned:
+            print(f"[PASS] G2B-6.4 (D-4): Criteria loader and engine strictly agree on 'EVALUATED_TRIALS_MINUS_ONE'.")
+        else:
+            print(f"[FAIL] G2B-6.4 (D-4): Conflicting divisor options remain in criteria loader.")
+            g2b6_passed = False
+
+        # G2B-6.5 (D-5): N_eval > N rejected fail-closed
+        d5_neval_rejected = False
+        try:
+            compute_deflated_sharpe_ratio(
+                annualized_sharpe=Decimal("1.50"),
+                trial_sharpe_variance=Decimal("0.20"),
+                observation_count=500,
+                trial_count_n=2,
+                evaluated_trial_count=50,
+            )
+        except SignificanceError:
+            d5_neval_rejected = True
+
+        if d5_neval_rejected:
+            print(f"[PASS] G2B-6.5 (D-5): Contradictory N_eval > N (N=2, N_eval=50) rejected with SignificanceError.")
+        else:
+            print(f"[FAIL] G2B-6.5 (D-5): N_eval > N was accepted without error.")
+            g2b6_passed = False
+
+        all_passed = all_passed and g2b6_passed
+
+        # ----------------------------------------------------------------------
         # INTEGRATION: TrialRegistry & GoNoGoCriteria End-to-End Evaluation
         # ----------------------------------------------------------------------
         print("\n--- Integration: TrialRegistry Consumption & Criteria Thresholding ---")

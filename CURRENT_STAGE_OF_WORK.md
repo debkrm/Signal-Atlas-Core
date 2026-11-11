@@ -6,7 +6,7 @@
 |---|---|
 | **Active Project Phase** | **Phase 2B Complete & Verified** (Statistical Significance Engine: DSR & Haircut Sharpe) · **Phase 2C next** — Strategy Contract & Next-Session Walk-Forward Engine |
 | **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash book, multi-fill position accounting, mark-to-market portfolio valuation, committed risk tracker, holdout containment, tamper-evident trial registry, and statistical significance engine complete |
-| **Offline Test Suite** | **180 passed in 1.86s** (100% pass rate, zero warnings) |
+| **Offline Test Suite** | **184 passed in 1.82s** (100% pass rate, zero warnings) |
 | **External Dependencies** | Zero live database connections, zero external network calls, zero shadow simulators |
 | **Historical Provenance** | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` (Strictly maintained, zero false promotions) |
 | **Holdout Containment** | `HOLDOUT_UNLOCK` is strictly **ABSENT**; out-of-sample data remains completely sealed |
@@ -230,8 +230,8 @@ Signal-Atlas-Core/
         ├── test_portfolio.py                # Exact Decimal cash ledger, positions, MTM, drawdown, risk caps, R-1..R-7, N-1..N-13 (29 tests)
         ├── test_containment.py              # Sealed holdout access, human unlock verification, fold generation (10 tests)
         ├── test_trials.py                   # Append-only hash chain, manifest anchor, tamper detection, variance (18 tests)
-        └── test_significance.py             # DSR golden vector, decay, bit-for-bit, haircut, SIG-FLOAT-BOUNDARY (14 tests)
-                                             # Total: 180 passing unit tests in 1.86s
+        └── test_significance.py             # DSR golden vector, decay, bit-for-bit, haircut, SIG-FLOAT-BOUNDARY, D-1..D-5 (18 tests)
+                                             # Total: 184 passing unit tests in 1.82s
 ```
 
 ---
@@ -350,6 +350,7 @@ Authoritative committed probe: [`scripts/verify_phase2b_significance.py`](file:/
 | **G2B-3** · Identical inputs yield bit-for-bit identical Decimal output | **PASS** | Repeated calls across identical parameters produce bit-for-bit identical Decimal string representations and values for all fields (DSR: `0.975268`, Haircut SR: `1.225063`). |
 | **G2B-4** · Haircut Sharpe decreases monotonically as N grows | **PASS** | Harvey & Liu (2015) Bonferroni haircut at $SR=2.00, T=1250$: $N=1 \to 2.000000$ (0.0% haircut), $N=5 \to 1.840276$ (8.0%), $N=20 \to 1.691856$ (15.4%), $N=100 \to 1.503433$ (24.8%), $N=1000 \to 1.190940$ (40.5%). Strictly decreasing Sharpe, strictly increasing haircut %. |
 | **G2B-5** · Float boundary isolation (SIG-FLOAT-BOUNDARY) | **PASS** | All result attributes are exact `Decimal`, `int`, or `str` (zero float leakage); float inputs to moments fail closed with `InvalidSampleError`; AST inspection confirms `ledger`, `position`, and `portfolio` modules never import significance math. |
+| **G2B-6** · Anti-overfitting guards & criteria alignment (D-1..D-5) | **PASS** | Zero variance and $N_{eval} < 2$ fail closed with `InvalidSampleError` when $N > 1$ (D-1, verified true $V=0.3367 \to 0.488273$ FAIL); non-positive Mertens variance term raises `SignificanceError` rather than substituting $10^{-6}$ (D-2); DSR invariant bit-for-bit across `RAW_NORMAL_THREE` and `EXCESS_NORMAL_ZERO` (D-3); loader and engine strictly agree on `EVALUATED_TRIALS_MINUS_ONE` (D-4); $N_{eval} > N$ rejected (D-5). |
 
 #### Phase 2C — Strategy Contract & Next-Session Walk-Forward Engine
 Modules: `src/signal_core/strategy/base.py`, `src/signal_core/research/walkforward.py`.
