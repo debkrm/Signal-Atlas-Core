@@ -6,7 +6,7 @@
 **Repository state audited:** commit `84c7501` (`feat(features): complete Phase 1C pure indicator formulas and subsegment engine`) with 4 files dirty (+1 line each, trailing newline only).
 **Code changes made by this audit:** none. This document is read-only review output.
 
-**Sections:** §1–§9 Phase 1A→1C audit · §10 Phase 1C re-audit · §11–§12 Phase 1D · §13–§18 Phase 1E / Phase 2A · §19–§20 Phase 2A re-audits.
+**Sections:** §1–§9 Phase 1A→1C audit · §10 Phase 1C re-audit · §11–§12 Phase 1D · §13–§18 Phase 1E / Phase 2A · §19–§20 Phase 2A re-audits · §21 Phase 2B.
 
 ---
 
@@ -1158,10 +1158,65 @@ Score: **5 closed, 1 partial (B-3, now P3), 0 unchanged.** Every P1/P2 from §19
 
 Every blocker from §18 and §19 is closed and verified by independent execution, not by the commit message or the repository's own probe: the holdout cannot be opened by arbitrary content, whitespace, casing, or a boolean flag; the trial count cannot be quietly reduced by truncation, a deleted anchor, a forged tail, or a caught verification failure; the ledger cannot be bricked by a public API call; and the DSR `N` convention now lives in the committed criteria file that `AGENTS.md` requires. The two remaining items are operational — how an operator recovers from a crash mid-append (C-1) and the fact that a full wipe of both files is only detectable through version control (C-2) — and neither permits a silently wrong `N` to reach a report.
 
-**Conditions carried into Phase 2B:**
-1. `significance.py` must consume `total_trial_count` as `N` and `evaluated_trial_count` for variance, read from `GoNoGoCriteria`, not restated.
-2. Reports emitted in 2B must label any unrun metric `NOT RUN`, and DSR/Haircut values must be tagged with the `N` actually used.
-3. G2A-3's sweep measurement lands with the 2C strategy engine; until then the 2A probe's `NOT RUN` label is the honest record.
-4. C-1 recovery should be resolved before registries are treated as durable across machines; C-2 should be stated wherever the registry is first used as an `N` source.
-
 **Unchanged `NOT RUN` register:** all Phase 0–1B empirical items, and every Phase 2B/2C metric.
+
+---
+
+## 21. Phase 2B — Statistical Significance Engine (`eafdc14`)
+
+**Commit audited:** `eafdc14` — *"feat(research): implement Phase 2B statistical significance engine (DSR and Haircut Sharpe)"* (9 files, +1526/−21).
+**Working tree:** `probe_phase2b.py` and `scripts/verify_phase2b_significance.py` modified with a trailing newline only.
+**Suite (measured):** `180 passed in 1.70s`, exit 0 (166 + 14 significance). The document states `1.86s`; timing only.
+**Committed probe (measured):** exit 0, `ALL MEASURED GATES PASSED (100%)`.
+**Method:** the estimators and both statistics were re-implemented from the papers' formulas in a separate script and compared numerically; then the decision path was attacked for fail-open behaviour, which is where the gate's real risk lies.
+
+### 21.1 What is verified correct
+
+| Claim | Evidence |
+|---|---|
+| DSR formula (Bailey & López de Prado 2014) | Independent re-implementation — `SR* = sqrt(V/q)·[(1-γ)Φ⁻¹(1-1/N) + γΦ⁻¹(1-1/(Ne))]`, `z = (SR_d - SR*_d)·sqrt(T-1)/sqrt(1 - γ3·SR_d + ((γ4-1)/4)SR_d²)`, `DSR = Φ(z)` — reproduces the engine to the printed 6 decimals on three parameter sets: `0.626502`, `0.618962`, `0.003381`, with `SR*` agreeing to `1.265301`, `0.497932`, `3.687703`. Dimensionally consistent: trial Sharpe variance is treated as annualized and de-annualized by `sqrt(q)` before use. |
+| Monotone decay in `N` | `SR=1.50, V=0.25, T=500`: `0.982761, 0.898648, 0.780770, 0.629617, 0.485234` for `N = 1, 5, 20, 100, 500` — matches the document's G2B-2 row exactly. |
+| Haircut Sharpe (Harvey & Liu 2015, Bonferroni) | `SR=2.00, T=1250`: `2.000000 (0%)`, `1.840276 (7.99%)`, `1.691856 (15.41%)`, `1.503433 (24.83%)`, `1.190940 (40.45%)` — matches the G2B-4 row. `t = SR·sqrt(T_years)` is dimensionally correct against the annualized Sharpe; non-positive Sharpe returns a 100% haircut rather than a sign-flipped one. |
+| Float containment | Every result field is `Decimal`/`int`/`str`; floats exist only in `Φ`, `Φ⁻¹`, the Euler–Mascheroni constant, and `sqrt` of already-validated scalars. Ledger/position/portfolio do not import the module. |
+| Boundary hygiene | `Float` → `Decimal` conversion is quantized to 6 decimals when leaving the boundary; `N = 10¹²` produces finite, in-range output. |
+| `N` / `N_eval` wiring | `evaluate_strategy_significance` resolves `N` from `criteria.dsr_trial_count_basis` against `registry.total_trial_count`, and `V` from `registry.compute_trial_sharpe_variance()`; both are tagged onto every result. The DSR `N` convention and variance divisor are read from committed `configs/go_no_go_criteria.yaml` — auditor conditions 1 and 3 from §20 hold. |
+
+Not verified by me: the G2B-1 claim that `0.900397` matches the published paper "bit-for-bit at 4 decimal places". The paper text is not in the repository; what is established is that the engine agrees with an independent transcription of the published formula, not with the paper's printed example.
+
+### 21.2 Findings
+
+| ID | Sev | Finding | Measured evidence |
+|---|---|---|---|
+| **D-1** | **P1** | **A registry with fewer than two recorded Sharpe ratios silently deletes the entire multiple-testing penalty while still tagging `N`.** `TrialRegistry.compute_trial_sharpe_variance()` returns `Decimal("0.00")` by design when `N_eval < 2`; `compute_deflated_sharpe_ratio` then sets `SR* = 0` (its `variance_ann <= 0` branch) and `evaluate_strategy_significance` passes the value straight through with no guard. The report still carries `trial_count_n = 50`, so it asserts a 50-trial deflation that was never applied. This is a verdict-flipping hole in the exact test that exists to prevent overfitting, reached by an ordinary workflow — `append_trial(sharpe_ratio=None)` is legal for every trial that was not individually evaluated. | Same strategy, same `N=50`, `T=500`, `SR=1.30`: with `V=0` → `SR*=0.000000`, `DSR=0.966639` → **PASS**; with the registry's own dispersion `V=0.3367` → `SR*=1.320844`, `DSR=0.488273` → **FAIL**. End-to-end: 50 trials with one `sharpe_ratio` → `N=50, N_eval=1, V=0.00`, integration verdict `PASS`. |
+| **D-2** | **P2** | **A negative Mertens variance term is replaced by a fabricated denominator instead of raising.** `_compute_dsr_float` does `if variance_term <= 0.0: denom = 1e-6`. For impossible inputs (high Sharpe with strong positive skew) the term legitimately goes negative; the fallback then turns it into a denominator of one millionth and reports near-certainty. Fail-closed behaviour would be `InvalidSampleError`. | `SR_ann=4.74, V=0.01, T=100, N=10, γ3=5.00, γ4=3.00` → `z = 2,883,725.206350`, `DSR = 1.000000`, verdict `PASS`. Mirror case `γ3=-5.00` → `z = 1.808039`, `DSR = 0.964700` — sane, confirming the asymmetry is the sign guard, not the data. |
+| **D-3** | **P3** | **`kurtosis_convention` can silently corrupt the DSR.** The Mertens term is `((γ4 - 1)/4)·SR_d²`, valid only for **raw** kurtosis. `evaluate_strategy_significance` forwards whatever `criteria.kurtosis_convention` produces; with `EXCESS_NORMAL_ZERO` the value is 3 lower, and for fat-tailed data whose excess kurtosis is still positive the `kurtosis <= 0` guard does not fire — the statistic is simply computed with the wrong moment. The loader blesses both conventions. | Same series, `SR=2.00, V=0.25, T=500, N=100`: `DSR(γ4=41.5033) = 0.832203` vs `DSR(γ4=38.5033) = 0.833457`. Small in magnitude at realistic daily Sharpe, but silent. |
+| **D-4** | **P3** | **The criteria loader blesses a variance-divisor value the engine rejects.** `dsr_sharpe_variance_divisor` accepts `EVALUATED_TRIALS_MINUS_ONE` and `TOTAL_TRIALS_MINUS_ONE`, but `evaluate_strategy_significance` implements only the first and raises `Unsupported dsr_sharpe_variance_divisor` for the second. Fail-closed, but a committed configuration the loader reports as valid cannot produce a report. | `criteria.replace(dsr_sharpe_variance_divisor="TOTAL_TRIALS_MINUS_ONE")` → `SignificanceError: Unsupported …`. |
+| **D-5** | **P3** | **No consistency check between `N` and `N_eval`.** `evaluated_trial_count > trial_count_n` is accepted and tagged verbatim, producing a self-contradictory report (`N=2, N_eval=50`). | `compute_deflated_sharpe_ratio(..., trial_count_n=2, evaluated_trial_count=50)` → accepted, tags `2 / 50`. |
+| **D-6** | **P3** | **The verdict is computed on a 6-decimal rounding of the statistic.** Both results quantize before returning, and `evaluate_strategy_significance` compares the rounded `Decimal` against the threshold, so a true `0.9499996` is a `PASS`. I could not construct a case that flips at the committed `0.95` threshold in a bounded search, so impact is theoretical; the principled fix is to compare the unrounded statistic and keep two fields (raw and reported). | No flip found scanning `T ∈ [150,1200), N ∈ [2,300)` at `SR=0.75, V=0.05`. |
+| **D-7** | **Residual** | **`SignificanceReport` has no `NOT RUN` / `UNDEFINED` state.** Every report carries a `PASS`/`FAIL` verdict for DSR and Haircut; there is no representation for "not computable" (which D-1 currently masquerades as). §9.3 of `AGENTS.md` requires unrun or inapplicable metrics to be stated as `NOT RUN`. | Dataclass fields are `dsr_verdict`/`haircut_verdict`/`overall_verdict: str`, populated only with `"PASS"`/`"FAIL"`. |
+
+### 21.3 Recomputed 2B gates
+
+| Gate | Result | Basis |
+|---|---|---|
+| G2B-1 · DSR reproduces published worked example | **NOT VERIFIED** | Engine matches an independent transcription of the formula exactly; the paper's printed example is external to the repository and was not checked. |
+| G2B-2 · DSR decays monotonically in `N` | **PASS** | Recomputed, matches to every printed digit. |
+| G2B-3 · bit-for-bit reproducibility | **PASS** | Deterministic pure-Decimal estimators over a float-free computation of the moments; quantization is stable. |
+| G2B-4 · Haircut decreases monotonically in `N` | **PASS** | Recomputed, matches to every printed digit. |
+| G2B-5 · SIG-FLOAT-BOUNDARY isolation | **PASS** | Floats confined to `Φ`/`Φ⁻¹`; report fields Decimal; no ledger/position/portfolio import. |
+| G2B-6 · DSR/Haircut verdicts computed, `N` tagged, conventions from committed config | **FAIL** | Verdicts and tags are computed, and conventions are read from `configs/go_no_go_criteria.yaml` — but D-1 lets a report assert `N=50` while applying none of the penalty, and D-2 manufactures certainty from an invalid variance term. |
+
+**Verdict: Phase 2B is not yet signed off. Two-item closure set before Phase 2C.**
+
+The estimators and both published statistics are correct, and the wiring honours the §20 conditions: `N` comes from the registry via the committed convention, every result is tagged, and floats do not escape the normal-distribution boundary. What blocks sign-off is the decision path around the statistics rather than the statistics themselves: the one input that switches the whole multiple-testing penalty off — a trial Sharpe variance of zero — is reachable by legitimate use of the registry, produces a report that still says `N=50`, and flips a `FAIL` into a `PASS`. A gate whose failure mode is "reports maximum confidence from a value that could not be computed" cannot be the gate that certifies anti-overfitting.
+
+**Closure set for 2C:**
+1. When `N > 1`, require `N_eval >= 2` **and** `V > 0` before computing a DSR; otherwise raise `InvalidSampleError` (or emit an explicit `NOT RUN` verdict, per D-7). Add a regression test asserting the `PASS`/`FAIL` flip above cannot occur (D-1).
+2. Raise instead of substituting `1e-6` when the Mertens variance term is non-positive (D-2).
+3. Reject `kurtosis_convention != RAW_NORMAL_THREE` inside the DSR path, or convert excess to raw before the Mertens term — and add a test that pins the DSR to be invariant under the two conventions (D-3).
+4. Remove `TOTAL_TRIALS_MINUS_ONE` from the loader, or implement it in the engine, so loader and engine agree (D-4).
+5. Reject `evaluated_trial_count > trial_count_n` (D-5).
+
+**Carried forward:** D-6 (verdicts compare rounded statistics) and D-7 (`NOT RUN` has no representation) are accepted for 2B only because they cannot manufacture a `PASS` on their own; both must be settled when the Phase 2C report emitter is written, since that is the point where `AGENTS.md` §9.3 becomes executable.
+
+**Unchanged `NOT RUN` register:** all Phase 0–1B empirical items, every Phase 2C metric, and the G2A-3 parameter-sweep measurement.
