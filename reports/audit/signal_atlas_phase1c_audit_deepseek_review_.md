@@ -6,7 +6,7 @@
 **Repository state audited:** commit `84c7501` (`feat(features): complete Phase 1C pure indicator formulas and subsegment engine`) with 4 files dirty (+1 line each, trailing newline only).
 **Code changes made by this audit:** none. This document is read-only review output.
 
-**Sections:** §1–§9 Phase 1A→1C audit · §10 Phase 1C re-audit · §11–§12 Phase 1D · §13–§18 Phase 1E / Phase 2A · §19 Phase 2A re-audit.
+**Sections:** §1–§9 Phase 1A→1C audit · §10 Phase 1C re-audit · §11–§12 Phase 1D · §13–§18 Phase 1E / Phase 2A · §19–§20 Phase 2A re-audits.
 
 ---
 
@@ -1109,5 +1109,59 @@ The remediation is real work and most of it holds under attack: the holdout is n
 6. Restate G2A-1 and G2A-3 in the document to what is measured, and pin the DSR `N` convention in the committed 2B config rather than in prose (B-6, A-11).
 
 **Carried as accepted residuals:** `embargo_sessions` remains calendar-day-bounded at class level while the generator is session-exact (B-5); the holdout seal is only as strong as human authorship of `PartitionSpec` (B-7).
+
+**Unchanged `NOT RUN` register:** all Phase 0–1B empirical items, and every Phase 2B/2C metric.
+
+---
+
+## 20. Phase 2A Re-Audit — §19 Remediation (`b4e9149`)
+
+**Commit audited:** `b4e9149` — *"fix(research): remediate §19 audit findings B-1 through B-4 and pin DSR N criteria"* (9 files, +455/−76).
+**Working tree:** clean (`git status --short` → empty).
+**Suite (measured):** `166 passed in 1.84s`, exit 0 (138 + 10 containment + 18 trials). The document states `1.60s`; timing only, and the test count matches.
+**Committed probe (measured):** exit 0, `ALL MEASURED CHECKS PASSED (100%)` — the wording no longer asserts five passing gates, which is the correct claim once G2A-3 is split.
+**Audit integrity:** §18 and the §19 body were committed verbatim; only the section-index line changed. This section supersedes the *status* of A-4, A-5, A-6, A-11, B-1…B-4 below without rewriting them, so the trail of what was believed when remains readable.
+
+### 20.1 §19 findings — closure status
+
+| ID | Status | Independent evidence |
+|---|---|---|
+| **B-1** manifest optional / ignored | **CLOSED** | Truncate 5→2 with the manifest present → `RegistryTamperedError: Registry truncation detected: registry has 2 records, but authoritative manifest specifies 2 trials`. Truncate with the manifest **deleted** → `RegistryTamperedError: Missing authoritative manifest anchor at ... for non-empty registry`. Higher-severity hole from §19 is gone. `.gitignore` no longer carries `*.manifest`; `git check-ignore -v data/registry.jsonl.manifest` now exits 1 (not ignored). A third check was added: `last_trial_id` must match the manifest, so a forged tail cannot reuse a valid head hash. |
+| **B-2 state destroyed on failed verify** | **CLOSED** | 4-record registry with record 2 tampered → `verify_integrity()` raises `RegistryTamperedError`, `trial_count` **4 before / 4 after**. `_load_and_verify` now builds `temp_records`/`temp_trial_ids` and assigns only after the full walk and the anchor check succeed. A catch-and-continue caller can no longer read a reduced `N`. |
+| **B-3 interrupted append** | **PARTIAL (downgraded P2→P3)** | Manifest replacement is genuinely atomic now: unique `.tmp_<pid>_<ns>` sibling, `flush()` + `os.fsync()`, `os.replace()`, temp unlinked on failure, and no residue observed after a successful append (`manifest tmp files left: []`). The **ordering** gap is unchanged: appending the record first and the manifest second means a crash in between leaves 3 records against a 2-record anchor → `RegistryTamperedError: Registry truncation detected: registry has 3 records, but authoritative manifest specifies 2 trials`, and a fresh `TrialRegistry(path)` cannot open it. There is still no repair entry point (`repair`/`rebuild_manifest`/`recover` → `[]`). Severity drops because the failure is loud and fail-closed — it blocks reads rather than silently certifying a wrong `N` — but an operator restarting after a crash has no supported way back. See C-1. |
+| **B-4 write path accepts unreadable values** | **CLOSED** | `observation_count=True` → `TrialRegistryError: observation_count must be a non-negative integer`; `returns_digest=123` → `TrialRegistryError: returns_digest must be a non-empty stripped string`. Valid values (`observation_count=10, returns_digest="sha256:abc"`) append and reload. Read path matches: a JSON `observation_count: 1.0` in the file → `RegistryTamperedError: Field 'observation_count' must be non-negative int`. `seq` and all ten string fields are type-checked on both paths, and `from_dict` no longer coerces. |
+| **B-6 doc overclaim (G2A-3 sweep, A-6 accessor)** | **CLOSED** | The gate table now reads `NOT RUN (Sweep) / PASS (Hashing & LF)` with the deferral stated; the probe prints `[INFO] G2A-3: Strategy grid sweep unmeasured in 2A (deferred to Phase 2C strategy engine per B-6)` instead of a PASS, and the final line is `ALL MEASURED CHECKS PASSED`. A-6's bullet now carries "unwired to external feature logic until Phase 2C strategy engine". Both are accurate descriptions of the code. |
+| **A-11 `N` convention in prose only** | **CLOSED** | `configs/go_no_go_criteria.yaml` now pins `dsr_trial_count_basis: TOTAL_ATTEMPTED_TRIALS` and `dsr_sharpe_variance_divisor: EVALUATED_TRIALS_MINUS_ONE`; `GoNoGoCriteria` carries both as typed fields and `tests/unit/test_criteria.py` asserts them against the committed file. The constant lives where §9 of `AGENTS.md` requires, not in a docstring. |
+
+Score: **5 closed, 1 partial (B-3, now P3), 0 unchanged.** Every P1/P2 from §19 is closed.
+
+### 20.2 New findings
+
+| ID | Sev | Finding | Measured evidence |
+|---|---|---|---|
+| **C-1** | **P3** | **No recovery path after an interrupted append.** The two-file update (record then manifest) is not transactional, and nothing in the API can reconcile a stale anchor with a longer file. Recovery requires hand-editing or deleting the manifest — the latter is now refused as a load, so the registry is simply unopenable until a human intervenes. Acceptable for an audit ledger (loud, fail-closed, never silently wrong), but should be either a documented `rebuild_manifest_from_file(path)` with an explicit human-confirm argument, or the record written after the manifest so the weaker state is a duplicate-tail rather than a blocked registry. | 3 records vs 2-record anchor → `RegistryTamperedError`; `[m for m in dir(TrialRegistry) if repair/rebuild/recover]` → `[]`. |
+| **C-2** | **P3 (residual)** | **Truncating a registry to an empty file and deleting its manifest yields a clean, empty registry.** `lines` is empty and `manifest is None`, so both checks are skipped: `count=0, verify_integrity()=True`. No local mechanism can distinguish "new registry" from "audit trail wiped"; the only controls are that the registry and its anchor are now both versioned files, so `git diff`/review exposes the deletion, and that `N` feeding DSR comes from a registry whose history is in the repository. Worth one sentence in the 2B significance doc rather than a code change. | `p.write_text("")` + `manifest.unlink()` → `loads, count= 0 verify= True`. |
+
+**Accepted residuals carried forward unchanged:** B-5 (`embargo_sessions` calendar-day-bounded in `WalkForwardFold`; the generator remains session-exact), B-7 (seal authority is the human-authored `PartitionSpec`, not a signature), A-6 (containment accessor still has no caller outside `research/` and its tests).
+
+### 20.3 Recomputed 2A gates
+
+| Gate | Result | Basis |
+|---|---|---|
+| G2A-1 · sealed read raises | **PASS** | Unchanged from §19 and still holds under re-attack. |
+| G2A-2 · folds deterministic, disjoint, calendar-validated | **PASS** | Unchanged. |
+| G2A-3 · shuffled sweep yields an identical registry file | **NOT RUN** | Correctly declared as deferred to 2C. The hashing/LF half passes; the gate as originally written is unmet by design, not by omission. |
+| G2A-4 · chain verifies; truncation fails closed | **PASS** | Now true unconditionally: anchor present, anchor absent, forged tail, reordering, content edit, concurrent desync, separator loss all raise. Failed verification no longer mutates state. Residual C-1 (recovery) and C-2 (empty reset) are operational, not detection, gaps. |
+| G2A-5 · schema ready for 2B | **PASS** | Nine fields round-trip; write and read paths agree on types; `N` and variance divisor pinned in committed config and asserted by test. |
+
+**Verdict: Phase 2A is signed off. GO to Phase 2B.**
+
+Every blocker from §18 and §19 is closed and verified by independent execution, not by the commit message or the repository's own probe: the holdout cannot be opened by arbitrary content, whitespace, casing, or a boolean flag; the trial count cannot be quietly reduced by truncation, a deleted anchor, a forged tail, or a caught verification failure; the ledger cannot be bricked by a public API call; and the DSR `N` convention now lives in the committed criteria file that `AGENTS.md` requires. The two remaining items are operational — how an operator recovers from a crash mid-append (C-1) and the fact that a full wipe of both files is only detectable through version control (C-2) — and neither permits a silently wrong `N` to reach a report.
+
+**Conditions carried into Phase 2B:**
+1. `significance.py` must consume `total_trial_count` as `N` and `evaluated_trial_count` for variance, read from `GoNoGoCriteria`, not restated.
+2. Reports emitted in 2B must label any unrun metric `NOT RUN`, and DSR/Haircut values must be tagged with the `N` actually used.
+3. G2A-3's sweep measurement lands with the 2C strategy engine; until then the 2A probe's `NOT RUN` label is the honest record.
+4. C-1 recovery should be resolved before registries are treated as durable across machines; C-2 should be stated wherever the registry is first used as an `N` source.
 
 **Unchanged `NOT RUN` register:** all Phase 0–1B empirical items, and every Phase 2B/2C metric.
