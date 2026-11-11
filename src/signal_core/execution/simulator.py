@@ -67,6 +67,7 @@ class ExecutionFillResult:
     executed_price: Optional[Decimal]
     slippage: Optional[SlippageResult]
     costs: Optional[TransactionCostBreakdown]
+    circuit_evidence_present: bool
     rejection_reason: Optional[str]
 
 
@@ -136,6 +137,7 @@ class ExecutionFillSimulator:
         lower_circuit_limit: Optional[Decimal] = None,
         average_daily_turnover: Optional[Decimal] = None,
         explicit_series: Optional[ExchangeSeries] = None,
+        round_to_paise: bool = False,
     ) -> ExecutionFillResult:
         """
         Simulates the execution of an order against an exchange session observation or price bar.
@@ -147,6 +149,7 @@ class ExecutionFillSimulator:
             lower_circuit_limit: Optional lower circuit limit override.
             average_daily_turnover: Optional trailing average daily turnover in INR.
             explicit_series: Optional explicit series when passing bare PriceBar.
+            round_to_paise: Whether to quantize transaction costs to paise (0.01 INR).
             
         Returns:
             ExecutionFillResult capturing fill status, quantity, price, slippage, and statutory costs.
@@ -398,7 +401,10 @@ class ExecutionFillSimulator:
             product=order.product,
             quantity=fill_qty,
             price=executed_price,
+            round_to_paise=round_to_paise,
         )
+
+        circuit_evidence = (effective_upper is not None or effective_lower is not None)
 
         return ExecutionFillResult(
             order=order,
@@ -410,6 +416,7 @@ class ExecutionFillSimulator:
             executed_price=executed_price,
             slippage=slippage_result,
             costs=costs,
+            circuit_evidence_present=circuit_evidence,
             rejection_reason=None,
         )
 
@@ -420,6 +427,7 @@ class ExecutionFillSimulator:
         latency_sessions: int,
         status: FillStatus,
         reason: str,
+        circuit_evidence_present: bool = False,
     ) -> ExecutionFillResult:
         return ExecutionFillResult(
             order=order,
@@ -431,5 +439,6 @@ class ExecutionFillSimulator:
             executed_price=None,
             slippage=None,
             costs=None,
+            circuit_evidence_present=circuit_evidence_present,
             rejection_reason=reason,
         )

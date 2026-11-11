@@ -594,3 +594,27 @@ def test_execution_order_validation_rejects_floats_and_booleans():
     # Non-finite Decimal limit price
     with pytest.raises(ExecutionOrderValidationError, match="finite positive Decimal limit_price"):
         ExecutionOrder("TCS", OrderSide.BUY, OrderProduct.DELIVERY, 10, t0, t1, OrderType.LIMIT, limit_price=Decimal("NaN"))
+
+
+def test_simulator_round_to_paise_and_circuit_evidence_marker():
+    """Verify simulator round_to_paise option and circuit evidence marker."""
+    t0 = datetime.date(2024, 10, 14)
+    t1 = datetime.date(2024, 10, 15)
+    simulator = ExecutionFillSimulator()
+    order = ExecutionOrder("TCS", OrderSide.BUY, OrderProduct.DELIVERY, 100, t0, t1)
+
+    # 1. Without circuit limits -> circuit_evidence_present is False
+    obs_no_circ = _make_obs(trade_date=t1, upper_circuit_limit=None, lower_circuit_limit=None)
+    res_no_circ = simulator.simulate_order(order, obs_no_circ, round_to_paise=True)
+    assert res_no_circ.status == FillStatus.FILLED
+    assert res_no_circ.circuit_evidence_present is False
+    assert res_no_circ.costs is not None
+    assert res_no_circ.costs.total_charges.as_tuple().exponent == -2
+    assert res_no_circ.costs.net_cash_flow.as_tuple().exponent == -2
+
+    # 2. With circuit limits -> circuit_evidence_present is True
+    obs_circ = _make_obs(trade_date=t1, upper_circuit_limit=Decimal("1100.00"))
+    res_circ = simulator.simulate_order(order, obs_circ, round_to_paise=False)
+    assert res_circ.status == FillStatus.FILLED
+    assert res_circ.circuit_evidence_present is True
+
