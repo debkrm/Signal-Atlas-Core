@@ -4,9 +4,9 @@
 
 | Attribute | Current Status |
 |---|---|
-| **Active Project Phase** | **Phase 1E Completed & Verified** — Ready for **Phase 2** (Strategy Validation & Walk-Forward Engine) |
-| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash ledger, multi-fill position accounting, mark-to-market portfolio valuation, and committed risk tracker complete |
-| **Offline Test Suite** | **120 passed in 0.97s** (100% pass rate, zero warnings) |
+| **Active Project Phase** | **Phase 1E In Audit Remediation** — §13 Audit Findings (I-1 through I-7) fully remediated; awaiting re-audit verdict |
+| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash book, multi-fill position accounting, mark-to-market portfolio valuation, and committed risk tracker complete |
+| **Offline Test Suite** | **126 passed in 0.89s** (100% pass rate, zero warnings) |
 | **External Dependencies** | Zero live database connections, zero external network calls, zero shadow simulators |
 | **Historical Provenance** | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` (Strictly maintained, zero false promotions) |
 | **Holdout Containment** | `HOLDOUT_UNLOCK` is strictly **ABSENT**; out-of-sample data remains completely sealed |
@@ -121,29 +121,27 @@
   * Remediated residual R-3: Replaced all `assert` statements across `indicators.py` and `execution/` with explicit domain validation exceptions (`IndicatorValidationError`, `ExecutionOrderValidationError`).
   * Unit test suite expanded to **108 tests**; 100% passing in 0.60s.
 
-### Phase 1E: Exact Decimal Portfolio Ledger & Accounting (Completed)
-- **Authoritative Double-Entry Cash Ledger** ([`src/signal_core/portfolio/ledger.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/portfolio/ledger.py)):
-  * Implemented [`CashLedger`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/portfolio/ledger.py) tracking capital deposits, withdrawals, trade outflows (BUY), and trade inflows (SELL).
+### Phase 1E: Exact Decimal Portfolio Ledger & Accounting (Remediated per §13 Audit)
+- **Authoritative Cash Book & Ledger** ([`src/signal_core/portfolio/ledger.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/portfolio/ledger.py)):
+  * Implemented [`CashLedger`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/portfolio/ledger.py) tracking capital deposits, withdrawals, trade outflows (BUY), and trade inflows (SELL) as a single-entry cash journal with external position tracking (I-6).
   * **Paise Quantization at Boundary (E-6 & Rule 6.4)**: Quantizes all monetary cash flow amounts and running balances to exact paise (`0.01` INR, `ROUND_HALF_UP`) matching official Indian contract note conventions.
   * **Fail-Closed Overdraft Protection**: Prohibits negative cash balances unless explicitly authorized (`allow_overdraft=True`).
+  * **Posting Idempotency & Unique Reference Enforcement (I-2)**: Enforces unique `reference_id` across all ledger entries; replaying or double-posting a fill fails closed with `LedgerValidationError`.
+  * **Chronological Date Monotonicity (I-5)**: Prohibits posting back-dated entries (`trade_date < last_date`), maintaining strict sequential audit order.
   * **Circuit Evidence Provenance Tracking (Audit Condition 2)**: Automatically records `circuit_evidence_present` status on every ledger entry and tags unverified fills with `UNVERIFIED_CIRCUIT_EVIDENCE` warning metadata.
-  * Rejects non-fill outcomes (`REJECTED_*`) from modifying financial ledger state.
+  * **Atomic Rollback Support**: Exposes `_rollback_last_entry()` ensuring failed multi-leg portfolio updates never leave orphaned cash movements behind.
 - **Multi-Fill Position Accounting** ([`src/signal_core/portfolio/position.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/portfolio/position.py)):
   * Implemented [`Position`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/portfolio/position.py) tracking weighted average entry price, total cost basis, and cumulative charges paid.
-  * **Prohibition of Naked Short Delivery**: Strictly prevents selling more shares than held under cash equity delivery settlement (`OrderProduct.DELIVERY` / CNC), failing closed with `LedgerValidationError`.
-  * **Proportional Transaction Fee Allocation**: On partial sales, automatically allocates buy charges proportionally to calculate exact realized gross and net PnL down to the paisa.
+  * **Prohibition of Naked Short Delivery (I-1)**: Pre-validates held quantity against sell volume, strictly preventing selling more shares than held under cash equity delivery settlement (`OrderProduct.DELIVERY` / CNC).
+  * **Drift-Free Proportional Cost Basis Allocation (I-7)**: Derives partial-sale cost basis directly and proportionally from `total_cost_basis`, completely eliminating sub-paise basis drift across lots and ensuring exact `0.00` residual basis on full liquidation.
   * **Full Lifecycle Exact Reconciliation**: Mathematically verified invariant across multi-fill orders:
     $$\Delta \text{Cash} = \text{Final Cash} - \text{Initial Cash} \equiv \sum \text{Realized Net PnL}$$
 - **Portfolio Mark-to-Market Valuation & Risk Tracker** ([`src/signal_core/portfolio/portfolio.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/portfolio/portfolio.py)):
   * Implemented [`Portfolio`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/portfolio/portfolio.py) coordinating the cash ledger, active positions, and committed Go/No-Go criteria.
-  * **Single-Position Allocation Constraint (Rule 7 & Criteria 3.3)**: Enforces `max_single_position_weight = 0.10` (10% allocation cap); fails closed with `PortfolioRiskLimitError` before order fill execution if breached.
-  * **Session Mark-to-Market Valuation**:
-    - Verifies chronological session date monotonicity (`as_of_date > last_date`).
-    - Fail-closed price verification: every open position requires an authoritative, positive finite Decimal market price (zero silent forward-fills or NaNs).
-    - Evaluates total equity = `cash + sum(open positions market value)`.
-    - Tracks peak portfolio equity, current drawdown, maximum drawdown, and consecutive drawdown duration sessions.
-    - Computes programmatic breach verdicts against `max_portfolio_drawdown` (0.25) and `max_drawdown_duration_sessions` (125).
-  * Comprehensive test suite in [`test_portfolio.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/tests/unit/test_portfolio.py) brings total repo test count to **120 passed in 0.97s**.
+  * **Atomic Fill Processing (I-1)**: Validates short delivery, capital outlay limits, and idempotency *before* touching the cash ledger; automatically rolls back cash if position update fails.
+  * **Concentration Limit on Total Capital Deployed (I-3)**: Evaluates `max_single_position_weight = 0.10` on total cash deployed (gross trade value + statutory transaction charges), eliminating under-enforcement by transaction costs.
+  * **Exact Decimal Drawdown Comparison (I-4)**: Computes and evaluates drawdown using unrounded exact Decimal precision, preventing real threshold breaches (e.g. `0.25001`) from being rounded away by premature quantization.
+  * Comprehensive test suite in [`test_portfolio.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/tests/unit/test_portfolio.py) expanded to **17 tests**, bringing total repo test count to **126 passed in 0.89s**.
 
 ---
 
@@ -212,8 +210,8 @@ Signal-Atlas-Core/
         ├── test_criteria.py                 # Go/No-Go criteria & effective-dated fee resolution (3 tests)
         ├── test_costs.py                    # Statutory Indian cost engine, circulars, GST base, paise rounding (6 tests)
         ├── test_execution_simulator.py      # Next-session invariant, circuits, volume cap, slippage, latency (11 tests)
-        └── test_portfolio.py                # Exact Decimal cash ledger, positions, MTM, drawdown, risk caps (11 tests)
-                                             # Total: 120 passing unit tests in 0.97s
+        └── test_portfolio.py                # Exact Decimal cash ledger, positions, MTM, drawdown, risk caps (17 tests)
+                                             # Total: 126 passing unit tests in 0.89s
 ```
 
 ---
@@ -230,20 +228,17 @@ Signal-Atlas-Core/
                          [Phase 1D: Indian Execution & Cost Model]         (COMPLETED)
                                           │
                                           ▼
-                         [Phase 1E: Exact Decimal Portfolio Ledger]        (COMPLETED)
+                         [Phase 1E: Exact Decimal Portfolio Ledger]        (IN AUDIT REMEDIATION)
                                           │
                                           ▼
-                         [Phase 2: Strategy Validation & Walk-Forward]     (NEXT IMMEDIATE TASK)
+                         [Phase 2: Strategy Validation & Walk-Forward]
 ```
 
-### Phase 1E: Exact Decimal Portfolio Ledger & Accounting (Completed)
-- Completed double-entry `CashLedger`, multi-fill `Position`, and session mark-to-market `Portfolio` engine with 100% exact Decimal arithmetic, contract-note paise quantization, short delivery prohibition, and risk limit enforcement.
+### Phase 1E: Exact Decimal Portfolio Ledger & Accounting (In Audit Remediation)
+- Remediated §13 findings: fill posting atomicity (I-1), posting idempotency (I-2), full capital outlay concentration check (I-3), exact Decimal drawdown comparison (I-4), date monotonicity (I-5), accurate documentation nomenclature (I-6), and drift-free proportional cost basis allocation (I-7). Awaiting re-audit verdict.
 
-### Phase 2: Walk-Forward Strategy Engine & Deflated Sharpe Evaluation (Next Immediate Task)
+### Phase 2: Walk-Forward Strategy Engine & Deflated Sharpe Evaluation (Next Phase)
 - Multi-hypothesis trial registry logging every sweep.
-- Walk-forward parameter stability evaluation across market regimes.
-- Automated generation of computed verdicts (PASS/FAIL) against committed `configs/go_no_go_criteria.yaml`.
-- Computation of Deflated Sharpe Ratio (DSR) and Haircut Sharpe ratio.
 - Walk-forward parameter stability evaluation across market regimes.
 - Automated generation of computed verdicts (PASS/FAIL) against committed `configs/go_no_go_criteria.yaml`.
 - Computation of Deflated Sharpe Ratio (DSR) and Haircut Sharpe ratio.

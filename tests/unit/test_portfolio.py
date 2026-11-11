@@ -1,13 +1,20 @@
 """Unit Test Suite for Portfolio Accounting, Cash Ledger, and Position Tracking.
 
 Verifies:
-- Exact Decimal double-entry ledger arithmetic with contract-note paise quantization (0.01 INR).
+- Exact Decimal ledger arithmetic with contract-note paise quantization (0.01 INR).
 - Fail-closed overdraft protection and statutory cost deductions.
 - Multi-instrument position accounting with weighted average price and proportional fee allocation.
 - Prohibition of short selling under cash delivery settlement (CNC).
 - Strict reconciliation: (Final Cash - Initial Cash) == Cumulative Realized Net PnL.
 - Portfolio mark-to-market valuation, peak equity, drawdown calculation, and risk limit enforcement.
 - Fail-closed valuation price presence (zero silent omissions or NaNs).
+- Remediation of Audit §13 Findings:
+  * I-1: Atomic fill processing; failed position updates leave cash ledger completely untouched.
+  * I-2: Idempotent fill processing; replayed / duplicate fills fail closed with unique reference enforcement.
+  * I-3: Concentration cap is evaluated on total capital deployed (gross + statutory charges).
+  * I-4: Exact Decimal drawdown comparison preserves threshold crossing (0.25001 > 0.25).
+  * I-5: Chronological date monotonicity rejects past-dated ledger postings.
+  * I-7: Proportional cost basis allocation eliminates sub-paise drift across partial sales.
 """
 
 import datetime
@@ -81,7 +88,7 @@ def _make_dummy_fill(
 
 
 # ==============================================================================
-# 1. Double-Entry CashLedger Tests
+# 1. Authoritative CashLedger Tests
 # ==============================================================================
 
 
@@ -166,13 +173,14 @@ def test_cash_ledger_record_fill_and_circuit_evidence_tracking():
     assert meta_dict["gross_amount"] == "100000.00"
     assert meta_dict["total_charges"] == "142.34"
 
-    # 2. SELL fill (verified circuit evidence)
+    # 2. SELL fill (verified circuit evidence) on next date
+    d2 = datetime.date(2026, 11, 12)
     sell_fill = _make_dummy_fill(
         instrument_id="RELIANCE",
         side=OrderSide.SELL,
         quantity=100,
         price=Decimal("1100.00"),
-        trade_date=d1,
+        trade_date=d2,
         circuit_evidence_present=True,
     )
     sell_entry = ledger.record_fill(sell_fill)
@@ -248,13 +256,17 @@ def test_position_prohibits_short_selling_delivery():
 def test_position_full_and_partial_sales_reconciliation():
     """
     Verify complete multi-fill lifecycle:
-    1. BUY 100 @ ₹1000
-    2. BUY 100 @ ₹1200 -> Average price ₹1100, quantity 200
-    3. Partial SELL 50 @ ₹1300
-    4. Full SELL remaining 150 @ ₹1400
+    1. BUY 100 @ ₹1000 (Session 1)
+    2. BUY 100 @ ₹1200 (Session 2) -> Average price ₹1100, quantity 200
+    3. Partial SELL 50 @ ₹1300 (Session 3)
+    4. Full SELL remaining 150 @ ₹1400 (Session 4)
     5. Reconcile: Cash Ledger Net Flow == Position Realized Net PnL to the exact paisa.
     """
-    d1 = datetime.date(2026, 11, 11)
+    d1 = datetime.date(2026, 11, 10)
+    d2 = datetime.date(2026, 11, 11)
+    d3 = datetime.date(2026, 11, 12)
+    d4 = datetime.date(2026, 11, 13)
+
     ledger = CashLedger(initial_capital=Decimal("500000.00"))
     pos = Position("INFY")
 
@@ -267,7 +279,7 @@ def test_position_full_and_partial_sales_reconciliation():
     assert pos.average_entry_price == Decimal("1000.0000")
 
     # Fill 2: BUY 100 @ 1200
-    f2 = _make_dummy_fill("INFY", OrderSide.BUY, 100, Decimal("1200.00"), d1)
+    f2 = _make_dummy_fill("INFY", OrderSide.BUY, 100, Decimal("1200.00"), d2)
     ledger.record_fill(f2)
     pos.apply_fill(f2)
     assert pos.quantity == 200
@@ -275,7 +287,7 @@ def test_position_full_and_partial_sales_reconciliation():
     assert pos.average_entry_price == Decimal("1100.0000")
 
     # Fill 3: Partial SELL 50 @ 1300
-    f3 = _make_dummy_fill("INFY", OrderSide.SELL, 50, Decimal("1300.00"), d1)
+    f3 = _make_dummy_fill("INFY", OrderSide.SELL, 50, Decimal("1300.00"), d3)
     ledger.record_fill(f3)
     gross_pnl_3, net_pnl_3 = pos.apply_fill(f3)
     assert pos.quantity == 150
@@ -286,7 +298,7 @@ def test_position_full_and_partial_sales_reconciliation():
     assert net_pnl_3 < gross_pnl_3  # reduced by statutory charges
 
     # Fill 4: Full SELL remaining 150 @ 1400
-    f4 = _make_dummy_fill("INFY", OrderSide.SELL, 150, Decimal("1400.00"), d1)
+    f4 = _make_dummy_fill("INFY", OrderSide.SELL, 150, Decimal("1400.00"), d4)
     ledger.record_fill(f4)
     gross_pnl_4, net_pnl_4 = pos.apply_fill(f4)
     assert pos.quantity == 0
@@ -315,7 +327,6 @@ def test_portfolio_single_position_allocation_limit_breach():
     Attempting to allocate >10% of portfolio equity to a single stock raises PortfolioRiskLimitError.
     """
     criteria = load_go_no_go_criteria()
-    # Portfolio with ₹1,000,000 initial cash
     portfolio = Portfolio(initial_capital=Decimal("1000000.00"), criteria=criteria)
     d1 = datetime.date(2026, 11, 11)
 
@@ -326,7 +337,8 @@ def test_portfolio_single_position_allocation_limit_breach():
     assert portfolio.get_position("RELIANCE").quantity == 80  # type: ignore
 
     # 2. Attempting to add another ₹50,000 (total ₹130,000 = ~13% > 10%) must fail closed
-    breach_fill = _make_dummy_fill("RELIANCE", OrderSide.BUY, 50, Decimal("1000.00"), d1)
+    d2 = datetime.date(2026, 11, 12)
+    breach_fill = _make_dummy_fill("RELIANCE", OrderSide.BUY, 50, Decimal("1000.00"), d2)
     with pytest.raises(PortfolioRiskLimitError, match="Allocation breach for 'RELIANCE'"):
         portfolio.process_fill(breach_fill, enforce_risk_limits=True)
 
@@ -353,43 +365,38 @@ def test_portfolio_mark_to_market_valuation_and_drawdown_tracking():
     snap1 = portfolio.mark_to_market(s1, {"TCS": Decimal("1000.00")})
     # Equity = cash (1000000 - 100142.34 = 899857.66) + 100000 = 999857.66
     assert snap1.total_portfolio_value == Decimal("999857.66")
-    assert snap1.current_drawdown == Decimal("0.0001")  # slight cost friction against 1M initial peak
+    assert snap1.current_drawdown == Decimal("0.00014234")  # exact Decimal cost friction
     assert snap1.open_positions_count == 1
 
     # Session 2: Price rises to 1200
     snap2 = portfolio.mark_to_market(s2, {"TCS": Decimal("1200.00")})
-    # Equity = 899857.66 + 120000 = 1019857.66 (new peak!)
     assert snap2.total_portfolio_value == Decimal("1019857.66")
     assert snap2.peak_portfolio_value == Decimal("1019857.66")
-    assert snap2.current_drawdown == Decimal("0.0000")
+    assert snap2.current_drawdown == Decimal("0.00")
     assert snap2.drawdown_duration_sessions == 0
 
     # Session 3: Price drops to 900
     snap3 = portfolio.mark_to_market(s3, {"TCS": Decimal("900.00")})
-    # Equity = 899857.66 + 90000 = 989857.66
-    # Drawdown = (1019857.66 - 989857.66) / 1019857.66 = 30000 / 1019857.66 = ~0.0294 (2.94%)
     assert snap3.total_portfolio_value == Decimal("989857.66")
     assert snap3.peak_portfolio_value == Decimal("1019857.66")
-    assert snap3.current_drawdown == Decimal("0.0294")
+    # Drawdown = (1019857.66 - 989857.66) / 1019857.66 = 30000 / 1019857.66 = ~0.02941587...
+    assert snap3.current_drawdown.quantize(Decimal("0.0001")) == Decimal("0.0294")
     assert snap3.drawdown_duration_sessions == 1
     assert portfolio.is_max_drawdown_breached is False
 
     # Session 4: Price drops to 700
     snap4 = portfolio.mark_to_market(s4, {"TCS": Decimal("700.00")})
-    # Equity = 899857.66 + 70000 = 969857.66
-    # Drawdown = (1019857.66 - 969857.66) / 1019857.66 = 50000 / 1019857.66 = ~0.0490 (4.90%)
-    assert snap4.current_drawdown == Decimal("0.0490")
-    assert snap4.max_drawdown == Decimal("0.0490")
+    assert snap4.current_drawdown.quantize(Decimal("0.0001")) == Decimal("0.0490")
+    assert snap4.max_drawdown.quantize(Decimal("0.0001")) == Decimal("0.0490")
     assert snap4.drawdown_duration_sessions == 2
 
     # Session 5: Price rockets to 1300
     snap5 = portfolio.mark_to_market(s5, {"TCS": Decimal("1300.00")})
-    # Equity = 899857.66 + 130000 = 1029857.66 (surpasses previous peak!)
     assert snap5.total_portfolio_value == Decimal("1029857.66")
     assert snap5.peak_portfolio_value == Decimal("1029857.66")
-    assert snap5.current_drawdown == Decimal("0.0000")
+    assert snap5.current_drawdown == Decimal("0.00")
     assert snap5.drawdown_duration_sessions == 0
-    assert snap5.max_drawdown == Decimal("0.0490")  # max drawdown recorded remains 4.90%
+    assert snap5.max_drawdown.quantize(Decimal("0.0001")) == Decimal("0.0490")
 
 
 def test_portfolio_mark_to_market_fail_closed_missing_price():
@@ -413,3 +420,173 @@ def test_portfolio_mark_to_market_rejects_non_monotonic_dates():
     portfolio.mark_to_market(d1, {})
     with pytest.raises(LedgerValidationError, match="must be strictly after last valuation date"):
         portfolio.mark_to_market(d2, {})
+
+
+# ==============================================================================
+# 4. Audit §13 Remediation Probes (I-1, I-2, I-3, I-4, I-5, I-7)
+# ==============================================================================
+
+
+def test_finding_i1_process_fill_atomicity_and_short_sale_leaves_cash_untouched():
+    """
+    Verify I-1 remediation:
+    Portfolio.process_fill pre-validates position transitions before moving cash.
+    A rejected oversell raises LedgerValidationError and leaves the cash balance
+    and ledger entries count COMPLETELY UNTOUCHED (zero fabricated inflows).
+    """
+    portfolio = Portfolio(initial_capital=Decimal("1000000.00"))
+    d1 = datetime.date(2026, 11, 10)
+    d2 = datetime.date(2026, 11, 11)
+
+    # 1. Buy 100 shares of RELIANCE
+    buy_fill = _make_dummy_fill("RELIANCE", OrderSide.BUY, 100, Decimal("1000.00"), d1)
+    portfolio.process_fill(buy_fill, enforce_risk_limits=False)
+    cash_after_buy = portfolio.ledger.current_cash
+    entries_count_after_buy = len(portfolio.ledger.entries)
+    assert cash_after_buy == Decimal("899857.66")
+    assert entries_count_after_buy == 2
+
+    # 2. Attempt illegal oversell: sell 200 shares when holding only 100
+    oversell_fill = _make_dummy_fill("RELIANCE", OrderSide.SELL, 200, Decimal("1000.00"), d2)
+    with pytest.raises(LedgerValidationError, match="Illegal short delivery: cannot sell 200 shares"):
+        portfolio.process_fill(oversell_fill, enforce_risk_limits=False)
+
+    # Verify atomicity: cash and entries MUST be identical to post-buy state
+    assert portfolio.ledger.current_cash == cash_after_buy
+    assert len(portfolio.ledger.entries) == entries_count_after_buy
+    assert portfolio.get_position("RELIANCE").quantity == 100  # type: ignore
+
+    # 3. Attempt selling an instrument never held (TCS)
+    never_held_fill = _make_dummy_fill("TCS", OrderSide.SELL, 50, Decimal("3500.00"), d2)
+    with pytest.raises(LedgerValidationError, match="Illegal short delivery: cannot sell 50 shares of TCS"):
+        portfolio.process_fill(never_held_fill, enforce_risk_limits=False)
+
+    assert portfolio.ledger.current_cash == cash_after_buy
+    assert len(portfolio.ledger.entries) == entries_count_after_buy
+
+
+def test_finding_i2_idempotent_fill_processing_rejection():
+    """
+    Verify I-2 remediation:
+    The same ExecutionFillResult processed twice is rejected on the second call.
+    Replays fail closed without double-debiting cash or duplicating entries.
+    """
+    portfolio = Portfolio(initial_capital=Decimal("1000000.00"))
+    d1 = datetime.date(2026, 11, 10)
+
+    buy_fill = _make_dummy_fill("INFY", OrderSide.BUY, 100, Decimal("1000.00"), d1)
+    portfolio.process_fill(buy_fill, enforce_risk_limits=False)
+    cash_after_first = portfolio.ledger.current_cash
+    entries_after_first = len(portfolio.ledger.entries)
+
+    # Replaying the exact same fill must raise LedgerValidationError
+    with pytest.raises(LedgerValidationError, match="Duplicate entry rejected: fill"):
+        portfolio.process_fill(buy_fill, enforce_risk_limits=False)
+
+    assert portfolio.ledger.current_cash == cash_after_first
+    assert len(portfolio.ledger.entries) == entries_after_first
+
+
+def test_finding_i3_concentration_cap_includes_statutory_charges():
+    """
+    Verify I-3 remediation:
+    Concentration limit evaluates total capital deployed (gross amount + statutory charges).
+    A buy of exactly 10.00% gross deployed capital exceeds 10.00% once charges are included,
+    and fails closed with PortfolioRiskLimitError.
+    """
+    criteria = load_go_no_go_criteria()
+    # Portfolio equity = ₹1,000,000
+    portfolio = Portfolio(initial_capital=Decimal("1000000.00"), criteria=criteria)
+    d1 = datetime.date(2026, 11, 10)
+
+    # Order of 100 shares @ ₹1000.00 = gross ₹100,000.00 (exactly 10.00% gross).
+    # With statutory charges (~₹142.34), total deployed = ₹100,142.34 (10.0142% > 10.00%).
+    exact_gross_fill = _make_dummy_fill("RELIANCE", OrderSide.BUY, 100, Decimal("1000.00"), d1)
+    with pytest.raises(PortfolioRiskLimitError, match="Allocation breach for 'RELIANCE'"):
+        portfolio.process_fill(exact_gross_fill, enforce_risk_limits=True)
+
+    # A 9% allocation (90 shares = ₹90,130.46 deployed = 9.01% <= 10.00%) passes
+    valid_fill = _make_dummy_fill("RELIANCE", OrderSide.BUY, 90, Decimal("1000.00"), d1)
+    entry = portfolio.process_fill(valid_fill, enforce_risk_limits=True)
+    assert entry.amount == Decimal("-90130.46")
+
+
+def test_finding_i4_drawdown_breach_precision_preserves_threshold_crossing():
+    """
+    Verify I-4 remediation:
+    Drawdown comparison is unrounded. An equity drop of 0.25001 against max_portfolio_drawdown
+    of 0.25 correctly flags is_max_drawdown_breached == True without premature 4 dp rounding loss.
+    """
+    criteria = load_go_no_go_criteria()
+    portfolio = Portfolio(initial_capital=Decimal("100000.00"), criteria=criteria)
+    d1 = datetime.date(2026, 11, 10)
+
+    # Buy 1 share @ ₹74,999.00
+    fill = _make_dummy_fill("NIFTY_BEES", OrderSide.BUY, 1, Decimal("74999.00"), d1)
+    portfolio.process_fill(fill, enforce_risk_limits=False)
+
+    # Session MTM: market price is ₹74,999.00, but charges caused equity to drop to ₹99857.66
+    # To test exact Probe G: force portfolio total equity to ₹74,999.00
+    # Peak was 100,000.00. If current value is 74,999.00, drop = 25,001.00 / 100,000.00 = 0.25001
+    portfolio._peak_portfolio_value = Decimal("100000.00")
+    # Take snapshot with price that causes equity to be exactly ₹74,999.00
+    # Current cash is 100,000 - (74999 + 112.65) = 24888.35
+    # If market price is 50110.65: equity = 24888.35 + 50110.65 = 74999.00
+    snap = portfolio.mark_to_market(d1, {"NIFTY_BEES": Decimal("50110.65")})
+    assert snap.total_portfolio_value == Decimal("74999.00")
+    assert portfolio.current_drawdown == Decimal("0.25001")
+    assert portfolio.is_max_drawdown_breached is True
+
+
+def test_finding_i5_chronological_ordering_rejects_past_dated_entry():
+    """
+    Verify I-5 remediation:
+    CashLedger enforces chronological date monotonicity.
+    Posting an entry on 11 Nov after an entry on 12 Nov raises LedgerValidationError.
+    """
+    ledger = CashLedger(initial_capital=Decimal("100000.00"))
+    d_later = datetime.date(2026, 11, 12)
+    d_earlier = datetime.date(2026, 11, 11)
+
+    ledger.deposit(d_later, Decimal("1000.00"))
+    with pytest.raises(LedgerValidationError, match="Non-monotonic trade_date"):
+        ledger.deposit(d_earlier, Decimal("500.00"))
+
+
+def test_finding_i7_proportional_basis_eliminates_sub_paise_drift():
+    """
+    Verify I-7 remediation (Probe D''):
+    Deriving partial-sale cost basis proportionally directly from total_cost_basis
+    eliminates sub-paise drift across multiple partial sales, leaving exactly 0.00 on full exit.
+    """
+    pos = Position("INFY")
+    d1 = datetime.date(2026, 11, 10)
+    d2 = datetime.date(2026, 11, 11)
+    d3 = datetime.date(2026, 11, 12)
+    d4 = datetime.date(2026, 11, 13)
+
+    # Buy 3 shares @ ₹333.3333... (total ₹1000.00)
+    # Using 3 shares with total cost basis 1000.00:
+    buy_fill = _make_dummy_fill("INFY", OrderSide.BUY, 3, Decimal("333.33"), d1)
+    pos.apply_fill(buy_fill)
+    # Initial cost basis is 3 * 333.33 = 999.99
+    assert pos.quantity == 3
+
+    # Sell 1 share
+    sell_1 = _make_dummy_fill("INFY", OrderSide.SELL, 1, Decimal("350.00"), d2)
+    pos.apply_fill(sell_1)
+    assert pos.quantity == 2
+
+    # Sell 1 share
+    sell_2 = _make_dummy_fill("INFY", OrderSide.SELL, 1, Decimal("350.00"), d3)
+    pos.apply_fill(sell_2)
+    assert pos.quantity == 1
+
+    # Sell final share
+    sell_3 = _make_dummy_fill("INFY", OrderSide.SELL, 1, Decimal("350.00"), d4)
+    pos.apply_fill(sell_3)
+    assert pos.quantity == 0
+    assert pos.is_closed is True
+    # Invariant: residual cost basis and unallocated charges MUST be exactly 0.00
+    assert pos.total_cost_basis == Decimal("0.00")
+    assert pos.unallocated_buy_charges == Decimal("0.00")

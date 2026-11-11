@@ -9,7 +9,7 @@ Enforces:
 
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from signal_core.contracts.criteria import GoNoGoCriteria, load_go_no_go_criteria
 from signal_core.execution.simulator import ExecutionFillResult
@@ -40,19 +40,25 @@ class Portfolio:
         initial_capital: Decimal = Decimal("0.00"),
         criteria: Optional[GoNoGoCriteria] = None,
         allow_overdraft: bool = False,
+        initial_date: Optional[datetime.date] = None,
     ) -> None:
         if isinstance(initial_capital, bool) or not isinstance(initial_capital, Decimal) or not initial_capital.is_finite() or initial_capital < 0:
             raise LedgerValidationError(f"initial_capital must be non-negative Decimal, got {initial_capital!r}")
 
         self._criteria = criteria if criteria is not None else load_go_no_go_criteria()
-        self._ledger = CashLedger(initial_capital=initial_capital, allow_overdraft=allow_overdraft)
+        self._ledger = CashLedger(
+            initial_capital=initial_capital,
+            allow_overdraft=allow_overdraft,
+            initial_date=initial_date,
+        )
         self._positions: Dict[str, Position] = {}
         self._peak_portfolio_value: Decimal = _quantize_paise(initial_capital)
-        self._current_drawdown: Decimal = Decimal("0.0000")
-        self._max_drawdown: Decimal = Decimal("0.0000")
+        self._current_drawdown: Decimal = Decimal("0.00")
+        self._max_drawdown: Decimal = Decimal("0.00")
         self._drawdown_duration_sessions: int = 0
         self._snapshots: List[PortfolioSnapshot] = []
         self._last_valuation_date: Optional[datetime.date] = None
+        self._processed_fill_ids: Set[int] = set()
 
     @property
     def ledger(self) -> CashLedger:
@@ -156,7 +162,8 @@ class Portfolio:
         latest_market_prices: Optional[Mapping[str, Decimal]] = None,
     ) -> None:
         """
-        Validates whether proposed order value complies with max_single_position_weight.
+        Validates whether proposed capital deployment complies with max_single_position_weight.
+        Evaluates unrounded exact allocation weight against committed criteria (I-3, I-4).
         Fails closed with PortfolioRiskLimitError if limit would be breached.
         """
         if isinstance(proposed_order_value, bool) or not isinstance(proposed_order_value, Decimal) or not proposed_order_value.is_finite() or proposed_order_value < 0:
@@ -180,11 +187,11 @@ class Portfolio:
                 existing_pos_val = pos.total_cost_basis
 
         proposed_pos_val = existing_pos_val + proposed_order_value
-        allocation_weight = (proposed_pos_val / total_equity).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        allocation_weight = proposed_pos_val / total_equity
 
         if allocation_weight > self._criteria.max_single_position_weight:
             raise PortfolioRiskLimitError(
-                f"Allocation breach for '{instrument_id}': proposed weight {allocation_weight:.4f} "
+                f"Allocation breach for '{instrument_id}': proposed weight {allocation_weight:.6f} "
                 f"exceeds maximum allowed single position weight {self._criteria.max_single_position_weight} "
                 f"(₹{proposed_pos_val} / ₹{total_equity})."
             )
@@ -194,12 +201,16 @@ class Portfolio:
         fill: ExecutionFillResult,
         enforce_risk_limits: bool = True,
         latest_market_prices: Optional[Mapping[str, Decimal]] = None,
+        reference_id: Optional[str] = None,
     ) -> CashLedgerEntry:
         """
-        Processes an executed trade fill:
-        1. Validates risk limits (max_single_position_weight on BUY).
-        2. Posts cash inflow/outflow to the CashLedger.
-        3. Updates the target instrument's Position (cost basis, realized PnL, average price).
+        Processes an executed trade fill atomically:
+        1. Pre-validates fill parameters, status, and costs.
+        2. Pre-validates short-sale / held quantity for SELL fills before moving cash (I-1).
+        3. Pre-validates concentration risk limits on total capital deployed for BUY fills (I-3).
+        4. Pre-validates fill idempotency against double-posting / replays (I-2).
+        5. Posts cash entry to CashLedger with exact paise quantization.
+        6. Updates target Position; rolls back CashLedger entry if position update fails.
         """
         if not isinstance(fill, ExecutionFillResult):
             raise LedgerValidationError(f"Expected ExecutionFillResult, got {type(fill)}")
@@ -209,20 +220,46 @@ class Portfolio:
                 f"Cannot process non-fill outcome '{fill.status.value}' in portfolio: {fill.rejection_reason}"
             )
 
+        if fill.costs is None:
+            raise LedgerValidationError("ExecutionFillResult lacks required TransactionCostBreakdown.")
+
         inst_id = fill.order.instrument_id
-        gross_trade_value = _quantize_paise(Decimal(fill.filled_quantity) * fill.executed_price)
+        pos = self.get_position(inst_id)
 
+        # 1. Pre-validate short delivery before any cash movement (I-1)
+        if fill.order.side == OrderSide.SELL:
+            held_quantity = 0 if pos is None else pos.quantity
+            if held_quantity < fill.filled_quantity:
+                raise LedgerValidationError(
+                    f"Illegal short delivery: cannot sell {fill.filled_quantity} shares of {inst_id}; "
+                    f"only {held_quantity} held in portfolio."
+                )
+
+        # 2. Pre-validate risk limits with full capital outlay (gross + charges) (I-3)
+        paise_costs = fill.costs.to_paise()
         if enforce_risk_limits and fill.order.side == OrderSide.BUY:
-            self.validate_allocation(inst_id, gross_trade_value, latest_market_prices)
+            capital_outlay = paise_costs.gross_amount + paise_costs.total_charges
+            self.validate_allocation(inst_id, capital_outlay, latest_market_prices)
 
-        # 1. Post to CashLedger (enforces overdraft protection and paise quantization)
-        entry = self._ledger.record_fill(fill)
+        # 3. Pre-validate idempotency before posting to ledger (I-2)
+        fill_ref = reference_id if reference_id is not None else f"FILL_{inst_id}_{fill.fill_date}"
+        if id(fill) in self._processed_fill_ids or fill_ref in self._ledger._posted_reference_ids:
+            raise LedgerValidationError(
+                f"Duplicate entry rejected: fill '{fill_ref}' has already been posted to portfolio."
+            )
 
-        # 2. Update Position
-        if inst_id not in self._positions:
-            self._positions[inst_id] = Position(inst_id)
-        
-        self._positions[inst_id].apply_fill(fill)
+        # 4. Post to CashLedger
+        entry = self._ledger.record_fill(fill, reference_id=fill_ref)
+
+        # 5. Update Position with atomic rollback safety
+        try:
+            if inst_id not in self._positions:
+                self._positions[inst_id] = Position(inst_id)
+            self._positions[inst_id].apply_fill(fill)
+            self._processed_fill_ids.add(id(fill))
+        except Exception:
+            self._ledger._rollback_last_entry()
+            raise
 
         return entry
 
@@ -238,7 +275,7 @@ class Portfolio:
         - Date monotonicity (as_of_date must be strictly after previous valuation date).
         - Fail-closed price verification: every open position MUST have an explicit,
           positive Decimal market price provided. Zero silent omitting or NaN forward-filling.
-        - Accurate tracking of peak portfolio value, session drawdown, and drawdown duration.
+        - Exact Decimal drawdown tracking without premature rounding loss (I-4).
         """
         if type(as_of_date) is not datetime.date:
             raise LedgerValidationError(f"as_of_date must be exact datetime.date, got {type(as_of_date).__name__}")
@@ -277,15 +314,15 @@ class Portfolio:
         cash_balance = self._ledger.current_cash
         total_val = _quantize_paise(cash_balance + total_market_val)
 
-        # Drawdown calculation
+        # Drawdown calculation with exact Decimal precision (I-4)
         if total_val >= self._peak_portfolio_value:
             self._peak_portfolio_value = total_val
-            self._current_drawdown = Decimal("0.0000")
+            self._current_drawdown = Decimal("0.00")
             self._drawdown_duration_sessions = 0
         else:
             if self._peak_portfolio_value > Decimal("0.00"):
                 dd = (self._peak_portfolio_value - total_val) / self._peak_portfolio_value
-                self._current_drawdown = dd.quantize(DRAWDOWN_PRECISION, rounding=ROUND_HALF_UP)
+                self._current_drawdown = dd
                 if self._current_drawdown > self._max_drawdown:
                     self._max_drawdown = self._current_drawdown
             self._drawdown_duration_sessions += 1
@@ -307,3 +344,4 @@ class Portfolio:
         self._last_valuation_date = as_of_date
 
         return snapshot
+

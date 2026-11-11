@@ -92,12 +92,10 @@ class Position:
     def unallocated_buy_charges(self) -> Decimal:
         return self._unallocated_buy_charges
 
-    def apply_fill(self, fill: ExecutionFillResult) -> Tuple[Decimal, Decimal]:
+    def validate_fill(self, fill: ExecutionFillResult) -> None:
         """
-        Updates the position based on an executed fill.
-        
-        Returns:
-            Tuple[Decimal, Decimal]: (realized_gross_pnl_for_fill, realized_net_pnl_for_fill)
+        Validates whether a fill can be safely applied to this position.
+        Fails closed before modifying any state.
         """
         if not isinstance(fill, ExecutionFillResult):
             raise LedgerValidationError(f"Expected ExecutionFillResult, got {type(fill)}")
@@ -115,10 +113,29 @@ class Position:
         if fill.costs is None:
             raise LedgerValidationError("ExecutionFillResult lacks required TransactionCostBreakdown.")
 
-        paise_costs = fill.costs.to_paise()
+        if fill.filled_quantity <= 0:
+            raise LedgerValidationError(f"Fill quantity must be positive, got {fill.filled_quantity}")
+
+        if fill.order.side == OrderSide.SELL:
+            if fill.filled_quantity > self._quantity:
+                raise LedgerValidationError(
+                    f"Illegal short delivery: cannot sell {fill.filled_quantity} shares of {self._instrument_id}; "
+                    f"only {self._quantity} shares held."
+                )
+
+    def apply_fill(self, fill: ExecutionFillResult) -> Tuple[Decimal, Decimal]:
+        """
+        Updates the position based on an executed fill.
+        
+        Returns:
+            Tuple[Decimal, Decimal]: (realized_gross_pnl_for_fill, realized_net_pnl_for_fill)
+        """
+        self.validate_fill(fill)
+
+        paise_costs = fill.costs.to_paise()  # type: ignore[union-attr]
         charges = paise_costs.total_charges
         qty = fill.filled_quantity
-        price = fill.executed_price
+        price = fill.executed_price  # type: ignore[assignment]
 
         if fill.order.side == OrderSide.BUY:
             gross = _quantize_paise(Decimal(qty) * price)
@@ -135,12 +152,6 @@ class Position:
             return (Decimal("0.00"), Decimal("0.00"))
 
         elif fill.order.side == OrderSide.SELL:
-            if qty > self._quantity:
-                raise LedgerValidationError(
-                    f"Illegal short delivery: cannot sell {qty} shares of {self._instrument_id}; "
-                    f"only {self._quantity} shares held."
-                )
-
             gross_proceeds = _quantize_paise(Decimal(qty) * price)
             self._total_charges_paid += charges
 
@@ -154,17 +165,20 @@ class Position:
                 self._quantity = 0
                 self._average_entry_price = Decimal("0.0000")
             else:
-                # Partial reduction
+                # Partial reduction: basis derived proportionally directly from total_cost_basis (I-7)
                 allocated_buy_charges = _quantize_paise(
                     self._unallocated_buy_charges * Decimal(qty) / Decimal(self._quantity)
                 )
                 sold_cost_basis = _quantize_paise(
-                    self._average_entry_price * Decimal(qty)
+                    self._total_cost_basis * Decimal(qty) / Decimal(self._quantity)
                 )
 
                 self._unallocated_buy_charges -= allocated_buy_charges
                 self._total_cost_basis -= sold_cost_basis
                 self._quantity -= qty
+                self._average_entry_price = (
+                    self._total_cost_basis / Decimal(self._quantity)
+                ).quantize(PRICE_PRECISION, rounding=ROUND_HALF_UP)
 
             gross_pnl = gross_proceeds - sold_cost_basis
             net_pnl = gross_pnl - charges - allocated_buy_charges
@@ -202,3 +216,4 @@ class Position:
             realized_gross_pnl=self._realized_gross_pnl,
             total_charges_paid=self._total_charges_paid,
         )
+
