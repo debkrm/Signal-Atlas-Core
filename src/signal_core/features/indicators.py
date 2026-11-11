@@ -400,6 +400,15 @@ def compute_macd(
     return macd_line, signal_line, histogram
 
 
+def _extract_close_and_date(item: Union[PriceBar, ExchangeSessionObservation]) -> Tuple[datetime.date, Decimal]:
+    """Helper to extract trade_date and close price polymorphically."""
+    if isinstance(item, ExchangeSessionObservation):
+        return item.trade_date, item.price_bar.close
+    elif isinstance(item, PriceBar):
+        return item.trade_date, item.close
+    raise IndicatorValidationError(f"Expected PriceBar or ExchangeSessionObservation, got {type(item).__name__}")
+
+
 def compute_relative_strength(
     stock_records: Sequence[Union[PriceBar, ExchangeSessionObservation]],
     benchmark_records: Sequence[Union[PriceBar, ExchangeSessionObservation]],
@@ -421,9 +430,11 @@ def compute_relative_strength(
     if n <= lookback_sessions:
         return [None] * n
 
-    # Extract dates and closes
-    stock_dates = [b.trade_date for b in stock_records]
-    bench_by_date = {b.trade_date: b.close for b in benchmark_records}
+    # Extract dates and closes polymorphically
+    stock_tuples = [_extract_close_and_date(b) for b in stock_records]
+    bench_tuples = [_extract_close_and_date(b) for b in benchmark_records]
+    stock_dates = [t[0] for t in stock_tuples]
+    bench_by_date = {t[0]: t[1] for t in bench_tuples}
 
     result: List[Optional[Decimal]] = [None] * lookback_sessions
 
@@ -436,8 +447,8 @@ def compute_relative_strength(
             result.append(None)
             continue
 
-        s_curr = stock_records[i].close
-        s_past = stock_records[i - lookback_sessions].close
+        s_curr = stock_tuples[i][1]
+        s_past = stock_tuples[i - lookback_sessions][1]
         b_curr = bench_by_date[cur_date]
         b_past = bench_by_date[past_date]
 
@@ -471,12 +482,25 @@ class WeeklyBar:
     session_count: int
 
 
+def is_consecutive_iso_week(prev_year: int, prev_week: int, cur_year: int, cur_week: int) -> bool:
+    """Checks whether (cur_year, cur_week) is the immediate consecutive ISO week following (prev_year, prev_week)."""
+    if cur_year == prev_year:
+        return cur_week == prev_week + 1
+    elif cur_year == prev_year + 1:
+        # Check if prev_week was the final ISO week of prev_year (week 52 or 53)
+        last_day_prev = datetime.date(prev_year, 12, 28)
+        _, max_prev_week, _ = last_day_prev.isocalendar()
+        return prev_week == max_prev_week and cur_week == 1
+    return False
+
+
 def aggregate_daily_to_weekly(
     records: Sequence[Union[PriceBar, ExchangeSessionObservation]],
 ) -> List[WeeklyBar]:
     """
     Aggregates daily bars into standard calendar weekly bars (ISO calendar year/week).
     Preserves exact chronological order, handles holidays and truncated trading weeks.
+    Rejects duplicate daily dates (fails closed).
     """
     if not records:
         return []
@@ -485,6 +509,12 @@ def aggregate_daily_to_weekly(
         [r.price_bar if isinstance(r, ExchangeSessionObservation) else r for r in records],
         key=lambda b: b.trade_date,
     )
+
+    seen_dates: Set[datetime.date] = set()
+    for b in sorted_bars:
+        if b.trade_date in seen_dates:
+            raise IndicatorValidationError(f"Duplicate daily bar detected on date: {b.trade_date}")
+        seen_dates.add(b.trade_date)
 
     weekly_bars: List[WeeklyBar] = []
     current_key: Optional[Tuple[int, int]] = None
@@ -568,6 +598,7 @@ def compute_weekly_trend(
     """
     Computes latest weekly trend derived from daily data:
     - Aggregates daily records into weekly bars.
+    - Asserts week-over-week calendar continuity over the trailing weekly_ema_period weeks.
     - Computes weekly EMA (default: 10-week EMA, ~50 daily sessions).
     - Returns (latest_weekly_close, latest_weekly_ema, is_bullish).
     """
@@ -579,7 +610,20 @@ def compute_weekly_trend(
             None,
         )
 
-    w_closes = [b.close for b in weekly_bars]
+    # Verify trailing weekly_ema_period bars form a continuous sequence of ISO weeks
+    trailing_bars = weekly_bars[-weekly_ema_period:]
+    for idx in range(1, len(trailing_bars)):
+        p = trailing_bars[idx - 1]
+        c = trailing_bars[idx]
+        if not is_consecutive_iso_week(p.year, p.week, c.year, c.week):
+            # Gap in weekly continuity! Refuse to smooth across missing calendar weeks
+            return (
+                weekly_bars[-1].close,
+                None,
+                None,
+            )
+
+    w_closes = [b.close for b in trailing_bars]
     w_emas = compute_ema(w_closes, weekly_ema_period)
 
     latest_close = w_closes[-1]
@@ -587,3 +631,4 @@ def compute_weekly_trend(
     is_bullish = (latest_close > latest_ema) if latest_ema is not None else None
 
     return latest_close, latest_ema, is_bullish
+

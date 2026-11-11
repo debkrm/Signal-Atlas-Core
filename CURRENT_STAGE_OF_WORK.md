@@ -4,13 +4,13 @@
 
 | Attribute | Current Status |
 |---|---|
-| **Active Project Phase** | **Phase 1C Completed** — Ready for **Phase 1D** (Indian Execution Realism & Statutory Cost Engine) |
-| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, and pure subsegment feature engine complete |
-| **Offline Test Suite** | **79 passed in 0.69s** (100% pass rate, zero warnings) |
+| **Active Project Phase** | **Phase 1C Completed & Hardened** (All DeepSeek Audit Recommendations Remediated) — Ready for **Phase 1D** |
+| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, and typed criteria loader complete |
+| **Offline Test Suite** | **91 passed in 0.79s** (100% pass rate, zero warnings) |
 | **External Dependencies** | Zero live database connections, zero external network calls, zero shadow simulators |
 | **Historical Provenance** | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` (Strictly maintained, zero false promotions) |
 | **Holdout Containment** | `HOLDOUT_UNLOCK` is strictly **ABSENT**; out-of-sample data remains completely sealed |
-| **Authoritative Criteria** | Committed in [`configs/go_no_go_criteria.yaml`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/configs/go_no_go_criteria.yaml) (DSR, Haircut Sharpe, Max Drawdown, Indian Statutory Cost Schedule) |
+| **Authoritative Criteria** | Committed in [`configs/go_no_go_criteria.yaml`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/configs/go_no_go_criteria.yaml), typed loader in [`criteria.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/criteria.py) (DSR, Haircut Sharpe, Max Drawdown, Effective-Dated Indian Statutory Cost Schedule) |
 | **Approved Strategy Policy** | [`APPROVED_EQ_ONLY_POLICY`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py#L141) (Strict rolling cash equity; Trade-to-Trade `BE` excluded from trade entry) |
 | **Legacy `Signal-Atlas`** | 100% untouched (`historical_dev_dataset_2022_2024.json` SHA-256: `502c6424c79f4856...`) |
 
@@ -65,7 +65,19 @@
   * **Zero Cross-Gap Leakage**: Indicators warm up afresh after any missing session gap; state never spills across non-contiguous dates.
   * **Zero Silent Forward-Filling**: Missing calendar dates return `None`.
   * **Fail-Closed Verification**: Option to fail closed immediately on unexplained gaps.
-  * Comprehensive indicator unit tests in `tests/unit/test_indicators.py` (15 new unit tests, bringing total to 79 passing tests).
+- **Independent External Audit Remediation (DeepSeek Review)** ([`reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md)):
+  * **F-01 (P1)**: Subsegment-bounded `compute_relative_strength`; post-gap RS values warm up afresh with zero cross-gap leakage.
+  * **F-02 (P1)**: Enabled polymorphic handling of `ExchangeSessionObservation` in `compute_relative_strength`.
+  * **F-03 (P1)**: Made subsegment partitioning fail-closed on off-calendar bars.
+  * **F-04 (P2)**: Replaced output-length `assert` with explicit `IndicatorValidationError`.
+  * **F-05 & F-06 (P2)**: Added weekly trend unit test suite and week-over-week ISO calendar continuity validation; duplicate daily dates fail closed.
+  * **F-07 (P2)**: Detected and rejected duplicate trade dates in `PriceSeriesContinuityValidator`.
+  * **F-08 (P2)**: Added golden parity regression test between clean and legacy `DATA-CTNT-V2` digests.
+  * **F-09 (P2)**: Strict float and boolean rejection added to `load_dataset_from_dict`.
+  * **F-11 (P3)**: Enriched `InstrumentTechnicalFeatures` with `raw_series_code`, `series_classification`, and `isin`.
+  * **F-12 (P3)**: Optimized feature engine by partitioning subsegments and validating continuity once upfront per instrument.
+  * **Section 5 / S-1..S-3**: Configured effective-dated historical NSE fee schedule in `go_no_go_criteria.yaml` and implemented typed contract loader [`criteria.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/criteria.py).
+  * Comprehensive regression test suite expanded to **91 passing tests in 0.79s**; all 5 external audit probes pass 100%.
 
 ---
 
@@ -79,11 +91,13 @@ Signal-Atlas-Core/
 ├── WHAT_WE_ARE_BUILDING.md                  # Comprehensive architectural vision & market realities
 ├── CURRENT_STAGE_OF_WORK.md                 # Current progress, completed milestones & roadmap
 ├── configs/
-│   └── go_no_go_criteria.yaml               # Committed quantitative thresholds (DSR, Haircut Sharpe, Costs)
+│   └── go_no_go_criteria.yaml               # Committed quantitative thresholds & effective-dated fee schedule
 ├── scripts/
 │   ├── reconcile_bhavcopy_series.py         # Reproducible Bhavcopy audit tool (strict explicit CLI root)
 │   └── verify_historical_snapshot.py        # Snapshot loader & SHA-256 / canonical fingerprint verifier
 ├── reports/
+│   ├── audit/
+│   │   └── signal_atlas_phase1c_audit_deepseek_review_.md # Independent external audit report
 │   └── reconciliation/
 │       ├── bhavcopy_545_reconciliation.csv  # 545-record row-level audit trail
 │       └── bhavcopy_series_policy_report.md # Policy report & empirical evidence
@@ -92,6 +106,7 @@ Signal-Atlas-Core/
 │       ├── __init__.py
 │       ├── contracts/
 │       │   ├── __init__.py                  # Public domain exports
+│       │   ├── criteria.py                  # Typed Go/No-Go criteria & effective-dated fee loader
 │       │   ├── price_bar.py                 # Immutable Decimal OHLCV contract
 │       │   ├── universe.py                  # Point-in-time UniverseSchedule & UniverseInterval
 │       │   ├── provenance.py                # Cryptographic fingerprinting (DATA-CTNT-V2, UNIV-SCHED-V1)
@@ -108,6 +123,17 @@ Signal-Atlas-Core/
 └── tests/
     ├── fixtures/
     │   └── small_synthetic_dataset.json     # Synthetic test fixture
+    └── unit/
+        ├── test_price_bar.py                # OHLCV invariants, float rejection, decimal validation (10 tests)
+        ├── test_universe.py                 # Universe schedules, date queries, immutability (9 tests)
+        ├── test_provenance.py               # Golden vectors, determinism, dual digest parity (11 tests)
+        ├── test_dataset.py                  # Snapshot construction, immutability, float rejection (11 tests)
+        ├── test_historical_loader.py        # Snapshot parsing, diagnostics, duplicate rejection (11 tests)
+        ├── test_bhavcopy_reconciliation.py  # Series preservation, continuity, subsegments, Cases 1-4 (14 tests)
+        ├── test_indicators.py               # Indicators, subsegment isolation, audit probes (22 tests)
+        └── test_criteria.py                 # Go/No-Go criteria & effective-dated fee resolution (3 tests)
+                                             # Total: 91 passing unit tests in 0.79s
+```
     └── unit/
         ├── test_price_bar.py                # OHLCV invariants, float rejection, decimal validation (10 tests)
         ├── test_universe.py                 # Universe schedules, date queries, immutability (9 tests)

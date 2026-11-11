@@ -185,6 +185,54 @@ class DatasetSnapshot:
             )
 
 
+def _parse_dict_decimal(val: Any, field_name: str) -> Decimal:
+    """Parses a dictionary numeric field into exact Decimal, strictly rejecting floats and booleans."""
+    if val is None:
+        raise DatasetValidationError(f"Missing required Decimal field '{field_name}'.")
+    if isinstance(val, bool):
+        raise DatasetValidationError(f"Field '{field_name}' cannot be a boolean.")
+    if isinstance(val, float):
+        raise DatasetValidationError(f"Field '{field_name}' cannot be a binary float. Exact Decimal or string required.")
+    if isinstance(val, Decimal):
+        if not val.is_finite():
+            raise DatasetValidationError(f"Field '{field_name}' must be finite: {val}.")
+        return val
+    if isinstance(val, (int, str)):
+        try:
+            d = Decimal(str(val))
+            if not d.is_finite():
+                raise DatasetValidationError(f"Field '{field_name}' must be finite: {val}.")
+            return d
+        except Exception as exc:
+            raise DatasetValidationError(f"Invalid Decimal for '{field_name}': {val!r}") from exc
+    raise DatasetValidationError(f"Field '{field_name}' must be Decimal, string, or int, got {type(val).__name__}.")
+
+
+def _parse_dict_volume(val: Any, field_name: str = "volume") -> int:
+    """Parses a dictionary volume field into integer, strictly rejecting floats and non-integer truncation."""
+    if val is None:
+        raise DatasetValidationError(f"Missing required field '{field_name}'.")
+    if isinstance(val, bool):
+        raise DatasetValidationError(f"Field '{field_name}' cannot be a boolean.")
+    if isinstance(val, float):
+        raise DatasetValidationError(f"Field '{field_name}' cannot be a binary float. Exact integer required.")
+    if isinstance(val, int):
+        if val < 0:
+            raise DatasetValidationError(f"Field '{field_name}' must be non-negative (>= 0): {val}.")
+        return val
+    if isinstance(val, str):
+        try:
+            if "." in val:
+                raise ValueError()
+            v = int(val)
+            if v < 0:
+                raise ValueError()
+            return v
+        except Exception as exc:
+            raise DatasetValidationError(f"Field '{field_name}' must be a non-negative integer string, got {val!r}.") from exc
+    raise DatasetValidationError(f"Field '{field_name}' must be an integer, got {type(val).__name__}.")
+
+
 def load_dataset_from_dict(
     payload: Dict[str, Any],
 ) -> Tuple[DatasetSnapshot, Dict[str, List[PriceBar]], List[PriceBar], Optional[UniverseSchedule]]:
@@ -227,12 +275,12 @@ def load_dataset_from_dict(
                 PriceBar(
                     instrument_id=inst_id,
                     trade_date=datetime.date.fromisoformat(b["trade_date"]),
-                    open=Decimal(str(b["open"])),
-                    high=Decimal(str(b["high"])),
-                    low=Decimal(str(b["low"])),
-                    close=Decimal(str(b["close"])),
-                    volume=int(b["volume"]),
-                    traded_value=Decimal(str(b["traded_value"])) if b.get("traded_value") is not None else None,
+                    open=_parse_dict_decimal(b.get("open"), "open"),
+                    high=_parse_dict_decimal(b.get("high"), "high"),
+                    low=_parse_dict_decimal(b.get("low"), "low"),
+                    close=_parse_dict_decimal(b.get("close"), "close"),
+                    volume=_parse_dict_volume(b.get("volume"), "volume"),
+                    traded_value=_parse_dict_decimal(b.get("traded_value"), "traded_value") if b.get("traded_value") is not None else None,
                     currency=b.get("currency", "INR"),
                 )
             )
@@ -246,12 +294,12 @@ def load_dataset_from_dict(
             PriceBar(
                 instrument_id=b.get("instrument_id", "BENCHMARK"),
                 trade_date=datetime.date.fromisoformat(b["trade_date"]),
-                open=Decimal(str(b["open"])),
-                high=Decimal(str(b["high"])),
-                low=Decimal(str(b["low"])),
-                close=Decimal(str(b["close"])),
-                volume=int(b["volume"]),
-                traded_value=Decimal(str(b["traded_value"])) if b.get("traded_value") is not None else None,
+                open=_parse_dict_decimal(b.get("open"), "open"),
+                high=_parse_dict_decimal(b.get("high"), "high"),
+                low=_parse_dict_decimal(b.get("low"), "low"),
+                close=_parse_dict_decimal(b.get("close"), "close"),
+                volume=_parse_dict_volume(b.get("volume"), "volume"),
+                traded_value=_parse_dict_decimal(b.get("traded_value"), "traded_value") if b.get("traded_value") is not None else None,
                 currency=b.get("currency", "INR"),
             )
         )

@@ -276,3 +276,52 @@ def test_load_dataset_from_synthetic_fixture():
     computed_univ_fp = compute_universe_schedule_fingerprint(universe_sched)
     assert computed_univ_fp == snap.universe_fingerprint
     assert computed_univ_fp == "UNIV-SCHED-V1-c120e21fc4b4bb6397bd9b664ac8f63c"
+
+
+def test_load_dataset_from_dict_rejects_floats_and_truncated_volumes():
+    """
+    Finding F-09 Regression Test:
+    Verify that load_dataset_from_dict strictly rejects binary float prices,
+    booleans, and non-integer truncation in volume (Probe 5 from audit).
+    """
+    base_payload = {
+        "metadata": {
+            "dataset_id": "D",
+            "schema_version": "v1.0",
+            "price_convention": "UNADJUSTED_RAW",
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-01",
+            "session_count": 1,
+            "instrument_count": 1,
+            "total_instrument_records": 1,
+            "total_price_records": 1,
+            "source_identity": "TEST",
+            "content_fingerprint": "DATA-CTNT-V2-test",
+        },
+        "universe_by_date": {"2024-01-01": ["A"]},
+    }
+
+    # 1. Float close price
+    float_price_payload = dict(base_payload)
+    float_price_payload["prices_by_instrument"] = {
+        "A": [{"trade_date": "2024-01-01", "open": "100.00", "high": "105.00", "low": "95.00", "close": 105.2, "volume": 100}]
+    }
+    with pytest.raises(DatasetValidationError, match="cannot be a binary float"):
+        load_dataset_from_dict(float_price_payload)
+
+    # 2. Float volume
+    float_vol_payload = dict(base_payload)
+    float_vol_payload["prices_by_instrument"] = {
+        "A": [{"trade_date": "2024-01-01", "open": "100.00", "high": "105.00", "low": "95.00", "close": "100.00", "volume": 10.9}]
+    }
+    with pytest.raises(DatasetValidationError, match="cannot be a binary float"):
+        load_dataset_from_dict(float_vol_payload)
+
+    # 3. Fractional volume string
+    frac_vol_payload = dict(base_payload)
+    frac_vol_payload["prices_by_instrument"] = {
+        "A": [{"trade_date": "2024-01-01", "open": "100.00", "high": "105.00", "low": "95.00", "close": "100.00", "volume": "10.9"}]
+    }
+    with pytest.raises(DatasetValidationError, match="non-negative integer string"):
+        load_dataset_from_dict(frac_vol_payload)
+

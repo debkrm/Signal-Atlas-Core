@@ -14,6 +14,7 @@ from decimal import Decimal
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from signal_core.contracts.exchange_series import (
+    ExchangeSeries,
     ExchangeSessionObservation,
     InstrumentListingInterval,
     PriceSeriesContinuityValidator,
@@ -42,6 +43,7 @@ class InstrumentTechnicalFeatures:
     """
     Immutable container of computed technical indicators for a single market session.
     All numeric fields are exact Decimal instances (or None during warm-up).
+    Preserves raw and typed series classification and ISIN anchor for strategy eligibility checks.
     """
     instrument_id: str
     trade_date: datetime.date
@@ -50,6 +52,9 @@ class InstrumentTechnicalFeatures:
     high: Decimal
     low: Decimal
     volume: int
+    raw_series_code: Optional[str] = None
+    series_classification: Optional[ExchangeSeries] = None
+    isin: Optional[str] = None
     sma_20: Optional[Decimal] = None
     sma_50: Optional[Decimal] = None
     ema_20: Optional[Decimal] = None
@@ -119,9 +124,10 @@ class SubsegmentIndicatorEngine:
 
         for segment in subsegments:
             seg_values = indicator_fn(segment)
-            assert len(seg_values) == len(segment), (
-                f"Indicator output length ({len(seg_values)}) does not match segment length ({len(segment)})"
-            )
+            if len(seg_values) != len(segment):
+                raise IndicatorValidationError(
+                    f"Indicator output length ({len(seg_values)}) does not match segment length ({len(segment)})."
+                )
             for bar, val in zip(segment, seg_values):
                 results_by_date[bar.trade_date] = val
 
@@ -150,64 +156,71 @@ class SubsegmentIndicatorEngine:
             return []
 
         sorted_bars = sorted(actual_price_bars, key=lambda b: b.trade_date)
-        inst_id = sorted_bars[0].instrument_id
+        first_item = sorted_bars[0]
+        inst_id = first_item.instrument_id
 
-        # Compute each indicator over continuous subsegments
-        sma_20_map = cls.compute_indicator_on_subsegments(
-            expected_calendar_sessions, sorted_bars, lambda s: compute_sma(s, 20),
-            fail_closed_on_unexplained, listing_interval,
-        )
-        sma_50_map = cls.compute_indicator_on_subsegments(
-            expected_calendar_sessions, sorted_bars, lambda s: compute_sma(s, 50),
-            fail_closed_on_unexplained, listing_interval,
-        )
-        ema_20_map = cls.compute_indicator_on_subsegments(
-            expected_calendar_sessions, sorted_bars, lambda s: compute_ema(s, 20),
-            fail_closed_on_unexplained, listing_interval,
-        )
-        ema_50_map = cls.compute_indicator_on_subsegments(
-            expected_calendar_sessions, sorted_bars, lambda s: compute_ema(s, 50),
-            fail_closed_on_unexplained, listing_interval,
-        )
-        ema_200_map = cls.compute_indicator_on_subsegments(
-            expected_calendar_sessions, sorted_bars, lambda s: compute_ema(s, 200),
-            fail_closed_on_unexplained, listing_interval,
-        )
-        atr_14_map = cls.compute_indicator_on_subsegments(
-            expected_calendar_sessions, sorted_bars, lambda s: compute_atr(s, 14),
-            fail_closed_on_unexplained, listing_interval,
-        )
-        rsi_14_map = cls.compute_indicator_on_subsegments(
-            expected_calendar_sessions, sorted_bars, lambda s: compute_rsi(s, 14),
-            fail_closed_on_unexplained, listing_interval,
-        )
-        hi_20_map = cls.compute_indicator_on_subsegments(
-            expected_calendar_sessions, sorted_bars, lambda s: compute_rolling_high(s, 20),
-            fail_closed_on_unexplained, listing_interval,
-        )
-        lo_20_map = cls.compute_indicator_on_subsegments(
-            expected_calendar_sessions, sorted_bars, lambda s: compute_rolling_low(s, 20),
-            fail_closed_on_unexplained, listing_interval,
-        )
-        hi_50_map = cls.compute_indicator_on_subsegments(
-            expected_calendar_sessions, sorted_bars, lambda s: compute_rolling_high(s, 50),
-            fail_closed_on_unexplained, listing_interval,
-        )
-        lo_50_map = cls.compute_indicator_on_subsegments(
-            expected_calendar_sessions, sorted_bars, lambda s: compute_rolling_low(s, 50),
-            fail_closed_on_unexplained, listing_interval,
+        # 1. Validate continuity ONCE upfront (if requested)
+        if fail_closed_on_unexplained:
+            audit = PriceSeriesContinuityValidator.validate_series_continuity(
+                instrument_id=inst_id,
+                symbol=inst_id,
+                expected_calendar_sessions=expected_calendar_sessions,
+                actual_price_bars=sorted_bars,
+                listing_interval=listing_interval,
+            )
+            if audit.has_unexplained_gaps:
+                raise IndicatorValidationError(
+                    f"Fail-closed: Instrument {inst_id} has {audit.unexplained_missing_count} "
+                    f"unexplained missing session(s). Refusing indicator computation."
+                )
+
+        # 2. Partition into contiguous subsegments ONCE upfront (reused across all indicators)
+        subsegments = PriceSeriesContinuityValidator.partition_into_continuous_subsegments(
+            expected_calendar_sessions=expected_calendar_sessions,
+            actual_price_bars=sorted_bars,
         )
 
+        def _run_subsegment_indicator(
+            fn: Callable[[Sequence[PriceRecordItem]], List[Optional[Decimal]]]
+        ) -> Dict[datetime.date, Optional[Decimal]]:
+            res: Dict[datetime.date, Optional[Decimal]] = {}
+            for seg in subsegments:
+                vals = fn(seg)
+                if len(vals) != len(seg):
+                    raise IndicatorValidationError(
+                        f"Indicator output length ({len(vals)}) does not match segment length ({len(seg)})."
+                    )
+                for b, v in zip(seg, vals):
+                    res[b.trade_date] = v
+            return res
+
+        sma_20_map = _run_subsegment_indicator(lambda s: compute_sma(s, 20))
+        sma_50_map = _run_subsegment_indicator(lambda s: compute_sma(s, 50))
+        ema_20_map = _run_subsegment_indicator(lambda s: compute_ema(s, 20))
+        ema_50_map = _run_subsegment_indicator(lambda s: compute_ema(s, 50))
+        ema_200_map = _run_subsegment_indicator(lambda s: compute_ema(s, 200))
+        atr_14_map = _run_subsegment_indicator(lambda s: compute_atr(s, 14))
+        rsi_14_map = _run_subsegment_indicator(lambda s: compute_rsi(s, 14))
+        hi_20_map = _run_subsegment_indicator(lambda s: compute_rolling_high(s, 20))
+        lo_20_map = _run_subsegment_indicator(lambda s: compute_rolling_low(s, 20))
+        hi_50_map = _run_subsegment_indicator(lambda s: compute_rolling_high(s, 50))
+        lo_50_map = _run_subsegment_indicator(lambda s: compute_rolling_low(s, 50))
+
+        # Relative strength 50 must ALSO be computed strictly per subsegment (zero cross-gap leakage)
         rs_50_map: Dict[datetime.date, Optional[Decimal]] = {}
         if benchmark_bars:
-            rs_values = compute_relative_strength(sorted_bars, benchmark_bars, lookback_sessions=50)
-            for bar, val in zip(sorted_bars, rs_values):
-                rs_50_map[bar.trade_date] = val
+            rs_50_map = _run_subsegment_indicator(
+                lambda s: compute_relative_strength(s, benchmark_bars, lookback_sessions=50)
+            )
 
         features: List[InstrumentTechnicalFeatures] = []
         for bar_item in sorted_bars:
             bar = bar_item.price_bar if isinstance(bar_item, ExchangeSessionObservation) else bar_item
             dt = bar.trade_date
+
+            raw_code = bar_item.raw_series_code if isinstance(bar_item, ExchangeSessionObservation) else None
+            series_cls = bar_item.series_classification if isinstance(bar_item, ExchangeSessionObservation) else None
+            isin = bar_item.isin if isinstance(bar_item, ExchangeSessionObservation) else None
 
             features.append(
                 InstrumentTechnicalFeatures(
@@ -218,6 +231,9 @@ class SubsegmentIndicatorEngine:
                     high=bar.high,
                     low=bar.low,
                     volume=bar.volume,
+                    raw_series_code=raw_code,
+                    series_classification=series_cls,
+                    isin=isin,
                     sma_20=sma_20_map.get(dt),
                     sma_50=sma_50_map.get(dt),
                     ema_20=ema_20_map.get(dt),
@@ -234,3 +250,4 @@ class SubsegmentIndicatorEngine:
             )
 
         return features
+

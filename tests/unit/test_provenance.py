@@ -289,3 +289,32 @@ def test_datetime_subclass_rejection_in_fingerprinting():
             trading_dates=[d_dt],  # type: ignore[list-item]
             prices_by_instrument={"INFY": [b_valid]},
         )
+
+
+def test_dual_digest_parity_data_content_v2():
+    """
+    Finding F-08 Parity Test:
+    Asserts that compute_dataset_content_fingerprint (in provenance.py) and
+    compute_legacy_dataset_content_fingerprint (in legacy_compat.py) yield
+    the exact identical SHA-256 digest for an unadjusted dataset.
+    """
+    from signal_core.contracts.legacy_compat import compute_legacy_dataset_content_fingerprint
+
+    dates, prices, bench = _make_sample_data()
+
+    fp_clean = compute_dataset_content_fingerprint(
+        trading_dates=dates,
+        prices_by_instrument=prices,
+        benchmark_prices=bench,
+    )
+
+    fp_legacy = compute_legacy_dataset_content_fingerprint(
+        trading_dates=dates,
+        prices_by_instrument=prices,
+        benchmark_prices=bench,
+        legacy_adjustments=None,
+    )
+
+    assert fp_clean == fp_legacy
+    assert fp_clean.startswith("DATA-CTNT-V2-")
+    assert len(fp_clean) == 13 + 32  # Prefix (13) + 32 hex chars

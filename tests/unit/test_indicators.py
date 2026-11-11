@@ -517,3 +517,180 @@ def test_compute_standard_features_for_instrument_complete():
     assert features[49].ema_50 is not None
     assert features[49].rolling_high_50 is not None
     assert features[49].rolling_low_50 is not None
+
+
+# ---------------------------------------------------------------------------
+# Section 9: Audit Findings Regression Tests (DeepSeek Peer Review Remediation)
+# ---------------------------------------------------------------------------
+
+def test_finding_f01_relative_strength_gap_isolation():
+    """
+    Finding F-01 Regression Test:
+    Verify that relative_strength_50 NEVER leaks lookbacks across a missing calendar session.
+
+    Setup (Probe 2 from audit):
+    - 60 calendar sessions.
+    - Session index 10 is missing in stock price bars.
+    - Subsegment 1 has 10 bars (indices 0..9).
+    - Subsegment 2 has 49 bars (indices 11..59).
+    - Since lookback is 50 sessions, neither subsegment has 51 continuous bars.
+    - Therefore, ALL 59 available bars MUST have relative_strength_50 == None.
+    - (The unpatched bug produced 9 contaminated non-None values by spanning the gap).
+    """
+    d0 = datetime.date(2022, 1, 3)
+    calendar = [d0 + datetime.timedelta(days=i) for i in range(60)]
+    gap_date = calendar[10]
+
+    stock_bars = [_make_bar(d, close=str(100 + i)) for i, d in enumerate(calendar) if d != gap_date]
+    bench_bars = [_make_bar(d, close=str(1000 + i), inst_id="BENCH") for i, d in enumerate(calendar)]
+
+    features = SubsegmentIndicatorEngine.compute_standard_features_for_instrument(
+        expected_calendar_sessions=calendar,
+        actual_price_bars=stock_bars,
+        benchmark_bars=bench_bars,
+    )
+
+    assert len(features) == 59
+    # Invariant: ZERO post-gap bars have relative_strength_50 populated because subsegment len (49) < 51
+    non_none_rs_count = sum(1 for f in features if f.relative_strength_50 is not None)
+    assert non_none_rs_count == 0, f"Expected 0 non-None RS values, got {non_none_rs_count} (cross-gap leakage detected)"
+
+
+def test_finding_f02_compute_relative_strength_with_observations():
+    """
+    Finding F-02 Regression Test:
+    Verify that compute_relative_strength accepts ExchangeSessionObservation directly
+    without raising AttributeError, producing identical values to PriceBar inputs.
+    """
+    d0 = datetime.date(2022, 1, 3)
+    days = [d0 + datetime.timedelta(days=i) for i in range(5)]
+
+    obs_stock = [_make_obs(days[i], str(100 + i * 10)) for i in range(5)]
+    obs_bench = [_make_obs(days[i], str(1000 + i * 10), inst_id="BENCH") for i in range(5)]
+
+    rs_values = compute_relative_strength(obs_stock, obs_bench, lookback_sessions=2)
+    assert len(rs_values) == 5
+    assert rs_values[0] is None
+    assert rs_values[1] is None
+    # Index 2: Stock: (120 - 100) / 100 = 0.2000. Bench: (1020 - 1000) / 1000 = 0.0200. RS = 0.1800
+    assert rs_values[2] == Decimal("0.1800")
+
+
+def test_finding_f03_off_calendar_bar_fails_closed():
+    """
+    Finding F-03 Regression Test:
+    Verify that partition_into_continuous_subsegments raises ValueError when
+    fed an off-calendar price bar (fail-closed invariant).
+    """
+    d0 = datetime.date(2022, 1, 3)
+    cal = [d0, d0 + datetime.timedelta(days=2)]  # Jan 3 and Jan 5
+    off_cal_bar = _make_bar(d0 + datetime.timedelta(days=1), close="101")  # Jan 4 (not in cal)
+
+    bars = [_make_bar(cal[0], close="100"), off_cal_bar, _make_bar(cal[1], close="102")]
+
+    from signal_core.contracts.exchange_series import PriceSeriesContinuityValidator
+    with pytest.raises(ValueError, match="off-calendar date"):
+        PriceSeriesContinuityValidator.partition_into_continuous_subsegments(cal, bars)
+
+
+def test_finding_f04_indicator_output_length_mismatch_raises_validation_error():
+    """
+    Finding F-04 Regression Test:
+    Verify that compute_indicator_on_subsegments raises IndicatorValidationError
+    when an indicator returns an invalid output length (survives python -O).
+    """
+    cal = [datetime.date(2022, 1, 3), datetime.date(2022, 1, 4)]
+    bars = [_make_bar(cal[0], close="100"), _make_bar(cal[1], close="101")]
+
+    # Malformed indicator returning 1 item for a 2-item segment
+    with pytest.raises(IndicatorValidationError, match="Indicator output length"):
+        SubsegmentIndicatorEngine.compute_indicator_on_subsegments(
+            expected_calendar_sessions=cal,
+            actual_price_bars=bars,
+            indicator_fn=lambda seg: [Decimal("100")],  # Only 1 item returned!
+        )
+
+
+def test_finding_f05_f06_weekly_trend_and_gap_detection():
+    """
+    Finding F-05 & F-06 Regression Test:
+    Verify compute_weekly_trend coverage (bullish, bearish, insufficient history)
+    and verify that non-consecutive ISO weeks refuse to smooth across gaps.
+    """
+    d0 = datetime.date(2022, 1, 3)  # Week 1, 2022
+
+    # 1. Insufficient history (< 10 weeks)
+    short_bars = [_make_bar(d0 + datetime.timedelta(weeks=i), close=str(100 + i)) for i in range(5)]
+    close, ema, trend = compute_weekly_trend(short_bars, weekly_ema_period=10)
+    assert close is not None
+    assert ema is None
+    assert trend is None
+
+    # 2. Continuous 12 consecutive weeks (Bullish trend: rising closes)
+    continuous_bars = [_make_bar(d0 + datetime.timedelta(weeks=i), close=str(100 + i * 2)) for i in range(12)]
+    close, ema, trend = compute_weekly_trend(continuous_bars, weekly_ema_period=10)
+    assert close is not None
+    assert ema is not None
+    assert trend is True  # Rising closes -> bullish
+
+    # 3. Continuous 12 consecutive weeks (Bearish trend: falling closes)
+    bearish_bars = [_make_bar(d0 + datetime.timedelta(weeks=i), close=str(200 - i * 5)) for i in range(12)]
+    close, ema, trend = compute_weekly_trend(bearish_bars, weekly_ema_period=10)
+    assert close is not None
+    assert ema is not None
+    assert trend is False  # Falling closes -> bearish
+
+    # 4. Weekly gap: Week 5 is missing (jump from week 4 to week 6)
+    # Refuses to smooth across missing calendar week!
+    gapped_weeks = [0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12]  # week 5 omitted
+    gapped_bars = [_make_bar(d0 + datetime.timedelta(weeks=w), close=str(100 + w)) for w in gapped_weeks]
+    close, ema, trend = compute_weekly_trend(gapped_bars, weekly_ema_period=10)
+    assert close == Decimal("112")
+    assert ema is None  # Fails closed on missing calendar week
+    assert trend is None
+
+    # 5. Duplicate daily dates reject in aggregate_daily_to_weekly
+    dup_bars = [_make_bar(d0, close="100"), _make_bar(d0, close="101")]
+    with pytest.raises(IndicatorValidationError, match="Duplicate daily bar"):
+        aggregate_daily_to_weekly(dup_bars)
+
+
+def test_finding_f07_duplicate_trade_dates_in_validator():
+    """
+    Finding F-07 Regression Test:
+    Verify that validate_series_continuity raises ValueError on duplicate bar dates.
+    """
+    d0 = datetime.date(2022, 1, 3)
+    cal = [d0]
+    bars = [_make_bar(d0, close="100"), _make_bar(d0, close="101")]
+
+    from signal_core.contracts.exchange_series import PriceSeriesContinuityValidator
+    with pytest.raises(ValueError, match="Duplicate price record detected"):
+        PriceSeriesContinuityValidator.validate_series_continuity("INST-1", "TEST", cal, bars)
+
+
+def test_finding_f11_features_enriched_with_series_and_isin():
+    """
+    Finding F-11 Regression Test:
+    Verify that InstrumentTechnicalFeatures preserves raw_series_code,
+    series_classification, and isin when fed ExchangeSessionObservation.
+    """
+    d0 = datetime.date(2022, 1, 3)
+    cal = [d0, d0 + datetime.timedelta(days=1)]
+    obs1 = _make_obs(cal[0], close="100", series="EQ")
+    obs2 = _make_obs(cal[1], close="102", series="BE")
+
+    features = SubsegmentIndicatorEngine.compute_standard_features_for_instrument(
+        expected_calendar_sessions=cal,
+        actual_price_bars=[obs1, obs2],
+    )
+
+    assert len(features) == 2
+    assert features[0].raw_series_code == "EQ"
+    assert features[0].series_classification == ExchangeSeries.EQ
+    assert features[0].isin == "INE000A01001"
+
+    assert features[1].raw_series_code == "BE"
+    assert features[1].series_classification == ExchangeSeries.BE
+    assert features[1].isin == "INE000A01001"
+

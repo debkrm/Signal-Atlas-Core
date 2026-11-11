@@ -335,9 +335,22 @@ class PriceSeriesContinuityValidator:
         Audits price bar coverage session-by-session against an explicit trading calendar.
         Accepts either pure PriceBar instances or enriched ExchangeSessionObservation instances.
         """
-        # Map available records by date
+        # Validate calendar sessions
+        calendar_set = set(expected_calendar_sessions)
+
+        # Map available records by date with duplicate and off-calendar validation
         records_by_date: Dict[datetime.date, PriceRecordItem] = {}
         for item in actual_price_bars:
+            if item.trade_date not in calendar_set:
+                raise ValueError(
+                    f"Price bar for instrument '{instrument_id}' on date {item.trade_date} is not present in expected trading calendar. "
+                    "Fail-closed invariant prohibits unverified off-calendar price observations."
+                )
+            if item.trade_date in records_by_date:
+                raise ValueError(
+                    f"Duplicate price record detected for instrument '{instrument_id}' on date {item.trade_date}. "
+                    "Silent deduplication is prohibited; clean inputs required."
+                )
             records_by_date[item.trade_date] = item
 
         gaps: List[SessionGapRecord] = []
@@ -472,11 +485,38 @@ class PriceSeriesContinuityValidator:
         if not actual_price_bars:
             return []
 
-        # Sort bars by date
-        sorted_records = sorted(actual_price_bars, key=lambda b: b.trade_date)
-        records_by_date = {b.trade_date: b for b in sorted_records}
+        if not expected_calendar_sessions:
+            raise ValueError("expected_calendar_sessions cannot be empty when actual_price_bars are provided.")
 
-        # Filter calendar to range of available bars
+        # Validate calendar is strictly sorted, genuine dates, and unique
+        seen_cal: Set[datetime.date] = set()
+        for i, dt in enumerate(expected_calendar_sessions):
+            if type(dt) is not datetime.date:
+                raise ValueError(f"Calendar date must be genuine datetime.date, got {type(dt).__name__}")
+            if dt in seen_cal:
+                raise ValueError(f"Duplicate calendar session detected in expected_calendar_sessions: {dt}")
+            seen_cal.add(dt)
+            if i > 0 and dt < expected_calendar_sessions[i - 1]:
+                raise ValueError(
+                    f"expected_calendar_sessions must be strictly sorted chronologically: "
+                    f"{expected_calendar_sessions[i-1]} followed by {dt}"
+                )
+
+        calendar_set = seen_cal
+
+        # Check for duplicates and off-calendar bars
+        records_by_date: Dict[datetime.date, PriceRecordItem] = {}
+        for b in actual_price_bars:
+            if b.trade_date not in calendar_set:
+                raise ValueError(
+                    f"Encountered price bar on off-calendar date {b.trade_date} not present in expected trading calendar. "
+                    "Fail-closed invariant prohibits silent data omission."
+                )
+            if b.trade_date in records_by_date:
+                raise ValueError(f"Duplicate price bar detected on date {b.trade_date}.")
+            records_by_date[b.trade_date] = b
+
+        sorted_records = sorted(actual_price_bars, key=lambda b: b.trade_date)
         first_date = sorted_records[0].trade_date
         last_date = sorted_records[-1].trade_date
         relevant_calendar = [d for d in expected_calendar_sessions if first_date <= d <= last_date]

@@ -43,6 +43,13 @@ from signal_core.contracts.legacy_compat import (
     LegacyRecordAdjustmentMetadata,
     compute_legacy_dataset_content_fingerprint,
 )
+from signal_core.contracts.criteria import (
+    CriteriaValidationError,
+    EffectiveDatedExchangeFee,
+    GoNoGoCriteria,
+    StatutoryCostCriteria,
+    load_go_no_go_criteria,
+)
 
 __all__ = [
     "PriceBar",
@@ -74,4 +81,9 @@ __all__ = [
     "PROPOSED_UNAPPROVED_EQ_ONLY_POLICY",
     "QUARANTINED_UNAPPROVED_PERMISSIVE_BE_POLICY",
     "validate_raw_series_code",
+    "GoNoGoCriteria",
+    "StatutoryCostCriteria",
+    "EffectiveDatedExchangeFee",
+    "CriteriaValidationError",
+    "load_go_no_go_criteria",
 ]
