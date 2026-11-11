@@ -782,36 +782,53 @@ def test_r4_initial_deposit_derived_from_first_trade_date():
 
 def test_n1_replay_guard_o1_lookup_and_bounded_memory():
     """
-    Verify N-1 remediation:
+    Verify N-1 & N-13 remediation:
     Replay guard must be O(1) in membership lookup and retain bounded memory.
-    Processing 1000 fills must run with sub-millisecond flat per-fill overhead,
+    Processing 1000 and 4000 fills must run with flat per-fill overhead,
+    scaling ratio must be strictly bounded (< 2.5) to rule out O(n^2) behavior,
     and memory cannot exceed max_pinned_instances.
     """
     import time
-    portfolio = Portfolio(initial_capital=Decimal("50000000.00"))
     start_date = datetime.date(2026, 1, 1)
 
-    fills = []
-    for i in range(1000):
-        d = start_date + datetime.timedelta(days=i)
-        fill = _make_dummy_fill(f"SCRIP_{i}", OrderSide.BUY, 10, Decimal("100.00"), d)
-        fills.append(fill)
-
+    # 1. Benchmark 1,000 fills
+    portfolio_1k = Portfolio(initial_capital=Decimal("500000000.00"), initial_date=start_date)
+    fills_1k = [
+        _make_dummy_fill(f"SCRIP_{i}", OrderSide.BUY, 10, Decimal("100.00"), start_date + datetime.timedelta(days=i))
+        for i in range(1000)
+    ]
     t0 = time.perf_counter()
-    for fill in fills:
-        portfolio.process_fill(fill, enforce_risk_limits=False)
+    for fill in fills_1k:
+        portfolio_1k.process_fill(fill, enforce_risk_limits=False)
     t1 = time.perf_counter()
+    per_fill_1k_us = ((t1 - t0) / 1000) * 1e6
 
-    per_fill_us = ((t1 - t0) / 1000) * 1e6
-    # O(1) dict lookup overhead must be strictly flat and sub-millisecond per fill (typically ~70-150 µs)
-    assert per_fill_us < 1000.0, f"Per fill time too high: {per_fill_us:.2f} µs"
+    # 2. Benchmark 4,000 fills
+    portfolio_4k = Portfolio(initial_capital=Decimal("500000000.00"), initial_date=start_date)
+    fills_4k = [
+        _make_dummy_fill(f"SCRIP_{i}", OrderSide.BUY, 10, Decimal("100.00"), start_date + datetime.timedelta(days=i))
+        for i in range(4000)
+    ]
+    t2 = time.perf_counter()
+    for fill in fills_4k:
+        portfolio_4k.process_fill(fill, enforce_risk_limits=False)
+    t3 = time.perf_counter()
+    per_fill_4k_us = ((t3 - t2) / 4000) * 1e6
+
+    # O(1) dict lookup overhead must be strictly flat and sub-250 µs per fill
+    assert per_fill_1k_us < 250.0, f"Per fill 1k time too high: {per_fill_1k_us:.2f} µs"
+    assert per_fill_4k_us < 250.0, f"Per fill 4k time too high: {per_fill_4k_us:.2f} µs"
+
+    # Scaling ratio must be flat (ratio < 2.5), ruling out quadratic O(n^2) scaling (~4.0x)
+    scaling_ratio = per_fill_4k_us / max(per_fill_1k_us, 1.0)
+    assert scaling_ratio < 2.5, f"Replay guard scaling superlinearly: ratio={scaling_ratio:.2f}"
 
     # Memory retention is bounded
-    assert len(portfolio._processed_fill_instances) <= portfolio._max_pinned_instances
+    assert len(portfolio_4k._processed_fill_instances) <= portfolio_4k._max_pinned_instances
 
     # Replay of any recent fill must be rejected in O(1) time
     with pytest.raises(LedgerValidationError, match="Duplicate entry rejected: fill"):
-        portfolio.process_fill(fills[-1], enforce_risk_limits=False)
+        portfolio_4k.process_fill(fills_4k[-1], enforce_risk_limits=False)
 
 
 def test_n2_sequence_counter_deterministic_without_holes_on_rejection():
@@ -958,5 +975,51 @@ def test_n4_order_id_and_fill_id_validation():
 
     with pytest.raises(LedgerValidationError, match="reference_id must be a non-empty"):
         portfolio.ledger.deposit(trade_date, Decimal("500.00"), reference_id="")
+
+
+def test_n8_generated_sequence_reference_collision_rejected():
+    """
+    Verify N-8 remediation (Gate G8):
+    The generated sequence reference on the anonymous path must be checked
+    against _posted_reference_ids. If an explicit reference already took that
+    reference ID (e.g. FILL_INFY_2026-11-11#1), the colliding generated fill must fail closed.
+    """
+    d = datetime.date(2026, 11, 11)
+    portfolio = Portfolio(initial_capital=Decimal("2000000.00"), initial_date=d)
+
+    # 1. Post explicit entry with reference FILL_INFY_2026-11-11#1
+    portfolio.ledger.deposit(d, Decimal("100.00"), reference_id="FILL_INFY_2026-11-11#1")
+
+    # 2. Attempt anonymous fill on INFY for 2026-11-11
+    # Candidate reference would be FILL_INFY_2026-11-11#1, which already exists!
+    f = _make_dummy_fill("INFY", OrderSide.BUY, 10, Decimal("1000.00"), d)
+    with pytest.raises(LedgerValidationError, match="Duplicate entry rejected: reference_id 'FILL_INFY_2026-11-11#1'"):
+        portfolio.process_fill(f, enforce_risk_limits=False)
+
+    # 3. Assert no duplicate reference in ledger
+    refs = [e.reference_id for e in portfolio.ledger.entries]
+    assert len(refs) == len(set(refs)), f"Duplicate references present in ledger: {refs}"
+
+
+def test_n10_lazy_opening_deposit_anchor_not_mutated_on_rejection():
+    """
+    Verify N-10 remediation (Gate G2):
+    When initial_date is omitted, a rejected fill must NOT mutate the deposit's
+    trade_date or the ledger's _last_trade_date.
+    """
+    d_construct = datetime.date.today()
+    portfolio = Portfolio(initial_capital=Decimal("10000.00"))  # no initial_date supplied
+    assert portfolio.ledger.entries[0].trade_date == d_construct
+    assert portfolio.ledger._last_trade_date == d_construct
+
+    # Attempt rejected fill (overdraft: ₹100,000 outlay against ₹10,000 cash) on a future date
+    d_attempt = d_construct + datetime.timedelta(days=10)
+    f_rejected = _make_dummy_fill("INFY", OrderSide.BUY, 100, Decimal("1000.00"), d_attempt)
+    with pytest.raises(LedgerValidationError, match="Cash overdraft prohibited"):
+        portfolio.process_fill(f_rejected, enforce_risk_limits=False)
+
+    # Ledger state must be completely untouched: deposit trade_date and cursor remain d_construct
+    assert portfolio.ledger.entries[0].trade_date == d_construct
+    assert portfolio.ledger._last_trade_date == d_construct
 
 

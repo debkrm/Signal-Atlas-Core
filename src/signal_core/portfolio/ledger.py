@@ -237,24 +237,14 @@ class CashLedger:
         if type(trade_date) is not datetime.date:
             raise LedgerValidationError(f"trade_date must be exact datetime.date, got {type(trade_date).__name__}")
 
-        # If opening deposit was posted without explicit initial_date, anchor it lazily to the first transaction date (R-4)
-        if not self._initial_date_was_explicit and len(self._entries) == 1 and self._entries[0].reference_id == "INIT_DEPOSIT":
-            init_entry = self._entries[0]
-            if init_entry.trade_date != trade_date:
-                self._entries[0] = CashLedgerEntry(
-                    entry_id=init_entry.entry_id,
-                    trade_date=trade_date,
-                    entry_type=init_entry.entry_type,
-                    amount=init_entry.amount,
-                    balance_after=init_entry.balance_after,
-                    description=init_entry.description,
-                    reference_id=init_entry.reference_id,
-                    circuit_evidence_present=init_entry.circuit_evidence_present,
-                    metadata=init_entry.metadata,
-                )
-                self._last_trade_date = trade_date
+        # Check if opening deposit was posted without explicit initial_date and needs lazy anchoring (R-4, N-10)
+        is_lazy_anchor_pending = (
+            not self._initial_date_was_explicit
+            and len(self._entries) == 1
+            and self._entries[0].reference_id == "INIT_DEPOSIT"
+        )
 
-        if self._last_trade_date is not None and trade_date < self._last_trade_date:
+        if not is_lazy_anchor_pending and self._last_trade_date is not None and trade_date < self._last_trade_date:
             raise LedgerValidationError(
                 f"Non-monotonic trade_date: cannot post entry for date {trade_date} "
                 f"after existing entry on {self._last_trade_date}."
@@ -282,19 +272,40 @@ class CashLedger:
                 f"₹{self._current_cash} would produce negative balance ₹{new_balance}."
             )
 
-        # All validations have passed. Commit sequence reference only now (N-2)
+        # All validations have passed. Commit sequence reference only now (N-2, N-8)
         if reference_id is not None:
             final_ref = reference_id
             seq_key_used = None
         elif seq_prefix is not None:
             seq_key = (seq_prefix, trade_date)
             count = self._fill_reference_counters.get(seq_key, 0) + 1
+            candidate_ref = f"FILL_{seq_prefix}_{trade_date}#{count}"
+            if candidate_ref in self._posted_reference_ids:
+                raise LedgerValidationError(
+                    f"Duplicate entry rejected: reference_id '{candidate_ref}' already posted to ledger."
+                )
             self._fill_reference_counters[seq_key] = count
-            final_ref = f"FILL_{seq_prefix}_{trade_date}#{count}"
+            final_ref = candidate_ref
             seq_key_used = seq_key
         else:
             final_ref = None
             seq_key_used = None
+
+        # Commit lazy re-anchoring of initial deposit only after all validations pass (N-10)
+        if is_lazy_anchor_pending:
+            init_entry = self._entries[0]
+            if init_entry.trade_date != trade_date:
+                self._entries[0] = CashLedgerEntry(
+                    entry_id=init_entry.entry_id,
+                    trade_date=trade_date,
+                    entry_type=init_entry.entry_type,
+                    amount=init_entry.amount,
+                    balance_after=init_entry.balance_after,
+                    description=init_entry.description,
+                    reference_id=init_entry.reference_id,
+                    circuit_evidence_present=init_entry.circuit_evidence_present,
+                    metadata=init_entry.metadata,
+                )
 
         self._entry_counter += 1
         entry_id = f"TXN_{self._entry_counter:06d}"

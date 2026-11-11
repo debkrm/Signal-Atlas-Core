@@ -32,8 +32,14 @@ class Portfolio:
     """
     Authoritative Portfolio Accounting Engine.
     
-    Coordinates the double-entry CashLedger, multi-instrument open positions,
+    Coordinates the single-entry CashLedger / cash book, multi-instrument open positions,
     mark-to-market session valuations, and committed Go/No-Go risk limits.
+
+    Replay Protection Scope (N-9):
+    In-memory fill instances without explicit identifiers (fill_id or reference_id) are
+    protected against replay within a bounded window of the most recent 10,000 fills
+    (_max_pinned_instances). Fills bearing persistent identifiers (fill_id or caller reference_id)
+    are protected indefinitely via ledger reference uniqueness.
     """
 
     def __init__(

@@ -34,7 +34,7 @@ class PortfolioRiskLimitError(ValueError):
 @dataclass(frozen=True, slots=True)
 class CashLedgerEntry:
     """
-    Immutable double-entry cash ledger record.
+    Immutable single-entry cash ledger record.
     All monetary amounts are exact Decimals quantized to paise (0.01 INR).
     """
     entry_id: str
