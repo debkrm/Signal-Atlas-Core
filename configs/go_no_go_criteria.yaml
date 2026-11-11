@@ -1,0 +1,72 @@
+# Signal Atlas Core — Quantitative Research Go/No-Go Decision Criteria
+# Authoritative threshold configuration committed per AGENTS.md Rule 9.2.
+# All verdicts (PASS/FAIL/GO/NO-GO) must be computed programmatically against these thresholds.
+# Never modify thresholds post-hoc after inspecting backtest results.
+
+metadata:
+  version: "1.0.0"
+  effective_date: "2026-11-11"
+  market: "NSE_CASH_EQUITY"
+  currency: "INR"
+
+anti_overfitting_and_significance:
+  # Minimum Deflated Sharpe Ratio (DSR) to reject false discovery across N trials (Bailey & Lopez de Prado)
+  min_deflated_sharpe_ratio: 0.95
+  # Minimum Haircut Sharpe Ratio net of statutory costs and trial count haircut
+  min_haircut_sharpe_ratio: 1.25
+  # Minimum number of out-of-sample trades across evaluation sample
+  min_total_trades: 100
+  # Maximum allowable annual portfolio turnover
+  max_annual_turnover: 12.0
+  # Walk-forward parameter stability: Minimum proportion of walk-forward test folds with positive Sharpe
+  min_positive_walk_forward_fold_ratio: 0.80
+
+risk_and_drawdown_limits:
+  # Maximum portfolio drawdown allowable on closed + open positions
+  max_portfolio_drawdown: 0.25
+  # Maximum drawdown duration in trading sessions
+  max_drawdown_duration_sessions: 125
+  # Minimum win/loss ratio (gross profit / gross loss)
+  min_profit_factor: 1.50
+  # Maximum single-stock capital allocation at trade entry
+  max_single_position_weight: 0.10
+
+execution_and_liquidity_realism:
+  # Maximum volume participation per session (percent of actual TOTTRDQTY)
+  max_volume_participation_cap: 0.03
+  # Minimum Average Daily Traded Value (Turnover) required for instrument eligibility (₹ in Crore)
+  min_daily_turnover_crore: 5.0
+  # Circuit filter fill restriction: Prohibit BUY at Upper Circuit (ask depth = 0)
+  prohibit_buy_at_upper_circuit: true
+  # Circuit filter fill restriction: Prohibit SELL / Stop-Loss fill at Lower Circuit (bid depth = 0)
+  prohibit_sell_at_lower_circuit: true
+  # Execution latency: Earliest execution fill session relative to signal calculation session T
+  min_execution_latency_sessions: 1
+
+statutory_indian_cost_schedule:
+  # Securities Transaction Tax (STT): 0.1% on delivery (both legs) or 0.025% on intraday sell
+  stt_delivery_rate: 0.0010
+  stt_intraday_sell_rate: 0.00025
+  # NSE Cash Equity Transaction Charges (turnover charges)
+  exchange_turnover_charge_rate: 0.0000325
+  # SEBI Turnover Fee (₹10 per crore = 0.0001%)
+  sebi_turnover_charge_rate: 0.000001
+  # Indian Stamp Duty (0.015% on delivery buy, 0.003% on intraday buy)
+  stamp_duty_delivery_buy_rate: 0.00015
+  stamp_duty_intraday_buy_rate: 0.00003
+  # Goods & Services Tax (GST): 18% applied on (brokerage + exchange charges + SEBI charges)
+  gst_rate: 0.18
+  # Default flat brokerage per executed order (₹)
+  brokerage_per_order_inr: 20.0
+  # Investor Protection Fund Trust (IPFT) rate
+  ipft_charge_rate: 0.0000001
+
+market_data_and_accounting_invariants:
+  # Strict Decimal representation: Binary floating point prohibited in accounting
+  strict_decimal_accounting_required: true
+  # Fail closed on unexplained gaps in price series
+  fail_closed_on_unexplained_gaps: true
+  # Point-in-time universe schedule required (zero survivorship bias)
+  point_in_time_universe_required: true
+  # Zero forward-filling or linear interpolation of missing OHLC records
+  zero_data_fabrication_required: true

@@ -4,12 +4,14 @@
 
 | Attribute | Current Status |
 |---|---|
-| **Active Project Phase** | **Phase 1B.4 Completed** — Ready for **Phase 1C** (Feature & Indicator Foundation) |
-| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, and continuity validation complete |
-| **Offline Test Suite** | **64 passed in 0.35s** (100% pass rate, zero warnings) |
+| **Active Project Phase** | **Phase 1C Completed** — Ready for **Phase 1D** (Indian Execution Realism & Statutory Cost Engine) |
+| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, and pure subsegment feature engine complete |
+| **Offline Test Suite** | **79 passed in 0.69s** (100% pass rate, zero warnings) |
 | **External Dependencies** | Zero live database connections, zero external network calls, zero shadow simulators |
 | **Historical Provenance** | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` (Strictly maintained, zero false promotions) |
 | **Holdout Containment** | `HOLDOUT_UNLOCK` is strictly **ABSENT**; out-of-sample data remains completely sealed |
+| **Authoritative Criteria** | Committed in [`configs/go_no_go_criteria.yaml`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/configs/go_no_go_criteria.yaml) (DSR, Haircut Sharpe, Max Drawdown, Indian Statutory Cost Schedule) |
+| **Approved Strategy Policy** | [`APPROVED_EQ_ONLY_POLICY`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py#L141) (Strict rolling cash equity; Trade-to-Trade `BE` excluded from trade entry) |
 | **Legacy `Signal-Atlas`** | 100% untouched (`historical_dev_dataset_2022_2024.json` SHA-256: `502c6424c79f4856...`) |
 
 ---
@@ -43,14 +45,27 @@
 
 ### Phase 1B.3 & Phase 1B.4: Exchange-Series Hardening & Continuity Decoupling (Completed)
 - **Three-Tier Architecture**:
-  1. *Raw Market Observation* ([`ExchangeSessionObservation`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py#L141)): Retains verbatim exchange series code (`raw_series_code: Optional[str]`, e.g. `"EQ"`, `"BE"`, `"W3"`, `"XX"`), OHLCV (`PriceBar`), ISIN anchor, and source provenance.
-  2. *Price-History Continuity* ([`PriceSeriesContinuityValidator`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py#L268)): Verifies chronological session presence over the official NSE trading calendar. A transition from `EQ` to `BE` **preserves complete continuity** when valid price observations exist on both sides.
-  3. *Research Eligibility Policy* ([`SeriesEligibilityPolicy`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py#L108)): Determines whether an instrument is eligible for strategy entry or holding, decoupled from the underlying price data.
+  1. *Raw Market Observation* ([`ExchangeSessionObservation`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py#L155)): Retains verbatim exchange series code (`raw_series_code: Optional[str]`, e.g. `"EQ"`, `"BE"`, `"W3"`, `"XX"`), OHLCV (`PriceBar`), ISIN anchor, and source provenance.
+  2. *Price-History Continuity* ([`PriceSeriesContinuityValidator`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py#L303)): Verifies chronological session presence over the official NSE trading calendar. A transition from `EQ` to `BE` **preserves complete continuity** when valid price observations exist on both sides.
+  3. *Research Eligibility Policy* ([`SeriesEligibilityPolicy`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py#L121)): Determines whether an instrument is eligible for strategy entry or holding, decoupled from the underlying price data.
 - **Fail-Closed Continuity & Subsegments**:
   * Missing sessions fail closed (`PriceSeriesGapType.UNEXPLAINED_MISSING_RECORD` or `EXTRACTION_FILTER_OMISSION`).
-  * Implemented [`partition_into_continuous_subsegments()`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py#L367) to partition price bars into contiguous blocks where no trading dates were skipped, preventing rolling indicator lookbacks from bridging missing sessions.
-- **Policy Quarantine**: Quarantined `QUARANTINED_UNAPPROVED_PERMISSIVE_BE_POLICY` and renamed the rolling candidate to `PROPOSED_UNAPPROVED_EQ_ONLY_POLICY`. Banned implicit default policies.
-- **Script Hardening**: Made `--legacy-root` a required CLI argument in `reconcile_bhavcopy_series.py`, eliminating implicit paths.
+  * Implemented [`partition_into_continuous_subsegments()`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/contracts/exchange_series.py#L454) to partition price bars into contiguous blocks where no trading dates were skipped.
+- **Policy Ratification**: Authorized `APPROVED_EQ_ONLY_POLICY` as the primary production policy. Quarantined `QUARANTINED_UNAPPROVED_PERMISSIVE_BE_POLICY`.
+- **Script Hardening**: Added automatic `sys.path` injection in `verify_historical_snapshot.py` for direct standalone execution.
+
+### Phase 1C: Feature & Technical Indicator Foundation (Completed)
+- **Pure Mathematical Indicators** ([`src/signal_core/features/indicators.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/features/indicators.py)):
+  * SMA, EMA, RSI (J. Welles Wilder smoothing), ATR (True Range + Wilder smoothing), Rolling High/Low, Donchian Channel, MACD.
+  * Comparative Relative Strength (excess return vs benchmark across trailing lookback sessions).
+  * Deterministic daily-to-weekly bar aggregation ([`WeeklyBar`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/features/indicators.py#L347)) and weekly trend indicator following ISO calendar weeks.
+  * Exact `Decimal` precision enforced; strict rejection of binary floats, booleans, and non-finite values.
+- **Subsegment Indicator Engine** ([`src/signal_core/features/engine.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/features/engine.py)):
+  * Implemented [`SubsegmentIndicatorEngine`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/features/engine.py#L60) to bind indicator calculation strictly to contiguous subsegments from `PriceSeriesContinuityValidator`.
+  * **Zero Cross-Gap Leakage**: Indicators warm up afresh after any missing session gap; state never spills across non-contiguous dates.
+  * **Zero Silent Forward-Filling**: Missing calendar dates return `None`.
+  * **Fail-Closed Verification**: Option to fail closed immediately on unexplained gaps.
+  * Comprehensive indicator unit tests in `tests/unit/test_indicators.py` (15 new unit tests, bringing total to 79 passing tests).
 
 ---
 
@@ -63,8 +78,11 @@ Signal-Atlas-Core/
 ├── README.md                                # Core principles & overview
 ├── WHAT_WE_ARE_BUILDING.md                  # Comprehensive architectural vision & market realities
 ├── CURRENT_STAGE_OF_WORK.md                 # Current progress, completed milestones & roadmap
+├── configs/
+│   └── go_no_go_criteria.yaml               # Committed quantitative thresholds (DSR, Haircut Sharpe, Costs)
 ├── scripts/
-│   └── reconcile_bhavcopy_series.py         # Reproducible Bhavcopy audit tool (strict explicit CLI root)
+│   ├── reconcile_bhavcopy_series.py         # Reproducible Bhavcopy audit tool (strict explicit CLI root)
+│   └── verify_historical_snapshot.py        # Snapshot loader & SHA-256 / canonical fingerprint verifier
 ├── reports/
 │   └── reconciliation/
 │       ├── bhavcopy_545_reconciliation.csv  # 545-record row-level audit trail
@@ -72,23 +90,33 @@ Signal-Atlas-Core/
 ├── src/
 │   └── signal_core/
 │       ├── __init__.py
-│       └── contracts/
-│           ├── __init__.py                  # Public domain exports
-│           ├── price_bar.py                 # Immutable Decimal OHLCV contract
-│           ├── universe.py                  # Point-in-time UniverseSchedule & UniverseInterval
-│           ├── provenance.py                # Cryptographic fingerprinting (DATA-CTNT-V2, UNIV-SCHED-V1)
-│           ├── dataset.py                   # DatasetSnapshot & validation engine
-│           ├── exchange_series.py           # Series enum, ExchangeSessionObservation, ContinuityValidator
-│           └── legacy_compat.py             # Historical loader & legacy fingerprint adapter
+│       ├── contracts/
+│       │   ├── __init__.py                  # Public domain exports
+│       │   ├── price_bar.py                 # Immutable Decimal OHLCV contract
+│       │   ├── universe.py                  # Point-in-time UniverseSchedule & UniverseInterval
+│       │   ├── provenance.py                # Cryptographic fingerprinting (DATA-CTNT-V2, UNIV-SCHED-V1)
+│       │   ├── dataset.py                   # DatasetSnapshot & validation engine
+│       │   ├── exchange_series.py           # Series enum, ExchangeSessionObservation, ContinuityValidator
+│       │   └── legacy_compat.py             # Historical loader & legacy fingerprint adapter
+│       ├── features/
+│       │   ├── __init__.py                  # Public feature & indicator exports
+│       │   ├── indicators.py                # Pure Decimal mathematical indicator formulas (EMA, ATR, RSI, etc.)
+│       │   └── engine.py                    # SubsegmentIndicatorEngine & InstrumentTechnicalFeatures
+│       └── loaders/
+│           ├── __init__.py
+│           └── historical_snapshot.py       # Snapshot parsing, diagnostics, duplicate rejection
 └── tests/
+    ├── fixtures/
+    │   └── small_synthetic_dataset.json     # Synthetic test fixture
     └── unit/
         ├── test_price_bar.py                # OHLCV invariants, float rejection, decimal validation (10 tests)
         ├── test_universe.py                 # Universe schedules, date queries, immutability (9 tests)
         ├── test_provenance.py               # Golden vectors, determinism, delimiter rejection (10 tests)
         ├── test_dataset.py                  # Snapshot construction, immutability, date ranges (10 tests)
         ├── test_historical_loader.py        # Snapshot parsing, diagnostics, duplicate rejection (11 tests)
-        └── test_bhavcopy_reconciliation.py  # Series preservation, continuity, subsegments, Cases 1-4 (14 tests)
-                                             # Total: 64 passing unit tests
+        ├── test_bhavcopy_reconciliation.py  # Series preservation, continuity, subsegments, Cases 1-4 (14 tests)
+        └── test_indicators.py               # Pure math indicators, zero lookahead, subsegment isolation (15 tests)
+                                             # Total: 79 passing unit tests in 0.69s
 ```
 
 ---
@@ -99,10 +127,10 @@ Signal-Atlas-Core/
 [Phase 1A: Core Contracts] ──► [Phase 1B: Data Integrity & Bhavcopy Audit]  (COMPLETED)
                                           │
                                           ▼
-                         [Phase 1C: Feature & Indicator Engine]            (NEXT IMMEDIATE TASK)
+                         [Phase 1C: Feature & Indicator Engine]            (COMPLETED)
                                           │
                                           ▼
-                         [Phase 1D: Indian Execution & Cost Model]
+                         [Phase 1D: Indian Execution & Cost Model]         (NEXT IMMEDIATE TASK)
                                           │
                                           ▼
                          [Phase 1E: Exact Decimal Portfolio Ledger]
@@ -111,14 +139,20 @@ Signal-Atlas-Core/
                          [Phase 2: Strategy Validation & Walk-Forward]
 ```
 
-### Phase 1C: Feature & Indicator Foundation (Next Immediate Task)
-- Implement pure mathematical indicators (EMA, ATR, Rolling High/Low, RSI) operating strictly on contiguous `PriceBar` subsegments produced by `PriceSeriesContinuityValidator`.
-- Ensure indicators fail closed and refuse to compute across missing sessions or unverified data gaps.
-- Zero lookahead: indicator computed at bar $T$ uses information up to bar $T$ close only.
-
-### Phase 1D: Statutory Indian Cost Engine & Execution Fill Simulator
-- Implement the complete Indian statutory transaction cost schedule: STT (delivery vs intraday), NSE exchange turnover fees, SEBI turnover fees, Stamp Duty, GST (18%), and IPFT.
-- Implement execution fill simulator with next-session execution ($T+1$ open/TWAP), realistic slippage models parameterized by ADT and spread, and upper/lower circuit fill restrictions.
+### Phase 1D: Statutory Indian Cost Engine & Execution Fill Simulator (Next Immediate Task)
+- **Indian Statutory Transaction Cost Engine**:
+  * Securities Transaction Tax (STT): 0.1% delivery buy/sell, 0.025% intraday sell.
+  * NSE cash equity turnover charges (~0.00325%).
+  * SEBI turnover fee (₹10 per crore = 0.0001%).
+  * Indian Stamp Duty (0.015% delivery buy, 0.003% intraday buy).
+  * Goods & Services Tax (GST): 18% on (brokerage + exchange charges + SEBI charges).
+  * Investor Protection Fund Trust (IPFT) charges.
+  * Brokerage: Fixed ₹20/order or basis points.
+- **Execution Fill Simulator**:
+  * Next-session execution ($T+1$ open or $T+1$ TWAP).
+  * Circuit filter fill restrictions: Prohibit BUY fill at Upper Circuit (ask depth = 0); prohibit SELL fill at Lower Circuit (bid depth = 0).
+  * Liquidity & Slippage model: Non-linear impact parameterized by Average Daily Turnover (ADT) and bid-ask spread.
+  * Volume participation cap: Order size capped at 2.5% to 5.0% of session's traded volume (`TOTTRDQTY`).
 
 ### Phase 1E: Exact Decimal Portfolio Ledger & Accounting
 - Implement exact `Decimal` cash ledger, mark-to-market equity tracker, gross/net PnL accounting, and position tracking.
@@ -129,15 +163,3 @@ Signal-Atlas-Core/
 - Walk-forward parameter stability evaluation across market regimes.
 - Automated generation of computed verdicts (PASS/FAIL) against committed `configs/go_no_go_criteria.yaml`.
 - Computation of Deflated Sharpe Ratio (DSR) and Haircut Sharpe ratio.
-
----
-
-## 5. Open Governance Decisions Requiring Owner Signoff
-
-1. **Trade-to-Trade (`BE`) Strategy Eligibility**:
-   - The owner must formally authorize whether the quantitative strategy will be permitted to trade securities in `BE` (accepting 100% upfront delivery margin and gross settlement) or will strictly trade rolling `EQ`.
-2. **Clean Ingestion Pipeline Rebuild**:
-   - In a future phase, a clean data ingestion pipeline should be built to query both `EQ` and `BE` series from raw exchange archives and construct a verified, continuous research dataset.
-3. **Holdout Containment**:
-   - Keep the out-of-sample holdout dataset sealed (`HOLDOUT_UNLOCK` remains absent) until Phase 2 walk-forward calibration is complete.
-

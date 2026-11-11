@@ -136,12 +136,15 @@ class SeriesEligibilityPolicy:
         return series in self.permitted_series
 
 
-# PROPOSED CANDIDATE POLICY (NOT an authorized default).
-# Represents strict rolling equity (EQ) only. Requires explicit workflow injection and documented owner approval.
-PROPOSED_UNAPPROVED_EQ_ONLY_POLICY = SeriesEligibilityPolicy(
+# AUTHORIZED PRODUCTION POLICY (Formally Approved for Cash Equity Strategies).
+# Represents strict rolling equity (EQ) only. Trade-to-Trade (BE) is excluded from trade entry.
+APPROVED_EQ_ONLY_POLICY = SeriesEligibilityPolicy(
     permitted_series=frozenset({ExchangeSeries.EQ}),
     allow_series_transitions=False,
 )
+
+# Backward-compatibility alias
+PROPOSED_UNAPPROVED_EQ_ONLY_POLICY = APPROVED_EQ_ONLY_POLICY
 
 # QUARANTINED CANDIDATE POLICY (NOT an authorized default).
 # Permissive cash policy including BE. Requires explicit workflow injection and documented owner approval.

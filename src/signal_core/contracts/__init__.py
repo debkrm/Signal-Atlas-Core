@@ -24,6 +24,7 @@ from signal_core.contracts.dataset import (
 )
 
 from signal_core.contracts.exchange_series import (
+    APPROVED_EQ_ONLY_POLICY,
     PROPOSED_UNAPPROVED_EQ_ONLY_POLICY,
     QUARANTINED_UNAPPROVED_PERMISSIVE_BE_POLICY,
     ExchangeSeries,
@@ -69,6 +70,7 @@ __all__ = [
     "InstrumentListingInterval",
     "PriceSeriesContinuityResult",
     "PriceSeriesContinuityValidator",
+    "APPROVED_EQ_ONLY_POLICY",
     "PROPOSED_UNAPPROVED_EQ_ONLY_POLICY",
     "QUARANTINED_UNAPPROVED_PERMISSIVE_BE_POLICY",
     "validate_raw_series_code",

@@ -10,6 +10,11 @@ import datetime
 from pathlib import Path
 import sys
 
+# Ensure src is on sys.path for standalone script execution
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT / "src"))
+
 from signal_core.contracts.legacy_compat import compute_legacy_dataset_content_fingerprint
 from signal_core.contracts.provenance import compute_universe_schedule_fingerprint
 from signal_core.loaders.historical_snapshot import (
