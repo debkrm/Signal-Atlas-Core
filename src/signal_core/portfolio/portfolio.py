@@ -7,6 +7,7 @@ Enforces:
 - Risk limits: max single-position concentration limit and portfolio drawdown monitoring.
 """
 
+from collections import OrderedDict
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
@@ -52,7 +53,8 @@ class Portfolio:
             initial_date=initial_date,
         )
         self._positions: Dict[str, Position] = {}
-        self._processed_fills: List[ExecutionFillResult] = []
+        self._processed_fill_instances: OrderedDict[int, ExecutionFillResult] = OrderedDict()
+        self._max_pinned_instances: int = 10000
         self._peak_portfolio_value: Decimal = _quantize_paise(initial_capital)
         self._current_drawdown: Decimal = Decimal("0.00")
         self._max_drawdown: Decimal = Decimal("0.00")
@@ -254,44 +256,52 @@ class Portfolio:
             capital_outlay = paise_costs.gross_amount + paise_costs.total_charges
             self.validate_allocation(inst_id, capital_outlay, latest_market_prices)
 
-        # 3. Check for replay of the exact same fill instance (R-5)
-        if any(fill is processed for processed in self._processed_fills):
+        # 3. O(1) Replay check for the exact same in-memory fill instance (N-1, R-5)
+        fill_addr = id(fill)
+        if fill_addr in self._processed_fill_instances:
             raise LedgerValidationError(
                 f"Duplicate entry rejected: fill '{fill}' has already been processed by portfolio."
             )
 
-        # Determine stable external reference ID or monotonic sequence (R-1)
+        # 4. Validate reference_id or fill_id if present (N-4)
         if reference_id is not None:
-            effective_ref = reference_id
+            if (
+                isinstance(reference_id, bool)
+                or not isinstance(reference_id, str)
+                or not reference_id.strip()
+                or reference_id != reference_id.strip()
+            ):
+                raise LedgerValidationError(
+                    f"reference_id must be a non-empty, non-whitespace string without leading/trailing whitespace, got {reference_id!r}"
+                )
+            if reference_id in self._ledger._posted_reference_ids:
+                raise LedgerValidationError(
+                    f"Duplicate entry rejected: fill with reference '{reference_id}' already posted to ledger."
+                )
         elif fill.fill_id is not None:
-            effective_ref = fill.fill_id
-        elif fill.order.order_id is not None:
-            effective_ref = f"FILL_{fill.order.order_id}"
-        else:
-            effective_ref = self._ledger.generate_fill_reference(inst_id, fill.fill_date)
+            if fill.fill_id in self._ledger._posted_reference_ids:
+                raise LedgerValidationError(
+                    f"Duplicate entry rejected: fill with reference '{fill.fill_id}' already posted to ledger."
+                )
 
-        if effective_ref in self._ledger._posted_reference_ids:
-            raise LedgerValidationError(
-                f"Duplicate entry rejected: fill with reference '{effective_ref}' already posted to ledger."
-            )
+        # 5. Post to CashLedger (CashLedger handles deterministic sequential reference commit upon posting)
+        entry = self._ledger.record_fill(fill, reference_id=reference_id)
 
-        # 4. Post to CashLedger
-        entry = self._ledger.record_fill(fill, reference_id=effective_ref)
-
-        # 5. Update Position with atomic rollback safety and clean phantom position cleanup (R-3)
+        # 6. Update Position with atomic rollback safety and clean phantom position cleanup (R-3)
         is_new_instrument = inst_id not in self._positions
         if is_new_instrument:
             self._positions[inst_id] = Position(inst_id)
 
         try:
             self._positions[inst_id].apply_fill(fill)
-            self._processed_fills.append(fill)
+            self._processed_fill_instances[fill_addr] = fill
+            if len(self._processed_fill_instances) > self._max_pinned_instances:
+                self._processed_fill_instances.popitem(last=False)
         except Exception:
             self._ledger._rollback_last_entry()
             if is_new_instrument:
                 del self._positions[inst_id]
-            if any(fill is p for p in self._processed_fills):
-                self._processed_fills.remove(fill)
+            self._processed_fill_instances.pop(fill_addr, None)
             raise
 
         return entry

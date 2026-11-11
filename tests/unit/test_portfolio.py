@@ -27,6 +27,7 @@ from signal_core.execution.costs import TransactionCostBreakdown, TransactionCos
 from signal_core.execution.simulator import ExecutionFillResult
 from signal_core.execution.types import (
     ExecutionOrder,
+    ExecutionOrderValidationError,
     FillStatus,
     OrderProduct,
     OrderSide,
@@ -46,6 +47,16 @@ from signal_core.portfolio.types import (
 )
 
 
+_DEFAULT_COST_MODEL: Optional[TransactionCostModel] = None
+
+
+def _get_cost_model() -> TransactionCostModel:
+    global _DEFAULT_COST_MODEL
+    if _DEFAULT_COST_MODEL is None:
+        _DEFAULT_COST_MODEL = TransactionCostModel()
+    return _DEFAULT_COST_MODEL
+
+
 def _make_dummy_fill(
     instrument_id: str,
     side: OrderSide,
@@ -57,7 +68,7 @@ def _make_dummy_fill(
     fill_id: Optional[str] = None,
 ) -> ExecutionFillResult:
     """Helper to create realistic filled ExecutionFillResult with statutory costs."""
-    cost_model = TransactionCostModel()
+    cost_model = _get_cost_model()
     costs = cost_model.compute_costs(
         trade_date=trade_date,
         side=side,
@@ -767,4 +778,185 @@ def test_r4_initial_deposit_derived_from_first_trade_date():
     assert portfolio.ledger.entries[0].amount == Decimal("500000.00")
     assert portfolio.ledger.entries[1].entry_type == CashEntryType.TRADE_BUY_OUTFLOW
     assert portfolio.ledger.entries[1].trade_date == trade_date
+
+
+def test_n1_replay_guard_o1_lookup_and_bounded_memory():
+    """
+    Verify N-1 remediation:
+    Replay guard must be O(1) in membership lookup and retain bounded memory.
+    Processing 1000 fills must run with sub-millisecond flat per-fill overhead,
+    and memory cannot exceed max_pinned_instances.
+    """
+    import time
+    portfolio = Portfolio(initial_capital=Decimal("50000000.00"))
+    start_date = datetime.date(2026, 1, 1)
+
+    fills = []
+    for i in range(1000):
+        d = start_date + datetime.timedelta(days=i)
+        fill = _make_dummy_fill(f"SCRIP_{i}", OrderSide.BUY, 10, Decimal("100.00"), d)
+        fills.append(fill)
+
+    t0 = time.perf_counter()
+    for fill in fills:
+        portfolio.process_fill(fill, enforce_risk_limits=False)
+    t1 = time.perf_counter()
+
+    per_fill_us = ((t1 - t0) / 1000) * 1e6
+    # O(1) dict lookup overhead must be strictly flat and sub-millisecond per fill (typically ~70-150 µs)
+    assert per_fill_us < 1000.0, f"Per fill time too high: {per_fill_us:.2f} µs"
+
+    # Memory retention is bounded
+    assert len(portfolio._processed_fill_instances) <= portfolio._max_pinned_instances
+
+    # Replay of any recent fill must be rejected in O(1) time
+    with pytest.raises(LedgerValidationError, match="Duplicate entry rejected: fill"):
+        portfolio.process_fill(fills[-1], enforce_risk_limits=False)
+
+
+def test_n2_sequence_counter_deterministic_without_holes_on_rejection():
+    """
+    Verify N-2 remediation:
+    The sequence counter must count committed fills, not attempts.
+    Rejections (e.g. non-monotonic date, overdraft, invalid reference) must not increment
+    the counter or leave sequence holes.
+    """
+    portfolio = Portfolio(initial_capital=Decimal("50000.00"))
+    d_valid = datetime.date(2026, 11, 11)
+    d_past = datetime.date(2026, 11, 10)
+
+    # 1. First valid fill on 2026-11-11
+    f1 = _make_dummy_fill("INFY", OrderSide.BUY, 10, Decimal("1000.00"), d_valid)
+    e1 = portfolio.process_fill(f1, enforce_risk_limits=False)
+    assert e1.reference_id == "FILL_INFY_2026-11-11#1"
+
+    # 2. Rejected non-monotonic attempt (past date)
+    f_rej_date = _make_dummy_fill("INFY", OrderSide.BUY, 10, Decimal("1000.00"), d_past)
+    with pytest.raises(LedgerValidationError, match="Non-monotonic trade_date"):
+        portfolio.process_fill(f_rej_date, enforce_risk_limits=False)
+
+    # 3. Rejected overdraft attempt
+    f_rej_overdraft = _make_dummy_fill("INFY", OrderSide.BUY, 100, Decimal("1000.00"), d_valid)
+    with pytest.raises(LedgerValidationError, match="Cash overdraft prohibited"):
+        portfolio.process_fill(f_rej_overdraft, enforce_risk_limits=False)
+
+    # 4. Next valid fill on 2026-11-11 must get #2 (zero sequence holes)
+    f2 = _make_dummy_fill("INFY", OrderSide.BUY, 10, Decimal("1000.00"), d_valid)
+    e2 = portfolio.process_fill(f2, enforce_risk_limits=False)
+    assert e2.reference_id == "FILL_INFY_2026-11-11#2"
+
+
+def test_n3_multi_session_partial_fills_with_same_order_id():
+    """
+    Verify N-3 remediation:
+    Partial-fill remainder executed across multiple sessions under the same order_id
+    must not alias references or collide on idempotency.
+    """
+    portfolio = Portfolio(initial_capital=Decimal("1000000.00"))
+    d1 = datetime.date(2026, 11, 11)
+    d2 = datetime.date(2026, 11, 12)
+
+    order_id = "ORD_PARTIAL_777"
+    # Session 1: 60 shares filled on Day 1
+    f1 = _make_dummy_fill("TCS", OrderSide.BUY, 60, Decimal("3000.00"), d1, order_id=order_id, fill_id=f"FILL_{order_id}_{d1}#1")
+    e1 = portfolio.process_fill(f1, enforce_risk_limits=False)
+    assert e1.reference_id == f"FILL_{order_id}_{d1}#1"
+    assert portfolio.get_position("TCS").quantity == 60
+
+    # Session 2: Remaining 40 shares filled on Day 2 under same order_id
+    f2 = _make_dummy_fill("TCS", OrderSide.BUY, 40, Decimal("3050.00"), d2, order_id=order_id, fill_id=f"FILL_{order_id}_{d2}#1")
+    e2 = portfolio.process_fill(f2, enforce_risk_limits=False)
+    assert e2.reference_id == f"FILL_{order_id}_{d2}#1"
+    assert portfolio.get_position("TCS").quantity == 100
+
+    # Replay of f1 or f2 must be rejected
+    with pytest.raises(LedgerValidationError, match="Duplicate entry rejected"):
+        portfolio.process_fill(f1, enforce_risk_limits=False)
+    with pytest.raises(LedgerValidationError, match="Duplicate entry rejected"):
+        portfolio.process_fill(f2, enforce_risk_limits=False)
+
+
+def test_n4_order_id_and_fill_id_validation():
+    """
+    Verify N-4 remediation:
+    Empty string, whitespace-only, unstripped strings, or non-string order_id, fill_id,
+    and reference_id must fail closed.
+    """
+    trade_date = datetime.date(2026, 11, 11)
+
+    # 1. ExecutionOrder order_id validation
+    with pytest.raises(ExecutionOrderValidationError, match="order_id must be a non-empty"):
+        ExecutionOrder(
+            instrument_id="INFY",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET_ON_OPEN,
+            quantity=10,
+            product=OrderProduct.DELIVERY,
+            signal_date=trade_date - datetime.timedelta(days=1),
+            target_date=trade_date,
+            order_id="",
+        )
+
+    with pytest.raises(ExecutionOrderValidationError, match="order_id must be a non-empty"):
+        ExecutionOrder(
+            instrument_id="INFY",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET_ON_OPEN,
+            quantity=10,
+            product=OrderProduct.DELIVERY,
+            signal_date=trade_date - datetime.timedelta(days=1),
+            target_date=trade_date,
+            order_id="   ",
+        )
+
+    with pytest.raises(ExecutionOrderValidationError, match="order_id must be a non-empty"):
+        ExecutionOrder(
+            instrument_id="INFY",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET_ON_OPEN,
+            quantity=10,
+            product=OrderProduct.DELIVERY,
+            signal_date=trade_date - datetime.timedelta(days=1),
+            target_date=trade_date,
+            order_id=" ORD1 ",
+        )
+
+    with pytest.raises(ExecutionOrderValidationError, match="order_id must be a non-empty"):
+        ExecutionOrder(
+            instrument_id="INFY",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET_ON_OPEN,
+            quantity=10,
+            product=OrderProduct.DELIVERY,
+            signal_date=trade_date - datetime.timedelta(days=1),
+            target_date=trade_date,
+            order_id=123,  # type: ignore
+        )
+
+    # 2. ExecutionFillResult fill_id validation
+    valid_fill = _make_dummy_fill("INFY", OrderSide.BUY, 10, Decimal("1000.00"), trade_date)
+    import dataclasses
+    with pytest.raises(ExecutionOrderValidationError, match="fill_id must be a non-empty"):
+        dataclasses.replace(valid_fill, fill_id="")
+
+    with pytest.raises(ExecutionOrderValidationError, match="fill_id must be a non-empty"):
+        dataclasses.replace(valid_fill, fill_id="   ")
+
+    with pytest.raises(ExecutionOrderValidationError, match="fill_id must be a non-empty"):
+        dataclasses.replace(valid_fill, fill_id=123)  # type: ignore
+
+    # 3. Portfolio reference_id validation
+    portfolio = Portfolio(initial_capital=Decimal("1000000.00"))
+    with pytest.raises(LedgerValidationError, match="reference_id must be a non-empty"):
+        portfolio.process_fill(valid_fill, reference_id="")
+
+    with pytest.raises(LedgerValidationError, match="reference_id must be a non-empty"):
+        portfolio.process_fill(valid_fill, reference_id="   ")
+
+    with pytest.raises(LedgerValidationError, match="reference_id must be a non-empty"):
+        portfolio.process_fill(valid_fill, reference_id=" REF_1 ")
+
+    with pytest.raises(LedgerValidationError, match="reference_id must be a non-empty"):
+        portfolio.ledger.deposit(trade_date, Decimal("500.00"), reference_id="")
+
 

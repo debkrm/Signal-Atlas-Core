@@ -75,6 +75,17 @@ class ExecutionOrder:
     def __post_init__(self) -> None:
         if not isinstance(self.instrument_id, str) or not self.instrument_id.strip():
             raise ExecutionOrderValidationError(f"Invalid instrument_id: {self.instrument_id!r}")
+
+        if self.order_id is not None:
+            if (
+                isinstance(self.order_id, bool)
+                or not isinstance(self.order_id, str)
+                or not self.order_id.strip()
+                or self.order_id != self.order_id.strip()
+            ):
+                raise ExecutionOrderValidationError(
+                    f"order_id must be a non-empty, non-whitespace string without leading/trailing whitespace, got {self.order_id!r}"
+                )
         
         if not isinstance(self.side, OrderSide):
             raise ExecutionOrderValidationError(f"side must be an OrderSide enum, got {type(self.side)}")

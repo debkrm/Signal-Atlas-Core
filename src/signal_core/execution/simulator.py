@@ -28,7 +28,7 @@ Enforces structural realism for Indian equities per AGENTS.md Rule 5 and Rule 7:
 from dataclasses import dataclass
 import datetime
 from decimal import Decimal
-from typing import Optional, Sequence, Union
+from typing import Dict, Optional, Sequence, Tuple, Union
 
 from signal_core.contracts.criteria import GoNoGoCriteria, load_go_no_go_criteria
 from signal_core.contracts.exchange_series import (
@@ -71,6 +71,18 @@ class ExecutionFillResult:
     rejection_reason: Optional[str]
     fill_id: Optional[str] = None
 
+    def __post_init__(self) -> None:
+        if self.fill_id is not None:
+            if (
+                isinstance(self.fill_id, bool)
+                or not isinstance(self.fill_id, str)
+                or not self.fill_id.strip()
+                or self.fill_id != self.fill_id.strip()
+            ):
+                raise ExecutionOrderValidationError(
+                    f"fill_id must be a non-empty, non-whitespace string without leading/trailing whitespace, got {self.fill_id!r}"
+                )
+
 
 class ExecutionFillSimulator:
     """
@@ -91,6 +103,7 @@ class ExecutionFillSimulator:
         self._eligibility_policy = eligibility_policy
         self._trading_calendar = tuple(trading_calendar) if trading_calendar is not None else None
         self._cal_index = {d: i for i, d in enumerate(self._trading_calendar)} if self._trading_calendar is not None else None
+        self._order_fill_counters: Dict[Tuple[str, datetime.date], int] = {}
 
     @property
     def criteria(self) -> GoNoGoCriteria:
@@ -406,7 +419,13 @@ class ExecutionFillSimulator:
         )
 
         circuit_evidence = (effective_upper is not None or effective_lower is not None)
-        fill_id = f"FILL_{order.order_id}" if order.order_id is not None else None
+        if order.order_id is not None:
+            order_key = (order.order_id, price_bar.trade_date)
+            count = self._order_fill_counters.get(order_key, 0) + 1
+            self._order_fill_counters[order_key] = count
+            fill_id = f"FILL_{order.order_id}_{price_bar.trade_date}#{count}"
+        else:
+            fill_id = None
 
         return ExecutionFillResult(
             order=order,
@@ -432,7 +451,13 @@ class ExecutionFillSimulator:
         reason: str,
         circuit_evidence_present: bool = False,
     ) -> ExecutionFillResult:
-        fill_id = f"REJ_{order.order_id}" if order.order_id is not None else None
+        if order.order_id is not None:
+            order_key = (order.order_id, fill_date)
+            count = self._order_fill_counters.get(order_key, 0) + 1
+            self._order_fill_counters[order_key] = count
+            fill_id = f"REJ_{order.order_id}_{fill_date}#{count}"
+        else:
+            fill_id = None
         return ExecutionFillResult(
             order=order,
             status=status,

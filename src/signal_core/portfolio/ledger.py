@@ -47,6 +47,7 @@ class CashLedger:
 
         self._allow_overdraft = allow_overdraft
         self._entries: List[CashLedgerEntry] = []
+        self._seq_keys_history: List[Optional[Tuple[str, datetime.date]]] = []
         self._entry_counter = 0
         self._posted_reference_ids: Set[str] = set()
         self._initial_date_was_explicit = initial_date is not None
@@ -69,14 +70,14 @@ class CashLedger:
 
     def generate_fill_reference(self, instrument_id: str, trade_date: datetime.date) -> str:
         """
-        Generates a deterministic monotonic sequence reference for an instrument on a trade date.
+        Returns the next sequential reference that will be generated for an instrument on a trade date.
+        Does not increment the sequence counter until the fill successfully posts (N-2).
         First fill: FILL_{instrument_id}_{trade_date}#1
         Subsequent fills: FILL_{instrument_id}_{trade_date}#2, #3, ...
         """
         key = (instrument_id, trade_date)
-        count = self._fill_reference_counters.get(key, 0) + 1
-        self._fill_reference_counters[key] = count
-        return f"FILL_{instrument_id}_{trade_date}#{count}"
+        next_count = self._fill_reference_counters.get(key, 0) + 1
+        return f"FILL_{instrument_id}_{trade_date}#{next_count}"
 
     @property
     def current_cash(self) -> Decimal:
@@ -200,12 +201,16 @@ class CashLedger:
 
         if reference_id is not None:
             ref_id = reference_id
+            seq_prefix = None
         elif fill.fill_id is not None:
             ref_id = fill.fill_id
+            seq_prefix = None
         elif fill.order.order_id is not None:
-            ref_id = f"FILL_{fill.order.order_id}"
+            ref_id = None
+            seq_prefix = fill.order.order_id
         else:
-            ref_id = self.generate_fill_reference(fill.order.instrument_id, fill.fill_date)
+            ref_id = None
+            seq_prefix = fill.order.instrument_id
 
         return self._post_entry(
             trade_date=fill.fill_date,
@@ -215,6 +220,7 @@ class CashLedger:
             reference_id=ref_id,
             circuit_evidence_present=fill.circuit_evidence_present,
             metadata=tuple(meta_items),
+            seq_prefix=seq_prefix,
         )
 
     def _post_entry(
@@ -226,6 +232,7 @@ class CashLedger:
         reference_id: Optional[str],
         circuit_evidence_present: bool,
         metadata: Optional[Tuple[Tuple[str, str], ...]],
+        seq_prefix: Optional[str] = None,
     ) -> CashLedgerEntry:
         if type(trade_date) is not datetime.date:
             raise LedgerValidationError(f"trade_date must be exact datetime.date, got {type(trade_date).__name__}")
@@ -253,10 +260,20 @@ class CashLedger:
                 f"after existing entry on {self._last_trade_date}."
             )
 
-        if reference_id is not None and reference_id in self._posted_reference_ids:
-            raise LedgerValidationError(
-                f"Duplicate entry rejected: reference_id '{reference_id}' already posted to ledger."
-            )
+        if reference_id is not None:
+            if (
+                isinstance(reference_id, bool)
+                or not isinstance(reference_id, str)
+                or not reference_id.strip()
+                or reference_id != reference_id.strip()
+            ):
+                raise LedgerValidationError(
+                    f"reference_id must be a non-empty, non-whitespace string without leading/trailing whitespace, got {reference_id!r}"
+                )
+            if reference_id in self._posted_reference_ids:
+                raise LedgerValidationError(
+                    f"Duplicate entry rejected: reference_id '{reference_id}' already posted to ledger."
+                )
 
         new_balance = self._current_cash + amount
         if not self._allow_overdraft and new_balance < Decimal("0.00"):
@@ -264,6 +281,20 @@ class CashLedger:
                 f"Cash overdraft prohibited: posting amount ₹{amount} against current cash "
                 f"₹{self._current_cash} would produce negative balance ₹{new_balance}."
             )
+
+        # All validations have passed. Commit sequence reference only now (N-2)
+        if reference_id is not None:
+            final_ref = reference_id
+            seq_key_used = None
+        elif seq_prefix is not None:
+            seq_key = (seq_prefix, trade_date)
+            count = self._fill_reference_counters.get(seq_key, 0) + 1
+            self._fill_reference_counters[seq_key] = count
+            final_ref = f"FILL_{seq_prefix}_{trade_date}#{count}"
+            seq_key_used = seq_key
+        else:
+            final_ref = None
+            seq_key_used = None
 
         self._entry_counter += 1
         entry_id = f"TXN_{self._entry_counter:06d}"
@@ -274,13 +305,14 @@ class CashLedger:
             amount=amount,
             balance_after=new_balance,
             description=description,
-            reference_id=reference_id,
+            reference_id=final_ref,
             circuit_evidence_present=circuit_evidence_present,
             metadata=metadata,
         )
 
-        if reference_id is not None:
-            self._posted_reference_ids.add(reference_id)
+        if final_ref is not None:
+            self._posted_reference_ids.add(final_ref)
+        self._seq_keys_history.append(seq_key_used)
         self._last_trade_date = trade_date
         self._current_cash = new_balance
         self._entries.append(entry)
@@ -289,25 +321,23 @@ class CashLedger:
     def _rollback_last_entry(self) -> CashLedgerEntry:
         """
         Rolls back the most recently posted entry to guarantee atomicity on failed operations.
+        Carries sequence keys directly without re-parsing reference strings (N-5).
         """
         if not self._entries:
             raise LedgerValidationError("Cannot rollback: ledger is empty.")
         entry = self._entries.pop()
-        self._current_cash -= entry.amount
-        self._entry_counter -= 1
+        seq_key = self._seq_keys_history.pop() if self._seq_keys_history else None
+
+        if seq_key is not None and seq_key in self._fill_reference_counters:
+            self._fill_reference_counters[seq_key] -= 1
+            if self._fill_reference_counters[seq_key] <= 0:
+                del self._fill_reference_counters[seq_key]
+
         if entry.reference_id is not None:
             self._posted_reference_ids.discard(entry.reference_id)
-            if "#" in entry.reference_id and entry.reference_id.startswith("FILL_"):
-                try:
-                    parts = entry.reference_id[5:].rsplit("#", 1)
-                    inst_date_part = parts[0].rsplit("_", 1)
-                    inst = inst_date_part[0]
-                    dt = datetime.date.fromisoformat(inst_date_part[1])
-                    key = (inst, dt)
-                    if key in self._fill_reference_counters and self._fill_reference_counters[key] > 0:
-                        self._fill_reference_counters[key] -= 1
-                except Exception:
-                    pass
+
+        self._current_cash -= entry.amount
+        self._entry_counter -= 1
         if self._entries:
             self._last_trade_date = self._entries[-1].trade_date
         else:
