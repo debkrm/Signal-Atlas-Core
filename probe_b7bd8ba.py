@@ -159,7 +159,9 @@ print("seq_keys_history", len(p10.ledger._seq_keys_history), "entries", len(p10.
 
 print("\n=== 11. bounded pinning (10001 distinct fills) ===")
 pr = Portfolio(initial_capital=Decimal("100000000.00"), initial_date=D)
-for i in range(10001):
+first_fill = mk("K00000", OrderSide.BUY, 1, "10")
+pr.process_fill(first_fill, enforce_risk_limits=False)
+for i in range(1, 10001):
     pr.process_fill(mk(f"K{i:05d}", OrderSide.BUY, 1, "10"), enforce_risk_limits=False)
 print("pinned size", len(pr._processed_fill_instances), "max", pr._max_pinned_instances)
-print("first id evicted?", id(pr) not in pr._processed_fill_instances)  # placeholder
+print("first id evicted?", id(first_fill) not in pr._processed_fill_instances)

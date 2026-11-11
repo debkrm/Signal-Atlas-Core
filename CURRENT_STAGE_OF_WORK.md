@@ -253,9 +253,3 @@ Signal-Atlas-Core/
 - Walk-forward parameter stability evaluation across market regimes.
 - Automated generation of computed verdicts (PASS/FAIL) against committed `configs/go_no_go_criteria.yaml`.
 - Computation of Deflated Sharpe Ratio (DSR) and Haircut Sharpe ratio.
-
-### Phase 2: Walk-Forward Strategy Engine & Deflated Sharpe Evaluation (Next Phase)
-- Multi-hypothesis trial registry logging every sweep.
-- Walk-forward parameter stability evaluation across market regimes.
-- Automated generation of computed verdicts (PASS/FAIL) against committed `configs/go_no_go_criteria.yaml`.
-- Computation of Deflated Sharpe Ratio (DSR) and Haircut Sharpe ratio.
