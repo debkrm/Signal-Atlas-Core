@@ -6,7 +6,7 @@
 **Repository state audited:** commit `84c7501` (`feat(features): complete Phase 1C pure indicator formulas and subsegment engine`) with 4 files dirty (+1 line each, trailing newline only).
 **Code changes made by this audit:** none. This document is read-only review output.
 
-**Sections:** §1–§9 Phase 1A→1C audit · §10 Phase 1C re-audit · §11–§12 Phase 1D · §13–§17 Phase 1E.
+**Sections:** §1–§9 Phase 1A→1C audit · §10 Phase 1C re-audit · §11–§12 Phase 1D · §13–§18 Phase 1E / Phase 2A.
 
 ---
 
@@ -969,3 +969,72 @@ Every §16 finding is closed by measurement, not by restatement: the reference g
 Recommended housekeeping only: remove the duplicated Phase 2 block (N-14) and fix the probe's eviction line (N-16).
 
 **Unchanged `NOT RUN` register:** snapshot SHA-256 / fingerprint reproduction, 545-pair Bhavcopy recomputation, Phase 0 legacy assessment, and any strategy/DSR/Haircut-Sharpe metric (no strategy layer exists). No strategy verdict is expressed in this section.
+
+---
+
+## 18. Phase 2A Audit — Holdout Containment & Trial Registry (`bbcbb6c`) (2026-11-11)
+
+**Commit audited:** `bbcbb6c` — *"feat(research): complete Phase 2A holdout containment and append-only trial registry"* (6 files, +1358/−13).
+**Working tree:** five uncommitted edits adding a trailing blank line to each new file; no behavioural content. Audited state = `bbcbb6c`.
+**Suite (measured):** `151 passed in 1.59s`, exit 0, zero warnings (138 + 13 new: 6 containment, 7 trials). The document states `1.99s`; timing only.
+**Method:** every guarantee claimed in `CURRENT_STAGE_OF_WORK.md` was attacked directly. All results below are printed by executed probes, not inferred from the tests.
+
+### 18.1 Claims that survive
+
+| Claim | Evidence |
+|---|---|
+| Content tampering is detected | Editing a stored `hypothesis` → `RegistryTamperedError: Tampered record hash`. |
+| Reordering is detected | Swapping records 2 and 3 → `DuplicateTrialError: Out-of-order sequence 1; expected 2`. |
+| Chain-link tampering is detected | Rewriting `prev_hash` and recomputing `record_hash` → `RegistryTamperedError: Broken hash chain`. |
+| Canonical hashing is key-order independent | `{"a":1,"b":2,"c":3}` and the reverse insertion order hash identically. |
+| Exact Decimal variance | `1.50/1.70/1.90` → `0.04`, matching the closed form. |
+| Overlapping folds are rejected | `train_end >= test_start` → `PartitionSpecValidationError`. |
+| No float reaches the canonicaliser | `_canonicalize_value` raises on float; `int`/`str`/`Decimal`/mapping/sequence only. |
+
+### 18.2 Findings
+
+| ID | Sev | Finding | Measured evidence |
+|---|---|---|---|
+| **A-1** | **P1** | **Holdout opens with arbitrary sentinel content.** `expected_token_hash` defaults to `None`, and `check_partition_access` forwards it, so *any* non-empty file unlocks the holdout. | `HOLDOUT_UNLOCK` containing `banana` → `verify_holdout_unlock` `True`, `check_partition_access(spec, HOLDOUT, path)` **admitted**. The suite only tests the hash-supplied and empty-file paths, so nothing catches this. |
+| **A-2** | **P1** | **Partition-string bypass.** The guard compares `partition.upper() == "HOLDOUT"` without normalising, while validation only requires non-empty/stripped *truthy* content. | `"HOLDOUT"`, `"holdout"`, `"Holdout"` rejected; `"holdout "` **admitted** into the registry with no authorisation. |
+| **A-3** | **P1** | **`allow_holdout: bool` is an unauthenticated bypass of containment.** The registry keeps its own holdout policy and never consults a sentinel, so a caller writes holdout trials by passing `True`. This also means two independent holdout authorities exist, contradicting the single-authority rule the slice was meant to establish. | `append_trial(..., partition="HOLDOUT", allow_holdout=True)` → **admitted**, `seq=2`, no unlock path or hash consulted. |
+| **A-4** | **P1** | **Truncation is undetectable, and `verify_integrity()` certifies the shortened registry.** A hash chain with no external head anchor cannot distinguish "5 trials" from "5 trials, last 3 deleted". DSR takes `N` from this registry, so understating the trial count directly inflates the significance verdict. | 5 records written, file truncated to 2 lines → `TrialRegistry(...).trial_count == 2`, `verify_integrity()` → **`True`**. |
+| **A-5** | **P1 (doc)** | **The document states guarantees the code does not provide,** and types a gate verdict by hand. `"verified with content hash"` is contradicted by A-1; `"Any accessor for a sealed partition raises"` is vacuous — no data accessor exists (A-6); `"2A Gates: 5 / 5 PASS (measured via independent probe …)"` is a hand-typed label with no 2A probe committed (only `probe_b7bd8ba.py`, which covers Phase 1E). Violates §9.1 (verdicts computed, never typed). | `git show bbcbb6c --stat` lists no 2A probe; `ls *.py` shows only `probe_b7bd8ba.py`. |
+| **A-6** | **P2** | **Containment is advisory, not binding.** `check_partition_access` never uses its `spec` argument, and no module outside `research/` calls it — nothing in the codebase reads price data through the guard. | `grep -rn "check_partition_access\|HoldoutSealedError\|PartitionRole" src --include=*.py` outside `research/` → **no matches**. |
+| **A-7** | **P2** | **Concurrent appenders corrupt the registry.** `append_trial` trusts its in-memory tail and appends unconditionally, with no lock and no re-verification against disk. | Two registries opened on one file, one append each → two `seq=1` rows on disk; the next load raises `DuplicateTrialError` and the file needs manual reconstruction. |
+| **A-8** | **P2** | **A missing trailing newline destroys the next record.** Append does not ensure the separator. | File stripped of its final newline loads fine (`1` record), then an append produces `RegistryTamperedError: Malformed JSON … Extra data` on reload. |
+| **A-9** | **P2** | **`auto_verify=False` loads tampered records and then extends their chain.** A documented switch disables the integrity check the class exists to provide. | Tampered `sharpe_ratio=99.0` → default load `RegistryTamperedError` (correct); `auto_verify=False` loads `2` records reporting `99.0` and appends `seq=3`. |
+| **A-10** | **P2** | **`embargo_sessions` is declarative and unverified.** `WalkForwardFold` checks only `train_end < test_start`; the stored embargo is never compared with the actual gap, so a fabricated embargo survives into a valid-looking `FOLD-SPEC-V1` fingerprint. | `train_end=2023-01-10`, `test_start=2023-01-11`, `embargo_sessions=5` → **accepted**, fingerprint `FOLD-SPEC-V1-84aaffea03602…`. |
+| **A-11** | **P2** | **The two DSR inputs disagree on `N`.** `compute_trial_sharpe_variance` divides by `(#non-None Sharpes − 1)` while `trial_count` counts all trials; DSR must use the total attempted. The convention is unpinned, so 2B would silently inherit a choice. | `get_trial_sharpes()` filters `None`; `trial_count` does not. |
+| **A-12** | **P2 (reproducibility)** | **Registry files are not byte-identical across platforms.** Append opens in text mode, so Windows writes `\r\n`. Any gate phrased as "identical registry file" cannot hold cross-platform. | `CRLF count: 1, LF count: 1` for a one-record file on this machine. |
+| **A-13** | **P3** | Non-finite Decimals accepted into records (`sharpe_ratio=Decimal("NaN")` → stored, reloads). | Append and reload both succeed. |
+| **A-14** | **P3** | Malformed records leak `KeyError` instead of `RegistryTamperedError`. | Line `{"seq":1,"trial_id":"M"}` → `UNTYPED KeyError: 'prev_hash'`. |
+| **A-15** | **P3** | In-memory and reloaded records are not equal for Decimal params, though their hashes match (`Decimal('0.010')` vs `'0.010'`) — the R-2 representation-sensitivity carried forward. | `params equal → False`, `hashes equal → True`. |
+| **A-16** | **P3** | Calendar sessions are not validated: duplicates and ordering are accepted, and duplicates silently absorb into fold windows. | `[d1,d1,d2,d3,d4]` accepted; fold produced without complaint. |
+| **A-17** | **P3** | Anchored mode over-rejects: `min_required` always adds `train_sessions` even when the train window is pinned to index 0. | 6 sessions, `train=4, test=3, embargo=0, anchored=True` → rejected, although train `0..2` / test `3..5` is valid. |
+| **A-18** | **P3** | `timestamp_utc` is an unvalidated free string — no ISO-8601 parse and no monotonicity, so trial chronology can be back-dated. | Any non-empty string accepted. |
+
+### 18.3 Recomputed 2A gates
+
+| Gate (from the committed plan) | Result | Basis |
+|---|---|---|
+| G2A-1 · sealed read raises | **FAIL** | No accessor exists; the guard is optional, admits arbitrary sentinel content (A-1), and has two string/flag bypasses (A-2, A-3). |
+| G2A-2 · folds deterministic, disjoint, exhaustive over IS | **PARTIAL** | Determinism and disjointness hold; test windows tile only the tail, so most of IS is never out-of-fold evaluated, and calendar validity is unchecked (A-16). |
+| G2A-3 · shuffled sweep yields an identical registry file | **FAIL** | Not measured by the suite (only key-order hashing is), and byte-identity is platform-dependent (A-12). |
+| G2A-4 · chain verifies; sample record recomputes | **FAIL** | True for content edits, false for truncation (A-4), transplant, and `auto_verify=False` (A-9). |
+| G2A-5 · schema ready for 2B | **PASS** | All nine DSR fields present and round-tripped, with the `N` ambiguity recorded as A-11. |
+
+**Verdict: Phase 2A is NOT verified — NO-GO to Phase 2B.**
+
+The registry's tamper-evidence is real for content edits, and the fold geometry is sound. But the slice exists to make one promise — the holdout cannot be reached, and the trial count cannot be quietly reduced — and both fail open: an arbitrary file unlocks the holdout, and a truncated registry reports `verify_integrity() == True` while having lost three of five trials. Since DSR consumes exactly that count, continuing to 2B would build significance statistics on an adjustable `N`.
+
+**Minimum closure set before 2B:**
+1. Make `expected_token_hash` required (no `None` default) or bind the token into the partition fingerprint; reject content that does not match.
+2. Normalise the partition value (`strip().upper()`) and validate it against `PartitionRole`, not an ad-hoc string comparison.
+3. Remove `allow_holdout`; route every holdout access through one shared authorisation function.
+4. Anchor the registry head (count + final `record_hash`) outside the appendable file and verify it on load; make truncation a `RegistryTamperedError`.
+5. Re-verify the on-disk tail before appending (tail hash + size) and refuse concurrent or separator-less writes.
+6. Bind a fold's `embargo_sessions` to its actual session gap, and settle the DSR `N` convention (total trials) in the 2B contract.
+7. Rewrite the 2A status claims in `CURRENT_STAGE_OF_WORK.md` to computed gate results, and commit the 2A probe that produces them.
+
+**Unchanged `NOT RUN` register:** all Phase 0–1B empirical items, and every Phase 2B/2C metric (no significance, strategy or walk-forward evaluation module exists).

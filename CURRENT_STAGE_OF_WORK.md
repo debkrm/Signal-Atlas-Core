@@ -165,7 +165,10 @@ Signal-Atlas-Core/
 │   └── go_no_go_criteria.yaml               # Committed quantitative thresholds & effective-dated fee schedule
 ├── scripts/
 │   ├── reconcile_bhavcopy_series.py         # Reproducible Bhavcopy audit tool (strict explicit CLI root)
-│   └── verify_historical_snapshot.py        # Snapshot loader & SHA-256 / canonical fingerprint verifier
+│   ├── verify_historical_snapshot.py        # Snapshot loader & SHA-256 / canonical fingerprint verifier
+│   └── verify_phase2a_containment_and_trials.py # Phase 2A containment & trial registry verification probe
+├── probe_b7bd8ba.py                         # Phase 1E independent audit probe
+├── probe_phase2a.py                         # Phase 2A independent audit probe
 ├── reports/
 │   ├── audit/
 │   │   └── signal_atlas_phase1c_audit_deepseek_review_.md # Independent external audit report
@@ -222,9 +225,9 @@ Signal-Atlas-Core/
         ├── test_costs.py                    # Statutory Indian cost engine, circulars, GST base, paise rounding (6 tests)
         ├── test_execution_simulator.py      # Next-session invariant, circuits, volume cap, slippage, latency (11 tests)
         ├── test_portfolio.py                # Exact Decimal cash ledger, positions, MTM, drawdown, risk caps, R-1..R-7, N-1..N-13 (29 tests)
-        ├── test_containment.py              # Sealed holdout access, human unlock verification, fold generation (6 tests)
-        └── test_trials.py                   # Append-only hash chain, tamper detection, canonical params, variance (7 tests)
-                                             # Total: 151 passing unit tests in 1.99s
+        ├── test_containment.py              # Sealed holdout access, human unlock verification, fold generation (10 tests)
+        └── test_trials.py                   # Append-only hash chain, manifest anchor, tamper detection, variance (15 tests)
+                                             # Total: 163 passing unit tests in 1.67s
 ```
 
 ---
@@ -274,15 +277,38 @@ Signal-Atlas-Core/
 
 ---
 
-#### Phase 2A — Holdout Containment & Multi-Hypothesis Trial Registry (Completed & Verified)
-Modules: `src/signal_core/research/containment.py`, `src/signal_core/research/trials.py` (independent of each other; neither imports the other).
+#### Phase 2A — Holdout Containment & Multi-Hypothesis Trial Registry (Completed & Remediated per §18 Audit)
+Modules: [`src/signal_core/research/containment.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/research/containment.py), [`src/signal_core/research/trials.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/src/signal_core/research/trials.py).
+Authoritative committed probe: [`scripts/verify_phase2a_containment_and_trials.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/scripts/verify_phase2a_containment_and_trials.py) (and root runner [`probe_phase2a.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/probe_phase2a.py)).
 
-- **Sealed partitions**: Implemented `PartitionSpec(IS, VALIDATION, HOLDOUT)` with deterministic fingerprinting (`PART-SPEC-V1-`). Any accessor for a sealed partition raises `HoldoutSealedError`; zero convenience paths.
-- **Unlock is human-only**: `HOLDOUT_UNLOCK` sentinel verified with content hash. Library code exposes zero APIs to create, write, or mock it (verified by automated reflection test).
-- **Fold generation**: Runs strictly over calendar sessions within In-Sample/Validation with lookahead-free lookback embargo buffers. Test windows are disjoint across folds. Deterministic fingerprinting (`FOLD-SPEC-V1-`).
-- **Trial registry**: Append-only tamper-evident JSONL with cryptographic SHA-256 hash chaining (`seq`, `prev_hash`, `record_hash`). Out-of-order sequence, duplicate `trial_id`, or broken hash chain fails closed (`RegistryTamperedError`, `DuplicateTrialError`).
-- **Phase 2B Schema Readiness**: Pre-allocated fields for returns digest, observation count, mean, standard deviation, skewness, kurtosis, Sharpe, and max drawdown. Pure Decimal trial Sharpe variance computation.
-- **2A Gates**: 5 / 5 PASS (measured via independent probe and unit suite).
+- **Audit §18 Remediation (A-1 through A-18)**:
+  * **Mandatory Cryptographic Token Binding (A-1)**: `PartitionSpec` requires a 64-character hex `holdout_token_hash` bound into its cryptographic fingerprint (`PART-SPEC-V1-`). `verify_holdout_unlock` requires `expected_token_hash` (no `None` default); sentinel files with arbitrary content (e.g. `banana`) fail closed (`HoldoutSealedError`).
+  * **Strict Role Normalization & Enum Validation (A-2)**: Partition roles are normalized (`.strip().upper()`) and validated against `PartitionRole` enum; bypass attempts such as `"holdout "` fail closed.
+  * **Single Containment Authority (A-3)**: Removed `allow_holdout: bool` flag. Holdout registration routes exclusively through `check_partition_access(spec, PartitionRole.HOLDOUT, unlock_path)`.
+  * **Authoritative External Head Manifest (A-4)**: Maintains `<registry_file>.manifest` recording `total_trials`, `head_hash`, and `last_trial_id`. Registry truncation or head mismatch triggers `RegistryTamperedError` fail-closed.
+  * **Committed Reproducible Verification Probe (A-5)**: Replaced hand-typed status claims with executable verification script `scripts/verify_phase2a_containment_and_trials.py` computing all gate verdicts.
+  * **Authoritative Observation Accessor (A-6)**: Implemented `filter_partition_observations` enforcing containment before observation streams can reach feature or evaluation logic.
+  * **On-Disk Tail Verification & Concurrent Guard (A-7)**: `append_trial` verifies on-disk record count and head hash before appending, rejecting desynchronized concurrent writes fail-closed.
+  * **Calendar-Backed Embargo Validation (A-8 & A-10)**: `WalkForwardFold` validates that calendar date separation `(test_start - train_end).days - 1` strictly accommodates `embargo_sessions`.
+  * **Unconditional Fail-Closed Integrity (A-9)**: Removed `auto_verify=False` toggle; all loads rigorously verify sequence, uniqueness, hash chaining, and manifest anchor.
+  * **Pinned DSR $N$ Convention (A-11)**: Pinned `total_trial_count` ($N$, total attempted trials) as the authoritative divisor for multiple-hypothesis penalty, while `compute_trial_sharpe_variance` computes sample variance over `evaluated_trial_count` ($N_{eval} - 1$).
+  * **Cross-Platform POSIX LF Byte-Identity (A-12)**: Registry and manifest append operations use `newline="\n"`, ensuring zero CRLF byte distortion on Windows.
+  * **Finite Decimal Validation (A-13)**: Non-finite Decimals (`NaN`, `Infinity`) in records are rejected fail-closed.
+  * **Typed Error Handling on Corrupt JSON (A-14)**: Malformed JSON records raise `RegistryTamperedError` instead of leaking untyped `KeyError`.
+  * **Canonical Parameter Parity (A-15)**: Pre-canonicalizes parameters in memory to ensure bit-for-bit parity between in-memory records and reloaded records.
+  * **Calendar Session Validation (A-16)**: `generate_walk_forward_folds` validates calendar session monotonicity, exact date types, and rejects duplicates.
+  * **Anchored Mode Calibration (A-17)**: Fixed `min_required` calculation in anchored mode so expanding-window folds do not over-reject.
+  * **Chronological Monotonicity Enforcement (A-18)**: Validates ISO-8601 UTC timestamps and enforces non-decreasing chronological monotonicity across trials.
+
+- **Phase 2A Computed Gate Verdicts (measured via `scripts/verify_phase2a_containment_and_trials.py`)**:
+
+| Gate | Status | Computed Measurement Basis |
+|---|---|---|
+| **G2A-1** · Sealed holdout read raises | **PASS** | `check_partition_access` and `filter_partition_observations` fail closed with `HoldoutSealedError` without valid sentinel; arbitrary content (`banana`) and string casing/whitespace bypasses (`"holdout "`) fail closed (A-1, A-2, A-3, A-6). |
+| **G2A-2** · Folds deterministic, disjoint, calendar-validated | **PASS** | `compute_fold_spec_fingerprint` is deterministic (`FOLD-SPEC-V1-c64ed6...`); test windows are strictly disjoint; declarative embargoes unbacked by calendar gap fail closed; calendar duplicates/disorder rejected; anchored mode produces valid folds without over-rejection (A-8, A-10, A-16, A-17). |
+| **G2A-3** · Shuffled parameter sweep reproducible & byte-identical | **PASS** | Canonical record hashing is key-order invariant; POSIX LF strictly enforced across platforms with CRLF=0, LF=7 on test append (A-12). |
+| **G2A-4** · Cryptographic chain verifies & tampering/truncation fails closed | **PASS** | Hash chaining verified across consecutive records; truncation from 5 to 2 records detected via manifest anchor (`RegistryTamperedError`); concurrent appender desync rejected; missing trailing newline fails closed (A-4, A-7, A-8, A-9). |
+| **G2A-5** · Schema ready for Phase 2B & DSR conventions pinned | **PASS** | All 9 statistical fields present; exact Decimal sample variance matches closed form (`0.0800`); non-finite Decimals rejected; malformed JSON raises typed error; canonical params agree bit-for-bit on reload; timestamps strictly monotonic; $N=3$ vs $N_{eval}=2$ convention pinned (A-11, A-13, A-14, A-15, A-18). |
 
 #### Phase 2B — Statistical Significance Engine
 Module: `src/signal_core/research/significance.py`.

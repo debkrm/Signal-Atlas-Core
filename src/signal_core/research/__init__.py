@@ -12,6 +12,7 @@ from signal_core.research.containment import (
     check_partition_access,
     compute_fold_spec_fingerprint,
     compute_partition_fingerprint,
+    filter_partition_observations,
     generate_walk_forward_folds,
     verify_holdout_unlock,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "check_partition_access",
     "compute_fold_spec_fingerprint",
     "compute_partition_fingerprint",
+    "filter_partition_observations",
     "generate_walk_forward_folds",
     "verify_holdout_unlock",
     "DuplicateTrialError",
@@ -41,3 +43,4 @@ __all__ = [
     "TrialRegistry",
     "TrialRegistryError",
 ]
+
