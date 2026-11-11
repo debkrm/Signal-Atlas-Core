@@ -7,7 +7,7 @@ overdraft protection, and unverified circuit evidence disclosure tracking.
 
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
-from typing import List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from signal_core.execution.simulator import ExecutionFillResult
 from signal_core.execution.types import FillStatus, OrderSide
@@ -47,10 +47,12 @@ class CashLedger:
 
         self._allow_overdraft = allow_overdraft
         self._entries: List[CashLedgerEntry] = []
-        self._current_cash = Decimal("0.00")
         self._entry_counter = 0
         self._posted_reference_ids: Set[str] = set()
+        self._initial_date_was_explicit = initial_date is not None
         self._last_trade_date: Optional[datetime.date] = initial_date
+        self._fill_reference_counters: Dict[Tuple[str, datetime.date], int] = {}
+        self._current_cash = Decimal("0.00")
 
         initial_quantized = _quantize_paise(initial_capital)
         if initial_quantized > Decimal("0.00"):
@@ -64,9 +66,17 @@ class CashLedger:
                 circuit_evidence_present=True,
                 metadata=None,
             )
-            # If initial_date was None, leave _last_trade_date unset so the first real trade can set it
-            if initial_date is None:
-                self._last_trade_date = None
+
+    def generate_fill_reference(self, instrument_id: str, trade_date: datetime.date) -> str:
+        """
+        Generates a deterministic monotonic sequence reference for an instrument on a trade date.
+        First fill: FILL_{instrument_id}_{trade_date}#1
+        Subsequent fills: FILL_{instrument_id}_{trade_date}#2, #3, ...
+        """
+        key = (instrument_id, trade_date)
+        count = self._fill_reference_counters.get(key, 0) + 1
+        self._fill_reference_counters[key] = count
+        return f"FILL_{instrument_id}_{trade_date}#{count}"
 
     @property
     def current_cash(self) -> Decimal:
@@ -188,7 +198,14 @@ class CashLedger:
             else CashEntryType.TRADE_SELL_INFLOW
         )
 
-        ref_id = reference_id if reference_id is not None else f"FILL_{fill.order.instrument_id}_{fill.fill_date}"
+        if reference_id is not None:
+            ref_id = reference_id
+        elif fill.fill_id is not None:
+            ref_id = fill.fill_id
+        elif fill.order.order_id is not None:
+            ref_id = f"FILL_{fill.order.order_id}"
+        else:
+            ref_id = self.generate_fill_reference(fill.order.instrument_id, fill.fill_date)
 
         return self._post_entry(
             trade_date=fill.fill_date,
@@ -212,6 +229,23 @@ class CashLedger:
     ) -> CashLedgerEntry:
         if type(trade_date) is not datetime.date:
             raise LedgerValidationError(f"trade_date must be exact datetime.date, got {type(trade_date).__name__}")
+
+        # If opening deposit was posted without explicit initial_date, anchor it lazily to the first transaction date (R-4)
+        if not self._initial_date_was_explicit and len(self._entries) == 1 and self._entries[0].reference_id == "INIT_DEPOSIT":
+            init_entry = self._entries[0]
+            if init_entry.trade_date != trade_date:
+                self._entries[0] = CashLedgerEntry(
+                    entry_id=init_entry.entry_id,
+                    trade_date=trade_date,
+                    entry_type=init_entry.entry_type,
+                    amount=init_entry.amount,
+                    balance_after=init_entry.balance_after,
+                    description=init_entry.description,
+                    reference_id=init_entry.reference_id,
+                    circuit_evidence_present=init_entry.circuit_evidence_present,
+                    metadata=init_entry.metadata,
+                )
+                self._last_trade_date = trade_date
 
         if self._last_trade_date is not None and trade_date < self._last_trade_date:
             raise LedgerValidationError(
@@ -263,6 +297,17 @@ class CashLedger:
         self._entry_counter -= 1
         if entry.reference_id is not None:
             self._posted_reference_ids.discard(entry.reference_id)
+            if "#" in entry.reference_id and entry.reference_id.startswith("FILL_"):
+                try:
+                    parts = entry.reference_id[5:].rsplit("#", 1)
+                    inst_date_part = parts[0].rsplit("_", 1)
+                    inst = inst_date_part[0]
+                    dt = datetime.date.fromisoformat(inst_date_part[1])
+                    key = (inst, dt)
+                    if key in self._fill_reference_counters and self._fill_reference_counters[key] > 0:
+                        self._fill_reference_counters[key] -= 1
+                except Exception:
+                    pass
         if self._entries:
             self._last_trade_date = self._entries[-1].trade_date
         else:

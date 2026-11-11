@@ -19,10 +19,11 @@ Verifies:
 
 import datetime
 from decimal import Decimal
+from typing import Optional
 import pytest
 
 from signal_core.contracts.criteria import load_go_no_go_criteria
-from signal_core.execution.costs import TransactionCostModel
+from signal_core.execution.costs import TransactionCostBreakdown, TransactionCostModel
 from signal_core.execution.simulator import ExecutionFillResult
 from signal_core.execution.types import (
     ExecutionOrder,
@@ -52,6 +53,8 @@ def _make_dummy_fill(
     price: Decimal,
     trade_date: datetime.date,
     circuit_evidence_present: bool = True,
+    order_id: Optional[str] = None,
+    fill_id: Optional[str] = None,
 ) -> ExecutionFillResult:
     """Helper to create realistic filled ExecutionFillResult with statutory costs."""
     cost_model = TransactionCostModel()
@@ -71,6 +74,7 @@ def _make_dummy_fill(
         product=OrderProduct.DELIVERY,
         signal_date=trade_date - datetime.timedelta(days=1),
         target_date=trade_date,
+        order_id=order_id,
     )
     return ExecutionFillResult(
         order=order,
@@ -84,6 +88,7 @@ def _make_dummy_fill(
         costs=costs,
         circuit_evidence_present=circuit_evidence_present,
         rejection_reason=None,
+        fill_id=fill_id,
     )
 
 
@@ -590,3 +595,176 @@ def test_finding_i7_proportional_basis_eliminates_sub_paise_drift():
     # Invariant: residual cost basis and unallocated charges MUST be exactly 0.00
     assert pos.total_cost_basis == Decimal("0.00")
     assert pos.unallocated_buy_charges == Decimal("0.00")
+
+
+def test_multi_fill_scale_in_same_session():
+    """
+    Verify R-1: Multi-fill scale-in in the same session without explicit references.
+    3 consecutive buys of RELIANCE on 2026-11-11 must all succeed and produce sequential
+    references (#1, #2, #3), holding a total of 60 shares.
+    """
+    portfolio = Portfolio(initial_capital=Decimal("1000000.00"))
+    d1 = datetime.date(2026, 11, 11)
+
+    f1 = _make_dummy_fill("RELIANCE", OrderSide.BUY, 20, Decimal("2500.00"), d1)
+    f2 = _make_dummy_fill("RELIANCE", OrderSide.BUY, 20, Decimal("2500.00"), d1)
+    f3 = _make_dummy_fill("RELIANCE", OrderSide.BUY, 20, Decimal("2500.00"), d1)
+
+    e1 = portfolio.process_fill(f1, enforce_risk_limits=False)
+    e2 = portfolio.process_fill(f2, enforce_risk_limits=False)
+    e3 = portfolio.process_fill(f3, enforce_risk_limits=False)
+
+    assert e1.reference_id == "FILL_RELIANCE_2026-11-11#1"
+    assert e2.reference_id == "FILL_RELIANCE_2026-11-11#2"
+    assert e3.reference_id == "FILL_RELIANCE_2026-11-11#3"
+
+    pos = portfolio.get_position("RELIANCE")
+    assert pos is not None
+    assert pos.quantity == 60
+
+
+def test_multi_fill_partial_fill_remainder():
+    """
+    Verify R-1: Multi-fill partial fill execution (60 shares, then 40 shares remainder)
+    on the same session for the same instrument without explicit references.
+    """
+    portfolio = Portfolio(initial_capital=Decimal("1000000.00"))
+    d1 = datetime.date(2026, 11, 11)
+
+    f1 = _make_dummy_fill("INFY", OrderSide.BUY, 60, Decimal("1500.00"), d1)
+    f2 = _make_dummy_fill("INFY", OrderSide.BUY, 40, Decimal("1500.00"), d1)
+
+    e1 = portfolio.process_fill(f1, enforce_risk_limits=False)
+    e2 = portfolio.process_fill(f2, enforce_risk_limits=False)
+
+    assert e1.reference_id == "FILL_INFY_2026-11-11#1"
+    assert e2.reference_id == "FILL_INFY_2026-11-11#2"
+
+    pos = portfolio.get_position("INFY")
+    assert pos is not None
+    assert pos.quantity == 100
+
+
+def test_replayed_fill_with_explicit_reference_id_rejected():
+    """
+    Verify replay protection with explicit reference_id:
+    A duplicate fill re-using an existing reference_id is rejected fail-closed.
+    """
+    portfolio = Portfolio(initial_capital=Decimal("1000000.00"))
+    d1 = datetime.date(2026, 11, 11)
+
+    f1 = _make_dummy_fill("TCS", OrderSide.BUY, 50, Decimal("3200.00"), d1)
+    portfolio.process_fill(f1, reference_id="ORD_TCS_101", enforce_risk_limits=False)
+
+    cash_after = portfolio.ledger.current_cash
+    entries_count = len(portfolio.ledger.entries)
+
+    f2 = _make_dummy_fill("TCS", OrderSide.BUY, 50, Decimal("3200.00"), d1)
+    with pytest.raises(LedgerValidationError, match="Duplicate entry rejected"):
+        portfolio.process_fill(f2, reference_id="ORD_TCS_101", enforce_risk_limits=False)
+
+    assert portfolio.ledger.current_cash == cash_after
+    assert len(portfolio.ledger.entries) == entries_count
+
+
+def test_r2_reconciliation_mismatch_fails_closed():
+    """
+    Verify R-2: Reconciliation between costs.gross_amount and quantity × executed_price.
+    A mismatch between the statutory breakdown and the price/quantity calculation fails closed.
+    """
+    portfolio = Portfolio(initial_capital=Decimal("1000000.00"))
+    d1 = datetime.date(2026, 11, 11)
+
+    valid_fill = _make_dummy_fill("HDFCBANK", OrderSide.BUY, 10, Decimal("1500.00"), d1)
+    # Expected gross is 15000.00; craft costs with mismatched gross of 14900.00
+    import dataclasses
+    mismatched_costs = dataclasses.replace(valid_fill.costs, gross_amount=Decimal("14900.00"))
+    bad_fill = ExecutionFillResult(
+        order=valid_fill.order,
+        status=valid_fill.status,
+        fill_date=valid_fill.fill_date,
+        latency_sessions=valid_fill.latency_sessions,
+        filled_quantity=valid_fill.filled_quantity,
+        unfilled_quantity=valid_fill.unfilled_quantity,
+        executed_price=valid_fill.executed_price,
+        slippage=valid_fill.slippage,
+        costs=mismatched_costs,
+        circuit_evidence_present=valid_fill.circuit_evidence_present,
+        rejection_reason=None,
+    )
+
+    with pytest.raises(LedgerValidationError, match="Reconciliation error"):
+        portfolio.process_fill(bad_fill, enforce_risk_limits=False)
+
+    # Verify executed_price <= 0 fails closed
+    zero_price_fill = ExecutionFillResult(
+        order=valid_fill.order,
+        status=valid_fill.status,
+        fill_date=valid_fill.fill_date,
+        latency_sessions=valid_fill.latency_sessions,
+        filled_quantity=valid_fill.filled_quantity,
+        unfilled_quantity=valid_fill.unfilled_quantity,
+        executed_price=Decimal("0.00"),
+        slippage=valid_fill.slippage,
+        costs=valid_fill.costs,
+        circuit_evidence_present=valid_fill.circuit_evidence_present,
+        rejection_reason=None,
+    )
+    with pytest.raises(LedgerValidationError, match="executed_price must be positive finite Decimal"):
+        portfolio.process_fill(zero_price_fill, enforce_risk_limits=False)
+
+
+def test_r3_phantom_position_discarded_on_rollback():
+    """
+    Verify R-3: If position.apply_fill fails, rollback discards the empty Position object
+    from portfolio._positions for newly traded scrips.
+    """
+    portfolio = Portfolio(initial_capital=Decimal("1000000.00"))
+    d1 = datetime.date(2026, 11, 11)
+
+    assert "WIPRO" not in portfolio._positions
+
+    # Create fill with invalid executed_price that passes portfolio checks but fails in position
+    valid_fill = _make_dummy_fill("WIPRO", OrderSide.BUY, 10, Decimal("400.00"), d1)
+
+    # Monkeypatch apply_fill to simulate an unexpected error during position update
+    target_pos = Position("WIPRO")
+    def _exploding_apply_fill(self, f):
+        raise RuntimeError("Simulated internal position failure")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Position, "apply_fill", _exploding_apply_fill)
+        with pytest.raises(RuntimeError, match="Simulated internal position failure"):
+            portfolio.process_fill(valid_fill, enforce_risk_limits=False)
+
+    # Rollback must have cleaned up the phantom Position
+    assert "WIPRO" not in portfolio._positions
+    # Cash ledger must have no trade entries
+    assert len(portfolio.ledger.entries) == 1
+    assert portfolio.ledger.current_cash == Decimal("1000000.00")
+
+
+def test_r4_initial_deposit_derived_from_first_trade_date():
+    """
+    Verify R-4: When initial_date is omitted in Portfolio(initial_capital=...),
+    the initial deposit date is derived lazily from the first trade session,
+    avoiding date disorder or fabricated today's date.
+    """
+    portfolio = Portfolio(initial_capital=Decimal("500000.00"))
+    trade_date = datetime.date(2022, 1, 5)
+
+    # Before any trades, 1 entry exists (initial deposit, awaiting anchor to first trade date)
+    assert len(portfolio.ledger.entries) == 1
+    assert portfolio.current_cash == Decimal("500000.00")
+
+    fill = _make_dummy_fill("SBIN", OrderSide.BUY, 100, Decimal("450.00"), trade_date)
+    portfolio.process_fill(fill, enforce_risk_limits=False)
+
+    # Ledger now has 2 entries: deposit and buy, both dated 2022-01-05
+    assert len(portfolio.ledger.entries) == 2
+    assert portfolio.ledger.entries[0].entry_type == CashEntryType.CAPITAL_DEPOSIT
+    assert portfolio.ledger.entries[0].trade_date == trade_date
+    assert portfolio.ledger.entries[0].amount == Decimal("500000.00")
+    assert portfolio.ledger.entries[1].entry_type == CashEntryType.TRADE_BUY_OUTFLOW
+    assert portfolio.ledger.entries[1].trade_date == trade_date
+

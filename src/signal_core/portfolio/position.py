@@ -113,6 +113,9 @@ class Position:
         if fill.costs is None:
             raise LedgerValidationError("ExecutionFillResult lacks required TransactionCostBreakdown.")
 
+        if fill.executed_price is None or isinstance(fill.executed_price, bool) or not isinstance(fill.executed_price, Decimal) or not fill.executed_price.is_finite() or fill.executed_price <= Decimal("0.00"):
+            raise LedgerValidationError(f"executed_price must be positive finite Decimal, got {fill.executed_price!r}")
+
         if fill.filled_quantity <= 0:
             raise LedgerValidationError(f"Fill quantity must be positive, got {fill.filled_quantity}")
 
@@ -131,11 +134,13 @@ class Position:
             Tuple[Decimal, Decimal]: (realized_gross_pnl_for_fill, realized_net_pnl_for_fill)
         """
         self.validate_fill(fill)
+        if fill.costs is None or fill.executed_price is None:
+            raise LedgerValidationError("ExecutionFillResult lacks required costs or executed_price.")
 
-        paise_costs = fill.costs.to_paise()  # type: ignore[union-attr]
+        paise_costs = fill.costs.to_paise()
         charges = paise_costs.total_charges
         qty = fill.filled_quantity
-        price = fill.executed_price  # type: ignore[assignment]
+        price = fill.executed_price
 
         if fill.order.side == OrderSide.BUY:
             gross = _quantize_paise(Decimal(qty) * price)

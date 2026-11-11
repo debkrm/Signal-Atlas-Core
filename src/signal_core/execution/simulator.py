@@ -69,6 +69,7 @@ class ExecutionFillResult:
     costs: Optional[TransactionCostBreakdown]
     circuit_evidence_present: bool
     rejection_reason: Optional[str]
+    fill_id: Optional[str] = None
 
 
 class ExecutionFillSimulator:
@@ -405,6 +406,7 @@ class ExecutionFillSimulator:
         )
 
         circuit_evidence = (effective_upper is not None or effective_lower is not None)
+        fill_id = f"FILL_{order.order_id}" if order.order_id is not None else None
 
         return ExecutionFillResult(
             order=order,
@@ -418,6 +420,7 @@ class ExecutionFillSimulator:
             costs=costs,
             circuit_evidence_present=circuit_evidence,
             rejection_reason=None,
+            fill_id=fill_id,
         )
 
     def _create_rejected_result(
@@ -429,6 +432,7 @@ class ExecutionFillSimulator:
         reason: str,
         circuit_evidence_present: bool = False,
     ) -> ExecutionFillResult:
+        fill_id = f"REJ_{order.order_id}" if order.order_id is not None else None
         return ExecutionFillResult(
             order=order,
             status=status,
@@ -441,4 +445,5 @@ class ExecutionFillSimulator:
             costs=None,
             circuit_evidence_present=circuit_evidence_present,
             rejection_reason=reason,
+            fill_id=fill_id,
         )

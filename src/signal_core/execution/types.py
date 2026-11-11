@@ -70,6 +70,7 @@ class ExecutionOrder:
     limit_price: Optional[Decimal] = None
     stop_price: Optional[Decimal] = None
     allow_partial_fill: bool = False
+    order_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.instrument_id, str) or not self.instrument_id.strip():

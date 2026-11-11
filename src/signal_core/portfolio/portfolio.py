@@ -52,13 +52,13 @@ class Portfolio:
             initial_date=initial_date,
         )
         self._positions: Dict[str, Position] = {}
+        self._processed_fills: List[ExecutionFillResult] = []
         self._peak_portfolio_value: Decimal = _quantize_paise(initial_capital)
         self._current_drawdown: Decimal = Decimal("0.00")
         self._max_drawdown: Decimal = Decimal("0.00")
         self._drawdown_duration_sessions: int = 0
         self._snapshots: List[PortfolioSnapshot] = []
         self._last_valuation_date: Optional[datetime.date] = None
-        self._processed_fill_ids: Set[int] = set()
 
     @property
     def ledger(self) -> CashLedger:
@@ -223,6 +223,20 @@ class Portfolio:
         if fill.costs is None:
             raise LedgerValidationError("ExecutionFillResult lacks required TransactionCostBreakdown.")
 
+        # Pre-validate price and reconcile costs.gross_amount to filled_quantity × executed_price (R-2)
+        if fill.executed_price is None or isinstance(fill.executed_price, bool) or not isinstance(fill.executed_price, Decimal) or not fill.executed_price.is_finite() or fill.executed_price <= Decimal("0.00"):
+            raise LedgerValidationError(
+                f"executed_price must be positive finite Decimal, got {fill.executed_price!r}"
+            )
+
+        paise_costs = fill.costs.to_paise()
+        expected_gross = _quantize_paise(Decimal(fill.filled_quantity) * fill.executed_price)
+        if paise_costs.gross_amount != expected_gross:
+            raise LedgerValidationError(
+                f"Reconciliation error: fill.costs.gross_amount (₹{paise_costs.gross_amount}) "
+                f"does not match filled_quantity × executed_price (₹{expected_gross})."
+            )
+
         inst_id = fill.order.instrument_id
         pos = self.get_position(inst_id)
 
@@ -236,29 +250,48 @@ class Portfolio:
                 )
 
         # 2. Pre-validate risk limits with full capital outlay (gross + charges) (I-3)
-        paise_costs = fill.costs.to_paise()
         if enforce_risk_limits and fill.order.side == OrderSide.BUY:
             capital_outlay = paise_costs.gross_amount + paise_costs.total_charges
             self.validate_allocation(inst_id, capital_outlay, latest_market_prices)
 
-        # 3. Pre-validate idempotency before posting to ledger (I-2)
-        fill_ref = reference_id if reference_id is not None else f"FILL_{inst_id}_{fill.fill_date}"
-        if id(fill) in self._processed_fill_ids or fill_ref in self._ledger._posted_reference_ids:
+        # 3. Check for replay of the exact same fill instance (R-5)
+        if any(fill is processed for processed in self._processed_fills):
             raise LedgerValidationError(
-                f"Duplicate entry rejected: fill '{fill_ref}' has already been posted to portfolio."
+                f"Duplicate entry rejected: fill '{fill}' has already been processed by portfolio."
+            )
+
+        # Determine stable external reference ID or monotonic sequence (R-1)
+        if reference_id is not None:
+            effective_ref = reference_id
+        elif fill.fill_id is not None:
+            effective_ref = fill.fill_id
+        elif fill.order.order_id is not None:
+            effective_ref = f"FILL_{fill.order.order_id}"
+        else:
+            effective_ref = self._ledger.generate_fill_reference(inst_id, fill.fill_date)
+
+        if effective_ref in self._ledger._posted_reference_ids:
+            raise LedgerValidationError(
+                f"Duplicate entry rejected: fill with reference '{effective_ref}' already posted to ledger."
             )
 
         # 4. Post to CashLedger
-        entry = self._ledger.record_fill(fill, reference_id=fill_ref)
+        entry = self._ledger.record_fill(fill, reference_id=effective_ref)
 
-        # 5. Update Position with atomic rollback safety
+        # 5. Update Position with atomic rollback safety and clean phantom position cleanup (R-3)
+        is_new_instrument = inst_id not in self._positions
+        if is_new_instrument:
+            self._positions[inst_id] = Position(inst_id)
+
         try:
-            if inst_id not in self._positions:
-                self._positions[inst_id] = Position(inst_id)
             self._positions[inst_id].apply_fill(fill)
-            self._processed_fill_ids.add(id(fill))
+            self._processed_fills.append(fill)
         except Exception:
             self._ledger._rollback_last_entry()
+            if is_new_instrument:
+                del self._positions[inst_id]
+            if any(fill is p for p in self._processed_fills):
+                self._processed_fills.remove(fill)
             raise
 
         return entry
