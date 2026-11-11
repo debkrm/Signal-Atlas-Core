@@ -1220,3 +1220,53 @@ The estimators and both published statistics are correct, and the wiring honours
 **Carried forward:** D-6 (verdicts compare rounded statistics) and D-7 (`NOT RUN` has no representation) are accepted for 2B only because they cannot manufacture a `PASS` on their own; both must be settled when the Phase 2C report emitter is written, since that is the point where `AGENTS.md` §9.3 becomes executable.
 
 **Unchanged `NOT RUN` register:** all Phase 0–1B empirical items, every Phase 2C metric, and the G2A-3 parameter-sweep measurement.
+
+---
+
+## 22. Phase 2B Re-audit — §21 remediation (`13ce7c7`)
+
+**Commit audited:** `13ce7c7` — *"fix(research): remediate §21 audit findings D-1 through D-5"* (6 files, +340/−7).
+**Suite (measured):** `184 passed in 1.67s` (180 + 4 closure tests).
+**Committed probe (measured):** exit 0, `ALL MEASURED GATES PASSED (100%)`.
+**Method:** each of D-1…D-5 was re-attacked with the exact input that produced the finding in §21; then the guards were probed for over-blocking (legitimate cases must still compute) and for bypass; then the statistic was re-checked against the independent reference implementation to confirm the guards did not alter the maths.
+
+### 22.1 Closure table
+
+| ID | §21 evidence | Re-probe against `13ce7c7` | Status |
+|---|---|---|---|
+| **D-1** | `N=50, V=0` → `DSR 0.966639` PASS, tagged `N=50` | `compute_deflated_sharpe_ratio(SR=1.30, V=0, T=500, N=50)` → `InvalidSampleError: When trial_count_n (50) > 1, computing DSR requires strictly positive trial Sharpe variance…`. `N=50, N_eval=1` → `InvalidSampleError: …requires at least 2 evaluated trials to establish empirical variance`. End-to-end, registry of 50 trials with one `sharpe_ratio` → `InvalidSampleError` propagates out of `evaluate_strategy_significance`, no report produced. Legitimate paths unaffected: `N=1, V=0` → `0.966639` (PSR), `N=2, V=0.05` → `0.952503`. `V<0` rejected earlier as `trial_sharpe_variance must be a non-negative finite Decimal`. | **CLOSED** |
+| **D-2** | `γ3=5, SR_ann=4.74` → `z=2,883,725`, `DSR=1.000000` PASS | Same inputs → `SignificanceError: Mertens asymptotic Sharpe variance term is non-positive (-4.539844e-01); DSR cannot be evaluated for extreme non-normal return moments…`. No `1e-6` substitution remains in the source. Mirror case `γ3=-5` still computes `0.964700`. | **CLOSED** |
+| **D-3** | `EXCESS_NORMAL_ZERO` silently shifted DSR `0.832203 → 0.833457` | `DeflatedSharpeResult` gained `kurtosis_convention`; the Mertens term now always receives normalized raw `γ4`. Field-wise comparison of `deflated_sharpe_ratio`, `expected_max_sharpe`, `z_score`, `p_value`, `trial_sharpe_variance`, `kurtosis` across `(γ4=3.00, RAW)` and `(γ4=0.00, EXCESS)` → identical on all six, both reporting `kurtosis=3.00`. End-to-end through `evaluate_strategy_significance` with criteria convention switched: DSR `0.999998` both ways. Unknown convention → `SignificanceError`. | **CLOSED** |
+| **D-4** | Loader accepted `TOTAL_TRIALS_MINUS_ONE`, engine raised `Unsupported` | `load_go_no_go_criteria` now rejects anything other than `EVALUATED_TRIALS_MINUS_ONE` with `CriteriaValidationError`; committed YAML still loads; probe and 184 tests green. Loader and engine can no longer disagree. | **CLOSED** |
+| **D-5** | `N=2, N_eval=50` accepted and tagged | → `SignificanceError: evaluated_trial_count (50) cannot exceed total trial_count_n (2).` Boundary `N=5, N_eval=5` still computes (`0.898648`). | **CLOSED** |
+
+**No regression in the statistic.** The guards are validation-only; the computation is untouched. Re-running the three independent-reference cases from §21 against `13ce7c7` reproduces `0.626502 / 0.618962 / 0.003381` with `SR* = 1.265301 / 0.497932 / 3.687703` — identical to the pre-remediation engine and to my own transcription of the formula. The probe's own D-1 regression asserts the true-penalty value `0.488273`, i.e. the number §21 produced with real dispersion, so the test pins the failure rather than the symptom.
+
+### 22.2 Residuals (not blocking)
+
+| ID | Sev | Finding | Evidence |
+|---|---|---|---|
+| **D-1b** | P3 | The new guard is on the **sign** of `V`, not its magnitude. A vanishing but positive variance passes and deflates by nothing, reproducing the old outcome numerically while now being technically "valid". A registry whose evaluated Sharpes differ only in the sixth decimal can reach this. It is defensible — no dispersion means no selection bias to correct — but the report cannot show whether deflation was actually applied. | `N=100, V=1e-18, SR=1.30, T=500` → `SR*=0.000000`, `DSR=0.966639` PASS. Recommend flagging any `N>1` result whose `expected_max_sharpe` quantizes to `0.000000`, since that is indistinguishable from the D-1 failure mode in the output. |
+| **D-6** | P3 | Verdicts still compare the 6-decimal rounded statistic. Unchanged from §21; no flip constructible at the committed `0.95` threshold. | Carried from §21. |
+| **D-7** | P3 | `SignificanceReport` still has no `NOT RUN` state. After D-1 the inapplicable case raises instead of mislabelling, which is fail-closed and strictly better, but `AGENTS.md` §9.3 still has no representation in the schema. Must be settled by the 2C/2D report emitter. | Carried from §21. |
+
+**Operational consequence of D-1, to be honoured in 2C:** a registry with `N > 1` must record `sharpe_ratio` for at least two trials and must exhibit real dispersion, or evaluation raises. That is the intended fail-closed behaviour and must not be worked around by padding a fabricated Sharpe into the registry.
+
+### 22.3 Recomputed gates
+
+| Gate | Result | Basis |
+|---|---|---|
+| G2B-1 · DSR reproduces published worked example | **NOT VERIFIED** | Formula verified against an independent transcription (`0.626502 / 0.618962 / 0.003381`); the paper's printed example remains external to the repository. |
+| G2B-2 · monotone decay in `N` | **PASS** | Unchanged by remediation. |
+| G2B-3 · bit-for-bit reproducibility | **PASS** | Unchanged; `kurtosis_convention` tag is deterministic. |
+| G2B-4 · Haircut monotone in `N` | **PASS** | Haircut path untouched. |
+| G2B-5 · float boundary isolation | **PASS** | Unchanged; no float reintroduced by the guards. |
+| G2B-6 · anti-overfitting guards & criteria alignment | **PASS** | D-1…D-5 all reproduced as closed by the probes in §22.1. |
+
+**Verdict: Phase 2B is signed off. GO.**
+
+All five §21 findings are closed by execution, not by description: the fail-open path that deleted the multiple-testing penalty while reporting `N=50` now raises at both the function and the orchestration level, the fabricated `1e-6` denominator is gone, the kurtosis convention is normalized so the DSR is invariant, loader and engine agree on the variance divisor, and contradictory `N_eval > N` is rejected. The legitimate cases — `N=1` probabilistic Sharpe, two-trial registries with real dispersion — still compute, and the statistic matches an independent implementation to the printed precision, so the guards closed the hole without moving the maths.
+
+Three residuals are carried and none can manufacture a `PASS`: D-1b (a near-zero variance still deflates by nothing, though it is now at least a mathematically coherent input), D-6 (rounded verdicts), D-7 (`NOT RUN` has no schema). D-6 and D-7 land on the Phase 2C/2D report emitter, which is where `AGENTS.md` §9.3 becomes executable.
+
+**Next per the committed roadmap:** Phase 2B.5 (market data ingestion and immutable storage layer) before 2C, per the window decision recorded in `CURRENT_STAGE_OF_WORK.md` — binding corpus from 2018-04-01, warm-up from 2015, Parquet as system of record with DuckDB as a rebuildable engine.

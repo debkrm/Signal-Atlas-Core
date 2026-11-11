@@ -186,3 +186,33 @@ As senior quantitative researchers building Signal Atlas for production-grade, w
 3. **Fail-Closed Reporting**:
    - If a metric or test was not run, the report explicitly states "NOT RUN".
    - A criterion is PASS only if backed by printed computation, reproducible test output, or mathematical unit test proof.
+
+---
+
+## 10. Market Data Ingestion, Storage & Reproducibility
+
+1. **Immutability Over Convenience**:
+   - Bronze payloads are byte-exact as retrieved and are never edited. Silver partitions are append-only, one per trading session.
+   - A correction is a new append carrying an effective date and a restatement reference. `UPDATE`/`DELETE` against historical prices, membership, or surveillance data is prohibited.
+2. **Files Are the System of Record; Databases Are Derived**:
+   - Parquet files plus their SHA-256 hashes constitute the dataset. Any SQL engine over them (DuckDB) is a rebuildable view and must be deletable without changing a single fingerprint.
+   - A mutable relational database is never the authority for research history. It may serve the live paper-trading service only, where concurrent writers and row-level order/fill state are the actual requirement.
+   - Analytical dependencies belong in optional extras; the core package stays stdlib-pure and no research module imports the query engine.
+3. **Layer Separation**:
+   - Raw → typed/validated → derived. Corporate-action adjustment, universe schedules, and features exist only in the derived layer, so "what was observable at $T$" is always recoverable.
+   - Storing split/bonus-adjusted prices in the validated layer is prohibited; adjustments are applied forward from an explicit corporate-action table.
+4. **Identity Is ISIN, Never Symbol**:
+   - Symbols are reused and reassigned. Rows are keyed by ISIN with symbol and series as effective-dated attributes.
+   - An ISIN transition is an explicit event with a verified effective date; histories are never stitched across differing ISINs. Never partition a dataset by symbol.
+5. **Time-Varying Facts Are Interval Tables**:
+   - Index membership, ASM/GSM/ESM stage, F&O ban, and price band are stored as half-open intervals `[effective_from, effective_to)` and joined as-of date $T$.
+   - They are never stored as a current snapshot and never reconstructed by back-solving from the present constituent list.
+6. **Exactness Across the Storage Boundary**:
+   - Prices, volumes, turnover, and quantities persist as `DECIMAL` (or integer paise) and must read back as `Decimal`; a cast to `float` at the storage boundary is prohibited.
+7. **Ingestion Runs Are Auditable**:
+   - Every retrieval records source URL, retrieval timestamp, byte count, and SHA-256 in a manifest.
+   - A run that fails part-way leaves no partially promoted Silver partition; promotion is atomic.
+8. **No Gating on Unsimulatable History**:
+   - A GO/NO-GO verdict may only be computed on sessions in which every required input exists: authoritative calendar, verified security identity, and surveillance state.
+   - Sessions before the surveillance frameworks existed (GSM effective 14 Mar 2017, ASM effective 26 Mar 2018) are warm-up only; metrics computed on them are `NOT RUN` for gating.
+   - A shorter honest evaluation window is preferred to a longer one resting on fabricated or absent inputs. The binding evaluation window for this project starts **2018-04-01**; moving it earlier requires sourced surveillance history, not prose.
