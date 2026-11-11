@@ -4,9 +4,9 @@
 
 | Attribute | Current Status |
 |---|---|
-| **Active Project Phase** | **Phase 1E Complete & Verified** — All §16 findings (N-8 through N-13) remediated; Gate G8 passed; ready to advance to Phase 2 |
-| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash book, multi-fill position accounting, mark-to-market portfolio valuation, and committed risk tracker complete |
-| **Offline Test Suite** | **138 passed in 1.45s** (100% pass rate, zero warnings) |
+| **Active Project Phase** | **Phase 2A Complete & Verified** (Holdout Containment & Trial Registry) · **Phase 2B next** — Statistical Significance Engine (DSR & Haircut Sharpe) |
+| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash book, multi-fill position accounting, mark-to-market portfolio valuation, committed risk tracker, holdout containment, and tamper-evident trial registry complete |
+| **Offline Test Suite** | **151 passed in 1.99s** (100% pass rate, zero warnings) |
 | **External Dependencies** | Zero live database connections, zero external network calls, zero shadow simulators |
 | **Historical Provenance** | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` (Strictly maintained, zero false promotions) |
 | **Holdout Containment** | `HOLDOUT_UNLOCK` is strictly **ABSENT**; out-of-sample data remains completely sealed |
@@ -193,9 +193,13 @@ Signal-Atlas-Core/
 │       ├── portfolio/
 │       │   ├── __init__.py                  # Public portfolio domain exports
 │       │   ├── types.py                     # CashEntryType, CashLedgerEntry, PositionSnapshot, PortfolioSnapshot
-│       │   ├── ledger.py                    # Double-entry CashLedger with paise quantization & overdraft protection
+│       │   ├── ledger.py                    # Single-entry CashLedger with paise quantization & overdraft protection
 │       │   ├── position.py                  # Multi-fill Position accounting with fee allocation & short delivery ban
 │       │   └── portfolio.py                 # Portfolio mark-to-market valuation, drawdown & risk limit tracker
+│       ├── research/
+│       │   ├── __init__.py                  # Public research & containment exports
+│       │   ├── containment.py               # PartitionSpec, holdout sealing, human unlock verifier, walk-forward folds
+│       │   └── trials.py                    # Append-only tamper-evident TrialRegistry with SHA-256 hash chaining
 │       ├── features/
 │       │   ├── __init__.py                  # Public feature & indicator exports
 │       │   ├── indicators.py                # Pure Decimal mathematical indicator formulas (EMA, ATR, RSI, etc.)
@@ -217,8 +221,10 @@ Signal-Atlas-Core/
         ├── test_criteria.py                 # Go/No-Go criteria & effective-dated fee resolution (3 tests)
         ├── test_costs.py                    # Statutory Indian cost engine, circulars, GST base, paise rounding (6 tests)
         ├── test_execution_simulator.py      # Next-session invariant, circuits, volume cap, slippage, latency (11 tests)
-        └── test_portfolio.py                # Exact Decimal cash ledger, positions, MTM, drawdown, risk caps, R-1..R-7, N-1..N-13 (29 tests)
-                                             # Total: 138 passing unit tests in 1.45s
+        ├── test_portfolio.py                # Exact Decimal cash ledger, positions, MTM, drawdown, risk caps, R-1..R-7, N-1..N-13 (29 tests)
+        ├── test_containment.py              # Sealed holdout access, human unlock verification, fold generation (6 tests)
+        └── test_trials.py                   # Append-only hash chain, tamper detection, canonical params, variance (7 tests)
+                                             # Total: 151 passing unit tests in 1.99s
 ```
 
 ---
@@ -238,7 +244,14 @@ Signal-Atlas-Core/
                          [Phase 1E: Exact Decimal Portfolio Ledger]        (COMPLETED & VERIFIED)
                                           │
                                           ▼
-                         [Phase 2: Strategy Validation & Walk-Forward]     (NEXT PHASE)
+                         [Phase 2: Strategy Validation & Walk-Forward]     (ACTIVE PHASE)
+                                          │
+                                          ▼
+ [2A: Containment + Trial Registry] ──► [2B: Significance (DSR/Haircut)]
+          (COMPLETED)                             (NEXT SLICE)
+                                          │
+                                          ▼
+ [2C: Strategy + Walk-Forward Engine] ──► [2D: Computed Verdict Engine]
 ```
 
 ### Phase 1E: Exact Decimal Portfolio Ledger & Accounting (Completed & Verified)
@@ -247,9 +260,58 @@ Signal-Atlas-Core/
 - Remediated §15 findings: O(1) bounded replay guard via `OrderedDict` (N-1), deterministic sequence counters incrementing only on committed fills (N-2), composed fill IDs for multi-session partial fills (N-3), fail-closed string validation for `order_id`/`fill_id`/`reference_id` (N-4), and direct sequence key rollback without string parsing (N-5).
 - Remediated §16 findings: generated reference uniqueness pre-check against `_posted_reference_ids` (N-8, Gate G8 PASS), documented 10k-fill identity window (N-9), lazy deposit re-anchoring deferred until post-validation (N-10, Gate G2 PASS), eliminated remaining "double-entry" comments (N-11), reproducible `probe_b7bd8ba.py` (N-12), and hardened ratio regression test in `test_n1` (N-13).
 
-### Phase 2: Walk-Forward Strategy Engine & Deflated Sharpe Evaluation (Next Phase)
-- **Strategy & Signal Construction**: Multi-hypothesis trial registry logging every sweep.
-  * Note: Per §16 audit guidelines, weekly trend indicator (`R-1`) and unverified circuit bands (`E-1-R`) are strictly isolated from trade signals until closed.
-- Walk-forward parameter stability evaluation across market regimes.
-- Automated generation of computed verdicts (PASS/FAIL) against committed `configs/go_no_go_criteria.yaml`.
-- Computation of Deflated Sharpe Ratio (DSR) and Haircut Sharpe ratio.
+### Phase 2: Walk-Forward Strategy Engine & Deflated Sharpe Evaluation (Active Phase — 4 Slices)
+
+**Sequencing principle.** Containment and trial accounting exist *before* the first strategy can run, so that no result can be produced outside a sealed partition or outside the registry. Only then do statistics (2B), simulation (2C) and verdicts (2D). Each slice ships with its own gates; a slice is not closed until its gates are measured, not asserted.
+
+**Carried blockers (unchanged, and they constrain 2C):**
+
+| Residual | Effect on Phase 2 |
+|---|---|
+| **E-1-R** — no verified circuit-band data source | Fills carry `UNVERIFIED_CIRCUIT_EVIDENCE`; 2C PnL is conditional and may not be used to justify a Phase 2 GO. |
+| **R-1** — weekly aggregation tolerates an intra-week missing session | Weekly trend must not feed a 2C strategy until path-aware weekly aggregation lands; daily features only. |
+| **R-2 / N-9** | No Phase 2 impact; carried forward unchanged. |
+
+---
+
+#### Phase 2A — Holdout Containment & Multi-Hypothesis Trial Registry (Completed & Verified)
+Modules: `src/signal_core/research/containment.py`, `src/signal_core/research/trials.py` (independent of each other; neither imports the other).
+
+- **Sealed partitions**: Implemented `PartitionSpec(IS, VALIDATION, HOLDOUT)` with deterministic fingerprinting (`PART-SPEC-V1-`). Any accessor for a sealed partition raises `HoldoutSealedError`; zero convenience paths.
+- **Unlock is human-only**: `HOLDOUT_UNLOCK` sentinel verified with content hash. Library code exposes zero APIs to create, write, or mock it (verified by automated reflection test).
+- **Fold generation**: Runs strictly over calendar sessions within In-Sample/Validation with lookahead-free lookback embargo buffers. Test windows are disjoint across folds. Deterministic fingerprinting (`FOLD-SPEC-V1-`).
+- **Trial registry**: Append-only tamper-evident JSONL with cryptographic SHA-256 hash chaining (`seq`, `prev_hash`, `record_hash`). Out-of-order sequence, duplicate `trial_id`, or broken hash chain fails closed (`RegistryTamperedError`, `DuplicateTrialError`).
+- **Phase 2B Schema Readiness**: Pre-allocated fields for returns digest, observation count, mean, standard deviation, skewness, kurtosis, Sharpe, and max drawdown. Pure Decimal trial Sharpe variance computation.
+- **2A Gates**: 5 / 5 PASS (measured via independent probe and unit suite).
+
+#### Phase 2B — Statistical Significance Engine
+Module: `src/signal_core/research/significance.py`.
+
+- Exact Decimal estimators for mean, sample standard deviation, skewness and kurtosis, with the bias-correction convention stated in the config rather than chosen in code.
+- **DSR** per Bailey & López de Prado, consuming the registry's full trial count `N`, the variance of trial Sharpe ratios, and the strategy's own skew/kurtosis/observation count. **Haircut Sharpe** computed under a named variant recorded in the config — no implicit variant, no post-hoc choice of method.
+- **Computation never touches the holdout**; DSR and haircut are evaluated on IS/validation series only.
+- **Explicit float boundary (`SIG-FLOAT-BOUNDARY`)**: returns, PnL and moments remain `Decimal`; the standard-normal CDF/quantile required by DSR is the only floating-point computation, confined to one function and pinned against fixed reference vectors. No float may reach ledger, cost or PnL code.
+- Methodology constants (`sessions_per_year`, kurtosis convention, haircut variant, annualization basis) are committed under `anti_overfitting_and_significance` before any run.
+
+**2B gates:** DSR reproduces published worked examples within a stated tolerance; DSR decays monotonically as `N` grows at fixed Sharpe; identical inputs give identical Decimal output; haircut Sharpe decreases monotonically in `N`; a test proves no `float` enters the PnL path.
+
+#### Phase 2C — Strategy Contract & Next-Session Walk-Forward Engine
+Modules: `src/signal_core/strategy/base.py`, `src/signal_core/research/walkforward.py`.
+
+- `Strategy` contract: `generate_signals(as_of, features) -> tuple[OrderIntent, ...]`, with only data at or before `as_of` reachable. Intents that reference a later session are rejected by the engine.
+- The engine drives the existing `ExecutionFillSimulator` and `Portfolio` — **no second simulator, no parallel fill or cost path**. Every intent becomes a fill that posts through the ledger.
+- Per fold: fit on train, trade the test window at or beyond the configured latency, and emit an equity curve plus the metrics 2A's schema expects.
+- Eligibility stays enforced by `APPROVED_EQ_ONLY_POLICY`; a strategy cannot widen it.
+
+**2C gates:** identical fingerprints/params give byte-identical results; every attempted same-session (T close → T fill) intent is rejected; no fill lands outside the eligibility policy; results whose fills lack circuit evidence are flagged and cannot be promoted to verified.
+
+#### Phase 2D — Automated Verdict Engine & End-to-End Regression
+Module: `src/signal_core/reporting/verdicts.py`.
+
+- Reads the pinned criteria version (echoed in the output), computes every criterion from a results bundle, and emits `NOT RUN` for any metric the bundle does not contain. `PASS` may only be attached to a printed computed value.
+- A test scans the reporting module for hardcoded verdict or adjective strings and fails on any.
+- End-to-end regression on `tests/fixtures/small_synthetic_dataset.json`, plus an adversarial suite that must fail closed: tampered registry chain, sealed holdout read, lookahead intent, DSR computed with `N = 1`.
+
+**2D gates:** the verdict report is reproducible from the results bundle alone; every label in it is traceable to a computation; adversarial cases fail rather than degrade.
+
+**Definition of done for Phase 2:** all four slices' gates measured and recorded; an end-to-end synthetic run produces a verdict report whose only `NOT RUN` entries are metrics the data genuinely cannot support (currently circuit-verified PnL); no module can reach the holdout without the human sentinel.
