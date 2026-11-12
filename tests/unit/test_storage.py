@@ -19,6 +19,7 @@ import pytest
 
 from signal_core.contracts.dataset import PriceConvention
 from signal_core.contracts.exchange_series import PriceSeriesGapType
+from signal_core.contracts.price_bar import PriceBar
 from signal_core.storage.calendar import (
     CalendarError,
     InvalidSessionError,
@@ -79,8 +80,7 @@ def sample_calendar() -> TradingCalendar:
         TradingSessionRecord(datetime.date(2024, 1, 11), SessionType.FULL, datetime.time(9, 15), datetime.time(15, 30), "Regular"),
         TradingSessionRecord(datetime.date(2024, 1, 12), SessionType.FULL, datetime.time(9, 15), datetime.time(15, 30), "Regular"),
     )
-    dates = tuple(r.date for r in sessions)
-    fpr = compute_calendar_fingerprint(dates)
+    fpr = compute_calendar_fingerprint(sessions)
     return TradingCalendar(
         calendar_id="TEST-CAL",
         market="NSE_CASH",
@@ -119,7 +119,7 @@ def test_e1_calendar_completeness_and_provenance():
     assert prov["source"] == "NSE_CIRCULARS_ANNUAL_TRADING_HOLIDAYS_AND_SPECIAL_SESSIONS"
     assert "circular_references" in prov
     assert len(prov["circular_references"]) >= 12
-    assert prov["sha256"] == "b96991d4e3c5c005504e5d0736a23a04b258056b24d4ec9db57c58a7bde6f4a1"
+    assert prov["sha256"] == "a1d8824f894bb90047b4adcbac560181faebaafd72a0102e0175a367134ad773"
 
     # 3. All 15 special/muhurat sessions identified in §23 are present
     budget_sats = [datetime.date(2020, 2, 1), datetime.date(2025, 2, 1)]
@@ -420,3 +420,79 @@ def test_gate_g2b5_7_no_session_before_2018_can_reach_go_verdict():
     assert resolve_gating_verdict(warmup_start, "PASS") == "NOT RUN"
     assert resolve_gating_verdict(binding_start, "GO") == "GO"
     assert resolve_gating_verdict(binding_start, "NO-GO") == "NO-GO"
+
+
+def test_f1_f2_f3_remediation(sample_calendar, temp_storage_dirs):
+    """
+    Tests remediation of findings F-1, F-2, and F-3:
+    F-1: fail_closed_on_missing parameter deleted; GoldEngine unconditionally fails closed.
+    F-2: compute_calendar_fingerprint covers session type and open/close hours.
+    F-3: PriceBar carries session_type, session_records_in_range and full_sessions_only work.
+    """
+    import inspect
+    from signal_core.storage.security_master import build_production_security_master
+
+    sec_master = build_production_security_master()
+    _, silver_dir, _ = temp_storage_dirs
+    silver = SilverStorage(silver_dir, calendar=sample_calendar)
+    gold = GoldEngine(silver, sample_calendar, sec_master)
+
+    # F-1: Parameter deleted and attempts to pass it raise TypeError
+    sig_load = inspect.signature(gold.load_price_panel)
+    assert "fail_closed_on_missing" not in sig_load.parameters
+
+    sig_snapshot = inspect.signature(gold.build_dataset_snapshot)
+    assert "fail_closed_on_missing" not in sig_snapshot.parameters
+
+    with pytest.raises(TypeError):
+        gold.load_price_panel(
+            datetime.date(2024, 1, 8),
+            datetime.date(2024, 1, 10),
+            fail_closed_on_missing=False,  # type: ignore
+        )
+
+    # F-2: Fingerprint changes when session type or hours change
+    rec_full = TradingSessionRecord(datetime.date(2024, 11, 1), SessionType.FULL, datetime.time(9, 15), datetime.time(15, 30), "Full")
+    rec_muhurat = TradingSessionRecord(datetime.date(2024, 11, 1), SessionType.MUHURAT, datetime.time(18, 0), datetime.time(19, 0), "Diwali Muhurat")
+
+    fpr_full = compute_calendar_fingerprint([rec_full])
+    fpr_muhurat = compute_calendar_fingerprint([rec_muhurat])
+    assert fpr_full != fpr_muhurat
+
+    # F-3: PriceBar carries session_type and calendar filtering works
+    cal_with_muhurat = TradingCalendar(
+        calendar_id="CAL-MUHURAT-TEST",
+        market="NSE_CASH",
+        session_records=(
+            TradingSessionRecord(datetime.date(2024, 10, 31), SessionType.FULL, datetime.time(9, 15), datetime.time(15, 30), "Regular"),
+            rec_muhurat,
+            TradingSessionRecord(datetime.date(2024, 11, 4), SessionType.FULL, datetime.time(9, 15), datetime.time(15, 30), "Regular"),
+        ),
+        binding_start_date=datetime.date(2018, 4, 1),
+        fingerprint="CAL-FPR-V1-test",
+        provenance={"source": "TEST"},
+        annual_session_counts={"2024": 3},
+    )
+
+    all_sessions = cal_with_muhurat.sessions_in_range(datetime.date(2024, 10, 31), datetime.date(2024, 11, 4))
+    assert len(all_sessions) == 3
+
+    full_only = cal_with_muhurat.sessions_in_range(datetime.date(2024, 10, 31), datetime.date(2024, 11, 4), full_sessions_only=True)
+    assert len(full_only) == 2
+    assert datetime.date(2024, 11, 1) not in full_only
+
+    records_range = cal_with_muhurat.session_records_in_range(datetime.date(2024, 10, 31), datetime.date(2024, 11, 4))
+    assert records_range[1].session_type == SessionType.MUHURAT
+
+    # PriceBar carries session_type
+    bar = PriceBar(
+        instrument_id="INE009A01021",
+        trade_date=datetime.date(2024, 11, 1),
+        open=Decimal("1500.00"),
+        high=Decimal("1520.00"),
+        low=Decimal("1495.00"),
+        close=Decimal("1510.00"),
+        volume=10000,
+        session_type="MUHURAT",
+    )
+    assert bar.session_type == "MUHURAT"

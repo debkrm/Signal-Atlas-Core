@@ -104,7 +104,7 @@ def run_phase_2b5_verification() -> bool:
         prov_ok = (
             prov.get("source") == "NSE_CIRCULARS_ANNUAL_TRADING_HOLIDAYS_AND_SPECIAL_SESSIONS"
             and len(prov.get("circular_references", [])) >= 12
-            and prov.get("sha256") == "b96991d4e3c5c005504e5d0736a23a04b258056b24d4ec9db57c58a7bde6f4a1"
+            and prov.get("sha256") == "a1d8824f894bb90047b4adcbac560181faebaafd72a0102e0175a367134ad773"
         )
 
         # 2. Check special budget and DR sessions

@@ -100,7 +100,7 @@ class SilverRecord:
             if not isinstance(self.traded_value, Decimal) or not self.traded_value.is_finite() or self.traded_value < Decimal("0"):
                 raise SilverStorageError(f"traded_value must be a non-negative finite Decimal, got {self.traded_value}")
 
-    def to_price_bar(self) -> PriceBar:
+    def to_price_bar(self, session_type: Optional[str] = None) -> PriceBar:
         """Converts SilverRecord to immutable PriceBar contract using isin as instrument_id."""
         return PriceBar(
             instrument_id=self.isin,
@@ -111,6 +111,7 @@ class SilverRecord:
             close=self.close,
             volume=self.volume,
             traded_value=self.traded_value,
+            session_type=session_type,
         )
 
 

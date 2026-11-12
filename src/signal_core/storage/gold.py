@@ -114,28 +114,29 @@ class GoldEngine:
         start_date: datetime.date,
         end_date: datetime.date,
         isins: Optional[Sequence[str]] = None,
-        fail_closed_on_missing: bool = True,
+        full_sessions_only: bool = False,
     ) -> Mapping[str, Sequence[PriceBar]]:
         """
         Loads unadjusted PriceBar sequences for specified instruments (or all registered instruments)
         across trading sessions in [start_date, end_date].
-        Fails closed with NonContiguousDatasetError if any active session is missing from storage (E-3).
+        Strictly fails closed with NonContiguousDatasetError if any active session is missing from storage (E-3, F-1).
+        Supports filtering to full trading sessions only (F-3).
         """
-        sessions = self._calendar.sessions_in_range(start_date, end_date)
+        sessions = self._calendar.sessions_in_range(start_date, end_date, full_sessions_only=full_sessions_only)
         target_isins = tuple(isins) if isins is not None else self._sec_master.registered_isins
 
         prices_by_inst: Dict[str, List[PriceBar]] = {isin: [] for isin in target_isins}
 
         for s in sessions:
             if not self._silver.partition_exists(s):
-                if fail_closed_on_missing:
-                    raise NonContiguousDatasetError(
-                        f"Cannot load contiguous price panel: missing required silver partition for calendar session {s}"
-                    )
-                continue
+                raise NonContiguousDatasetError(
+                    f"Cannot load contiguous price panel: missing required silver partition for calendar session {s}"
+                )
 
             records = self._silver.read_daily_partition(s)
             records_by_isin = {r.isin: r for r in records}
+            session_rec = self._calendar.get_session(s)
+            st_val = session_rec.session_type.value if session_rec else None
 
             for isin in target_isins:
                 # Check if instrument is active on date s
@@ -143,8 +144,8 @@ class GoldEngine:
                     continue
 
                 if isin in records_by_isin:
-                    prices_by_inst[isin].append(records_by_isin[isin].to_price_bar())
-                elif fail_closed_on_missing:
+                    prices_by_inst[isin].append(records_by_isin[isin].to_price_bar(session_type=st_val))
+                else:
                     raise NonContiguousDatasetError(
                         f"Active instrument {isin} has unexplained missing record on session {s}"
                     )
@@ -154,7 +155,7 @@ class GoldEngine:
         for isin, bars in prices_by_inst.items():
             if bars:
                 result[isin] = tuple(bars)
-            elif fail_closed_on_missing:
+            else:
                 # Check if instrument was active on any calendar session in [start_date, end_date]
                 active_days = [s for s in sessions if self._sec_master.is_active(isin, s)]
                 if active_days:
@@ -171,18 +172,17 @@ class GoldEngine:
         price_convention: PriceConvention = PriceConvention.UNADJUSTED_RAW,
         dataset_id: str = "NSE-CASH-EQUITY-GOLD",
         isins: Optional[Sequence[str]] = None,
-        fail_closed_on_missing: bool = True,
+        full_sessions_only: bool = False,
     ) -> Tuple[DatasetSnapshot, Mapping[str, Sequence[PriceBar]]]:
         """
         Produces an immutable DatasetSnapshot descriptor and price panel.
-        Fails closed by default if any session is missing: never mints a fingerprint over a gapped series (E-3).
+        Strictly fails closed if any session is missing: never mints a fingerprint over a gapped series (E-3, F-1).
         Computes deterministic DATA-CTNT-V2 content fingerprint and UNIV-SCHED-V1 universe fingerprint.
         Guarantees bit-for-bit reproducibility across runs (Gate G2B.5-2).
         """
-        sessions = self._calendar.sessions_in_range(start_date, end_date)
-        # Fail closed on missing sessions by default (E-3)
+        sessions = self._calendar.sessions_in_range(start_date, end_date, full_sessions_only=full_sessions_only)
         raw_prices = self.load_price_panel(
-            start_date, end_date, isins=isins, fail_closed_on_missing=fail_closed_on_missing
+            start_date, end_date, isins=isins, full_sessions_only=full_sessions_only
         )
 
         # Build universe schedule and fingerprint
@@ -226,6 +226,7 @@ class GoldEngine:
                         volume=adj_volume,
                         traded_value=b.traded_value,
                         currency=b.currency,
+                        session_type=b.session_type,
                     )
                     adj_bars.append(adj_bar)
                 processed_prices[isin] = adj_bars

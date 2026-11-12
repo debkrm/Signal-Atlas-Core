@@ -39,6 +39,14 @@ from signal_core.research.significance import (
     sample_std,
     sample_variance,
 )
+from signal_core.research.walkforward import (
+    FoldExecutionResult,
+    WalkForwardEngine,
+    WalkForwardEngineError,
+    WalkForwardLookaheadError,
+    WalkForwardEligibilityError,
+    WalkForwardResult,
+)
 
 __all__ = [
     "ContainmentError",
@@ -72,5 +80,11 @@ __all__ = [
     "sample_skewness",
     "sample_std",
     "sample_variance",
+    "FoldExecutionResult",
+    "WalkForwardEngine",
+    "WalkForwardEngineError",
+    "WalkForwardLookaheadError",
+    "WalkForwardEligibilityError",
+    "WalkForwardResult",
 ]
 

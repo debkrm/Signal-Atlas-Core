@@ -47,6 +47,7 @@ class PriceBar:
     volume: int
     traded_value: Optional[Decimal] = None
     currency: str = "INR"
+    session_type: Optional[str] = None
 
     def __post_init__(self) -> None:
         # 1. Instrument ID validation
@@ -140,3 +141,12 @@ class PriceBar:
             raise PriceBarValidationError(
                 f"Invalid OHLC relationship: close ({self.close}) must be within [low ({self.low}), high ({self.high})]."
             )
+
+        # 8. Session Type Validation
+        if self.session_type is not None:
+            if not isinstance(self.session_type, str):
+                raise PriceBarValidationError(
+                    f"session_type must be a string if provided, got {type(self.session_type).__name__}."
+                )
+            if not self.session_type or self.session_type != self.session_type.strip():
+                raise PriceBarValidationError("session_type cannot be empty or contain leading/trailing whitespace.")

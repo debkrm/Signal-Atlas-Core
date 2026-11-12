@@ -1425,3 +1425,74 @@ This is a competent skeleton with the right module boundaries, the right identit
 6. **E-6** — Make Bronze content-addressed and reject in-place restatement without an explicit restatement reference.
 
 E-7…E-15 are carried as residuals; E-11 and E-12 must be resolved before any universe or participation-cap computation is presented as measured. The gate table must gain tests for: calendar completeness and provenance, off-calendar bar rejection, fingerprint refusal over a gapped series, Bronze restatement, numeric typing through the view, and corrupt-partition fail-closed behaviour — each of which currently passes without being checked.
+
+---
+
+## 24. Phase 2B.5 Re-Audit — Remediation of E-1 through E-6 (`110acd9`)
+
+**Commit audited:** `110acd9` — *"fix(storage): remediate Phase 2B.5 audit findings E-1 through E-6"* (14 files, +21,718/−568).
+**Suite (measured):** `194 passed in 4.27s`, exit 0.
+**Committed probe (measured):** exit 0, `ALL MEASURED GATES PASSED (7/7, 100.0%)`.
+**Method:** every closure claim re-tested adversarially against the new fixtures — not by re-running the probe, whose fixtures are the author's own. Each probe below constructs the failure mode the rule exists to prevent.
+
+### 24.1 Closure of the §23 set
+
+| ID | Claim in `110acd9` | Independent measurement | Status |
+|---|---|---|---|
+| **E-1** | Calendar rebuilt as sessions with type, hours, specials, provenance, annual counts | 2,939 records = 2,923 FULL + 12 MUHURAT + 4 SPECIAL. All 15 sessions §23 named are present, as are 2024-03-02 and 2026-11-08 (which §23 did not know about). Hours are per-session (e.g. 2024-11-01 MUHURAT 18:00–19:00; 2024-05-18 SPECIAL 09:15–12:30). Loader refuses a file with no `provenance.source`. Provenance status is declared `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` — the honest value under §6.5, not an unearned `VERIFIED`. | **CLOSED** (F-2, F-4 carried) |
+| **E-2** | Silver validates write-time and detects off-calendar partitions | With a calendar wired: writing 2024-05-19 raises `OffCalendarSessionError`. A Sunday partition planted by an unwired writer is caught on read: `read_instrument_series_with_calendar_validation` raises `OffCalendarSessionError` instead of silently skipping it. | **CLOSED** (F-6 carried) |
+| **E-3** | Snapshot fails closed; no gapped fingerprints | Default `build_dataset_snapshot` over a range with 2024-01-12 missing raises `NonContiguousDatasetError`. The `if v` silent shrinkage is gone: an active instrument with zero bars raises. | **CLOSED in default path** (F-1 carried — see below) |
+| **E-4** | Typed DECIMAL columns in the view | `typeof(close)` = `DECIMAL(18,4)`; `WHERE close >= '3000'` returns 0 against prices 2500.00/900.00 (correct, was 1); `avg(close)` = 1700.0 instead of a binder error. Parquet now holds `decimal128(18,4)` and `int64`. | **CLOSED** |
+| **E-5** | Corrupt partitions fail closed; empty fallback only when no files exist | Truncated the **second** of two partitions (the probe only ever corrupts first-file scenarios, so `LIMIT 1` short-circuiting was a live risk) → `DuckDBViewError: Failed to register silver view ... Invalid Input`. No silent zero-row view. | **CLOSED** |
+| **E-6** | Content-addressed Bronze; no in-place restatement | Different bytes without `restatement_ref` → `BronzeStorageError`. With a ref → accepted, two distinct blobs (`blobs/{sha}.bin`), both retrievals independently verifiable. Corrupting the original blob → `TamperedBronzePayloadError` for that digest only, revised retrieval unaffected. Unmanifested path → `MissingBronzeManifestError`. | **CLOSED** |
+| **E-8** | Duplicate delisting/transition events rejected | Dict comprehensions replaced by explicit loops raising `SecurityMasterError`. Confirmed by diff and by the new unit test. | **CLOSED** |
+| **E-14** | `GO`/`APPROVED`/`PASS` blocked pre-2018 | `check_gating_verdict_eligibility` normalises and rejects all three; probe gate G2B.5-7 measures all three. | **CLOSED** |
+
+The remediation is substantive, not cosmetic: the code now enforces what the docstrings claim, and two findings (E-4, E-5) that were previously invisible to anyone not running a numeric predicate or planting a corrupt file are now closed with measurements that would have caught the old behaviour.
+
+### 24.2 New and remaining findings
+
+These do not reopen the closure set, but F-1 through F-3 must close before Phase 2C's first consumer of this layer.
+
+| ID | Sev | Finding | Measurement |
+|---|---|---|---|
+| **F-1** | P2 | The E-3 escape hatch still exists and still mints a fingerprint over a hole | `build_dataset_snapshot(..., fail_closed_on_missing=False)` over a range with 2024-01-12 absent returns 3 bars with `session_count=4` and a valid `DATA-CTNT-V2-2fffdb22…`. The parameter is used **nowhere** in the repository (grep: only its own definition), so it is dead configurability whose only reachable effect is to certify non-contiguous data. E-3's own wording — *never emit a fingerprint over a non-contiguous series* — is not met. Delete it, or make `DatasetSnapshot` assert `total_price_records` against calendar sessions. | 3 bars, 4 sessions, fingerprint minted |
+| **F-2** | P2 | The calendar fingerprint and its provenance `sha256` do not cover session semantics | `compute_calendar_fingerprint(sessions: Sequence[date])` hashes dates only, so changing a MUHURAT to FULL, or a muhurat window from 18:00–19:00 to 09:15–15:30, changes no `CAL-FPR-V1` value. The provenance `sha256` is `sha256(",".join(session_dates))` — recomputed from the same file's contents, so it identifies the date list but attests to no external artifact. A content address that cannot distinguish a full day from a one-hour evening session is under-specified for the feature engine. | Fingerprint body = dates only; declared sha matches the derived date string, not any external bytes |
+| **F-3** | P2 | Session typing stops at the calendar boundary | `TradingCalendar.sessions_in_range` returns bare `datetime.date`; `PriceBar` and `DatasetSnapshot` carry no session type or hours. A panel spanning 2024-10-30…2024-11-04 returns 2024-11-01 as an ordinary bar — a 1-hour (18:00–19:00) muhurat session indistinguishable from a 6h15m session. Downstream ATR/range features would treat it as a full day. The E-1 fix is storage-complete but not analytics-complete. | Bar on 2024-11-01 has no field identifying its session type |
+| **F-4** | P3 | `annual_session_counts` is self-referential, so the completeness gate cannot fail | The declared counts reproduce exactly the list's own length per year (2,939 total). `assert_year_completeness` is called only from the probe and one unit test — never from the load path. It detects drift between the list and the counts inside one file, which is useful, but it is not the assertion-against-NSE-circular that §23 E-1 asked for. | 2015:247 … 2026:216 = 2,939 = list length |
+| **F-5** | P3 | Placeholder circular references presented as citations | `provenance.circular_references` are strings like `NSE/CMTR/2015_HOLIDAYS` — internal placeholders in no NSE format. `provenance_status: SOURCE_UNVERIFIED` keeps this honest today, but the string form invites a later reader to treat them as filed circulars. Same pattern as E-9 in the security master. | 12 placeholder ids |
+| **F-6** | P3 | Silver's calendar stays optional, so the write path is fail-open by default | `SilverStorage(path)` accepts a Sunday partition; `tests/unit/test_storage.py:177` constructs `calendar=None` deliberately as a "rogue writer bypass simulation". Because every read path (`read_instrument_series_with_calendar_validation`, `GoldEngine`) requires a calendar and fails closed, no analytic result can be produced from such data — so this is a seam, not a hole. The clean form is a required calendar with the rogue test planting the file by copy. | Sunday accepted by unwired writer; caught on read |
+| **F-7** | P3 | Volume adjustment uses floor division, and the division-exactness half of E-12 remains | `adj_volume = (b.volume * int(num)) // int(den)` truncates: a 3:2 event on 1,001 shares yields 1,501, not 1,501.5. `cum_denominator / cum_numerator` still divides at the ambient Decimal context, so a 1:2 bonus (2/3) is a 28-digit approximation embedded in the content fingerprint. Correct direction and correct inverse relationship to the price multiplier; exactness is approximate. | — |
+
+Carried unchanged from §23: **E-7** (surveillance overlap and precedence), **E-9** (unverified `circular_ref` in the security master), **E-10** (hardcoded five-scrip master), **E-11** (no index membership — "universe" is the master's ISIN set), **E-13** (OHLC coherence is now enforced; `series` is still free text — writing `series="ZZ"` is accepted, so §5.1's `EQ`/`BE`/`SM`/`BZ` semantics remain unenforced).
+
+### 24.3 Gate re-assessment
+
+| Gate | Before | Now | Verified by this audit |
+|---|---|---|---|
+| G2B.5-1 | tamper only | tamper + calendar provenance + restatement | Yes — original blob tamper-detected independently of the revision; restatement without ref refused |
+| G2B.5-2 | determinism | unchanged | Yes — fingerprints reproduce |
+| G2B.5-3 | delisting dates | unchanged | Yes — dates correct; no universe reconstruction exists (E-11) |
+| G2B.5-4 | whole-partition miss | off-calendar write, missing-session gap, gapped snapshot | Yes — all three, plus the on-disk off-calendar read trap the gate does not mention |
+| G2B.5-5 | API rewrite refused | unchanged | By inspection; unchanged |
+| G2B.5-6 | disposability | + DECIMAL typing + corruption | Yes — including the second-file corruption the fixture does not plant |
+| G2B.5-7 | `GO` only | `GO`/`APPROVED`/`PASS` | Yes |
+
+### 24.4 Documentation integrity
+
+`110acd9` restricts itself to *"remediation complete, submitted for re-audit"* in the status row, restores the design rationale §23.5 recorded as deleted, and rewrites the gate table with measurement bases instead of bare `PASS` labels. That is the correct posture for an un-audited commit and is the first time in this phase the document has understated rather than overstated its own state. The one claim this audit does not endorse is the completeness assertion (F-4) — the counts prove internal consistency, not NSE reality — and the provenance should keep saying `SOURCE_UNVERIFIED` until a circular archive is actually filed.
+
+### 24.5 Verdict
+
+**Phase 2B.5 is signed off. GO.**
+
+All six closure items are closed by execution, on paths the author did not choose to test: the off-calendar bar is now rejected at the write and trapped at the read instead of vanishing; a gapped snapshot raises instead of being fingerprinted; prices are `DECIMAL(18,4)` so a numeric predicate returns the numerically correct answer; a corrupt second partition fails `register_views` rather than producing a zero-row view; and Bronze no longer overwrites an archived path, with both historic retrievals still independently verifiable. E-8 and E-14 closed as side work. 194 tests, 7/7 gates.
+
+The two findings that could have blocked sign-off — E-1 and E-2 — are fixed at the layer where they mattered. What remains is narrower and is carried as conditions rather than as failures:
+
+- **Before 2C consumes this layer:** F-1 (delete the dead `fail_closed_on_missing=False` escape hatch, so a gapped fingerprint is unreachable rather than merely unused), F-2 (hash session type and hours into `CAL-FPR`, so the content address distinguishes a muhurat session from a full day), F-3 (carry session type/hours into the Gold panel, or exclude non-FULL sessions from feature windows, so 2C's ATR does not treat a one-hour session as a full day).
+- **Before any reported number depends on them:** E-11 (universe reconstruction), E-12/F-7 (exactness of adjusted volume and of non-terminating ratios), E-13 (`series` whitelist), E-7 (surveillance precedence).
+- **Provenance discipline:** F-4/F-5 — keep `SOURCE_UNVERIFIED` until circular archives are filed, and replace placeholder references with real ones or remove them.
+
+With that, the ingestion and storage layer is a sound foundation to build the strategy contract on. Phase 2C may begin.
+

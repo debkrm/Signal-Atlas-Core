@@ -65,9 +65,22 @@ class TradingSessionRecord:
             raise CalendarError(f"open_time ({self.open_time}) must precede close_time ({self.close_time})")
 
 
-def compute_calendar_fingerprint(sessions: Sequence[datetime.date]) -> str:
-    """Computes deterministic SHA-256 fingerprint for a sequence of trading dates."""
-    canonical_repr = ",".join(s.isoformat() for s in sessions)
+def compute_calendar_fingerprint(
+    sessions: Sequence[Union[TradingSessionRecord, datetime.date]]
+) -> str:
+    """
+    Computes deterministic SHA-256 fingerprint covering dates, session types, and open/close hours (CAL-FPR-V1).
+    Distinguishes a 1-hour evening Muhurat session from a full trading day (F-2).
+    """
+    items = []
+    for s in sessions:
+        if isinstance(s, TradingSessionRecord):
+            items.append(f"{s.date.isoformat()}:{s.session_type.value}:{s.open_time.isoformat()}:{s.close_time.isoformat()}")
+        elif isinstance(s, datetime.date):
+            items.append(f"{s.isoformat()}:FULL:09:15:00:15:30:00")
+        else:
+            raise CalendarError(f"Unsupported session item type: {type(s)}")
+    canonical_repr = ",".join(items)
     digest = hashlib.sha256(canonical_repr.encode("utf-8")).hexdigest()
     return f"CAL-FPR-V1-{digest}"
 
@@ -135,15 +148,35 @@ class TradingCalendar:
         """Returns True if query_date is an authoritative session on or after binding start (2018-04-01)."""
         return self.is_session(query_date) and query_date >= self.binding_start_date
 
-    def sessions_in_range(self, start: datetime.date, end: datetime.date) -> Tuple[datetime.date, ...]:
-        """Returns ordered tuple of trading session dates within [start, end] inclusive."""
+    def session_records_in_range(
+        self,
+        start: datetime.date,
+        end: datetime.date,
+        full_sessions_only: bool = False,
+    ) -> Tuple[TradingSessionRecord, ...]:
+        """
+        Returns ordered tuple of TradingSessionRecord within [start, end] inclusive.
+        If full_sessions_only=True, filters out Muhurat and Special sessions (F-3).
+        """
         if type(start) is not datetime.date:
             raise CalendarError(f"start must be exact datetime.date, got {type(start).__name__}")
         if type(end) is not datetime.date:
             raise CalendarError(f"end must be exact datetime.date, got {type(end).__name__}")
         if start > end:
             raise CalendarError(f"start date {start} cannot be after end date {end}")
-        return tuple(r.date for r in self.session_records if start <= r.date <= end)
+        records = [r for r in self.session_records if start <= r.date <= end]
+        if full_sessions_only:
+            records = [r for r in records if r.session_type == SessionType.FULL]
+        return tuple(records)
+
+    def sessions_in_range(
+        self,
+        start: datetime.date,
+        end: datetime.date,
+        full_sessions_only: bool = False,
+    ) -> Tuple[datetime.date, ...]:
+        """Returns ordered tuple of trading session dates within [start, end] inclusive."""
+        return tuple(r.date for r in self.session_records_in_range(start, end, full_sessions_only=full_sessions_only))
 
     def session_count_between(self, start: datetime.date, end: datetime.date) -> int:
         """Counts trading sessions in [start, end] inclusive."""
@@ -253,7 +286,7 @@ def load_nse_trading_calendar(path: Optional[Union[str, Path]] = None) -> Tradin
 
     session_records_tuple = tuple(session_records_list)
     dates_tuple = tuple(r.date for r in session_records_tuple)
-    fingerprint = compute_calendar_fingerprint(dates_tuple)
+    fingerprint = compute_calendar_fingerprint(session_records_tuple)
 
     binding_start_raw = data.get("binding_start_date", "2018-04-01")
     binding_start = datetime.date.fromisoformat(binding_start_raw)
