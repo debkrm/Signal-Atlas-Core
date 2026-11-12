@@ -1496,3 +1496,108 @@ The two findings that could have blocked sign-off — E-1 and E-2 — are fixed 
 
 With that, the ingestion and storage layer is a sound foundation to build the strategy contract on. Phase 2C may begin.
 
+---
+
+## 25. Phase 2C Audit — Strategy Contract & Walk-Forward Engine (`8988f60`)
+
+**Commit audited:** `8988f60` — *"feat(phase2c): implement strategy contract, order intents, and walk-forward engine with zero lookahead"* (17 files, +2,347/−36). This commit also carries the §24 F-1…F-3 remediation and my §24 text.
+**Suite (measured):** `207 passed in 5.93s`, exit 0.
+**Committed probe (measured):** `ALL MEASURED GATES PASSED (5/5, 100.0%)`, exit 0.
+**Method:** re-derived every gate on fixtures that can fail — including ones the committed probe deliberately cannot reach (a readable trade, a naked sell, an oversized allocation, a fold with no partition role, a zero-trade run).
+
+### 25.1 Closure of the §24 conditions
+
+| ID | Measured | Status |
+|---|---|---|
+| **F-1** | `fail_closed_on_missing` no longer exists anywhere in `gold.py` (grep: zero hits). `load_price_panel` and `build_dataset_snapshot` raise unconditionally on a missing partition or a missing active-instrument record. A gapped fingerprint is now unreachable, not merely unused. | **CLOSED** |
+| **F-2** | `compute_calendar_fingerprint` now hashes `date:TYPE:open:close` per session. Mutating 2024-11-01 MUHURAT→FULL changes `CAL-FPR-V1-a1d8824f…`; mutating its 18:00–19:00 window to 09:15–15:30 also changes it. Both mutations were previously invisible. The declared provenance `sha256` equals the digest of that canonical string — a true content address of the session semantics (it still attests to no external artifact, which F-4/F-5 already record and `SOURCE_UNVERIFIED` honestly states). | **CLOSED** |
+| **F-3** | `PriceBar.session_type` added and populated from the calendar on every Silver→Gold conversion; `session_records_in_range(full_sessions_only=…)` exposed. 2024-11-01 now arrives as a bar tagged `MUHURAT` rather than an anonymous one. The type is a free-text `Optional[str]` with only non-blank validation, so any string arms; the *carrying* defect is fixed. | **CLOSED** (policy default carried as G-12) |
+
+### 25.2 What the 2C engine gets right (measured, not asserted)
+
+- **Next-session execution.** A BUY signalled at 2024-01-15 fills on 2024-01-16 at `1061.279533…` against an open of `1060.0000` — the `T+1` open plus modelled slippage. Signals never fill same-session, and the intent constructor rejects `target_date <= signal_date` before the engine ever sees it.
+- **Eligibility.** A `BE` scrip order is rejected 4/4 with `REJECTED_INELIGIBLE_SERIES` and never reaches the ledger.
+- **Single authoritative path.** The engine imports `ExecutionFillSimulator` and `Portfolio` and nothing else that prices or books a trade. Statutory costs appear on the fill (STT ₹78.117 on a ₹78,117 turnover), cash falls, positions open.
+- **Short-delivery guard.** A naked SELL of 50 shares with no holding is stopped by the ledger: `Illegal short delivery: cannot sell 50 shares … only 0 held`. This is the correct §5 answer and it lives in the ledger, not in the strategy.
+- **Participation cap.** `simulate_order` enforces `max_volume_participation_cap` against session volume rather than assuming infinite depth.
+- **Determinism.** With a real fill, two runs reproduce identical fingerprint, identical `aggregate_daily_returns` tuple, identical executed prices, identical equity (`1001449.250000000000000000000`). Determinism is real; the gate that certifies it is not (G-13).
+
+### 25.3 Findings
+
+| ID | Sev | Finding | Measurement |
+|---|---|---|---|
+| **G-1** | **P1** | **Holdout containment is not enforced at execution.** `WalkForwardFold` carries no partition role (`__slots__` = `fold_index, train_start, train_end, test_start, test_end, embargo_sessions`) and `run_walk_forward` accepts any date range with no `PartitionSpec` and no unlock check. Registration into `TrialRegistry` is guarded; *running and reading the numbers* is not. AGENTS §8.1 forbids accessing the sealed window, and this is the engine that will be pointed at it. | Fold over 2024 ran with no role and no unlock, 1 trade |
+| **G-2** | **P1** | **The shipped reference strategy cannot open a position.** `TechnicalCrossStrategy.allocation_weight` defaults to 0.20 while `max_single_position_weight` is 0.10, so its first BUY raises out of the backtest. The strategy contract and the risk limit shipped in the same phase are mutually incompatible. | 20% target_weight → `PortfolioRiskLimitError: proposed weight 0.202042 exceeds maximum 0.10` |
+| **G-3** | **P1** | **Risk and liquidity rejections abort the entire evaluation instead of rejecting the order.** `portfolio.process_fill(..., enforce_risk_limits=True)` raises through `run_fold`; the participation cap raises from `simulate_order`. One oversized intent destroys a multi-fold run and there is no path that records `REJECTED_RISK_LIMIT` the way `REJECTED_INELIGIBLE_SERIES` is recorded. A strategy whose sizing varies can never be evaluated. | Concentration breach terminates the run; no rejection status exists for it |
+| **G-4** | **P1** | **Results are not bound to the data that produced them.** `run_walk_forward(dataset_content_fingerprint="DATA-CTNT-V2-UNKNOWN")` takes the dataset fingerprint as a caller-supplied string, never computes it from the Gold snapshot, never validates it, and hashes it into `WF-RES-V1`. A `TrialRecord` can therefore cite any dataset — including `UNKNOWN` — while satisfying every field §8.2 requires. | Default parameter is a literal; no call to `build_dataset_snapshot` in `walkforward.py` |
+| **G-5** | P2 | `execution_latency_sessions` is stored as `self._latency` and never read. Constructing the engine with latency 1, 2, or 3 gives an identical fill: 2024-01-16, `latency_sessions=1`. §7.1's "realistic execution latency" is a dead control. | Three latencies, one fill date |
+| **G-6** | P2 | `verification_status` is inverted in effect: `all([])` is `True`, so a **zero-trade** run is promoted to `VERIFIED`, while every run that actually trades is permanently `CIRCUIT_UNVERIFIED` — because no circuit limit is ever produced into the Gold layer (`upper/lower_circuit_limit` exist only on the `ExchangeSessionObservation` contract; neither `SilverRecord` nor `GoldEngine` populates them). The only way to be `VERIFIED` today is to not trade. G2C-4 measures this constant, not a guard. | 0 trades → `VERIFIED`; any fill → `CIRCUIT_UNVERIFIED` |
+| **G-7** | P2 | `annualized_return` is linear scaling, not compounding: `total_return * 252 / len(sessions)`. On the measured 5-session fold a 0.1449% total becomes 7.30% "annualized" — a ×50.4 multiplier on a one-week sample. `annualized_return` and the fold-level `ann_ret` both do this, and these numbers are what a verdict engine will later consume. | `total_return=0.00144925` → `annualized_return=0.07304220` |
+| **G-8** | P2 | The determinism gate hashes **an empty result**. `G2C-1`'s fixture is `TechnicalCrossStrategy(fast_indicator="close", slow_indicator="open")`; `close > close` is never true and `close < open` is false on the constructed series, so the run produces no trade, ends at exactly ₹10,00,000.00 with Sharpe 0.00, and the gate compares two identical empty bundles. It also compares only final equity and Sharpe — not `aggregate_daily_returns` or executed prices. | Probe prints `Final Equity: ₹1000000.00 == ₹1000000.00 | Sharpe: 0.00` |
+| **G-9** | P2 | `G2C-5`'s concentration assertion is a bare `except Exception`, so any error at all — an `AttributeError` from a typo, a `NonContiguousDatasetError`, a `KeyError` — reads as "risk limit enforced". | Probe line: `except Exception: concentration_caught = True` |
+| **G-10** | P3 | Slippage is applied at full Decimal precision with no tick rounding: the executed price `1061.279533188057740375864895` is not a price any exchange can print (tick ₹0.05). Fill prices are therefore not tradable prices. | Executed price 24 decimal places |
+| **G-11** | P3 | `for ret, snap in zip(f_res.daily_returns, f_res.portfolio_snapshots)` silently truncates on a length mismatch instead of failing closed. | — |
+| **G-12** | P3 | The 2C engine opts out of both session and gap policy: `load_price_panel(..., full_sessions_only=False)` treats the 12 muhurat and 4 special sessions as full days for feature windows, and `compute_standard_features_for_instrument(..., fail_closed_on_unexplained=False)` explicitly disables §6.3's fail-closed continuity check. Both defaults are pre-existing in the callee; the engine chooses them. | `walkforward.py` passes `False` to both |
+| **G-13** | P3 | No insufficient-cash invariant exists in `CashLedger`/`Portfolio`; settlement is only bounded by the 10% single-position cap. Unreachable with the current 5-scrip master (≤50% deployment), reachable the moment E-10/E-11 add a real universe. | No cash-sufficiency check in `portfolio/` |
+
+### 25.4 Gate re-assessment
+
+| Gate | Committed claim | Independent assessment |
+|---|---|---|
+| G2C-1 | determinism **PASS** | Measurement is vacuous (G-8). Determinism itself is real and was proven here with a live fill: fingerprint, returns and prices all reproduce. The gate needs a fixture that trades. |
+| G2C-2 | lookahead rejection **PASS** | **Substantive.** Verified at both layers, plus the fill lands on `T+1` at the `T+1` open. Note `fail_on_lookahead=False` silently skips rogue intents instead of raising — a knob no caller uses. |
+| G2C-3 | eligibility **PASS** | **Substantive.** 4 rejections, 0 fills, `BE` never reaches the ledger. |
+| G2C-4 | circuit evidence **PASS** | **Tautological** (G-6). Every fill is `CIRCUIT_UNVERIFIED` because circuit data does not exist in the storage layer, so §5.3 (no BUY at upper circuit, no SELL at lower freeze) is currently unimplementable and unmeasured. |
+| G2C-5 | single engine + ledger **PASS** | **Substantive on costs and ledger** (statutory charges on the fill, cash and positions move, naked sell blocked); the risk-limit half is asserted by a bare `except` (G-9) and, when it does fire, it aborts the run rather than rejecting the order (G-3). |
+
+### 25.5 Documentation integrity
+
+The gate table's measurement bases are specific and reproducible, and the 207-test / 5-gate claims are true as printed. What it omits is that two of the five gates cannot fail: G2C-1 exercises no trade and G2C-4's flag is a constant. A gate whose fixture cannot produce the phenomenon it certifies is a `NOT RUN` in substance. The status row reads *"Phase 2C implemented & verified (5/5 gates PASS)"*, which overstates on those two gates.
+
+### 25.6 Verdict
+
+**Phase 2C is NOT signed off. NO-GO at this commit.**
+
+The engine is a sound skeleton — one fill path, one ledger, statutory costs, real `T+1` timing, an eligibility gate that actually rejects, and determinism that survives a live trade. The previous closure set is fully discharged: F-1, F-2, F-3 closed with the mutations that used to be invisible now changing the fingerprint.
+
+What blocks sign-off is not a single bug but four structural gaps, each cheap to fix and each consequential:
+
+1. **G-1** — the engine will run on the sealed holdout with no role and no unlock. §8.1 is non-negotiable, and an entry point that cannot enforce it has to gain a `PartitionSpec`/role argument before any result from this engine is meaningful.
+2. **G-4** — `TrialRecord.dataset_fingerprint` can be `UNKNOWN`. The one artifact §8.2 relies on for trial accountability is a free string, so the trial registry cannot distinguish a real evaluation from an unbound one.
+3. **G-2/G-3** — the shipped strategy cannot trade under the shipped risk limit, and the risk/liquidity rejections raise out of the run instead of producing a rejected fill. As it stands, the reference strategy has no executable path.
+4. **G-5** — latency is configured and ignored; §7.1's latency realism is therefore a comment, not a control.
+
+Required before re-audit: G-1, G-2, G-3, G-4, G-5, and replace the two unfalsifiable gates (G-8, G-6) with fixtures that can fail — a determinism run that trades, and a circuit-limit path with at least one session whose upper/lower limit is populated so a locked-circuit fill is actually refused. G-6 (zero-trade `VERIFIED`) belongs with it: a run with no fills should be `NOT RUN`, never `VERIFIED`. G-7's annualization must either compound or be labelled as linear extrapolation, since a ×50 multiplier on a 5-session fold is exactly how a deflated-Sharpe verdict gets manufactured by accident.
+
+G-10 through G-13 are carried.
+
+---
+
+## 26. Sequencing Recommendation — Historical Backfill vs. Phase 2C Closure vs. Phase 2D
+
+**Question put to the auditor:** close the 2C blockers (G-1…G-5) and build Phase 2D on synthetic fixtures first, or run the 2015–2026 historical ingestion (with E-7, E-11, E-12/F-7) immediately after 2C sign-off and before 2D?
+
+**Answer: neither as stated.** Option 1 repeats a measured failure mode; Option 2 has the right direction but starts one step too late. Recommended order below.
+
+**The precedent that decides it.** In §23→§24 and again in §25, gate tables came back green because the fixtures were the author's own: 2C passed 5/5 while G2C-1 exercised no trade and G2C-4 measured a constant. A Phase 2D verdict engine certified on synthetic fixtures would produce a third false-green table — this time on the component that prints GO/NO-GO. Phase 2D therefore must be built against real data from its first commit, which rules out Option 1.
+
+**What Option 2 gives away.** It schedules ingestion after 2C sign-off, but the two irreversible items — the holdout guard and the ingest provenance schema — must precede the first real byte. Once the sealed 2025+ window exists on disk, an unguarded entry point can read it with no unlock and §8.1 fails retroactively with no remedy. And Bronze blobs are captured once: archives refetched later will not be byte-identical, so provenance fields must be final before capture.
+
+| Wave | Content | Rationale |
+|---|---|---|
+| **0 · before any real bytes** | **G-1 only** — partition role on `WalkForwardFold` + `PartitionSpec`/unlock enforcement at `run_walk_forward`. Freeze ingest schemas: provenance fields, corporate-action record shape, membership-interval shape, circuit/price-band source choice, and physical holdout separation (E-15). | Only unrecoverable delays live here. |
+| **1 · thin real-data vertical slice** | One scrip, one month, real NSE bhavcopy: Bronze → Silver → Gold → DuckDB → `DATA-CTNT-V2`, plus one real corporate action and one real membership interval. Fully audited. | Cheapest place to discover the storage contract does not survive real bytes (field sentinels, symbol changes mid-month, a split inside the window). Exercises E-12/F-7 and F-4 against NSE reality rather than against self-declared counts. |
+| **2 · close Phase 2C** | G-2/G-3 (sizing vs. risk limit; a `REJECTED_RISK_LIMIT` status instead of aborting the run), G-5 (latency), **G-4** (dataset fingerprint computed from the Gold snapshot), replace the unfalsifiable G2C-1/G2C-4 fixtures, zero-fill runs become `NOT RUN`. | G-2/G-3 are policy choices that need real prices and volumes to be meaningful; G-4 needs a real snapshot to bind to. G-5 and the gate hardware are data-independent and may run in parallel with Wave 1. |
+| **3 · full backfill** | Tier B (2015–2018 warm-up) then Tier A (2018-04-01→2026-11-11), **with** membership intervals (E-11), verified CA ratios and ex-dates (E-12/F-7), surveillance stages with precedence (E-7), and price-band/circuit data — in the same wave. Re-run every 2B.5 and 2C gate on the real corpus; mark synthetic-only results `SYNTHETIC ONLY`. | Prices without PIT membership yield a five-ISIN universe; without verified ratios they yield wrong adjusted series; without circuit/surveillance data §5.2/§5.3 and G2C-4 stay permanently unmeasurable. These are not optional companions to the price load. |
+| **4 · Phase 2D** | `verdicts.py` + end-to-end regression, on real Tier-A data, holdout sealed. | The verdict engine consumes everything above; it is built last. |
+
+**Preconditions attached to sign-off at each boundary**
+
+1. Before Wave 3: `configs/go_no_go_criteria.yaml` and the `PartitionSpec` committed and frozen, `TrialRegistry` live. Criteria are never tuned after the first real number is printed (§9.2).
+2. The holdout must be sealed physically — separate storage root plus a manifest lock (E-15) — not merely by a guard in one engine. A holdout the Gold layer cannot glob is a real seal.
+3. The daily bhavcopy carries no circuit-limit field; circuit limits and price bands come from a separate NSE publication. That source must be chosen and archived in Wave 0/3, or G2C-4 remains a tautology and §5.3 remains unimplementable regardless of code.
+4. No Silver write may bypass the calendar; no parse may precede the Bronze capture.
+5. Pre-2018 remains warm-up only; E-14's gating already enforces it and the backfill must not tempt anyone to compute on Tier B.
+
+**Verdict on the two options:** Option 1 — rejected. Option 2 — directionally correct (real ingestion before 2D, with E-11/E-12/E-7 resolved as part of it), with two amendments: G-1 plus the schema freeze move ahead of ingestion rather than after 2C, and a one-month real slice precedes the full backfill so the storage contract is proven before 1.5M rows are loaded.
+

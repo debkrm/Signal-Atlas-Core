@@ -16,6 +16,9 @@ import shutil
 import sys
 import tempfile
 
+# Ensure src/ is on python path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
 from signal_core.contracts.criteria import load_go_no_go_criteria
 from signal_core.contracts.exchange_series import (
     APPROVED_EQ_ONLY_POLICY,
@@ -23,7 +26,7 @@ from signal_core.contracts.exchange_series import (
     SeriesEligibilityPolicy,
 )
 from signal_core.execution.types import FillStatus, OrderSide
-from signal_core.research.containment import WalkForwardFold
+from signal_core.research.containment import PartitionRole, WalkForwardFold
 from signal_core.research.trials import TrialRegistry
 from signal_core.research.walkforward import (
     WalkForwardEngine,
@@ -178,6 +181,7 @@ def run_phase_2c_verification() -> bool:
             test_start=datetime.date(2024, 1, 15),
             test_end=datetime.date(2024, 1, 19),
             embargo_sessions=1,
+            partition_role=PartitionRole.VALIDATION,
         )
 
         engine = WalkForwardEngine(
@@ -403,3 +407,4 @@ def run_phase_2c_verification() -> bool:
 if __name__ == "__main__":
     success = run_phase_2c_verification()
     sys.exit(0 if success else 1)
+

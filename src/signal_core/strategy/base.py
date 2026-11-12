@@ -335,3 +335,4 @@ class TechnicalCrossStrategy(Strategy):
                 )
 
         return tuple(intents)
+

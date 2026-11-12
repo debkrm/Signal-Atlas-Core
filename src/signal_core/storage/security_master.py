@@ -155,6 +155,7 @@ class SurveillanceInterval:
 class CorporateAction:
     """
     Explicit corporate action record with verified ex-date and adjustment ratios.
+    Frozen ingest contract per AGENTS.md Rule 5.4, Rule 10.3 and Wave 0.
     """
     isin: str
     ex_date: datetime.date
@@ -165,20 +166,40 @@ class CorporateAction:
     new_isin: Optional[str] = None
     circular_ref: Optional[str] = None
     description: Optional[str] = None
+    record_date: Optional[datetime.date] = None
 
     def __post_init__(self) -> None:
         _validate_identifier(self.isin, "isin")
         _validate_date(self.ex_date, "ex_date")
+        if self.record_date is not None:
+            _validate_date(self.record_date, "record_date")
+            if self.record_date < self.ex_date:
+                raise SecurityMasterError(
+                    f"record_date ({self.record_date}) cannot precede ex_date ({self.ex_date}) for ISIN {self.isin}"
+                )
+
         if not isinstance(self.action_type, CorporateActionType):
             raise SecurityMasterError(f"action_type must be a CorporateActionType, got {type(self.action_type).__name__}")
         if not isinstance(self.ratio_numerator, Decimal) or not isinstance(self.ratio_denominator, Decimal):
             raise SecurityMasterError("ratio_numerator and ratio_denominator must be exact Decimal instances.")
         if self.ratio_numerator <= Decimal("0") or self.ratio_denominator <= Decimal("0"):
             raise SecurityMasterError("Ratios must be strictly positive Decimals.")
-        if self.old_isin is not None:
+        if not self.ratio_numerator.is_finite() or not self.ratio_denominator.is_finite():
+            raise SecurityMasterError("Ratios must be finite Decimals.")
+
+        if self.action_type == CorporateActionType.ISIN_TRANSITION:
+            if not self.old_isin or not self.new_isin:
+                raise SecurityMasterError("ISIN_TRANSITION requires both old_isin and new_isin.")
             _validate_identifier(self.old_isin, "old_isin")
-        if self.new_isin is not None:
             _validate_identifier(self.new_isin, "new_isin")
+            if self.old_isin == self.new_isin:
+                raise SecurityMasterError(f"old_isin and new_isin must differ for ISIN_TRANSITION: {self.old_isin}")
+        else:
+            if self.old_isin is not None:
+                _validate_identifier(self.old_isin, "old_isin")
+            if self.new_isin is not None:
+                _validate_identifier(self.new_isin, "new_isin")
+
         if self.circular_ref is not None:
             _validate_identifier(self.circular_ref, "circular_ref")
 
@@ -186,6 +207,44 @@ class CorporateAction:
     def adjustment_factor(self) -> Decimal:
         """Multiplier to apply to pre-event prices to back-adjust to post-event basis."""
         return self.ratio_denominator / self.ratio_numerator
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes CorporateAction to JSON-compatible dictionary."""
+        d: Dict[str, Any] = {
+            "isin": self.isin,
+            "ex_date": self.ex_date.isoformat(),
+            "action_type": self.action_type.value,
+            "ratio_numerator": str(self.ratio_numerator),
+            "ratio_denominator": str(self.ratio_denominator),
+        }
+        if self.old_isin is not None:
+            d["old_isin"] = self.old_isin
+        if self.new_isin is not None:
+            d["new_isin"] = self.new_isin
+        if self.circular_ref is not None:
+            d["circular_ref"] = self.circular_ref
+        if self.description is not None:
+            d["description"] = self.description
+        if self.record_date is not None:
+            d["record_date"] = self.record_date.isoformat()
+        return d
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "CorporateAction":
+        """Deserializes CorporateAction from mapping."""
+        rec_d = datetime.date.fromisoformat(data["record_date"]) if data.get("record_date") else None
+        return cls(
+            isin=str(data["isin"]),
+            ex_date=datetime.date.fromisoformat(data["ex_date"]),
+            action_type=CorporateActionType(str(data["action_type"])),
+            ratio_numerator=Decimal(str(data["ratio_numerator"])),
+            ratio_denominator=Decimal(str(data["ratio_denominator"])),
+            old_isin=str(data["old_isin"]) if data.get("old_isin") else None,
+            new_isin=str(data["new_isin"]) if data.get("new_isin") else None,
+            circular_ref=str(data["circular_ref"]) if data.get("circular_ref") else None,
+            description=str(data["description"]) if data.get("description") else None,
+            record_date=rec_d,
+        )
 
 
 @dataclass(frozen=True, slots=True)

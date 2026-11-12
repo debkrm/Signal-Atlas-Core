@@ -4,9 +4,9 @@
 
 | Attribute | Current Status |
 |---|---|
-| **Active Project Phase** | **Phase 2B signed off** (§22) · **Phase 2B.5 signed off — GO** (§24) · **Phase 2C implemented & verified (5/5 gates PASS)** · **Next** — Phase 2D Automated Verdict Engine & End-to-End Regression |
-| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash book, multi-fill position accounting, mark-to-market portfolio valuation, committed risk tracker, holdout containment, tamper-evident trial registry, statistical significance engine, strategy contract, and walk-forward engine complete |
-| **Offline Test Suite** | **207 passed in 5.82s** (100% pass rate, zero warnings) |
+| **Active Project Phase** | **Phase 2B signed off** (§22) · **Phase 2B.5 signed off — GO** (§24) · **Phase 2C implemented — NOT SIGNED OFF** (§25: G-1, G-2/G-3, G-4, G-5) · **Wave 0 COMPLETED** (G-1 closed, Ingest schemas frozen in code, Physical holdout separation adopted & documented) · **Next** — Wave 1: one-month real-data slice |
+| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash book, multi-fill position accounting, mark-to-market portfolio valuation, committed risk tracker, holdout containment, tamper-evident trial registry, statistical significance engine, strategy contract, walk-forward engine, frozen ingest schemas, and physical holdout separation architecture complete |
+| **Offline Test Suite** | **219 passed in 6.49s** (100% pass rate, zero warnings) |
 | **External Dependencies** | Zero network calls, zero shadow simulators. Research storage is planned as embedded Parquet + DuckDB in an optional extra (no server process); the core package stays stdlib-pure. |
 | **Historical Provenance** | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` (Strictly maintained, zero false promotions) |
 | **Holdout Containment** | `HOLDOUT_UNLOCK` is strictly **ABSENT**; out-of-sample data remains completely sealed |
@@ -405,7 +405,7 @@ Partition roles inside Tier A: IS 2018-04 → 2023-12, validation 2024, **holdou
 | **G2B.5-6** · DuckDB views DECIMAL(18,4) typing, corruption fail-closed & disposable views | **PASS** | `typeof(close)` is `DECIMAL(18,4)`; numeric predicates (`close >= 3000` returns 0; `close >= 1000` matches INFY, excludes RELIANCE) and `avg(close)` compute accurately; corrupt partition raises `DuckDBViewError` fail-closed; deleting `.duckdb` file deletes database with zero fingerprint change. |
 | **G2B.5-7** · Gating window enforcement (no GO/APPROVED/PASS before 2018-04-01) | **PASS** | Window starting 2017-01-01 classified as `PRE_SURVEILLANCE_WARMUP`; attempting `GO`, `APPROVED`, or `PASS` raises `GatingWindowValidationError`; resolved verdict forced to `NOT RUN`; binding window starting 2018-04-01 permits `GO`. |
 
-#### Phase 2C — Strategy Contract & Next-Session Walk-Forward Engine (Completed & Verified)
+#### Phase 2C — Strategy Contract & Next-Session Walk-Forward Engine (Implemented — NOT SIGNED OFF, see audit §25)
 Modules: `src/signal_core/strategy/base.py`, `src/signal_core/research/walkforward.py`.
 
 - `Strategy` contract: `generate_signals(as_of, next_session, universe, features) -> tuple[OrderIntent, ...]`, with only data at or before `as_of` reachable. Intents that reference a later session or same-session fill ($T \to T$) are rejected fail-closed.
@@ -423,6 +423,48 @@ Modules: `src/signal_core/strategy/base.py`, `src/signal_core/research/walkforwa
 | **G2C-3** · Series eligibility enforcement (`APPROVED_EQ_ONLY_POLICY`) | **PASS** | Strategy orders for ineligible Trade-to-Trade `BE` instrument (`INE999B01019`) are rejected by simulator with `FillStatus.REJECTED_INELIGIBLE_SERIES` (4 rejections, 0 fills). Ineligible instruments never reach fill or ledger. |
 | **G2C-4** · Circuit evidence audit & promotion gating | **PASS** | Executed fills lacking verified circuit limit depth are flagged with `circuit_evidence_complete = False` and `verification_status = 'CIRCUIT_UNVERIFIED'`, blocking false promotion to `VERIFIED` per Rule 5.3 & 5.5. |
 | **G2C-5** · Single authoritative engine & portfolio ledger integration | **PASS** | Trade fills route strictly through `ExecutionFillSimulator` and post to `Portfolio` `CashLedger` (statutory STT, stamp duty, turnover fees deducted; cash balance reduced; positions opened and tracked). Concentration limit breaches (> 10% weight) fail closed with `PortfolioRiskLimitError`. |
+
+---
+
+### Audit §26 Phased Wave Sequence (Roadmap to Full Production Backfill & Phase 2D)
+
+Per Auditor §26 recommendation, work is staged in strict waves before ingesting the 2015–2026 historical corpus:
+
+```
+Wave 0 (Pre-ingest: G-1, Schemas, Holdout Decision) [COMPLETED]
+   │
+   ▼
+Wave 1 (Thin 1-Month Real Slice: 1 scrip, 1 month real NSE Bhavcopy)
+   │
+   ▼
+Wave 2 (Close Phase 2C Blockers: G-2/G-3 Risk Limit, G-5 Latency, G-4 Gold Dataset Binding, Falsifiable Gates)
+   │
+   ▼
+Wave 3 (Full Historical Backfill 2015–2026: Tier B Warm-up + Tier A In-Sample, Validation, and Physically Sealed Holdout)
+   │
+   ▼
+Wave 4 (Phase 2D: Automated Verdict Engine & End-to-End Regression on Real Tier-A Data)
+```
+
+#### Wave 0 — Pre-Ingestion Containment & Schema Freezing (Completed & Verified)
+Modules: `containment.py`, `walkforward.py`, `bronze.py`, `security_master.py`, `universe.py`, `price_band.py`.
+Documentation: [`docs/holdout_physical_separation_architecture.md`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/docs/holdout_physical_separation_architecture.md).
+
+- **G-1 Holdout Containment Closed**:
+  - `WalkForwardFold` carries `partition_role: Optional[PartitionRole] = None` (normalized to enum, incorporated into `compute_fold_spec_fingerprint`).
+  - `WalkForwardEngine.run_fold` and `run_walk_forward` enforce fail-closed containment:
+    1. Unlabelled folds (`partition_role=None`) are strictly refused fail-closed with `HoldoutSealedError`. Unknown must not run.
+    2. Any fold whose date window intersects `[partition_spec.holdout_start, partition_spec.holdout_end]` strictly requires verified human-authorized `HOLDOUT_UNLOCK` sentinel file matching `holdout_token_hash`. Mismatched roles (e.g. fold intersecting holdout claiming to be `VALIDATION`) fail closed.
+    3. Folds declared as `HOLDOUT` without a `PartitionSpec` fail closed.
+- **Ingest Schemas Frozen in Code**:
+  - `BronzeManifestEntry` (in `src/signal_core/storage/bronze.py`): Typed fields (`relative_path`, `source_url`, `retrieved_at`, `byte_count`, `sha256`, `restatement_ref`, `source_archive_format`) with strict `__post_init__` invariant validation (no directory traversal, no backslashes, positive byte count, exact 64-char hex SHA-256).
+  - Manifest Locking (Finding E-15): Implemented `BronzeStorage._lock_manifest()` context manager using an atomic inter-process `.lock` file to guarantee serial writes and prevent interleaved partial lines during concurrent ingestion.
+  - `CorporateAction` (in `src/signal_core/storage/security_master.py`): Verified exact Decimals for `ratio_numerator` and `ratio_denominator`, `ex_date`, optional `record_date` ($\ge \text{ex\_date}$), `circular_ref`, and mandatory distinct `old_isin`/`new_isin` validation for `ISIN_TRANSITION`.
+  - `IndexMembershipInterval` (in `src/signal_core/contracts/universe.py`): Time-varying universe membership represented as half-open interval tables $[effective\_from, effective\_to)$ per Rule 10.5, with mandatory ISIN identity (Rule 10.4), overlap detection, and serialization.
+  - `PriceBandSourceDescriptor`, `PriceBandRecord`, `PriceBandInterval` (in `src/signal_core/contracts/price_band.py`): Authoritative NSE publication sources (`NSE_DAILY_PRICE_BAND_REPORT`, `NSE_PR_ZIP`, `NSE_SURVEILLANCE_CIRCULAR`), discrete daily circuit observations with exact Decimal bounds and unconstrained F&O handling, plus half-open interval tables for sustained fixed surveillance bands.
+- **Physical Holdout Separation Adopted (E-15)**:
+  - Formally committed in [`docs/holdout_physical_separation_architecture.md`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/docs/holdout_physical_separation_architecture.md).
+  - Holdout data (2025–2026) will be stored in a physically segregated directory tree (`storage_holdout/`) with an independent cryptographic manifest lock, completely outside `storage/silver/`. The Gold layer and DuckDB views globbing standard silver physically cannot discover or parse holdout files.
 
 #### Phase 2D — Automated Verdict Engine & End-to-End Regression
 Module: `src/signal_core/reporting/verdicts.py`.

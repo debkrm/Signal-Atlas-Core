@@ -5,6 +5,14 @@ Exports authoritative trading calendar, security master, and three-tier storage 
 (Bronze, Silver, Gold, DuckDB Views, Gating Window enforcement).
 """
 
+from signal_core.contracts.universe import IndexMembershipInterval
+from signal_core.contracts.price_band import (
+    PriceBandInterval,
+    PriceBandPublicationSource,
+    PriceBandRecord,
+    PriceBandSourceDescriptor,
+    PriceBandValidationError,
+)
 from signal_core.storage.calendar import (
     DEFAULT_CALENDAR_PATH,
     BINDING_EVALUATION_START_DATE,
@@ -80,6 +88,12 @@ __all__ = [
     "CorporateActionType",
     "DelistingEvent",
     "ISINTransitionEvent",
+    "IndexMembershipInterval",
+    "PriceBandRecord",
+    "PriceBandSourceDescriptor",
+    "PriceBandPublicationSource",
+    "PriceBandInterval",
+    "PriceBandValidationError",
     "SecurityMaster",
     "SecurityMasterError",
     "SecurityNotFoundError",

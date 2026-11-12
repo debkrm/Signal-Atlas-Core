@@ -23,7 +23,12 @@ from signal_core.contracts.exchange_series import (
     SeriesEligibilityPolicy,
 )
 from signal_core.execution.types import FillStatus, OrderSide, OrderType
-from signal_core.research.containment import WalkForwardFold
+from signal_core.research.containment import (
+    HoldoutSealedError,
+    PartitionRole,
+    PartitionSpec,
+    WalkForwardFold,
+)
 from signal_core.research.trials import TrialRegistry
 from signal_core.research.walkforward import (
     FoldExecutionResult,
@@ -185,6 +190,7 @@ def test_gate_g2c_1_bit_for_bit_determinism(wf_environment):
         test_start=datetime.date(2024, 1, 15),
         test_end=datetime.date(2024, 1, 19),
         embargo_sessions=1,
+        partition_role=PartitionRole.VALIDATION,
     )
 
     strat = TechnicalCrossStrategy(
@@ -221,6 +227,7 @@ def test_gate_g2c_2_same_session_lookahead_rejection(wf_environment):
         test_start=datetime.date(2024, 1, 15),
         test_end=datetime.date(2024, 1, 19),
         embargo_sessions=1,
+        partition_role=PartitionRole.VALIDATION,
     )
 
     # Rogue strategy attempting same-session fill (signal on T, target on T)
@@ -294,6 +301,7 @@ def test_gate_g2c_3_eligibility_enforcement(wf_environment):
         test_start=datetime.date(2024, 1, 15),
         test_end=datetime.date(2024, 1, 19),
         embargo_sessions=1,
+        partition_role=PartitionRole.VALIDATION,
     )
 
     res = engine.run_walk_forward(strategy=BESeriesStrategy(), folds=[fold], isins=[be_isin, "INE009A01021"])
@@ -316,6 +324,7 @@ def test_gate_g2c_4_circuit_evidence_audit(wf_environment):
         test_start=datetime.date(2024, 1, 15),
         test_end=datetime.date(2024, 1, 19),
         embargo_sessions=1,
+        partition_role=PartitionRole.VALIDATION,
     )
 
     # Simple buyer strategy
@@ -361,6 +370,7 @@ def test_gate_g2c_5_single_authoritative_engine_and_portfolio_integration(wf_env
         test_start=datetime.date(2024, 1, 15),
         test_end=datetime.date(2024, 1, 19),
         embargo_sessions=1,
+        partition_role=PartitionRole.VALIDATION,
     )
 
     class SingleTradeBuyer(Strategy):
@@ -418,6 +428,7 @@ def test_walk_forward_trial_registry_integration(wf_environment):
         test_start=datetime.date(2024, 1, 15),
         test_end=datetime.date(2024, 1, 19),
         embargo_sessions=1,
+        partition_role=PartitionRole.VALIDATION,
     )
 
     strat = TechnicalCrossStrategy(
@@ -449,3 +460,227 @@ def test_walk_forward_trial_registry_integration(wf_environment):
     assert record.sharpe_ratio == res.annualized_sharpe
     assert registry.verify_integrity() is True
     assert registry.total_trial_count == 1
+
+
+# ==============================================================================
+# AUDIT §25 / §26 — GATE G-1 HOLDOUT CONTAINMENT & FOLD PARTITION ROLE TESTS
+# ==============================================================================
+
+def test_g1_unlabelled_fold_rejected_fail_closed(wf_environment):
+    """
+    Gate G-1 (Audit §25/§26): Unlabelled fold (partition_role=None) must be
+    refused fail-closed with HoldoutSealedError. Unknown must not run.
+    """
+    cal, sec_master, silver, gold, tmp_path = wf_environment
+
+    unlabelled_fold = WalkForwardFold(
+        fold_index=0,
+        train_start=datetime.date(2024, 1, 8),
+        train_end=datetime.date(2024, 1, 11),
+        test_start=datetime.date(2024, 1, 15),
+        test_end=datetime.date(2024, 1, 19),
+        embargo_sessions=1,
+        partition_role=None,  # Explicitly unlabelled
+    )
+
+    strat = TechnicalCrossStrategy(strategy_id="TEST-UNLABELLED")
+    engine = WalkForwardEngine(calendar=cal, gold_engine=gold)
+
+    # Must raise from run_fold
+    with pytest.raises(HoldoutSealedError, match="unlabelled"):
+        engine.run_fold(strat, unlabelled_fold)
+
+    # Must raise from run_walk_forward
+    with pytest.raises(HoldoutSealedError, match="unlabelled"):
+        engine.run_walk_forward(strat, [unlabelled_fold])
+
+
+def test_g1_holdout_fold_without_spec_rejected_fail_closed(wf_environment):
+    """
+    Gate G-1: Fold declared as HOLDOUT without supplying a PartitionSpec must
+    be refused fail-closed with HoldoutSealedError.
+    """
+    cal, sec_master, silver, gold, tmp_path = wf_environment
+
+    holdout_fold = WalkForwardFold(
+        fold_index=0,
+        train_start=datetime.date(2024, 1, 8),
+        train_end=datetime.date(2024, 1, 11),
+        test_start=datetime.date(2024, 1, 15),
+        test_end=datetime.date(2024, 1, 19),
+        embargo_sessions=1,
+        partition_role=PartitionRole.HOLDOUT,
+    )
+
+    strat = TechnicalCrossStrategy(strategy_id="TEST-HOLDOUT-NOSPEC")
+    engine = WalkForwardEngine(calendar=cal, gold_engine=gold)
+
+    with pytest.raises(HoldoutSealedError, match="no PartitionSpec was supplied"):
+        engine.run_fold(strat, holdout_fold)
+
+    with pytest.raises(HoldoutSealedError, match="no PartitionSpec was supplied"):
+        engine.run_walk_forward(strat, [holdout_fold])
+
+
+def test_g1_fold_intersecting_holdout_window_without_unlock_rejected_fail_closed(wf_environment):
+    """
+    Gate G-1: Fold whose window intersects PartitionRole.HOLDOUT without an unlock path
+    must be refused fail-closed with HoldoutSealedError.
+    """
+    import hashlib
+    cal, sec_master, silver, gold, tmp_path = wf_environment
+
+    spec = PartitionSpec(
+        dataset_fingerprint="DATA-CTNT-V2-TEST",
+        holdout_token_hash=hashlib.sha256(b"secret-human-token-12345").hexdigest(),
+        in_sample_start=datetime.date(2024, 1, 8),
+        in_sample_end=datetime.date(2024, 1, 10),
+        validation_start=datetime.date(2024, 1, 11),
+        validation_end=datetime.date(2024, 1, 12),
+        holdout_start=datetime.date(2024, 1, 15),
+        holdout_end=datetime.date(2024, 1, 19),
+    )
+
+    holdout_fold = WalkForwardFold(
+        fold_index=0,
+        train_start=datetime.date(2024, 1, 8),
+        train_end=datetime.date(2024, 1, 11),
+        test_start=datetime.date(2024, 1, 15),
+        test_end=datetime.date(2024, 1, 19),
+        embargo_sessions=1,
+        partition_role=PartitionRole.HOLDOUT,
+    )
+
+    strat = TechnicalCrossStrategy(strategy_id="TEST-HOLDOUT-NOUNLOCK")
+    engine = WalkForwardEngine(calendar=cal, gold_engine=gold)
+
+    # Attempt execution with spec but no unlock file path
+    with pytest.raises(HoldoutSealedError, match="sealed"):
+        engine.run_walk_forward(strat, [holdout_fold], partition_spec=spec, unlock_file_path=None)
+
+
+def test_g1_fold_intersecting_holdout_window_with_mismatched_role_rejected_fail_closed(wf_environment):
+    """
+    Gate G-1: Fold intersecting the HOLDOUT window but falsely declared as VALIDATION
+    must be refused fail-closed with HoldoutSealedError.
+    """
+    import hashlib
+    cal, sec_master, silver, gold, tmp_path = wf_environment
+
+    spec = PartitionSpec(
+        dataset_fingerprint="DATA-CTNT-V2-TEST",
+        holdout_token_hash=hashlib.sha256(b"secret-human-token-12345").hexdigest(),
+        in_sample_start=datetime.date(2024, 1, 8),
+        in_sample_end=datetime.date(2024, 1, 10),
+        validation_start=datetime.date(2024, 1, 11),
+        validation_end=datetime.date(2024, 1, 12),
+        holdout_start=datetime.date(2024, 1, 15),
+        holdout_end=datetime.date(2024, 1, 19),
+    )
+
+    # Date span [2024-01-08, 2024-01-19] intersects holdout [2024-01-15, 2024-01-19]
+    # but role is declared as VALIDATION!
+    mismatched_fold = WalkForwardFold(
+        fold_index=0,
+        train_start=datetime.date(2024, 1, 8),
+        train_end=datetime.date(2024, 1, 11),
+        test_start=datetime.date(2024, 1, 15),
+        test_end=datetime.date(2024, 1, 19),
+        embargo_sessions=1,
+        partition_role=PartitionRole.VALIDATION,
+    )
+
+    strat = TechnicalCrossStrategy(strategy_id="TEST-MISMATCHED-ROLE")
+    engine = WalkForwardEngine(calendar=cal, gold_engine=gold, partition_spec=spec)
+
+    with pytest.raises(HoldoutSealedError, match="intersects sealed HOLDOUT partition"):
+        engine.run_walk_forward(strat, [mismatched_fold])
+
+
+def test_g1_fold_intersecting_holdout_with_valid_unlock_permitted(wf_environment):
+    """
+    Gate G-1: Fold intersecting HOLDOUT window executes successfully when
+    a verified human-created HOLDOUT_UNLOCK matching spec.holdout_token_hash is provided.
+    """
+    import hashlib
+    cal, sec_master, silver, gold, tmp_path = wf_environment
+
+    token_secret = "human-authorized-unsealing-2026"
+    token_hash = hashlib.sha256(token_secret.encode("utf-8")).hexdigest()
+
+    unlock_file = tmp_path / "HOLDOUT_UNLOCK"
+    unlock_file.write_text(token_secret, encoding="utf-8")
+
+    spec = PartitionSpec(
+        dataset_fingerprint="DATA-CTNT-V2-TEST",
+        holdout_token_hash=token_hash,
+        in_sample_start=datetime.date(2024, 1, 8),
+        in_sample_end=datetime.date(2024, 1, 10),
+        validation_start=datetime.date(2024, 1, 11),
+        validation_end=datetime.date(2024, 1, 12),
+        holdout_start=datetime.date(2024, 1, 15),
+        holdout_end=datetime.date(2024, 1, 19),
+    )
+
+    holdout_fold = WalkForwardFold(
+        fold_index=0,
+        train_start=datetime.date(2024, 1, 8),
+        train_end=datetime.date(2024, 1, 11),
+        test_start=datetime.date(2024, 1, 15),
+        test_end=datetime.date(2024, 1, 19),
+        embargo_sessions=1,
+        partition_role=PartitionRole.HOLDOUT,
+    )
+
+    strat = TechnicalCrossStrategy(
+        strategy_id="TEST-AUTHORIZED-HOLDOUT",
+        allocation_weight=Decimal("0.10"),
+    )
+    engine = WalkForwardEngine(calendar=cal, gold_engine=gold)
+
+    res = engine.run_walk_forward(
+        strategy=strat,
+        folds=[holdout_fold],
+        partition_spec=spec,
+        unlock_file_path=unlock_file,
+    )
+    assert res is not None
+    assert len(res.fold_results) == 1
+
+
+def test_g1_validation_fold_outside_holdout_executes_cleanly(wf_environment):
+    """
+    Gate G-1: Validation fold strictly outside HOLDOUT window executes cleanly
+    with PartitionSpec without requiring an unlock sentinel.
+    """
+    import hashlib
+    cal, sec_master, silver, gold, tmp_path = wf_environment
+
+    spec = PartitionSpec(
+        dataset_fingerprint="DATA-CTNT-V2-TEST",
+        holdout_token_hash=hashlib.sha256(b"secret-holdout-token").hexdigest(),
+        in_sample_start=datetime.date(2024, 1, 8),
+        in_sample_end=datetime.date(2024, 1, 10),
+        validation_start=datetime.date(2024, 1, 11),
+        validation_end=datetime.date(2024, 1, 19),
+        holdout_start=datetime.date(2025, 1, 1),
+        holdout_end=datetime.date(2025, 12, 31),
+    )
+
+    val_fold = WalkForwardFold(
+        fold_index=0,
+        train_start=datetime.date(2024, 1, 8),
+        train_end=datetime.date(2024, 1, 11),
+        test_start=datetime.date(2024, 1, 15),
+        test_end=datetime.date(2024, 1, 19),
+        embargo_sessions=1,
+        partition_role=PartitionRole.VALIDATION,
+    )
+
+    strat = TechnicalCrossStrategy(strategy_id="TEST-VALIDATION-OK", allocation_weight=Decimal("0.10"))
+    engine = WalkForwardEngine(calendar=cal, gold_engine=gold)
+
+    # Must execute cleanly with spec and NO unlock file path
+    res = engine.run_walk_forward(strat, [val_fold], partition_spec=spec)
+    assert res is not None
+    assert len(res.fold_results) == 1

@@ -44,9 +44,11 @@ from signal_core.features.engine import InstrumentTechnicalFeatures, SubsegmentI
 from signal_core.portfolio.portfolio import Portfolio
 from signal_core.portfolio.types import PortfolioSnapshot
 from signal_core.research.containment import (
+    HoldoutSealedError,
     PartitionRole,
     PartitionSpec,
     WalkForwardFold,
+    check_partition_access,
     compute_fold_spec_fingerprint,
 )
 from signal_core.research.significance import (
@@ -256,6 +258,8 @@ class WalkForwardEngine:
         slippage_model: Optional[SlippageModel] = None,
         eligibility_policy: SeriesEligibilityPolicy = APPROVED_EQ_ONLY_POLICY,
         execution_latency_sessions: int = 1,
+        partition_spec: Optional[PartitionSpec] = None,
+        unlock_file_path: Optional[Union[str, Path]] = None,
     ) -> None:
         self._calendar = calendar
         self._gold_engine = gold_engine
@@ -265,6 +269,8 @@ class WalkForwardEngine:
         self._slippage_model = slippage_model
         self._eligibility_policy = eligibility_policy
         self._latency = execution_latency_sessions
+        self._partition_spec = partition_spec
+        self._unlock_file_path = unlock_file_path
 
     @property
     def calendar(self) -> TradingCalendar:
@@ -282,6 +288,14 @@ class WalkForwardEngine:
     def eligibility_policy(self) -> SeriesEligibilityPolicy:
         return self._eligibility_policy
 
+    @property
+    def partition_spec(self) -> Optional[PartitionSpec]:
+        return self._partition_spec
+
+    @property
+    def unlock_file_path(self) -> Optional[Union[str, Path]]:
+        return self._unlock_file_path
+
     def run_fold(
         self,
         strategy: Strategy,
@@ -289,10 +303,45 @@ class WalkForwardEngine:
         initial_capital: Decimal = Decimal("1000000.00"),
         isins: Optional[Sequence[str]] = None,
         fail_on_lookahead: bool = True,
+        partition_spec: Optional[PartitionSpec] = None,
+        unlock_file_path: Optional[Union[str, Path]] = None,
     ) -> FoldExecutionResult:
         """
         Simulates an individual walk-forward test fold out-of-sample.
         """
+        # Gate G-1: Holdout containment and fold partition role validation (fail-closed per AGENTS.md Rule 8.1 / Wave 0)
+        if fold.partition_role is None:
+            raise HoldoutSealedError(
+                f"Fold {fold.fold_index} has no declared partition role (unlabelled). "
+                f"Unlabelled folds are strictly refused fail-closed per AGENTS.md Rule 8.1."
+            )
+
+        active_spec = partition_spec or self._partition_spec
+        active_unlock = unlock_file_path or self._unlock_file_path
+
+        if active_spec is not None:
+            # Check if fold window [train_start, test_end] intersects sealed HOLDOUT partition
+            intersects_holdout = (
+                fold.train_start <= active_spec.holdout_end
+                and active_spec.holdout_start <= fold.test_end
+            )
+            if intersects_holdout:
+                if fold.partition_role != PartitionRole.HOLDOUT:
+                    raise HoldoutSealedError(
+                        f"Fold {fold.fold_index} date window [{fold.train_start}, {fold.test_end}] "
+                        f"intersects sealed HOLDOUT partition [{active_spec.holdout_start}, {active_spec.holdout_end}], "
+                        f"but fold role is declared as '{fold.partition_role.value}'. Refusing execution fail-closed."
+                    )
+                check_partition_access(active_spec, PartitionRole.HOLDOUT, unlock_file_path=active_unlock)
+            else:
+                check_partition_access(active_spec, fold.partition_role, unlock_file_path=active_unlock)
+        else:
+            if fold.partition_role == PartitionRole.HOLDOUT:
+                raise HoldoutSealedError(
+                    f"Fold {fold.fold_index} is declared as PartitionRole.HOLDOUT, but no PartitionSpec was supplied "
+                    f"to verify holdout token hash and authorization. Execution refused fail-closed per AGENTS.md Rule 8.1."
+                )
+
         # 1. Trading calendar sessions in test window
         test_sessions = self._calendar.sessions_in_range(fold.test_start, fold.test_end)
         if not test_sessions:
@@ -510,13 +559,48 @@ class WalkForwardEngine:
         isins: Optional[Sequence[str]] = None,
         dataset_content_fingerprint: str = "DATA-CTNT-V2-UNKNOWN",
         fail_on_lookahead: bool = True,
+        partition_spec: Optional[PartitionSpec] = None,
+        unlock_file_path: Optional[Union[str, Path]] = None,
     ) -> WalkForwardResult:
         """
         Runs comprehensive walk-forward validation across all provided folds.
         Emits WalkForwardResult bundle with aggregate metrics and deterministic fingerprint (Gate G2C-1).
+        Enforces holdout containment and fold partition roles fail-closed (Gate G-1).
         """
         if not folds:
             raise WalkForwardEngineError("Cannot run walk-forward backtest with empty folds sequence.")
+
+        active_spec = partition_spec or self._partition_spec
+        active_unlock = unlock_file_path or self._unlock_file_path
+
+        # Gate G-1 pre-flight validation across all folds
+        for fold in folds:
+            if fold.partition_role is None:
+                raise HoldoutSealedError(
+                    f"Fold {fold.fold_index} has no declared partition role (unlabelled). "
+                    f"Unlabelled folds are strictly refused fail-closed per AGENTS.md Rule 8.1."
+                )
+            if active_spec is not None:
+                intersects = (
+                    fold.train_start <= active_spec.holdout_end
+                    and active_spec.holdout_start <= fold.test_end
+                )
+                if intersects:
+                    if fold.partition_role != PartitionRole.HOLDOUT:
+                        raise HoldoutSealedError(
+                            f"Fold {fold.fold_index} date window [{fold.train_start}, {fold.test_end}] "
+                            f"intersects sealed HOLDOUT partition [{active_spec.holdout_start}, {active_spec.holdout_end}], "
+                            f"but fold role is declared as '{fold.partition_role.value}'. Refusing execution fail-closed."
+                        )
+                    check_partition_access(active_spec, PartitionRole.HOLDOUT, unlock_file_path=active_unlock)
+                else:
+                    check_partition_access(active_spec, fold.partition_role, unlock_file_path=active_unlock)
+            else:
+                if fold.partition_role == PartitionRole.HOLDOUT:
+                    raise HoldoutSealedError(
+                        f"Fold {fold.fold_index} is declared as PartitionRole.HOLDOUT, but no PartitionSpec was supplied "
+                        f"to verify holdout token hash and authorization. Execution refused fail-closed per AGENTS.md Rule 8.1."
+                    )
 
         fold_results: List[FoldExecutionResult] = []
         agg_daily_returns: List[Decimal] = []
@@ -532,6 +616,8 @@ class WalkForwardEngine:
                 initial_capital=initial_capital,
                 isins=isins,
                 fail_on_lookahead=fail_on_lookahead,
+                partition_spec=active_spec,
+                unlock_file_path=active_unlock,
             )
             fold_results.append(f_res)
             agg_trades.extend(f_res.trades)

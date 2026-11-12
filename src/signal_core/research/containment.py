@@ -254,6 +254,8 @@ class WalkForwardFold:
     Invariants:
     - train_start <= train_end < test_start <= test_end
     - Session separation: (test_start - train_end).days > embargo_sessions (A-8/A-10)
+    - Partition role: optional role classification (IN_SAMPLE, VALIDATION, HOLDOUT).
+      Execution engines refuse unlabelled folds fail-closed per AGENTS.md Rule 8.1 / Wave 0.
     """
     fold_index: int
     train_start: datetime.date
@@ -261,6 +263,7 @@ class WalkForwardFold:
     test_start: datetime.date
     test_end: datetime.date
     embargo_sessions: int
+    partition_role: Optional[PartitionRole] = None
 
     def __post_init__(self) -> None:
         if isinstance(self.fold_index, bool) or not isinstance(self.fold_index, int) or self.fold_index < 0:
@@ -302,6 +305,21 @@ class WalkForwardFold:
                 f"is only {cal_gap_days} days, which cannot support {self.embargo_sessions} exchange sessions."
             )
 
+        # Wave 0 (G-1): Validate partition_role if provided
+        if self.partition_role is not None:
+            if isinstance(self.partition_role, str):
+                normalized_role = self.partition_role.strip().upper()
+                try:
+                    object.__setattr__(self, "partition_role", PartitionRole(normalized_role))
+                except ValueError:
+                    raise PartitionSpecValidationError(
+                        f"Invalid partition_role {self.partition_role!r}; must be one of {[r.value for r in PartitionRole]}"
+                    )
+            elif not isinstance(self.partition_role, PartitionRole):
+                raise PartitionSpecValidationError(
+                    f"partition_role must be PartitionRole, str, or None; got {type(self.partition_role).__name__}"
+                )
+
 
 def compute_fold_spec_fingerprint(folds: Sequence[WalkForwardFold]) -> str:
     """Computes a deterministic cryptographic fingerprint for a sequence of WalkForwardFolds."""
@@ -312,9 +330,10 @@ def compute_fold_spec_fingerprint(folds: Sequence[WalkForwardFold]) -> str:
     for f in folds:
         if not isinstance(f, WalkForwardFold):
             raise PartitionSpecValidationError(f"Expected WalkForwardFold, got {type(f)}")
+        role_tag = f.partition_role.value if f.partition_role is not None else "UNLABELLED"
         fold_strings.append(
             f"{f.fold_index}:{f.train_start.isoformat()}:{f.train_end.isoformat()}:"
-            f"{f.test_start.isoformat()}:{f.test_end.isoformat()}:{f.embargo_sessions}"
+            f"{f.test_start.isoformat()}:{f.test_end.isoformat()}:{f.embargo_sessions}:{role_tag}"
         )
 
     payload = "|".join(fold_strings)
@@ -331,6 +350,7 @@ def generate_walk_forward_folds(
     test_sessions: int,
     embargo_sessions: int,
     anchored: bool = False,
+    partition_role: Union[PartitionRole, str] = PartitionRole.VALIDATION,
 ) -> Tuple[WalkForwardFold, ...]:
     """
     Generates deterministic, non-overlapping walk-forward folds strictly across valid calendar sessions.
@@ -343,6 +363,10 @@ def generate_walk_forward_folds(
         train_sessions: Window length for training (>= 1). In rolling mode, constant window.
                         In anchored mode, minimum initial window for fold 0.
         test_sessions: Session window length for out-of-fold evaluation (>= 1).
+        embargo_sessions: Minimum session buffer between train_end and test_start (>= 0).
+        anchored: If True, train_start remains pinned to session index 0 (expanding window).
+                  If False, train window rolls forward with constant train_sessions (rolling window).
+        partition_role: Role classification for the generated folds (defaults to VALIDATION).
         embargo_sessions: Minimum session buffer between train_end and test_start (>= 0).
         anchored: If True, train_start remains pinned to session index 0 (expanding window).
                   If False, train window rolls forward with constant train_sessions (rolling window).
@@ -367,6 +391,21 @@ def generate_walk_forward_folds(
 
     if isinstance(embargo_sessions, bool) or not isinstance(embargo_sessions, int) or embargo_sessions < 0:
         raise PartitionSpecValidationError(f"embargo_sessions must be integer >= 0, got {embargo_sessions!r}")
+
+    # Wave 0 (G-1): Validate partition_role for generated folds
+    if isinstance(partition_role, str):
+        try:
+            typed_role = PartitionRole(partition_role.strip().upper())
+        except ValueError:
+            raise PartitionSpecValidationError(
+                f"Invalid partition_role {partition_role!r}; must be one of {[r.value for r in PartitionRole]}"
+            )
+    elif isinstance(partition_role, PartitionRole):
+        typed_role = partition_role
+    else:
+        raise PartitionSpecValidationError(
+            f"partition_role must be PartitionRole or str, got {type(partition_role).__name__}"
+        )
 
     # A-16 Remediation: Validate calendar sessions order, uniqueness, and types
     if not calendar_sessions or len(calendar_sessions) < 2:
@@ -450,6 +489,7 @@ def generate_walk_forward_folds(
             test_start=test_start,
             test_end=test_end,
             embargo_sessions=embargo_sessions,
+            partition_role=typed_role,
         )
         folds.append(fold)
 

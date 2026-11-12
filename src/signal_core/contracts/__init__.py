@@ -9,7 +9,19 @@ Exports the fundamental domain contracts:
 """
 
 from signal_core.contracts.price_bar import PriceBar, PriceBarValidationError
-from signal_core.contracts.universe import UniverseSchedule, UniverseInterval, UniverseValidationError
+from signal_core.contracts.universe import (
+    IndexMembershipInterval,
+    UniverseInterval,
+    UniverseSchedule,
+    UniverseValidationError,
+)
+from signal_core.contracts.price_band import (
+    PriceBandInterval,
+    PriceBandPublicationSource,
+    PriceBandRecord,
+    PriceBandSourceDescriptor,
+    PriceBandValidationError,
+)
 from signal_core.contracts.provenance import (
     ProvenanceError,
     ProvenanceStatus,
@@ -56,7 +68,13 @@ __all__ = [
     "PriceBarValidationError",
     "UniverseSchedule",
     "UniverseInterval",
+    "IndexMembershipInterval",
     "UniverseValidationError",
+    "PriceBandRecord",
+    "PriceBandSourceDescriptor",
+    "PriceBandPublicationSource",
+    "PriceBandInterval",
+    "PriceBandValidationError",
     "DatasetSnapshot",
     "DatasetValidationError",
     "PriceConvention",

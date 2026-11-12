@@ -8,7 +8,7 @@ semantics, and strict validation rejecting duplicates and whitespace corruption.
 from dataclasses import dataclass
 import datetime
 from types import MappingProxyType
-from typing import Dict, Iterable, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Set, Tuple
 
 
 class UniverseValidationError(ValueError):
@@ -63,6 +63,107 @@ class UniverseInterval:
         if type(query_date) is not datetime.date:
             raise UniverseValidationError(f"query_date must be a genuine datetime.date, got {type(query_date).__name__}.")
         return self.start_date <= query_date <= self.end_date
+
+
+@dataclass(frozen=True, slots=True)
+class IndexMembershipInterval:
+    """
+    Effective-dated interval representing an instrument's inclusion in an index or universe.
+    Frozen ingest contract per AGENTS.md Rule 10.4, Rule 10.5 and Wave 0.
+
+    Interval semantics: half-open [effective_from, effective_to).
+    - If effective_to is None, the membership is currently active / open-ended.
+    - Identity is ISIN, never symbol (Rule 10.4).
+    """
+    index_name: str
+    isin: str
+    effective_from: datetime.date
+    effective_to: Optional[datetime.date] = None
+    circular_ref: Optional[str] = None
+    source_publication: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.index_name, bool) or not isinstance(self.index_name, str) or not self.index_name.strip():
+            raise UniverseValidationError(f"index_name must be a non-empty string, got {self.index_name!r}")
+        if any(c in self.index_name for c in FORBIDDEN_CHARACTERS):
+            raise UniverseValidationError(f"index_name '{self.index_name}' contains forbidden characters.")
+        object.__setattr__(self, "index_name", self.index_name.strip().upper())
+
+        if isinstance(self.isin, bool) or not isinstance(self.isin, str) or not self.isin.strip():
+            raise UniverseValidationError(f"isin must be a non-empty string, got {self.isin!r}")
+        if any(c in self.isin for c in FORBIDDEN_CHARACTERS):
+            raise UniverseValidationError(f"isin '{self.isin}' contains forbidden characters.")
+        if len(self.isin.strip()) != 12:
+            raise UniverseValidationError(f"ISIN must be exactly 12 alphanumeric characters, got {self.isin!r}")
+        object.__setattr__(self, "isin", self.isin.strip().upper())
+
+        if type(self.effective_from) is not datetime.date:
+            raise UniverseValidationError(f"effective_from must be exact datetime.date, got {type(self.effective_from).__name__}")
+        if self.effective_to is not None:
+            if type(self.effective_to) is not datetime.date:
+                raise UniverseValidationError(f"effective_to must be exact datetime.date, got {type(self.effective_to).__name__}")
+            if self.effective_from >= self.effective_to:
+                raise UniverseValidationError(
+                    f"effective_from ({self.effective_from}) must precede effective_to ({self.effective_to}) for index {self.index_name}, isin {self.isin}"
+                )
+
+        if self.circular_ref is not None:
+            if isinstance(self.circular_ref, bool) or not isinstance(self.circular_ref, str) or not self.circular_ref.strip():
+                raise UniverseValidationError(f"circular_ref must be a non-empty string if provided, got {self.circular_ref!r}")
+            object.__setattr__(self, "circular_ref", self.circular_ref.strip())
+
+        if self.source_publication is not None:
+            if isinstance(self.source_publication, bool) or not isinstance(self.source_publication, str) or not self.source_publication.strip():
+                raise UniverseValidationError(f"source_publication must be a non-empty string if provided, got {self.source_publication!r}")
+            object.__setattr__(self, "source_publication", self.source_publication.strip())
+
+    def contains(self, as_of: datetime.date) -> bool:
+        """Returns True if as_of falls within [effective_from, effective_to)."""
+        if type(as_of) is not datetime.date:
+            raise UniverseValidationError(f"as_of must be exact datetime.date, got {type(as_of).__name__}")
+        if as_of < self.effective_from:
+            return False
+        if self.effective_to is not None and as_of >= self.effective_to:
+            return False
+        return True
+
+    def overlaps(self, other: "IndexMembershipInterval") -> bool:
+        """Checks if two intervals for the same (index_name, isin) overlap in time."""
+        if not isinstance(other, IndexMembershipInterval):
+            raise UniverseValidationError(f"Expected IndexMembershipInterval, got {type(other).__name__}")
+        if self.index_name != other.index_name or self.isin != other.isin:
+            return False
+
+        self_end = self.effective_to or datetime.date.max
+        other_end = other.effective_to or datetime.date.max
+
+        return self.effective_from < other_end and other.effective_from < self_end
+
+    def to_dict(self) -> Dict[str, Any]:
+        d: Dict[str, Any] = {
+            "index_name": self.index_name,
+            "isin": self.isin,
+            "effective_from": self.effective_from.isoformat(),
+        }
+        if self.effective_to is not None:
+            d["effective_to"] = self.effective_to.isoformat()
+        if self.circular_ref is not None:
+            d["circular_ref"] = self.circular_ref
+        if self.source_publication is not None:
+            d["source_publication"] = self.source_publication
+        return d
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "IndexMembershipInterval":
+        eff_to = datetime.date.fromisoformat(data["effective_to"]) if data.get("effective_to") else None
+        return cls(
+            index_name=str(data["index_name"]),
+            isin=str(data["isin"]),
+            effective_from=datetime.date.fromisoformat(data["effective_from"]),
+            effective_to=eff_to,
+            circular_ref=str(data["circular_ref"]) if data.get("circular_ref") else None,
+            source_publication=str(data["source_publication"]) if data.get("source_publication") else None,
+        )
 
 
 class UniverseSchedule:
