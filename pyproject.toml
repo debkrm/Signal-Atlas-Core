@@ -29,6 +29,10 @@ dependencies = []
 dev = [
     "pytest>=8.0.0",
 ]
+storage = [
+    "pyarrow>=14.0.0",
+    "duckdb>=1.0.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

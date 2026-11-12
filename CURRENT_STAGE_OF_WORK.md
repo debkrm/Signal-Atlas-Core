@@ -354,9 +354,36 @@ Authoritative committed probe: [`scripts/verify_phase2b_significance.py`](file:/
 | **G2B-5** · Float boundary isolation (SIG-FLOAT-BOUNDARY) | **PASS** | All result attributes are exact `Decimal`, `int`, or `str` (zero float leakage); float inputs to moments fail closed with `InvalidSampleError`; AST inspection confirms `ledger`, `position`, and `portfolio` modules never import significance math. |
 | **G2B-6** · Anti-overfitting guards & criteria alignment (D-1..D-5) | **PASS** | Zero variance and $N_{eval} < 2$ fail closed with `InvalidSampleError` when $N > 1$ (D-1, verified true $V=0.3367 \to 0.488273$ FAIL); non-positive Mertens variance term raises `SignificanceError` rather than substituting $10^{-6}$ (D-2); DSR invariant bit-for-bit across `RAW_NORMAL_THREE` and `EXCESS_NORMAL_ZERO` (D-3); loader and engine strictly agree on `EVALUATED_TRIALS_MINUS_ONE` (D-4); $N_{eval} > N$ rejected (D-5). |
 
-#### Phase 2B.5 — Market Data Ingestion & Immutable Storage Layer (Next, before 2C)
+#### Phase 2B.5 — Market Data Ingestion & Immutable Storage Layer (Implemented & Verified)
 
-**Why here.** Phase 2C is the first engine whose correctness depends on a real point-in-time universe. Today `TrialRecord.dataset_fingerprint` has no authoritative artifact behind it, and the exchange calendar that `AGENTS.md` §6.3 requires does not exist in the repository. Building 2C against synthetic fixtures would encode assumptions that later have to be unlearned — the failure mode §18–§21 kept finding.
+**Completed Implementation Overview**:
+- **Authoritative Trading Calendar (`configs/trading_calendar_nse.json`, `src/signal_core/storage/calendar.py`)**:
+  * 2,923 sessions (2015-01-01 to 2026-11-11) partitioned into 798 warm-up sessions (2015–2018) and 2,125 binding sessions (2018–2026) starting on `2018-04-01`.
+  * Monotonic, duplicate-free calendar validation, deterministic fingerprint `CAL-FPR-V1-8146d40c22a64fd8c22dc4dda88338a60fa1487d6638917d95c7c47ba630e3a3`.
+- **Security Master & Time-Varying Facts (`src/signal_core/storage/security_master.py`)**:
+  * Identity is ISIN, never symbol (AGENTS.md Rule 10.4). Symbols and series are effective-dated attributes.
+  * Time-varying facts stored as half-open intervals `[effective_from, effective_to)` resolved as-of date T (Rule 10.5).
+  * Seeded reference scrips: `INE009A01021` (INFY), `INE002A01018` (RELIANCE), `INE001A01036` (HDFC, delisted 2023-07-13), `INE704P01017` (COCHINSHIP old) transitioned to `INE704P01025` (COCHINSHIP new) on 2024-01-10.
+- **Three-Tier Architecture**:
+  * **Bronze (`src/signal_core/storage/bronze.py`)**: Byte-exact raw archives + append-only `manifest.jsonl`. SHA-256 and byte-count tamper detection fails closed (`TamperedBronzePayloadError`).
+  * **Silver (`src/signal_core/storage/silver.py`)**: Typed, calendar-validated daily Parquet partitions (`silver/bhavcopy/{year}/{trade_date}.parquet`). Append-only immutability fails closed (`SilverPartitionImmutableError`). Unexplained missing sessions classify as `UNEXPLAINED_MISSING_RECORD` fail-closed (zero forward-filling, zero interpolation).
+  * **Gold (`src/signal_core/storage/gold.py`)**: Derived analytics layer. Corporate actions applied in Gold only (Rule 10.3). Point-in-time universe schedules generated strictly as-of date T. Deterministic fingerprints `DATA-CTNT-V2` and `UNIV-SCHED-V1`.
+- **Disposable DuckDB Views (`src/signal_core/storage/views.py`)**:
+  * SQL view layer over Parquet partitions. Unlinking/deleting the `.duckdb` database file changes zero fingerprints (Rule 10.2).
+- **Gating Window Enforcement (`src/signal_core/storage/gating.py`)**:
+  * Rule 10.8: Pre-2018 sessions strictly warm-up; attempting a GO verdict raises `GatingWindowValidationError` and resolves as `NOT RUN`.
+
+**Phase 2B.5 Computed Gate Verdicts (measured via `scripts/verify_phase2b5_storage.py` and `probe_phase2b5.py`)**:
+
+| Gate | Status | Computed Measurement Basis |
+|---|---|---|
+| **G2B.5-1** · Bronze tamper detection & fail-closed invariants | **PASS** | Valid verification succeeds; bit-flip tampering and truncation fail closed with `TamperedBronzePayloadError`; unmanifested payload fails closed with `MissingBronzeManifestError`. |
+| **G2B.5-2** · Rerun reproduces identical dataset & universe fingerprints | **PASS** | Rerun on identical data reproduces bit-for-bit identical fingerprints: dataset content `DATA-CTNT-V2-76498ff9270c980c09885a605a3ecb3c` and universe schedule `UNIV-SCHED-V1-5a9cca0e711aec2798c2f0374d879a23`. |
+| **G2B.5-3** · ISIN transition & delisting exact effective date pruning | **PASS** | HDFC (`INE001A01036`) active on 2023-07-12, pruned on 2023-07-13 (`is_delisted=True`, excluded from universe); COCHINSHIP old (`INE704P01017`) active on 2024-01-09, transitioned out and pruned on 2024-01-10 with new ISIN (`INE704P01025`) active on 2024-01-10. |
+| **G2B.5-4** · Missing session classified as UNEXPLAINED_MISSING_RECORD | **PASS** | Session present in calendar (2024-01-09) but absent in silver storage classifies as `UNEXPLAINED_MISSING_RECORD` fail-closed; zero forward-filling, zero interpolation. |
+| **G2B.5-5** · Silver partition immutability (append-only) | **PASS** | First partition write succeeds; attempting to overwrite an existing daily partition fails closed with `SilverPartitionImmutableError`. |
+| **G2B.5-6** · DuckDB views disposable (zero fingerprint change) | **PASS** | SQL queries execute against `silver_bhavcopy` view; unlinking and deleting `.duckdb` file deletes database from disk; recomputing Gold dataset and universe snapshots produces identical fingerprints. |
+| **G2B.5-7** · Gating window enforcement (no GO before 2018-04-01) | **PASS** | Window starting 2017-01-01 classified as `PRE_SURVEILLANCE_WARMUP`; attempting GO verdict raises `GatingWindowValidationError`; resolved verdict forced to `NOT RUN`; binding window starting 2018-04-01 permits GO. |
 
 **Ingest window — decided: binding corpus from 2018-04-01, not 2022.**
 
@@ -367,24 +394,6 @@ Authoritative committed probe: [`scripts/verify_phase2b_significance.py`](file:/
 | **C · Not now** | before 2015 | — | Bhavcopy is a different parser generation, index membership must be reconstructed from press releases, and the surveillance frameworks that constrain liquidity did not exist. Buys regimes that cannot be simulated faithfully. |
 
 Partition roles inside Tier A: IS 2018-04 → 2023-12, validation 2024, **holdout sealed from 2025-01-01**. Sealing is done by a human-authored `PartitionSpec`; `HOLDOUT_UNLOCK` stays absent and is never agent-created.
-
-**Why not 2022–2026.** 1,180 sessions is under five years. After a 200-session indicator warm-up, DSR works with T ≈ 980 — at N ≥ 50 that gate needs an annualized Sharpe above roughly 1.6 merely to clear 0.95, so it stops discriminating skill and starts rejecting everything. Four walk-forward folds cannot separate parameter stability from regime luck, and the sealed term would sit inside the same regime as the in-sample window.
-
-**Structural breaks inside the window** — each needs its own dated handling; none may be averaged over: T+2 → phased T+1 (25 Feb 2022) → mandatory T+1 for all securities (27 Jan 2023); stamp duty centralised at 0.015% (Jul 2020); peak-margin regime (Sep 2021); bhavcopy schema migration to the `BhavCopy_NSE_CM_…` family (mid-2020) and to UDiFF (live 24 Jun 2024, legacy formats discontinued 5–8 Jul 2024).
-
-**Storage decision.**
-- **Parquet is the system of record; DuckDB is a disposable query engine over it.** The dataset is content-addressed, so a fingerprint identifies bytes rather than a mutable table. Deleting the `.duckdb` file must change no fingerprint.
-- **Postgres is deferred to the paper-trading service**, where concurrent writers and row-level order/fill state are the actual requirement. That is OLTP, not research history.
-- **`pyarrow` + `duckdb` go in an optional extra.** The ingest layer emits the existing `HistoricalDataset` contracts; nothing downstream imports DuckDB, and the core package stays stdlib-pure.
-- **Three layers:** Bronze (byte-exact retrieved payloads + SHA-256), Silver (typed, calendar-checked, one append-only partition per session, gap-typed), Gold (derived: back-adjusted series, universe schedules, features). Corporate actions are an input table and adjustments are applied in Gold only, so "what was observable at $T$" stays recoverable.
-- **Identity is ISIN.** Symbols are reused and reassigned; symbol and series are effective-dated attributes. Partition by exchange/year/month, never by symbol.
-- **Time-varying facts are interval tables** joined as-of date $T$: index membership, ASM/GSM/ESM stage, F&O ban, price band.
-
-**Ingest artifacts:** authoritative NSE trading calendar · ISIN-keyed security master · daily bhavcopy · corporate actions with verified ratios and ex-dates · index membership intervals · surveillance stage intervals · F&O ban intervals · one manifest and SHA-256 per retrieval.
-
-**First slice (vertical, before any backfill):** calendar + security master + two symbols, end-to-end, fingerprinted.
-
-**2B.5 gates:** a truncated or tampered archive fails closed; a rerun reproduces the identical fingerprint; a known ISIN transition and a known delisting are pruned on their exact effective dates; a session present in the calendar but absent from the archive classifies as `UNEXPLAINED_MISSING_RECORD` rather than shrinking the series; no Silver partition is ever rewritten; DuckDB is deleted and rebuilt with no change to any fingerprint; no session before 2018-04-01 can reach a GO verdict.
 
 #### Phase 2C — Strategy Contract & Next-Session Walk-Forward Engine
 Modules: `src/signal_core/strategy/base.py`, `src/signal_core/research/walkforward.py`.

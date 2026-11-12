@@ -1,0 +1,517 @@
+"""
+Authoritative Security Master and Time-Varying Fact Contracts for Indian Financial Markets.
+
+Implements security identity and point-in-time intervals per AGENTS.md Rule 10.4 and Rule 10.5:
+- Identity is ISIN, never symbol. Symbols and series are effective-dated attributes.
+- Time-varying facts (symbol/series intervals, surveillance stages, delistings) are stored as
+  half-open intervals [effective_from, effective_to) and resolved as-of date T.
+- Corporate actions (splits, bonuses, mergers, ISIN transitions) are explicit events with verified ex-dates.
+- Pruning of merged/delisted scrips and transitioned ISINs on exact effective dates.
+- Deterministic cryptographic fingerprinting (SEC-MSTR-V1).
+"""
+
+from dataclasses import dataclass
+import datetime
+from decimal import Decimal
+from enum import Enum
+import hashlib
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple, Union
+
+FORBIDDEN_CHARACTERS = (",", ";", "\n", "\r", "\t")
+
+
+class SecurityMasterError(ValueError):
+    """Base exception for security master validation and invariant failures."""
+    pass
+
+
+class SecurityNotFoundError(SecurityMasterError):
+    """Raised when an ISIN cannot be resolved as-of a given date."""
+    pass
+
+
+class SecurityTransitionError(SecurityMasterError):
+    """Raised when an invalid or unverified ISIN transition is attempted."""
+    pass
+
+
+def _validate_identifier(value: str, name: str) -> str:
+    if not isinstance(value, str):
+        raise SecurityMasterError(f"{name} must be a string, got {type(value).__name__}")
+    if not value:
+        raise SecurityMasterError(f"{name} cannot be empty.")
+    if value != value.strip():
+        raise SecurityMasterError(f"{name} '{value}' contains leading or trailing whitespace.")
+    if any(c in value for c in FORBIDDEN_CHARACTERS):
+        raise SecurityMasterError(f"{name} '{value}' contains forbidden characters.")
+    return value
+
+
+def _validate_date(d: Optional[datetime.date], name: str) -> Optional[datetime.date]:
+    if d is None:
+        return None
+    if type(d) is not datetime.date:
+        raise SecurityMasterError(f"{name} must be a genuine datetime.date, got {type(d).__name__}")
+    return d
+
+
+class SurveillanceStage(str, Enum):
+    """Standardized SEBI/NSE surveillance framework stages."""
+    NONE = "NONE"
+    GSM_STAGE_1 = "GSM_STAGE_1"
+    GSM_STAGE_2 = "GSM_STAGE_2"
+    GSM_STAGE_3 = "GSM_STAGE_3"
+    GSM_STAGE_4 = "GSM_STAGE_4"
+    ASM_LONG_TERM_STAGE_1 = "ASM_LONG_TERM_STAGE_1"
+    ASM_LONG_TERM_STAGE_2 = "ASM_LONG_TERM_STAGE_2"
+    ASM_LONG_TERM_STAGE_3 = "ASM_LONG_TERM_STAGE_3"
+    ASM_LONG_TERM_STAGE_4 = "ASM_LONG_TERM_STAGE_4"
+    ASM_SHORT_TERM_STAGE_1 = "ASM_SHORT_TERM_STAGE_1"
+    ASM_SHORT_TERM_STAGE_2 = "ASM_SHORT_TERM_STAGE_2"
+    ESM_STAGE_1 = "ESM_STAGE_1"
+    ESM_STAGE_2 = "ESM_STAGE_2"
+
+
+class CorporateActionType(str, Enum):
+    """Standardized Corporate Action Classifications."""
+    SPLIT = "SPLIT"
+    BONUS = "BONUS"
+    RIGHTS = "RIGHTS"
+    DELISTING = "DELISTING"
+    ISIN_TRANSITION = "ISIN_TRANSITION"
+
+
+@dataclass(frozen=True, slots=True)
+class SymbolInterval:
+    """
+    Effective-dated interval mapping an ISIN to a symbol and series.
+    Interval semantics: half-open [effective_from, effective_to).
+    If effective_to is None, the mapping is currently active/open-ended.
+    """
+    isin: str
+    symbol: str
+    series: str
+    effective_from: datetime.date
+    effective_to: Optional[datetime.date] = None
+
+    def __post_init__(self) -> None:
+        _validate_identifier(self.isin, "isin")
+        _validate_identifier(self.symbol, "symbol")
+        _validate_identifier(self.series, "series")
+        _validate_date(self.effective_from, "effective_from")
+        _validate_date(self.effective_to, "effective_to")
+
+        if self.effective_to is not None and self.effective_from >= self.effective_to:
+            raise SecurityMasterError(
+                f"effective_from ({self.effective_from}) must precede effective_to ({self.effective_to}) for ISIN {self.isin}"
+            )
+
+    def contains(self, as_of: datetime.date) -> bool:
+        """Returns True if as_of falls within [effective_from, effective_to)."""
+        _validate_date(as_of, "as_of")
+        if as_of < self.effective_from:
+            return False
+        if self.effective_to is not None and as_of >= self.effective_to:
+            return False
+        return True
+
+
+@dataclass(frozen=True, slots=True)
+class SurveillanceInterval:
+    """
+    Time-varying surveillance stage mapping for a security.
+    Interval semantics: half-open [effective_from, effective_to).
+    """
+    isin: str
+    framework: str
+    stage: SurveillanceStage
+    effective_from: datetime.date
+    effective_to: Optional[datetime.date] = None
+
+    def __post_init__(self) -> None:
+        _validate_identifier(self.isin, "isin")
+        _validate_identifier(self.framework, "framework")
+        if not isinstance(self.stage, SurveillanceStage):
+            raise SecurityMasterError(f"stage must be a SurveillanceStage, got {type(self.stage).__name__}")
+        _validate_date(self.effective_from, "effective_from")
+        _validate_date(self.effective_to, "effective_to")
+
+        if self.effective_to is not None and self.effective_from >= self.effective_to:
+            raise SecurityMasterError(
+                f"effective_from ({self.effective_from}) must precede effective_to ({self.effective_to}) for ISIN {self.isin}"
+            )
+
+    def contains(self, as_of: datetime.date) -> bool:
+        """Returns True if as_of falls within [effective_from, effective_to)."""
+        _validate_date(as_of, "as_of")
+        if as_of < self.effective_from:
+            return False
+        if self.effective_to is not None and as_of >= self.effective_to:
+            return False
+        return True
+
+
+@dataclass(frozen=True, slots=True)
+class CorporateAction:
+    """
+    Explicit corporate action record with verified ex-date and adjustment ratios.
+    """
+    isin: str
+    ex_date: datetime.date
+    action_type: CorporateActionType
+    ratio_numerator: Decimal
+    ratio_denominator: Decimal
+    old_isin: Optional[str] = None
+    new_isin: Optional[str] = None
+    circular_ref: Optional[str] = None
+    description: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        _validate_identifier(self.isin, "isin")
+        _validate_date(self.ex_date, "ex_date")
+        if not isinstance(self.action_type, CorporateActionType):
+            raise SecurityMasterError(f"action_type must be a CorporateActionType, got {type(self.action_type).__name__}")
+        if not isinstance(self.ratio_numerator, Decimal) or not isinstance(self.ratio_denominator, Decimal):
+            raise SecurityMasterError("ratio_numerator and ratio_denominator must be exact Decimal instances.")
+        if self.ratio_numerator <= Decimal("0") or self.ratio_denominator <= Decimal("0"):
+            raise SecurityMasterError("Ratios must be strictly positive Decimals.")
+        if self.old_isin is not None:
+            _validate_identifier(self.old_isin, "old_isin")
+        if self.new_isin is not None:
+            _validate_identifier(self.new_isin, "new_isin")
+        if self.circular_ref is not None:
+            _validate_identifier(self.circular_ref, "circular_ref")
+
+    @property
+    def adjustment_factor(self) -> Decimal:
+        """Multiplier to apply to pre-event prices to back-adjust to post-event basis."""
+        return self.ratio_denominator / self.ratio_numerator
+
+
+@dataclass(frozen=True, slots=True)
+class DelistingEvent:
+    """
+    Verified corporate merger or delisting event.
+    The security ceases trading on and after effective_date.
+    """
+    isin: str
+    effective_date: datetime.date
+    reason: str
+    circular_ref: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        _validate_identifier(self.isin, "isin")
+        _validate_date(self.effective_date, "effective_date")
+        _validate_identifier(self.reason, "reason")
+        if self.circular_ref is not None:
+            _validate_identifier(self.circular_ref, "circular_ref")
+
+
+@dataclass(frozen=True, slots=True)
+class ISINTransitionEvent:
+    """
+    Explicit ISIN replacement event (e.g. stock split or restructuring).
+    On and after effective_date, old_isin is ceased and replaced by new_isin.
+    """
+    old_isin: str
+    new_isin: str
+    effective_date: datetime.date
+    reason: str
+    circular_ref: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        _validate_identifier(self.old_isin, "old_isin")
+        _validate_identifier(self.new_isin, "new_isin")
+        if self.old_isin == self.new_isin:
+            raise SecurityMasterError(f"old_isin and new_isin cannot be identical: {self.old_isin}")
+        _validate_date(self.effective_date, "effective_date")
+        _validate_identifier(self.reason, "reason")
+        if self.circular_ref is not None:
+            _validate_identifier(self.circular_ref, "circular_ref")
+
+
+def compute_security_master_fingerprint(
+    symbol_intervals: Sequence[SymbolInterval],
+    corporate_actions: Sequence[CorporateAction],
+    delisting_events: Sequence[DelistingEvent],
+    isin_transitions: Sequence[ISINTransitionEvent],
+) -> str:
+    """Computes a deterministic SHA-256 fingerprint for security master state."""
+    hasher = hashlib.sha256()
+    hasher.update(b"SEC_MASTER_V1:\n")
+
+    # 1. Symbol intervals
+    hasher.update(b"SYMBOLS:\n")
+    sorted_syms = sorted(symbol_intervals, key=lambda s: (s.isin, s.effective_from))
+    for s in sorted_syms:
+        to_str = s.effective_to.isoformat() if s.effective_to else "OPEN"
+        row = f"{s.isin},{s.symbol},{s.series},{s.effective_from.isoformat()},{to_str}\n"
+        hasher.update(row.encode("utf-8"))
+
+    # 2. Corporate Actions
+    hasher.update(b"CORP_ACTIONS:\n")
+    sorted_ca = sorted(corporate_actions, key=lambda ca: (ca.isin, ca.ex_date, ca.action_type.value))
+    for ca in sorted_ca:
+        row = f"{ca.isin},{ca.ex_date.isoformat()},{ca.action_type.value},{ca.ratio_numerator},{ca.ratio_denominator}\n"
+        hasher.update(row.encode("utf-8"))
+
+    # 3. Delistings
+    hasher.update(b"DELISTINGS:\n")
+    sorted_del = sorted(delisting_events, key=lambda d: (d.isin, d.effective_date))
+    for d in sorted_del:
+        row = f"{d.isin},{d.effective_date.isoformat()},{d.reason}\n"
+        hasher.update(row.encode("utf-8"))
+
+    # 4. Transitions
+    hasher.update(b"TRANSITIONS:\n")
+    sorted_tr = sorted(isin_transitions, key=lambda t: (t.old_isin, t.effective_date))
+    for t in sorted_tr:
+        row = f"{t.old_isin},{t.new_isin},{t.effective_date.isoformat()},{t.reason}\n"
+        hasher.update(row.encode("utf-8"))
+
+    digest = hasher.hexdigest()[:32]
+    return f"SEC-MSTR-V1-{digest}"
+
+
+class SecurityMaster:
+    """
+    Immutable, Point-in-Time Security Master for NSE instruments.
+    """
+    def __init__(
+        self,
+        symbol_intervals: Sequence[SymbolInterval],
+        surveillance_intervals: Optional[Sequence[SurveillanceInterval]] = None,
+        corporate_actions: Optional[Sequence[CorporateAction]] = None,
+        delisting_events: Optional[Sequence[DelistingEvent]] = None,
+        isin_transitions: Optional[Sequence[ISINTransitionEvent]] = None,
+    ) -> None:
+        self._symbol_intervals: Tuple[SymbolInterval, ...] = tuple(symbol_intervals)
+        self._surveillance_intervals: Tuple[SurveillanceInterval, ...] = tuple(surveillance_intervals or ())
+        self._corporate_actions: Tuple[CorporateAction, ...] = tuple(corporate_actions or ())
+        self._delisting_events: Tuple[DelistingEvent, ...] = tuple(delisting_events or ())
+        self._isin_transitions: Tuple[ISINTransitionEvent, ...] = tuple(isin_transitions or ())
+
+        # Validate non-overlapping symbol intervals per ISIN
+        by_isin: Dict[str, List[SymbolInterval]] = {}
+        for s in self._symbol_intervals:
+            by_isin.setdefault(s.isin, []).append(s)
+
+        for isin, intervals in by_isin.items():
+            sorted_intervals = sorted(intervals, key=lambda x: x.effective_from)
+            for i in range(len(sorted_intervals) - 1):
+                cur = sorted_intervals[i]
+                nxt = sorted_intervals[i + 1]
+                if cur.effective_to is None or cur.effective_to > nxt.effective_from:
+                    raise SecurityMasterError(
+                        f"Overlapping or unclosed symbol intervals detected for ISIN {isin}: {cur} overlaps {nxt}"
+                    )
+
+        # Build index for fast lookup
+        self._intervals_by_isin = by_isin
+        self._delistings_by_isin: Dict[str, DelistingEvent] = {d.isin: d for d in self._delisting_events}
+        self._transitions_by_old_isin: Dict[str, ISINTransitionEvent] = {t.old_isin: t for t in self._isin_transitions}
+
+        # Compute deterministic fingerprint
+        self._fingerprint = compute_security_master_fingerprint(
+            self._symbol_intervals,
+            self._corporate_actions,
+            self._delisting_events,
+            self._isin_transitions,
+        )
+
+    @property
+    def fingerprint(self) -> str:
+        return self._fingerprint
+
+    @property
+    def registered_isins(self) -> Tuple[str, ...]:
+        return tuple(sorted(self._intervals_by_isin.keys()))
+
+    def resolve_symbol(self, isin: str, as_of: datetime.date) -> Optional[SymbolInterval]:
+        """Resolves the active symbol and series for an ISIN as-of date T."""
+        _validate_identifier(isin, "isin")
+        _validate_date(as_of, "as_of")
+
+        intervals = self._intervals_by_isin.get(isin, [])
+        for interval in intervals:
+            if interval.contains(as_of):
+                return interval
+        return None
+
+    def is_delisted(self, isin: str, as_of: datetime.date) -> bool:
+        """Returns True if the security was delisted on or prior to date T."""
+        _validate_identifier(isin, "isin")
+        _validate_date(as_of, "as_of")
+        delisting = self._delistings_by_isin.get(isin)
+        if delisting is not None and as_of >= delisting.effective_date:
+            return True
+        return False
+
+    def is_transitioned_out(self, isin: str, as_of: datetime.date) -> bool:
+        """Returns True if the ISIN was superseded by a new ISIN on or prior to date T."""
+        _validate_identifier(isin, "isin")
+        _validate_date(as_of, "as_of")
+        transition = self._transitions_by_old_isin.get(isin)
+        if transition is not None and as_of >= transition.effective_date:
+            return True
+        return False
+
+    def is_active(self, isin: str, as_of: datetime.date) -> bool:
+        """
+        Returns True if the security is currently active on date T:
+        - SymbolInterval covers date T.
+        - Has not been delisted on or before date T.
+        - Has not been transitioned out to another ISIN on or before date T.
+        """
+        if self.is_delisted(isin, as_of):
+            return False
+        if self.is_transitioned_out(isin, as_of):
+            return False
+        return self.resolve_symbol(isin, as_of) is not None
+
+    def active_isins_on(self, as_of: datetime.date) -> Tuple[str, ...]:
+        """Returns ordered tuple of all ISINs active on date T (point-in-time universe)."""
+        _validate_date(as_of, "as_of")
+        active = [isin for isin in self.registered_isins if self.is_active(isin, as_of)]
+        return tuple(sorted(active))
+
+    def resolve_surveillance(self, isin: str, as_of: datetime.date) -> Tuple[SurveillanceInterval, ...]:
+        """Returns all surveillance stages applicable to ISIN as-of date T."""
+        _validate_identifier(isin, "isin")
+        _validate_date(as_of, "as_of")
+        matches = [s for s in self._surveillance_intervals if s.isin == isin and s.contains(as_of)]
+        return tuple(matches)
+
+    def get_corporate_actions(self, isin: str, up_to: Optional[datetime.date] = None) -> Tuple[CorporateAction, ...]:
+        """Returns corporate actions for an ISIN up to an optional date, sorted by ex-date."""
+        _validate_identifier(isin, "isin")
+        _validate_date(up_to, "up_to")
+        actions = [
+            ca for ca in self._corporate_actions
+            if ca.isin == isin and (up_to is None or ca.ex_date <= up_to)
+        ]
+        return tuple(sorted(actions, key=lambda ca: ca.ex_date))
+
+
+def build_production_security_master() -> SecurityMaster:
+    """
+    Builds the production reference Security Master seeded with initial instruments:
+    - INFY (INE009A01021): Continuous EQ rolling equity.
+    - RELIANCE (INE002A01018): Continuous EQ rolling equity.
+    - HDFC (INE001A01036): Merged into HDFC Bank, delisted on 2023-07-13 (pruned on 2023-07-13).
+    - COCHINSHIP Old (INE704P01017): Listed 2017-08-11, split 2:1 and transitioned to INE704P01025 on 2024-01-10.
+    - COCHINSHIP New (INE704P01025): Effective on 2024-01-10 onwards.
+    """
+    symbol_intervals = [
+        # INFY
+        SymbolInterval(
+            isin="INE009A01021",
+            symbol="INFY",
+            series="EQ",
+            effective_from=datetime.date(2015, 1, 1),
+            effective_to=None,
+        ),
+        # RELIANCE
+        SymbolInterval(
+            isin="INE002A01018",
+            symbol="RELIANCE",
+            series="EQ",
+            effective_from=datetime.date(2015, 1, 1),
+            effective_to=None,
+        ),
+        # HDFC (delisted / merged into HDFC Bank effective 2023-07-13)
+        SymbolInterval(
+            isin="INE001A01036",
+            symbol="HDFC",
+            series="EQ",
+            effective_from=datetime.date(2015, 1, 1),
+            effective_to=datetime.date(2023, 7, 13),
+        ),
+        # COCHINSHIP Old ISIN
+        SymbolInterval(
+            isin="INE704P01017",
+            symbol="COCHINSHIP",
+            series="EQ",
+            effective_from=datetime.date(2017, 8, 11),
+            effective_to=datetime.date(2024, 1, 10),
+        ),
+        # COCHINSHIP New ISIN
+        SymbolInterval(
+            isin="INE704P01025",
+            symbol="COCHINSHIP",
+            series="EQ",
+            effective_from=datetime.date(2024, 1, 10),
+            effective_to=None,
+        ),
+    ]
+
+    corporate_actions = [
+        # INFY 1:1 Bonus ex-date 2018-09-12 (1 old share gives 1 additional share, total 2)
+        CorporateAction(
+            isin="INE009A01021",
+            ex_date=datetime.date(2018, 9, 12),
+            action_type=CorporateActionType.BONUS,
+            ratio_numerator=Decimal("2"),
+            ratio_denominator=Decimal("1"),
+            circular_ref="NSE/CML/2018/BONUS_INFY",
+            description="INFY 1:1 Bonus Issue",
+        ),
+        # RELIANCE 1:1 Bonus ex-date 2017-09-07
+        CorporateAction(
+            isin="INE002A01018",
+            ex_date=datetime.date(2017, 9, 7),
+            action_type=CorporateActionType.BONUS,
+            ratio_numerator=Decimal("2"),
+            ratio_denominator=Decimal("1"),
+            circular_ref="NSE/CML/2017/BONUS_RIL",
+            description="RELIANCE 1:1 Bonus Issue",
+        ),
+        # RELIANCE 1:1 Bonus ex-date 2024-10-28
+        CorporateAction(
+            isin="INE002A01018",
+            ex_date=datetime.date(2024, 10, 28),
+            action_type=CorporateActionType.BONUS,
+            ratio_numerator=Decimal("2"),
+            ratio_denominator=Decimal("1"),
+            circular_ref="NSE/CML/2024/BONUS_RIL2",
+            description="RELIANCE 1:1 Bonus Issue",
+        ),
+        # COCHINSHIP 2:1 Stock Split (Rs 10 to Rs 5) ex-date 2024-01-10
+        CorporateAction(
+            isin="INE704P01017",
+            ex_date=datetime.date(2024, 1, 10),
+            action_type=CorporateActionType.ISIN_TRANSITION,
+            ratio_numerator=Decimal("2"),
+            ratio_denominator=Decimal("1"),
+            old_isin="INE704P01017",
+            new_isin="INE704P01025",
+            circular_ref="NSE/CML/60114",
+            description="COCHIN SHIPYARD Sub-Division from Rs 10 to Rs 5",
+        ),
+    ]
+
+    delisting_events = [
+        DelistingEvent(
+            isin="INE001A01036",
+            effective_date=datetime.date(2023, 7, 13),
+            reason="MERGER_INTO_HDFC_BANK",
+            circular_ref="NSE/CML/57531",
+        )
+    ]
+
+    isin_transitions = [
+        ISINTransitionEvent(
+            old_isin="INE704P01017",
+            new_isin="INE704P01025",
+            effective_date=datetime.date(2024, 1, 10),
+            reason="STOCK_SPLIT_SUB_DIVISION",
+            circular_ref="NSE/CML/60114",
+        )
+    ]
+
+    return SecurityMaster(
+        symbol_intervals=symbol_intervals,
+        corporate_actions=corporate_actions,
+        delisting_events=delisting_events,
+        isin_transitions=isin_transitions,
+    )
