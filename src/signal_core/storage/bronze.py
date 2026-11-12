@@ -150,6 +150,7 @@ class BronzeStorage:
         lock_path = self._manifest_path.with_suffix(".lock")
         start_time = time.monotonic()
         fd = None
+        acquired_stat = None
         while True:
             try:
                 fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
@@ -158,6 +159,7 @@ class BronzeStorage:
                     os.write(fd, payload)
                 except Exception:
                     pass
+                acquired_stat = os.fstat(fd)
                 break
             except OSError:
                 if time.monotonic() - start_time > timeout_seconds:
@@ -177,7 +179,18 @@ class BronzeStorage:
                     pass
             try:
                 if lock_path.exists():
-                    lock_path.unlink()
+                    current_stat = lock_path.stat()
+                    # Audit §29 H-19: Only delete the lock if it matches the file this process created
+                    if (
+                        acquired_stat is not None
+                        and hasattr(acquired_stat, "st_ino")
+                        and acquired_stat.st_ino != 0
+                        and current_stat.st_ino != acquired_stat.st_ino
+                    ):
+                        # Another writer created a new file at lock_path; do not delete it!
+                        pass
+                    else:
+                        lock_path.unlink()
             except OSError:
                 pass
 

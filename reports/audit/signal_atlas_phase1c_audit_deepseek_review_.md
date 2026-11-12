@@ -1822,3 +1822,85 @@ Then re-audit. On H-9 alone, Wave 0 becomes GO and Wave 1 (one scrip, one month,
 G-2/G-3/G-4/G-5/G-6 from §25 remain open. Phase 2C stays NO-GO.
 
 ---
+
+## 29. Wave 0 Re-Audit (Third Pass) — `d2fd8e0`
+
+**Scope:** §28 findings H-9 (blocking), C3, H-12, H-13, H-14, and H-10, implemented in a single commit `d2fd8e0`. Diffs read in full; suite re-run; four fresh probes (P17…P20) built on fixtures the author did not use, targeting the failure mode behind each claimed closure.
+
+**Suite:** `223 passed`, exit 0 (222 + 1 new test function `test_c3_p11_caller_spec_narrowing_canonical_holdout_rejected_fail_closed`). No `stale_timeout_seconds` reference survives anywhere in the tree, so the removed parameter left no orphaned caller.
+
+**Commit hygiene:** the stale-lock auto-break is deleted rather than re-timed, `store_payload` no longer takes `stale_timeout_seconds`, the H-14 fixture date is restored to `2024-11-01`, and the `except Exception` around the canonical-spec load is narrowed to two named exception types. All four are the exact changes §28 asked for, and none of them touched anything outside their finding.
+
+---
+
+### 29.1 Closure Table — §28 findings
+
+| Finding | Claimed | Measured | Verdict |
+|---|---|---|---|
+| **H-9** live-lock theft | Auto-clear removed; timeout fails closed with remediation text | Code: `O_CREAT\|O_EXCL`, no unlink on timeout, single `finally` cleanup. Test ages the lock 6 s and asserts it survives verbatim; P15's exact scenario now *waits* | **CLOSED** |
+| **C3** spec narrowing | Caller spec may only widen the sealed window | P11's 2030 spec now refused at `__init__`, at `run_walk_forward`, and at `run_fold`; committed test asserts all three | **CLOSED** |
+| **C4b / H-12** physical root | Root must be an explicit segregated holdout root | P19: name check accepts `storage/silver/holdout` — a directory **inside** the standard tree — writes 2025 partitions there, and Gold reads them | **NOT CLOSED — H-17** |
+| **H-10** consolidation | `CONSOLIDATION` type, `num < den`, factor > 1 | P20: 10:1 consolidation moves the pre-ex close 1545 → 15450 and volume 500000 → 50000; ex-day bar untouched | **CLOSED** |
+| **H-13** blanket catch | Catch spec-validation errors only | Loader already wraps YAML/IO failures in `PartitionSpecValidationError`, so the narrowed tuple still covers a corrupt or missing spec; a programming bug now propagates | **CLOSED** |
+| **H-14** fixture date | Reverted | `2024-11-01` restored, unrelated to the assertions | **CLOSED** |
+
+H-9 is the finding that blocked Wave 0, and it is properly closed: the lock is acquired with `O_EXCL`, is never broken on age, and the only way past it is the operator following the remediation message. The manifest can no longer gain a duplicate row from a slow-but-live writer.
+
+---
+
+### 29.2 Measured probe output
+
+```
+P17  canonical spec file edited to holdout 2030-01-01..2031-12-31, engine built with no argument
+       -> ACCEPTED; engine.partition_spec.holdout_start == 2030-01-01 (code anchor: 2025-01-01)
+P18  caller spec with self-chosen token hash + matching self-written HOLDOUT_UNLOCK,
+     fold role HOLDOUT over 2025-01-13..17
+       -> containment PASSED; blocked only downstream by Gold: HoldoutPartitionIsolationError
+P19  SilverStorage(storage/silver/holdout, is_holdout_storage=True)
+       -> ACCEPTED; wrote storage/silver/holdout/bhavcopy/2025/2025-01-15.parquet
+       -> Gold on that storage read 5 bars of the sealed window
+P20  10:1 CONSOLIDATION ex-date 2024-01-15
+       -> 2024-01-12 close 1545 -> 15450.0000, volume 500000 -> 50000; 2024-01-15 close 1555.0000
+```
+
+P19 is P12b of §28 recurring one directory deeper. The bool was replaced by a string test on the directory *name*, so the check asserts that a folder is called "holdout", not that its bytes live outside the standard silver tree. `storage/silver/holdout` satisfies the test while violating the property it stands for. This is the difference between a naming convention and physical separation.
+
+P18 is newly measured and not attributable to this commit: `_validate_partition_spec_widening` accepts the caller's `holdout_token_hash` as given, and `verify_holdout_unlock` checks the sentinel against *that* hash. A caller who mints both a spec and an unlock file is therefore self-authorizing; the engine's seal degrades to "did you bring a token you also chose". Today the data layer absorbs it (P18 dies at Gold), because no holdout storage exists yet. It stops absorbing it the moment Wave 3 stands up `storage_holdout/` and a `GoldEngine` is constructed on it — at which point the only remaining guard is the caller-mintable token.
+
+---
+
+### 29.3 Findings
+
+**H-17 · H-12 residual, gate before any 2025+ byte — the holdout root check is a name test, not a containment test.**
+`"holdout" in root_dir.name` accepts any subdirectory of the standard tree whose own name says holdout, and rejects a legitimately segregated sibling such as `storage/sealed` for the wrong reason. Physical separation means the path is not under the standard silver root; test that with `Path.is_relative_to`, not with a substring.
+
+**H-16 · New, gate before holdout storage exists — the unlock token is self-certifying.**
+The token hash must be anchored to the committed spec (`configs/partition_spec.yaml`), not read from a caller-supplied `PartitionSpec`. Otherwise a caller who supplies both sides defeats containment at the engine layer, and P18 shows exactly how little is left under it.
+
+**H-15 · Cheap — the default spec path is never checked against the code anchor (P17).**
+`__init__` validates only explicit `partition_spec` arguments. An edited `configs/partition_spec.yaml` with `holdout_start: 2030-01-01` is loaded and used unchallenged, so the sealed window is anchored in a mutable file while the code holds constants it does not compare against. Run the same `_validate_partition_spec_widening` on the loaded canonical spec.
+
+**H-18 · Documentation drift, recurring.**
+`docs/holdout_physical_separation_architecture.md` still states that holdout access requires an "authorization token" and a "separate storage root". The code implements a boolean plus a directory-name test. This is the third consecutive pass where prose described the intended design rather than the shipped one; the doc must describe `d2fd8e0` as it is, with H-16/H-17 named as the gap.
+
+**H-19 · Minor — cleanup can delete a lock this process does not own.**
+`finally` unlinks `lock_path` if it exists, without checking it is the file this process created. If an operator follows the remediation message and removes a lock while its holder is alive, a later writer's lock occupies the same path and is deleted by the first writer on exit — the duplicate-row outcome H-9 exists to prevent, now requiring a manual step. Comparing the inode/handle before unlinking closes it.
+
+Also noted, no action: `except (PartitionSpecValidationError, FileNotFoundError)` — the `FileNotFoundError` arm is dead, because the loader converts a missing file into `PartitionSpecValidationError`. Harmless, and the narrowed tuple is still an improvement over `except Exception`.
+
+---
+
+### 29.4 Verdict
+
+**Wave 0 — SIGNED OFF (GO).** The blocking item is closed and verified by measurement, not by test name. C3 is closed at all three entry points. H-10 is representable and produces the right arithmetic. Wave 1 — one scrip, one month of real NSE bhavcopy, every date before 2025-01-01 — may start.
+
+This sign-off is deliberately narrow: it certifies the seal over data that exists today, which is none in the holdout window. Three items are hard gates downstream, not Wave 0 conditions:
+
+1. **H-17 before the first 2025+ byte** — replace the name test with a real path-containment check, and confirm P19 fails afterwards.
+2. **H-16 before `storage_holdout/` exists** — take the token hash from the committed spec, not from the caller's argument; port P18 as a test that must fail to be self-satisfiable.
+3. **H-15 same commit as either** — validate the loaded canonical spec against the constants.
+
+**Phase 2C remains NO-GO** — G-2/G-3, G-4, G-5, G-6 from §25 are untouched by this wave, and §25's G2C-1/G2C-4 unfalsifiability stands until the end-to-end determinism and circuit-evidence gates are demonstrated on real data rather than on fixtures.
+
+---
+

@@ -290,9 +290,11 @@ class WalkForwardEngine:
             self._partition_spec = _validate_partition_spec_widening(partition_spec)
         else:
             try:
-                self._partition_spec = load_canonical_partition_spec()
-            except (PartitionSpecValidationError, FileNotFoundError):
-                # Audit §28 H-13: Catch specification and missing-file errors only; allow programming bugs to surface
+                loaded_spec = load_canonical_partition_spec()
+                # Audit §29 H-15: Compare loaded canonical spec against code constants
+                self._partition_spec = _validate_partition_spec_widening(loaded_spec)
+            except (PartitionSpecValidationError, FileNotFoundError, HoldoutSealedError):
+                # Audit §28 H-13, §29 H-15: Catch specification and missing-file errors only; allow programming bugs to surface
                 self._partition_spec = None
         self._unlock_file_path = unlock_file_path
 

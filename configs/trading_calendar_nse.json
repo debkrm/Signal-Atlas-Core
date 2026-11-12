@@ -16,7 +16,8 @@
       "NSE/CMTR/2023_HOLIDAYS",
       "NSE/CMTR/2024_HOLIDAYS",
       "NSE/CMTR/2025_HOLIDAYS",
-      "NSE/CMTR/2026_HOLIDAYS"
+      "NSE/CMTR/2026_HOLIDAYS",
+      "NSE/CMTR/60309"
     ],
     "retrieved_at": "2026-11-12T06:00:00Z",
     "sha256": "a1d8824f894bb90047b4adcbac560181faebaafd72a0102e0175a367134ad773",
@@ -32,7 +33,7 @@
     "2021": 248,
     "2022": 248,
     "2023": 246,
-    "2024": 248,
+    "2024": 249,
     "2025": 250,
     "2026": 216
   },
@@ -2277,6 +2278,7 @@
     "2024-01-17",
     "2024-01-18",
     "2024-01-19",
+    "2024-01-20",
     "2024-01-23",
     "2024-01-24",
     "2024-01-25",
@@ -18657,6 +18659,13 @@
       "open_time": "09:15:00",
       "close_time": "15:30:00",
       "description": "Regular Trading Session"
+    },
+    {
+      "date": "2024-01-20",
+      "session_type": "SPECIAL",
+      "open_time": "09:15:00",
+      "close_time": "12:30:00",
+      "description": "Disaster Recovery Testing Live Session"
     },
     {
       "date": "2024-01-23",

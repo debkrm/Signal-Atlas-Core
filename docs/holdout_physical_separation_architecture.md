@@ -57,6 +57,8 @@ storage_holdout/              # Isolated physical root
 
 ### 3.2 Inviolable Properties of Physical Separation
 
+> **Implementation status (audit §29, commit `d2fd8e0`):** properties 2 and 4 below are *targets*, not shipped behaviour. Property 2's root requirement is currently a directory-**name** test (`"holdout" in root_dir.name`), which `storage/silver/holdout` satisfies while still sitting inside the standard tree (§29 H-17 / probe P19); property 4's token hash is read from the caller-supplied `PartitionSpec`, so a caller who supplies both spec and unlock file is self-authorizing (§29 H-16 / probe P18); the loaded canonical spec is not checked against the code anchor (§29 H-15 / probe P17). Properties 1 and 3 are implemented.
+
 1. **Physical Unglobbability**:
    `GoldEngine`, `SilverStorage("storage/silver")`, DuckDB views, and file system glob operations (`storage/silver/**/*.parquet`) physically cannot discover or parse any 2025+ holdout file. The operating system filesystem boundary enforces zero access.
 2. **Zero Default Ingestion Path**:

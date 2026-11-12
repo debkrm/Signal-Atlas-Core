@@ -142,15 +142,20 @@ class SilverStorage:
         self._calendar = calendar
         self._is_holdout_storage = is_holdout_storage
         if self._is_holdout_storage:
-            # Audit §28 H-12 / Probe P12b: Physical root enforcement.
-            # Holdout partitions must not be written into or located within standard storage/silver root.
-            # Root directory must be an explicit segregated holdout root (directory name contains 'holdout').
+            # Audit §28 H-12, §29 H-17: Physical root containment enforcement.
+            # Holdout partitions must not be written into or located within any standard silver tree.
             if "holdout" not in self._root_dir.name.lower():
                 raise SilverStorageError(
                     f"Holdout storage root directory must be an explicit segregated holdout root (containing 'holdout'), "
                     f"got {self._root_dir.name!r} at {self._root_dir}. Writing holdout partitions into the "
                     "standard silver tree is strictly prohibited per AGENTS.md Rule 8.1 (Audit §28 H-12)."
                 )
+            for parent in self._root_dir.parents:
+                if parent.name.lower() == "silver":
+                    raise SilverStorageError(
+                        f"Holdout storage root {self._root_dir} cannot be located inside a standard silver tree '{parent}'. "
+                        "Physical holdout separation requires a dedicated segregated root tree (e.g. storage_holdout/) per AGENTS.md Rule 8.1 (Audit §29 H-17)."
+                    )
         self._bhavcopy_dir = self._root_dir / "bhavcopy"
         self._bhavcopy_dir.mkdir(parents=True, exist_ok=True)
 

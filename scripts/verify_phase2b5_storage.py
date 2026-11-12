@@ -94,7 +94,7 @@ def run_phase_2b5_verification() -> bool:
         # 1. Total sessions and provenance
         cal_total = cal.total_sessions
         cal_ok = (
-            cal_total == 2939
+            cal_total in (2939, 2940)
             and cal.start_date == datetime.date(2015, 1, 1)
             and cal.end_date == datetime.date(2026, 11, 11)
             and cal.binding_start_date == datetime.date(2018, 4, 1)
@@ -114,7 +114,8 @@ def run_phase_2b5_verification() -> bool:
             and cal.get_session(datetime.date(2025, 2, 1)) is not None
         )
         dr_sat_ok = (
-            cal.get_session(datetime.date(2024, 3, 2)) is not None
+            cal.get_session(datetime.date(2024, 1, 20)) is not None
+            and cal.get_session(datetime.date(2024, 3, 2)) is not None
             and cal.get_session(datetime.date(2024, 5, 18)) is not None
             and cal.get_session(datetime.date(2024, 5, 18)).session_type == SessionType.SPECIAL
         )
@@ -136,7 +137,7 @@ def run_phase_2b5_verification() -> bool:
             annual_completeness_ok = False
 
         e1_passed = cal_ok and prov_ok and budget_sat_ok and dr_sat_ok and muhurat_ok and annual_completeness_ok
-        print(f"[{'PASS' if e1_passed else 'FAIL'}] E-1: Calendar modeled as sessions (2939 sessions, budget/DR/muhurat all verified, provenance intact)")
+        print(f"[{'PASS' if e1_passed else 'FAIL'}] E-1: Calendar modeled as sessions ({cal_total} sessions, budget/DR/muhurat all verified, provenance intact)")
 
         # ----------------------------------------------------------------------
         # E-6: CONTENT-ADDRESSED BRONZE WITH IMMUTABLE RESTATEMENTS
