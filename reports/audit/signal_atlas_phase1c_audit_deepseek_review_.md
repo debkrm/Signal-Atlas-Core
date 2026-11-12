@@ -1904,3 +1904,114 @@ This sign-off is deliberately narrow: it certifies the seal over data that exist
 
 ---
 
+
+## 30. Wave 1 Thin Real-Data Slice Audit — `95ac584`
+
+**Scope:** the first commit that puts real NSE bytes through the stack — `ingest.py` (new), calendar amendment for 2024-01-20, the `COCHINSHIP` January 2024 slice, and the §29 carry-over fixes (H-15, H-17, H-19). Diffs read in full; suite re-run; the verification script executed; eleven probes against ingest, calendar, containment and the real archive set.
+
+**Suite:** `227 passed`, exit 0 (223 + 4 new test functions).
+
+**Housekeeping note:** this commit also contains the uncommitted §29 audit section and the two documentation edits I made while writing it (82 lines of audit, 2 of doc, plus the status row). Not a correctness problem, but audit findings should arrive in their own commit so the reviewed work and the review are never the same diff.
+
+**Data provenance note:** the sibling directory `../Signal-Atlas/data/raw/2024` holds 249 real 2024 Bhavcopy archives, and the January subset is the 22 files the slice consumes. I used that directory directly for independent measurement, so the numbers below come from the exchange files, not from the pipeline's own output.
+
+---
+
+### 30.1 Closure Table — §29 items
+
+| Finding | Measured | Verdict |
+|---|---|---|
+| **H-15** default spec unchecked against code anchor | A `configs/partition_spec.yaml` rewritten to `holdout_start: 2030-01-01` now yields `engine.partition_spec is None` (P21). The legitimate canonical spec still loads as `[2025-01-01, 2026-11-11]` | **CLOSED** |
+| **H-17** holdout root by name only | `storage/silver/holdout` now refused; `storage_holdout/` accepted. Ancestor scan looks for a parent *literally named* `silver` | **CLOSED for the reported case — residual H-20** |
+| **H-19** lock cleanup can delete a foreign lock | `acquired_stat` captured at `os.fstat`, compared by `st_ino` before unlink. The timeout `raise` happens before the `try/finally`, so a failed acquisition never reaches the unlink | **CLOSED** |
+| **H-16** self-certifying unlock token | Untouched — hash still read from the caller's spec | **OPEN (as scheduled: gates `storage_holdout/`)** |
+
+H-15's failure mode is worth naming: a tampered default does not raise, it silently becomes "spec is `None`", which is the sealed state. Fail-closed, but the operator will be told the holdout is sealed rather than that their config is invalid. Acceptable; a distinct error would be kinder.
+
+---
+
+### 30.2 Wave 1 gate measurements
+
+Computed from the real archives, independent of the author's script:
+
+```
+A  2024 archive dates = 249, calendar 2024 sessions = 249
+   dates in archive but not calendar: []      dates in calendar but not archive: []
+B  jan 2024 sessions = 22; 2024-01-22 absent from both archive set and calendar
+   2024-01-20 present in both
+H  22 COCHINSHIP records; OHLC-invalid bars: 0; zero/negative prices: 0
+   2024-01-09  INE704P01017  close 1338.00  vol 3,355,705
+   2024-01-10  INE704P01025  close  802.80  vol 22,442,717
+   2024-01-20  INE704P01025  close  874.30  vol 3,585,746
+I  byte-exactness: blob sha256 == sha256(archive), blob bytes == archive bytes,
+   manifest.source_url / retrieved_at / source_archive_format populated honestly
+```
+
+The verification script, run with stdout forced to UTF-8:
+
+```
+W1-1 PASS  22 January sessions; 2024-01-20 present as SPECIAL
+W1-2 PASS  22 ingestions; 22 manifest entries; 22 silver partitions
+W1-3 PASS  old ISIN Jan 1-9, new ISIN Jan 10-31, factor 0.5
+W1-4 PASS  (see H-27 - this gate proves interval arithmetic only)
+W1-5 PASS  Jan 9 1338.0000 -> adjusted 669.00000 (vol 6,711,410); Jan 10 802.8000
+           DATA-CTNT-V2-53c061fb9d45a24a61929f573ad7fec3  (bit-identical on rerun)
+           UNIV-SCHED-V1-ad0091e85def8c9784dda2dbdbfef3c9
+W1-6 PASS  close DECIMAL(18,4), volume BIGINT, trade_date DATE; 22 rows;
+           min 753.8500 / max 1363.2500 / total volume 130,613,155
+```
+
+Every value the status doc quotes reproduces exactly. The split is real and correctly applied: the 2024-01-10 figures match contemporaneous reporting, which records Cochin Shipyard turning ex-split that day and hitting a 20% upper circuit at ₹802.80 on the NSE. The 2024-01-20 session is real too — an intraday switchover to the Disaster Recovery site — and 2024-01-22 is correctly absent (Republic Day weekend closure around the Ram Mandir holiday), which is what makes 22 the right January count rather than 23.
+
+This is the first time a claim in this project has held up against an outside record rather than against the code that produced it, and it does.
+
+---
+
+### 30.3 Findings
+
+**H-21 · Blocking for the next wave — the committed regression test cannot observe a Wave 1 regression.**
+`test_wave1_thin_slice_real_or_synthetic_pipeline` decides its own scope from a filesystem probe of `../../Signal-Atlas/data/raw/2024`, a directory outside the repository, and falls through to a branch of two hand-built `SilverRecord` objects whenever the 22 archives are not there — or are 21. On a clean clone the test never touches ingestion, the calendar, the split, or the fingerprint; it asserts `1338 * 0.5 == 669` on numbers it just wrote. `227 passed` therefore says nothing about the slice, and a future break in `ingest.py` will not fail CI. Split it: a real-data test that skips with an explicit reason when the archives are absent, and a separate synthetic test for the arithmetic.
+
+**H-22 · Blocking for the next wave — the verification script does not run in its default environment, and the report does not say so.**
+`scripts/verify_wave1_thin_slice.py` dies at gate W1-5 with `UnicodeEncodeError: 'charmap' codec can't encode character '\u20b9'` on a default Windows console, before the Gold snapshot, the fingerprint rerun, and all of W1-6. The commit message and status doc present those gates as executed. They were, but only with `PYTHONIOENCODING=utf-8`, which appears in no file. Either make the script encoding-safe or record the override; a verification artifact that fails on the author's own platform is not reproducible.
+
+**H-23 · Before bulk backfill — volume is parsed through binary float (§6.4).**
+`int(float(row[vol_idx].strip()))`. Measured: `100000000000000001` → `100000000000000000`, and `1500000.9` → `1500000` accepted without complaint. Parse with `Decimal`, require an integral value, and fail closed on a fraction — volume feeds order sizing and the 2.5–5% participation cap, so a silently truncated share count becomes a silently wrong position.
+
+**H-24 · Before any multi-date archive — the trade date is latched from the first matching row.**
+`inferred_date` is resolved once and reused for every row. Measured: an archive containing two ISINs dated 2024-01-01 and 2024-01-02 parses with *both* records stamped 2024-01-01 and no error. `write_daily_partition` cannot catch it, because the partition date is derived from that same latched value. Today's Bhavcopy is one file per day so the slice is unaffected, but a weekly or monthly archive — or a restated day with two dates — would be written as fabricated dates, which is exactly the `UNEXPLAINED_MISSING_RECORD` class of failure §6.3 forbids. Compare each row's parsed date to the resolved date and refuse on mismatch.
+
+**H-25 · Silent row loss.**
+Measured: a row truncated after its close price is dropped with no error and no count (`len(row) <= min_required_len: continue`), and a duplicated ISIN in a non-`EQ` series is dropped silently in favour of `EQ`. The precedence rule is defensible; the silence is not. Return the skipped count and fail closed when a row that matched `target_isins` was discarded, so a parser bug and an empty row cannot look the same.
+
+**H-26 · Calendar provenance is now internally inconsistent, and the gate that should have caught it was loosened.**
+The recorded `provenance.sha256` is `a1d8824f…`; the file's actual SHA-256 is `a4be3014…`. This commit edited the calendar's content and left the fingerprint untouched, and `test_storage.py` asserts the stale literal, so nothing recomputes it — §6.5 asks for a deterministic fingerprint and gets a comment. Separately, both `test_storage.py` and `verify_phase2b5_storage.py` were changed to `total_sessions in (2939, 2940)`, which admits either value: the added session is now gated by no test at all. It happens to be correct — I confirmed 249 == 249 against the real archive set — but the suite would not have told anyone. Assert the exact count, and recompute the digest.
+
+**H-27 · Gate W1-4 is not a real-data gate, and two evidence strings do not survive checking (§9.1).**
+W1-4 constructs two `IndexMembershipInterval` objects from literals in the script, then asserts their own `contains()` results. It demonstrates that half-open intervals work; it says nothing about COCHINSHIP's Nifty 500 membership, and the interval it "validates" ends membership on the split ex-date, which is not an index event — a split changes the ISIN, not the membership. Two further strings fail verification:
+
+- `NSE/CMTR/60309`, cited for the 2024-01-20 session, matches no circular I can find. The documented references for that session are `NSE/MSD/60300` (2024-01-18) and `NSE/MSD/60318` (2024-01-19) — different department prefix, different number.
+- The session is recorded as one window `09:15–12:30`. The circulars define two: live trading from the primary site `09:15–10:00`, then from the DR site `11:30–12:30`, with a 5% maximum band on all securities that day. One session per date cannot express that, which is harmless for daily bars and wrong for any intraday study.
+
+`NSE/CML/60114` is reused as the `circular_ref` for both the split and the index interval. One unverified identifier cannot evidence two different facts. Previous passes filed this as documentation drift; it has now reached the data model, so it belongs in the trial registry as a provenance defect: record these as `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` with the real circular numbers, or keep the placeholder out of the "verified" language.
+
+**H-20 · H-17 residual, low.** The ancestor scan rejects a parent named `silver`; a holdout root at `data/market/holdout` is still accepted because the standard root's name is the caller's choice. Compare against the configured standard root rather than a name. Note also that `test_h1_physical_holdout_separation_silver_rejection` was changed to build its holdout root outside the tree instead of asserting the new refusal, so the ancestor check has no test — the case that motivates it was moved out of the suite rather than kept as a negative.
+
+---
+
+### 30.4 Verdict
+
+**Wave 1 — SIGNED OFF (GO), on the data.** Real exchange bytes reach Bronze, Silver, Gold and DuckDB with correct byte-exact provenance, a complete and calendar-consistent 22-session month, and a stock split applied on the right side of the ex-date with the right factor and the right volume multiplier. I reproduced every quoted number from the archives and cross-checked the split against the public record. That is a genuine vertical slice, and it is the first deliverable in this project whose claims I could falsify and could not.
+
+Three conditions, in order, because the next wave multiplies whatever these defects do:
+
+1. **H-21 and H-22 before Wave 3 begins.** A test that silently tests fixtures and a script that cannot print its own output are not a regression net, and Wave 3 is where a regression stops being cheap to find.
+2. **H-23 and H-24 before the first multi-date archive or the first bulk backfill.** Float volume and latched dates both write plausible wrong numbers into immutable partitions, which is the one failure Silver is designed not to allow.
+3. **H-26 and H-27 whenever the calendar or security master is next touched** — exact session count, recomputed digest, real circular numbers, and W1-4 relabelled as an interval-arithmetic test until a circular-backed membership interval exists.
+
+**H-16 remains the gate on `storage_holdout/`**, and H-20 rides along with it.
+
+**Phase 2C stays NO-GO.** G-2/G-3, G-4, G-5 and G-6 from §25 are untouched; Wave 1 added data and an ingestion path, not the risk-limit rejection, latency, dataset-binding or falsifiability work those gates require. The status doc's move to "Wave 2 — close Phase 2C blockers" is the right next step.
+
+---
+
