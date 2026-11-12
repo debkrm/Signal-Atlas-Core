@@ -141,8 +141,27 @@ class PriceBandRecord:
         if self.band_percentage is not None:
             _validate_decimal(self.band_percentage, "band_percentage")
 
+        if self.source_descriptor is not None and not isinstance(self.source_descriptor, PriceBandSourceDescriptor):
+            raise PriceBandValidationError(
+                f"source_descriptor must be PriceBandSourceDescriptor, got {type(self.source_descriptor).__name__}"
+            )
+
+        if self.source_ref is not None:
+            _validate_non_empty_str(self.source_ref, "source_ref")
+
         if self.is_unconstrained:
-            # Unconstrained scrips (e.g. F&O stocks with dynamic flexing bands) may omit fixed limits
+            # Audit §27 H-4: Unconstrained scrips (e.g. F&O stocks with dynamic flexing bands)
+            # must cite an authoritative publication source descriptor; anonymous claims are rejected.
+            if self.source_descriptor is None:
+                raise PriceBandValidationError(
+                    f"is_unconstrained=True requires an authoritative source_descriptor citation for ISIN {self.isin} on {self.trade_date}."
+                )
+            # Cannot claim parameter-free trading without either dynamic base percentage or limits
+            if self.band_percentage is None and (self.upper_circuit_limit is None or self.lower_circuit_limit is None):
+                raise PriceBandValidationError(
+                    f"is_unconstrained=True scrips (e.g. F&O underlyings with dynamic flexing bands) must declare "
+                    f"either band_percentage (e.g. 10.0 for dynamic base band) or explicit limits for ISIN {self.isin} on {self.trade_date}."
+                )
             if self.upper_circuit_limit is not None:
                 _validate_decimal(self.upper_circuit_limit, "upper_circuit_limit")
             if self.lower_circuit_limit is not None:
@@ -155,25 +174,31 @@ class PriceBandRecord:
                 _validate_decimal(self.lower_circuit_limit, "lower_circuit_limit")
 
             if self.upper_circuit_limit is not None and self.lower_circuit_limit is not None:
-                if self.lower_circuit_limit > self.upper_circuit_limit:
+                if self.lower_circuit_limit >= self.upper_circuit_limit:
                     raise PriceBandValidationError(
-                        f"lower_circuit_limit ({self.lower_circuit_limit}) exceeds "
+                        f"lower_circuit_limit ({self.lower_circuit_limit}) must be strictly less than "
                         f"upper_circuit_limit ({self.upper_circuit_limit}) for ISIN {self.isin} on {self.trade_date}"
                     )
 
-        if self.source_descriptor is not None and not isinstance(self.source_descriptor, PriceBandSourceDescriptor):
-            raise PriceBandValidationError(
-                f"source_descriptor must be PriceBandSourceDescriptor, got {type(self.source_descriptor).__name__}"
-            )
-
-        if self.source_ref is not None:
-            _validate_non_empty_str(self.source_ref, "source_ref")
+        # Audit §27 H-4: Cross-check band_percentage against upper/lower limits
+        if self.upper_circuit_limit is not None and self.lower_circuit_limit is not None and self.band_percentage is not None:
+            implied_pct = ((self.upper_circuit_limit - self.lower_circuit_limit) / (self.upper_circuit_limit + self.lower_circuit_limit)) * Decimal("100")
+            max_discrepancy = max(Decimal("1.5"), self.band_percentage * Decimal("0.20"))
+            if abs(implied_pct - self.band_percentage) > max_discrepancy:
+                raise PriceBandValidationError(
+                    f"Inconsistent price band limits vs band_percentage for ISIN {self.isin} on {self.trade_date}: "
+                    f"limits [{self.lower_circuit_limit}, {self.upper_circuit_limit}] imply band percentage {implied_pct:.2f}%, "
+                    f"which diverges from declared band_percentage {self.band_percentage}%."
+                )
 
     @property
     def has_circuit_evidence(self) -> bool:
         """Returns True if authoritative circuit boundaries are documented."""
         if self.is_unconstrained:
-            return True
+            return self.source_descriptor is not None and (
+                (self.upper_circuit_limit is not None and self.lower_circuit_limit is not None)
+                or self.band_percentage is not None
+            )
         return self.upper_circuit_limit is not None and self.lower_circuit_limit is not None
 
     def to_dict(self) -> Dict[str, Any]:

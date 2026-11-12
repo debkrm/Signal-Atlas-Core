@@ -10,8 +10,10 @@ Verifies typed contracts in code (not prose) per Audit §26:
 
 import datetime
 from decimal import Decimal
+import os
 from pathlib import Path
 import tempfile
+import time
 import pytest
 
 from signal_core.contracts.price_band import (
@@ -108,7 +110,7 @@ def test_bronze_manifest_entry_validation():
 
 
 def test_bronze_manifest_lock_concurrent_serialization_e15():
-    """Verify BronzeStorage inter-process lock serializes concurrent manifest writes (Finding E-15)."""
+    """Verify BronzeStorage inter-process lock serializes concurrent manifest writes (Finding E-15, H-3)."""
     with tempfile.TemporaryDirectory(prefix="bronze_lock_test_") as tmpdir:
         storage = BronzeStorage(tmpdir)
         payload = b"test-content-bytes"
@@ -122,20 +124,39 @@ def test_bronze_manifest_lock_concurrent_serialization_e15():
         assert entry1 is not None
         assert storage.manifest_path.exists()
 
-        # Artificially held lock causes timeout fail-closed
+        # Artificially held lock causes timeout fail-closed with clear remediation message (H-3)
         lock_path = storage.manifest_path.with_suffix(".lock")
         lock_path.write_text("held by another process")
         try:
-            with pytest.raises(BronzeStorageError, match="Timeout"):
+            with pytest.raises(BronzeStorageError, match=r"Remediation: remove the lock file"):
                 storage.store_payload(
                     relative_path="raw/session_2.csv",
                     data=b"other-payload",
                     source_url="https://example.com/session_2.csv",
                     lock_timeout_seconds=0.1,
+                    stale_timeout_seconds=5.0,
                 )
         finally:
             if lock_path.exists():
                 lock_path.unlink()
+
+        # Stale lock auto-clearing (H-3): if lock file is older than stale_timeout_seconds, clear and proceed
+        lock_path.write_text("orphaned lock from crashed process")
+        # Backdate the lock file mtime by 10 seconds
+        past_time = time.time() - 10.0
+        os.utime(str(lock_path), (past_time, past_time))
+
+        entry2 = storage.store_payload(
+            relative_path="raw/session_2.csv",
+            data=b"other-payload",
+            source_url="https://example.com/session_2.csv",
+            lock_timeout_seconds=1.0,
+            stale_timeout_seconds=2.0,
+        )
+        assert entry2 is not None
+        assert entry2.relative_path == "raw/session_2.csv"
+        # The lock was cleaned up after successful write
+        assert not lock_path.exists()
 
 
 # ==============================================================================
@@ -143,7 +164,7 @@ def test_bronze_manifest_lock_concurrent_serialization_e15():
 # ==============================================================================
 
 def test_corporate_action_record_invariants_and_serialization():
-    """Verify CorporateAction ratios, ex-date, record_date, and transition constraints."""
+    """Verify CorporateAction ratios, ex-date, record_date, and transition constraints (Finding H-5)."""
     ca = CorporateAction(
         isin="INE002A01018",
         ex_date=datetime.date(2023, 9, 1),
@@ -155,6 +176,38 @@ def test_corporate_action_record_invariants_and_serialization():
         description="1:1 Bonus Issue",
     )
     assert ca.adjustment_factor == Decimal("0.5")
+
+    # Audit §27 H-5: Standard 1:10 stock split produces factor 0.10
+    ca_split = CorporateAction(
+        isin="INE002A01018",
+        ex_date=datetime.date(2024, 2, 1),
+        action_type=CorporateActionType.SPLIT,
+        ratio_numerator=Decimal("10"),
+        ratio_denominator=Decimal("1"),
+        circular_ref="NSE/CML/2024/SPLIT10",
+        description="1:10 Stock Split",
+    )
+    assert ca_split.adjustment_factor == Decimal("0.1")
+
+    # Audit §27 H-5: Inverted split (num <= den) must be rejected fail-closed
+    with pytest.raises(SecurityMasterError, match="SPLIT requires ratio_numerator > ratio_denominator"):
+        CorporateAction(
+            isin="INE002A01018",
+            ex_date=datetime.date(2024, 2, 1),
+            action_type=CorporateActionType.SPLIT,
+            ratio_numerator=Decimal("1"),
+            ratio_denominator=Decimal("10"),
+        )
+
+    # Inverted or equal bonus (num <= den) must be rejected fail-closed
+    with pytest.raises(SecurityMasterError, match="BONUS requires ratio_numerator > ratio_denominator"):
+        CorporateAction(
+            isin="INE002A01018",
+            ex_date=datetime.date(2024, 2, 1),
+            action_type=CorporateActionType.BONUS,
+            ratio_numerator=Decimal("1"),
+            ratio_denominator=Decimal("1"),
+        )
 
     # Roundtrip serialization
     d = ca.to_dict()
@@ -302,17 +355,52 @@ def test_price_band_source_descriptor_and_record():
     assert rec_recovered.lower_circuit_limit == record.lower_circuit_limit
     assert rec_recovered.source_descriptor.source_type == record.source_descriptor.source_type
 
-    # Unconstrained scrip (F&O stock)
+    # Unconstrained scrip (F&O stock) with authoritative publication descriptor and dynamic band
     fno_record = PriceBandRecord(
         isin="INE009A01021",
         trade_date=datetime.date(2024, 1, 15),
         series="EQ",
         is_unconstrained=True,
+        band_percentage=Decimal("10.00"),
+        source_descriptor=source_desc,
+        source_ref="NSE/FO/2024/01",
     )
     assert fno_record.has_circuit_evidence is True
 
-    # Reject lower_circuit_limit > upper_circuit_limit
-    with pytest.raises(PriceBandValidationError, match="exceeds upper_circuit_limit"):
+    # Audit §27 H-4: Anonymous unconstrained claim without source descriptor is rejected fail-closed
+    with pytest.raises(PriceBandValidationError, match="requires an authoritative source_descriptor"):
+        PriceBandRecord(
+            isin="INE009A01021",
+            trade_date=datetime.date(2024, 1, 15),
+            series="EQ",
+            is_unconstrained=True,
+        )
+
+    # Audit §27 H-4: Unconstrained claim with zero percentage and zero limits is rejected
+    with pytest.raises(PriceBandValidationError, match="must declare either band_percentage"):
+        PriceBandRecord(
+            isin="INE009A01021",
+            trade_date=datetime.date(2024, 1, 15),
+            series="EQ",
+            is_unconstrained=True,
+            source_descriptor=source_desc,
+        )
+
+    # Audit §27 H-4: Inconsistent band_percentage vs declared upper/lower limits is rejected
+    # upper=2200, lower=1800 implies 10% band ((2200-1800)/(2200+1800) = 400/4000 = 10%), but 5% declared
+    with pytest.raises(PriceBandValidationError, match="Inconsistent price band limits vs band_percentage"):
+        PriceBandRecord(
+            isin="INE002A01018",
+            trade_date=datetime.date(2024, 1, 15),
+            series="EQ",
+            upper_circuit_limit=Decimal("2200.00"),
+            lower_circuit_limit=Decimal("1800.00"),
+            band_percentage=Decimal("5.00"),
+            source_descriptor=source_desc,
+        )
+
+    # Reject lower_circuit_limit >= upper_circuit_limit
+    with pytest.raises(PriceBandValidationError, match="strictly less than upper_circuit_limit"):
         PriceBandRecord(
             isin="INE002A01018",
             trade_date=datetime.date(2024, 1, 15),

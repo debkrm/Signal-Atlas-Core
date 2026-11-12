@@ -155,7 +155,20 @@ class SurveillanceInterval:
 class CorporateAction:
     """
     Explicit corporate action record with verified ex-date and adjustment ratios.
-    Frozen ingest contract per AGENTS.md Rule 5.4, Rule 10.3 and Wave 0.
+    Frozen ingest contract per AGENTS.md Rule 5.4, Rule 10.3 and Wave 0 (Audit §26 / §27 H-5).
+
+    Ratio Semantics (Unambiguous Direction per Audit §27 H-5):
+    - ratio_numerator: Post-event total shares held per ratio_denominator pre-event shares held.
+      * For a 1:10 stock split (1 old share subdivided into 10 new shares):
+        ratio_numerator = Decimal("10")
+        ratio_denominator = Decimal("1")
+        adjustment_factor = ratio_denominator / ratio_numerator = 1 / 10 = Decimal("0.10")
+      * For a 1:1 bonus issue (1 bonus share received for every 1 old share held -> 2 shares held):
+        ratio_numerator = Decimal("2")
+        ratio_denominator = Decimal("1")
+        adjustment_factor = ratio_denominator / ratio_numerator = 1 / 2 = Decimal("0.50")
+    - ratio_denominator: Pre-event shares held (typically 1 for splits and standard bonus expressions).
+    - adjustment_factor: Multiplier applied to pre-event prices = ratio_denominator / ratio_numerator.
     """
     isin: str
     ex_date: datetime.date
@@ -186,6 +199,16 @@ class CorporateAction:
             raise SecurityMasterError("Ratios must be strictly positive Decimals.")
         if not self.ratio_numerator.is_finite() or not self.ratio_denominator.is_finite():
             raise SecurityMasterError("Ratios must be finite Decimals.")
+
+        # Invariant H-5: Invert-proof ratio direction per action type.
+        # SPLIT and BONUS increase total share count (ratio_numerator > ratio_denominator).
+        if self.action_type in (CorporateActionType.SPLIT, CorporateActionType.BONUS):
+            if self.ratio_numerator <= self.ratio_denominator:
+                raise SecurityMasterError(
+                    f"{self.action_type.value} requires ratio_numerator > ratio_denominator (post-event shares > pre-event shares). "
+                    f"For a 1:10 split (1 old share subdivided into 10 new shares), use ratio_numerator=10, ratio_denominator=1, "
+                    f"yielding adjustment_factor=0.1. Received ratio_numerator={self.ratio_numerator}, ratio_denominator={self.ratio_denominator}."
+                )
 
         if self.action_type == CorporateActionType.ISIN_TRANSITION:
             if not self.old_isin or not self.new_isin:

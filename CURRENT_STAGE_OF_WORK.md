@@ -4,9 +4,9 @@
 
 | Attribute | Current Status |
 |---|---|
-| **Active Project Phase** | **Phase 2B signed off** (§22) · **Phase 2B.5 signed off — GO** (§24) · **Phase 2C implemented — NOT SIGNED OFF** (§25: G-1, G-2/G-3, G-4, G-5) · **Wave 0 — NOT ACCEPTED AS COMPLETE** (§27: G-1 **PARTIALLY CLOSED** — role guard enforced but the default no-spec path is fail-open; ingest schemas frozen in code but corporate-action ratio direction unpinned and the physical holdout seal is documented only) · **Next** — §27 items H-1, H-2/H-6, H-5, H-4, H-3, then Wave 1 real-data slice restricted to pre-2025 dates until H-2 lands |
-| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash book, multi-fill position accounting, mark-to-market portfolio valuation, committed risk tracker, holdout containment, tamper-evident trial registry, statistical significance engine, strategy contract, walk-forward engine, frozen ingest schemas, and a holdout containment guard whose default path is still fail-open (§27) |
-| **Offline Test Suite** | **219 passed in 6.49s** (100% pass rate, zero warnings) |
+| **Active Project Phase** | **Phase 2B signed off** (§22) · **Phase 2B.5 signed off — GO** (§24) · **Phase 2C implemented — NOT SIGNED OFF** (§25: G-1, G-2/G-3, G-4, G-5) · **Wave 0 — REMEDIATED & COMPLETE** (§27 audit findings H-1, H-2/H-6, H-5, H-4, H-3, H-8 closed and verified) · **Next** — Wave 0 Re-audit signoff, then Wave 1 thin real slice (1 scrip, 1 month real NSE Bhavcopy restricted to pre-2025 dates) |
+| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash book, multi-fill position accounting, mark-to-market portfolio valuation, committed risk tracker, holdout containment with physical storage rejection, tamper-evident trial registry, statistical significance engine, strategy contract, walk-forward engine with canonical partition spec defaults, frozen ingest schemas, and invert-proof corporate action & circuit band contracts |
+| **Offline Test Suite** | **222 passed in 6.79s** (100% pass rate, zero warnings) |
 | **External Dependencies** | Zero network calls, zero shadow simulators. Research storage is planned as embedded Parquet + DuckDB in an optional extra (no server process); the core package stays stdlib-pure. |
 | **Historical Provenance** | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` (Strictly maintained, zero false promotions) |
 | **Holdout Containment** | `HOLDOUT_UNLOCK` is strictly **ABSENT**; out-of-sample data remains completely sealed |
@@ -446,25 +446,20 @@ Wave 3 (Full Historical Backfill 2015–2026: Tier B Warm-up + Tier A In-Sample,
 Wave 4 (Phase 2D: Automated Verdict Engine & End-to-End Regression on Real Tier-A Data)
 ```
 
-#### Wave 0 — Pre-Ingestion Containment & Schema Freezing (Completed & Verified)
-Modules: `containment.py`, `walkforward.py`, `bronze.py`, `security_master.py`, `universe.py`, `price_band.py`.
+#### Wave 0 — Pre-Ingestion Containment & Schema Freezing (Remediated & Verified)
+Modules: `containment.py`, `walkforward.py`, `bronze.py`, `security_master.py`, `universe.py`, `price_band.py`, `silver.py`, `gold.py`.
+Configs: [`configs/partition_spec.yaml`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/configs/partition_spec.yaml).
 Documentation: [`docs/holdout_physical_separation_architecture.md`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/docs/holdout_physical_separation_architecture.md).
 
-- **G-1 Holdout Containment Closed**:
-  - `WalkForwardFold` carries `partition_role: Optional[PartitionRole] = None` (normalized to enum, incorporated into `compute_fold_spec_fingerprint`).
-  - `WalkForwardEngine.run_fold` and `run_walk_forward` enforce fail-closed containment:
-    1. Unlabelled folds (`partition_role=None`) are strictly refused fail-closed with `HoldoutSealedError`. Unknown must not run.
-    2. Any fold whose date window intersects `[partition_spec.holdout_start, partition_spec.holdout_end]` strictly requires verified human-authorized `HOLDOUT_UNLOCK` sentinel file matching `holdout_token_hash`. Mismatched roles (e.g. fold intersecting holdout claiming to be `VALIDATION`) fail closed.
-    3. Folds declared as `HOLDOUT` without a `PartitionSpec` fail closed.
-- **Ingest Schemas Frozen in Code**:
-  - `BronzeManifestEntry` (in `src/signal_core/storage/bronze.py`): Typed fields (`relative_path`, `source_url`, `retrieved_at`, `byte_count`, `sha256`, `restatement_ref`, `source_archive_format`) with strict `__post_init__` invariant validation (no directory traversal, no backslashes, positive byte count, exact 64-char hex SHA-256).
-  - Manifest Locking (Finding E-15): Implemented `BronzeStorage._lock_manifest()` context manager using an atomic inter-process `.lock` file to guarantee serial writes and prevent interleaved partial lines during concurrent ingestion.
-  - `CorporateAction` (in `src/signal_core/storage/security_master.py`): Verified exact Decimals for `ratio_numerator` and `ratio_denominator`, `ex_date`, optional `record_date` ($\ge \text{ex\_date}$), `circular_ref`, and mandatory distinct `old_isin`/`new_isin` validation for `ISIN_TRANSITION`.
-  - `IndexMembershipInterval` (in `src/signal_core/contracts/universe.py`): Time-varying universe membership represented as half-open interval tables $[effective\_from, effective\_to)$ per Rule 10.5, with mandatory ISIN identity (Rule 10.4), overlap detection, and serialization.
-  - `PriceBandSourceDescriptor`, `PriceBandRecord`, `PriceBandInterval` (in `src/signal_core/contracts/price_band.py`): Authoritative NSE publication sources (`NSE_DAILY_PRICE_BAND_REPORT`, `NSE_PR_ZIP`, `NSE_SURVEILLANCE_CIRCULAR`), discrete daily circuit observations with exact Decimal bounds and unconstrained F&O handling, plus half-open interval tables for sustained fixed surveillance bands.
-- **Physical Holdout Separation Adopted (E-15)**:
-  - Formally committed in [`docs/holdout_physical_separation_architecture.md`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/docs/holdout_physical_separation_architecture.md).
-  - Holdout data (2025–2026) will be stored in a physically segregated directory tree (`storage_holdout/`) with an independent cryptographic manifest lock, completely outside `storage/silver/`. The Gold layer and DuckDB views globbing standard silver physically cannot discover or parse holdout files.
+- **G-1 Holdout Containment & Physical Rejection (H-1, H-2, H-6 Closed)**:
+  - **H-1 Physical Holdout Separation**: Standard `SilverStorage` and `GoldEngine` explicitly reject any read, write, or query intersecting the canonical holdout window `[2025-01-01, 2026-11-11]` fail-closed with `HoldoutPartitionIsolationError` unless explicitly instantiated with `is_holdout_storage=True`.
+  - **H-6 Committed Canonical Partition Spec**: Committed [`configs/partition_spec.yaml`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/configs/partition_spec.yaml) defining authoritative In-Sample (2018-04-01 to 2023-12-31), Validation (2024-01-01 to 2024-12-31), and Holdout (2025-01-01 to 2026-11-11) windows with placeholder token hash.
+  - **H-2 Default Fail-Closed Containment**: `WalkForwardEngine` defaults to loading the canonical partition spec. Removed all fail-open defaults (`partition_spec=None` cannot run without spec resolution). Any fold intersecting the holdout window without verified human unlock raises `HoldoutSealedError`. Unlabelled folds (`partition_role=None`) fail closed.
+- **Ingest Schemas Frozen & Invert-Proofed (H-3, H-4, H-5 Closed)**:
+  - **H-5 Corporate Action Ratio Direction & Split Invariant**: `CorporateAction` in `security_master.py` clearly documents ratio semantics (`ratio_numerator`: post-event shares held per `ratio_denominator` pre-event shares held; `adjustment_factor = den / num`). Strictly enforces `ratio_numerator > ratio_denominator` for `SPLIT` and `BONUS`, rejecting inverted splits (`num <= den`) fail-closed. 1:10 split verified to produce `adjustment_factor == Decimal('0.1')`.
+  - **H-4 Circuit Filter & Unconstrained F&O Validation**: `PriceBandRecord(is_unconstrained=True)` requires an authoritative `source_descriptor` citation and either dynamic `band_percentage` or explicit limits; anonymous unconstrained claims fail closed with `PriceBandValidationError`. Declared upper/lower circuit limits are reconciled against `band_percentage` (`|implied_pct - band_pct| <= max(1.5, 0.20 * band_pct)`), rejecting inconsistent records fail-closed.
+  - **H-3 Atomic Bronze Manifest Locking & Stale Lock Clearing**: `BronzeStorage._lock_manifest()` records PID and timestamp metadata. If an orphaned lock from a crashed process older than `stale_timeout_seconds` (5.0s) is encountered, it is automatically cleared and recovered. If an active lock times out, an explicit remediation message specifies the exact file to remove.
+  - **H-8 Walk-Forward Docstring Cleanup**: Removed duplicated parameter docstring lines in `generate_walk_forward_folds`.
 
 #### Phase 2D — Automated Verdict Engine & End-to-End Regression
 Module: `src/signal_core/reporting/verdicts.py`.

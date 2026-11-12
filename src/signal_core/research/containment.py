@@ -409,9 +409,6 @@ def generate_walk_forward_folds(
         anchored: If True, train_start remains pinned to session index 0 (expanding window).
                   If False, train window rolls forward with constant train_sessions (rolling window).
         partition_role: Role classification for the generated folds (defaults to VALIDATION).
-        embargo_sessions: Minimum session buffer between train_end and test_start (>= 0).
-        anchored: If True, train_start remains pinned to session index 0 (expanding window).
-                  If False, train window rolls forward with constant train_sessions (rolling window).
 
     Returns:
         Immutable tuple of WalkForwardFold instances.

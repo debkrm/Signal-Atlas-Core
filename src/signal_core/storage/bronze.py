@@ -141,10 +141,11 @@ class BronzeStorage:
         return self._blobs_dir / f"{sha256_digest}.bin"
 
     @contextmanager
-    def _lock_manifest(self, timeout_seconds: float = 10.0):
+    def _lock_manifest(self, timeout_seconds: float = 10.0, stale_timeout_seconds: float = 5.0):
         """
-        Cross-platform inter-process file lock for atomic manifest.jsonl appends (Finding E-15).
+        Cross-platform inter-process file lock for atomic manifest.jsonl appends (Finding E-15, H-3).
         Guarantees serial execution of manifest validation and writes across concurrent processes.
+        Features stale-lock auto-clearing and explicit actionable remediation messaging on timeout.
         """
         lock_path = self._manifest_path.with_suffix(".lock")
         start_time = time.monotonic()
@@ -152,18 +153,40 @@ class BronzeStorage:
         while True:
             try:
                 fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                try:
+                    payload = json.dumps({"pid": os.getpid(), "timestamp": time.time()}).encode("utf-8")
+                    os.write(fd, payload)
+                except Exception:
+                    pass
                 break
             except OSError:
+                # Audit §27 H-3: Check for stale lock from dead or killed process
+                try:
+                    mtime = lock_path.stat().st_mtime
+                    if time.time() - mtime > stale_timeout_seconds:
+                        try:
+                            lock_path.unlink()
+                            continue
+                        except OSError:
+                            pass
+                except OSError:
+                    pass
+
                 if time.monotonic() - start_time > timeout_seconds:
                     raise BronzeStorageError(
-                        f"Timeout ({timeout_seconds}s) acquiring inter-process manifest lock: {lock_path}"
+                        f"Timeout ({timeout_seconds}s) acquiring inter-process manifest lock: {lock_path}. "
+                        f"If no concurrent ingestion process is running, the lock is orphaned. "
+                        f"Remediation: remove the lock file '{lock_path}' to resume Bronze storage operations."
                     )
                 time.sleep(0.01)
         try:
             yield
         finally:
             if fd is not None:
-                os.close(fd)
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
             try:
                 if lock_path.exists():
                     lock_path.unlink()
@@ -179,11 +202,12 @@ class BronzeStorage:
         restatement_ref: Optional[str] = None,
         source_archive_format: Optional[str] = None,
         lock_timeout_seconds: float = 10.0,
+        stale_timeout_seconds: float = 5.0,
     ) -> BronzeManifestEntry:
         """
         Stores raw payload bytes in content-addressed storage and appends provenance record to manifest.
         Fails closed if attempting to overwrite an existing path with different bytes without an explicit restatement_ref (E-6).
-        Acquires inter-process manifest lock (E-15).
+        Acquires inter-process manifest lock with stale-lock detection (E-15, H-3).
         """
         if not isinstance(data, (bytes, bytearray)):
             raise BronzeStorageError(f"Payload data must be bytes, got {type(data).__name__}")
@@ -196,7 +220,7 @@ class BronzeStorage:
         byte_count = len(data)
         sha256_digest = hashlib.sha256(data).hexdigest()
 
-        with self._lock_manifest(timeout_seconds=lock_timeout_seconds):
+        with self._lock_manifest(timeout_seconds=lock_timeout_seconds, stale_timeout_seconds=stale_timeout_seconds):
             # Check existing manifest records for this relative_path
             existing_entries = [e for e in self.load_manifest() if e.relative_path == normalized_path]
             if existing_entries:
