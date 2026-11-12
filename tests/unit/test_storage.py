@@ -46,6 +46,7 @@ from signal_core.storage.bronze import (
     TamperedBronzePayloadError,
 )
 from signal_core.storage.silver import (
+    HoldoutPartitionIsolationError,
     OffCalendarSessionError,
     SilverPartitionImmutableError,
     SilverRecord,
@@ -487,7 +488,7 @@ def test_f1_f2_f3_remediation(sample_calendar, temp_storage_dirs):
     # PriceBar carries session_type
     bar = PriceBar(
         instrument_id="INE009A01021",
-        trade_date=datetime.date(2024, 11, 1),
+        trade_date=datetime.date(2024, 1, 1),
         open=Decimal("1500.00"),
         high=Decimal("1520.00"),
         low=Decimal("1495.00"),
@@ -496,3 +497,47 @@ def test_f1_f2_f3_remediation(sample_calendar, temp_storage_dirs):
         session_type="MUHURAT",
     )
     assert bar.session_type == "MUHURAT"
+
+
+# -----------------------------------------------------------------------------
+# H-1: PHYSICAL HOLDOUT SEPARATION IN STORAGE (Audit §27)
+# -----------------------------------------------------------------------------
+def test_h1_physical_holdout_separation_silver_rejection(temp_storage_dirs):
+    """
+    Finding H-1: Standard silver storage explicitly rejects writing or reading
+    dates falling within sealed holdout window [2025-01-01, 2026-11-11] fail-closed.
+    Dedicated holdout storage (is_holdout_storage=True) is required.
+    """
+    _, silver_dir, _ = temp_storage_dirs
+    standard_silver = SilverStorage(silver_dir, is_holdout_storage=False)
+    holdout_silver = SilverStorage(silver_dir / "holdout_sub", is_holdout_storage=True)
+
+    holdout_date = datetime.date(2025, 1, 15)
+    rec = SilverRecord(
+        isin="INE009A01021",
+        symbol="INFY",
+        series="EQ",
+        trade_date=holdout_date,
+        open=Decimal("1800.00"),
+        high=Decimal("1820.00"),
+        low=Decimal("1790.00"),
+        close=Decimal("1810.00"),
+        volume=10000,
+        traded_value=Decimal("18100000.00"),
+    )
+
+    # 1. Standard storage MUST reject writing holdout session fail-closed
+    with pytest.raises(HoldoutPartitionIsolationError, match="explicitly rejects dates falling within"):
+        standard_silver.write_daily_partition(holdout_date, [rec])
+
+    # 2. Standard storage MUST reject reading holdout session fail-closed
+    with pytest.raises(HoldoutPartitionIsolationError, match="explicitly rejects dates falling within"):
+        standard_silver.read_daily_partition(holdout_date)
+
+    # 3. Dedicated holdout storage is permitted to write holdout session
+    partition_path = holdout_silver.write_daily_partition(holdout_date, [rec])
+    assert partition_path.is_file()
+    read_recs = holdout_silver.read_daily_partition(holdout_date)
+    assert len(read_recs) == 1
+    assert read_recs[0].trade_date == holdout_date
+

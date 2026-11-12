@@ -38,6 +38,14 @@ class SilverStorageError(ValueError):
     pass
 
 
+class HoldoutPartitionIsolationError(SilverStorageError):
+    """
+    Raised when standard silver storage attempts to write or read partitions in the sealed holdout window (H-1).
+    Per Physical Holdout Separation Architecture, holdout partitions must be isolated in storage_holdout/.
+    """
+    pass
+
+
 class SilverPartitionImmutableError(SilverStorageError):
     """Raised when an attempt is made to overwrite an existing immutable silver partition (Gate G2B.5-5)."""
     pass
@@ -51,6 +59,10 @@ class OffCalendarSessionError(SilverStorageError):
 class MissingDependencyError(SilverStorageError):
     """Raised when pyarrow is not installed for silver storage operations."""
     pass
+
+
+CANONICAL_HOLDOUT_START_DATE = datetime.date(2025, 1, 1)
+CANONICAL_HOLDOUT_END_DATE = datetime.date(2026, 11, 11)
 
 
 def _require_pyarrow() -> None:
@@ -124,9 +136,11 @@ class SilverStorage:
         self,
         root_dir: Union[str, Path],
         calendar: Optional[TradingCalendar] = None,
+        is_holdout_storage: bool = False,
     ) -> None:
         self._root_dir = Path(root_dir).resolve()
         self._calendar = calendar
+        self._is_holdout_storage = is_holdout_storage
         self._bhavcopy_dir = self._root_dir / "bhavcopy"
         self._bhavcopy_dir.mkdir(parents=True, exist_ok=True)
 
@@ -141,6 +155,10 @@ class SilverStorage:
     @property
     def calendar(self) -> Optional[TradingCalendar]:
         return self._calendar
+
+    @property
+    def is_holdout_storage(self) -> bool:
+        return self._is_holdout_storage
 
     def get_partition_path(self, trade_date: datetime.date) -> Path:
         """Returns standard path for a daily session partition."""
@@ -160,6 +178,7 @@ class SilverStorage:
         """
         Writes a daily partition to Parquet format.
         Fails closed with:
+        - HoldoutPartitionIsolationError if standard silver storage is given a 2025+ holdout session (H-1).
         - SilverPartitionImmutableError if partition already exists (Gate G2B.5-5).
         - OffCalendarSessionError if date or any record is off-calendar (E-2).
         """
@@ -169,6 +188,15 @@ class SilverStorage:
             raise SilverStorageError(f"trade_date must be genuine datetime.date, got {type(trade_date).__name__}")
         if not records:
             raise SilverStorageError(f"Cannot write empty partition for {trade_date}")
+
+        # Physical holdout separation (Finding H-1): Standard silver storage explicitly rejects dates falling within [2025-01-01, 2026-11-11]
+        if not self._is_holdout_storage:
+            if CANONICAL_HOLDOUT_START_DATE <= trade_date <= CANONICAL_HOLDOUT_END_DATE:
+                raise HoldoutPartitionIsolationError(
+                    f"Standard silver storage explicitly rejects dates falling within "
+                    f"[{CANONICAL_HOLDOUT_START_DATE}, {CANONICAL_HOLDOUT_END_DATE}] ({trade_date}). "
+                    f"Holdout partitions must be written to an isolated physical root (storage_holdout/) per AGENTS.md Rule 8.1."
+                )
 
         # Calendar validation at write time (E-2)
         active_cal = calendar or self._calendar
@@ -268,6 +296,15 @@ class SilverStorage:
         """Reads daily partition and returns typed SilverRecord instances."""
         _require_pyarrow()
 
+        # Physical holdout separation (Finding H-1): Standard silver storage rejects 2025+ holdout window
+        if not self._is_holdout_storage:
+            if CANONICAL_HOLDOUT_START_DATE <= trade_date <= CANONICAL_HOLDOUT_END_DATE:
+                raise HoldoutPartitionIsolationError(
+                    f"Standard silver storage explicitly rejects dates falling within "
+                    f"[{CANONICAL_HOLDOUT_START_DATE}, {CANONICAL_HOLDOUT_END_DATE}] ({trade_date}). "
+                    f"Physical holdout separation forbids reading holdout partitions from standard storage."
+                )
+
         partition_path = self.get_partition_path(trade_date)
         if not partition_path.is_file():
             raise FileNotFoundError(f"No silver partition found for date {trade_date} at {partition_path}")
@@ -324,6 +361,15 @@ class SilverStorage:
         - If security was delisted or transitioned, classifies appropriately.
         - Fails closed: Never forward-fills, never linearly interpolates, never masks with NaN.
         """
+        # Physical holdout separation (Finding H-1): Standard silver storage rejects holdout query
+        if not self._is_holdout_storage:
+            if not (end_date < CANONICAL_HOLDOUT_START_DATE or start_date > CANONICAL_HOLDOUT_END_DATE):
+                raise HoldoutPartitionIsolationError(
+                    f"Standard silver storage explicitly rejects query range [{start_date}, {end_date}] "
+                    f"intersecting sealed holdout window [{CANONICAL_HOLDOUT_START_DATE}, {CANONICAL_HOLDOUT_END_DATE}]. "
+                    f"Physical holdout separation forbids reading holdout partitions from standard storage."
+                )
+
         # Audit on-disk partitions within [start_date, end_date] to reject off-calendar storage fail-closed (E-2)
         if self._bhavcopy_dir.exists():
             for p_file in self._bhavcopy_dir.glob("*/*.parquet"):

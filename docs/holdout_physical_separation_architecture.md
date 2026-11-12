@@ -75,3 +75,4 @@ storage_holdout/              # Isolated physical root
 - **Wave 2 (Phase 2C Closure)**: Binds strategy runs to dataset fingerprints without holdout access.
 - **Wave 3 (Historical Backfill)**: Ingestion script partitions data across `storage/silver/` (2015–2024) and `storage_holdout/silver/` (2025–2026) with zero leakage.
 - **Wave 4 (Phase 2D)**: Confirmatory evaluation engine unlocks `storage_holdout/` only when human sentinel is present.
+

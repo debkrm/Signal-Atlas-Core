@@ -25,7 +25,12 @@ from signal_core.contracts.provenance import (
 from signal_core.contracts.universe import UniverseSchedule
 from signal_core.storage.calendar import TradingCalendar
 from signal_core.storage.security_master import CorporateAction, CorporateActionType, SecurityMaster
-from signal_core.storage.silver import SilverStorage
+from signal_core.storage.silver import (
+    CANONICAL_HOLDOUT_START_DATE,
+    CANONICAL_HOLDOUT_END_DATE,
+    HoldoutPartitionIsolationError,
+    SilverStorage,
+)
 
 
 class GoldEngineError(ValueError):
@@ -124,6 +129,15 @@ class GoldEngine:
         """
         sessions = self._calendar.sessions_in_range(start_date, end_date, full_sessions_only=full_sessions_only)
         target_isins = tuple(isins) if isins is not None else self._sec_master.registered_isins
+
+        # Physical holdout separation (Finding H-1): Standard silver storage rejects holdout query
+        if not self._silver.is_holdout_storage:
+            if not (end_date < CANONICAL_HOLDOUT_START_DATE or start_date > CANONICAL_HOLDOUT_END_DATE):
+                raise HoldoutPartitionIsolationError(
+                    f"Gold engine using standard silver storage explicitly rejects query range [{start_date}, {end_date}] "
+                    f"intersecting sealed holdout window [{CANONICAL_HOLDOUT_START_DATE}, {CANONICAL_HOLDOUT_END_DATE}]. "
+                    f"Physical holdout separation forbids loading holdout partitions from standard storage."
+                )
 
         prices_by_inst: Dict[str, List[PriceBar]] = {isin: [] for isin in target_isins}
 

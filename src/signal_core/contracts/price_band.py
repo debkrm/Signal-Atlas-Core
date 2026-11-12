@@ -251,3 +251,4 @@ class PriceBandInterval:
         if self.effective_to is not None and as_of >= self.effective_to:
             return False
         return True
+

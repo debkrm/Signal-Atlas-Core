@@ -47,6 +47,9 @@ from signal_core.storage.bronze import (
     TamperedBronzePayloadError,
 )
 from signal_core.storage.silver import (
+    CANONICAL_HOLDOUT_START_DATE,
+    CANONICAL_HOLDOUT_END_DATE,
+    HoldoutPartitionIsolationError,
     MissingDependencyError,
     OffCalendarSessionError,
     SilverPartitionImmutableError,
@@ -110,6 +113,9 @@ __all__ = [
     "MissingBronzeManifestError",
     "TamperedBronzePayloadError",
     # Silver
+    "CANONICAL_HOLDOUT_START_DATE",
+    "CANONICAL_HOLDOUT_END_DATE",
+    "HoldoutPartitionIsolationError",
     "MissingDependencyError",
     "OffCalendarSessionError",
     "SilverPartitionImmutableError",

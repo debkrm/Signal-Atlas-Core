@@ -1601,3 +1601,107 @@ G-10 through G-13 are carried.
 
 **Verdict on the two options:** Option 1 — rejected. Option 2 — directionally correct (real ingestion before 2D, with E-11/E-12/E-7 resolved as part of it), with two amendments: G-1 plus the schema freeze move ahead of ingestion rather than after 2C, and a one-month real slice precedes the full backfill so the storage contract is proven before 1.5M rows are loaded.
 
+
+## 27. Wave 0 Re-Audit — Commit `eae376d`
+
+**Scope reviewed:** `eae376d` ("Wave 0") — G-1 holdout guard, frozen ingest schemas, physical holdout separation. Diff read in full: `research/containment.py`, `research/walkforward.py`, `storage/bronze.py`, `storage/security_master.py`, `contracts/price_band.py` (new), `contracts/universe.py`, `storage/__init__.py`, `docs/holdout_physical_separation_architecture.md` (new), `tests/unit/test_ingest_schemas.py` (new), `tests/unit/test_walkforward.py`, `scripts/verify_phase2c_walkforward.py`, `probe_phase2c.py`.
+
+Note on the commit contents: the 105 audit-file lines in `eae376d` are my own §25/§26 text, committed unmodified from the working tree. Nothing in it was rewritten. The four trailing-newline-only diffs in the same commit are unrelated and harmless.
+
+**Method.** The suite was re-run first (`219 passed`, exit 0, up from 207 — the 12 new tests are real). Then eight adversarial probes were executed against the guard, the locks, and the new contracts, on fixtures the author did not use. The probe file was deleted after measurement; all numbers below are printed output.
+
+---
+
+### 27.1 Closure Table — the three Wave 0 items
+
+| # | Wave 0 item | Claim in the commit / status row | Measured | Verdict |
+|---|---|---|---|---|
+| 1 | **G-1 holdout guard** | Holdout access refused without role and verified unlock | Guard fires when a spec is supplied (P1, P3); **does not fire when `partition_spec` is omitted** (P2, P4) | **PARTIALLY CLOSED** |
+| 2 | **Frozen ingest schemas** | Provenance, corporate-action, membership-interval and price-band shapes frozen | Contracts exist and validate; suite 219/219. But CA ratio direction is unpinned (H-5) and the price-band escape hatch is unfalsifiable (H-4) | **PARTIALLY CLOSED** |
+| 3 | **Physical holdout separation** | Status row: "Physical holdout separation adopted & documented"; doc: "ADOPTED & COMMITTED", silver "explicitly rejects dates falling within `[2025-01-01, 2026-11-11]`" | `grep -rn "holdout\|HOLDOUT\|2025-01-01\|storage_holdout" src/signal_core/storage/` → **0 matches**. No separate root, no `.sealed_manifest.sha256`, no date rejection | **NOT CLOSED — H-1** |
+
+Wave 0 as declared in §26 is **not complete**. Item 1 is a real guard but not a seal; item 3 exists only as prose.
+
+---
+
+### 27.2 Measured probe output
+
+```
+P1  spec supplied, VALIDATION fold over sealed 2024-01-15..19  -> HoldoutSealedError   (guard fires)
+P2  NO spec, identical dates, role VALIDATION                  -> RAN, folds=1, trades=0
+P3  NO spec, role HOLDOUT                                      -> HoldoutSealedError   (label guard fires)
+P4  spec with holdout_start=2030, fold over 2024               -> RAN, folds=1
+P5  generate_walk_forward_folds default role                   -> {VALIDATION}, n=3
+P6  PriceBandRecord(is_unconstrained=True, zero limits)        -> has_circuit_evidence=True
+P7  orphaned manifest lock                                     -> Timeout (0.2s), lock present=True, store bricked=True
+P8  1:10 split num=10/den=1 -> factor 0.1 ; num=1/den=10 -> factor 10   (both accepted)
+```
+
+`P1` versus `P2` is the decisive pair: the same dates, the same role, the same strategy — containment present only when the caller remembers to pass a spec. That is a guard, not a seal.
+
+---
+
+### 27.3 Findings
+
+**H-1 · Blocking — the physical seal is documented but not implemented, and is reported as done.**
+`docs/holdout_physical_separation_architecture.md` line 6 declares **ADOPTED & COMMITTED** and line 63 states that "standard silver storage explicitly rejects dates falling within `[2025-01-01, 2026-11-11]` unless instantiated with the explicit holdout root and authorization token." `src/signal_core/storage/` contains zero references to `holdout`, `storage_holdout`, or that date range; `silver.py` validates type, finiteness and OHLC coherence only. The only E-15 element actually built is the Bronze manifest file lock. This is a violation of §9.3 (fail-closed reporting): an unrun, unimplemented control is presented to a reader — and in `CURRENT_STAGE_OF_WORK.md` — as enforced. It is also the exact precondition §26 attached to Wave 3 ("a holdout the Gold layer cannot glob is a real seal"), so leaving it as prose is not a cosmetic issue: it is the item that was pulled ahead of ingestion because it is unrecoverable later.
+
+**H-2 · Blocking for the G-1 claim — containment is opt-in and spec-relative.**
+`WalkForwardEngine` defaults `partition_spec=None`, and `run_fold`/`run_walk_forward` skip the containment check entirely in that case (P2). `generate_walk_forward_folds` defaults every generated fold to `PartitionRole.VALIDATION` (P5), so the default fold grid over 2025+ dates is unlabelled-as-protected and, absent a spec, runs. When a spec is supplied, the boundary is whatever the caller passed: `holdout_start=2030` lets a 2024 window through (P4) — which is correct given that spec, and precisely the problem, because nothing binds the spec's window to the actual on-disk partition. §8.1 requires the dataset to be sealed; the current design requires the caller to describe the seal accurately, with no committed artifact to check it against (§26 precondition 1 — no `PartitionSpec` exists in `configs/`; the canonical windows live only in a paragraph of a doc). The one thing that is genuinely closed is the role label: an unlabelled or `HOLDOUT`-labelled fold with no verified unlock is refused, in both entry points, and the five added tests cover it.
+
+**H-3 · Operational — an orphaned manifest lock permanently bricks Bronze writes.**
+`_lock_manifest` is an `O_CREAT|O_EXCL` spin lock with a 10 s timeout and no PID, heartbeat, or stale detection. Measured (P7): create the lock file, and `store_payload` raises `Timeout ... acquiring inter-process manifest lock`; the lock file survives the failure and every subsequent write fails the same way, with no remedy in the message. Fail-closed, so no integrity breach, but a killed process during Wave 3's multi-day backfill stops ingestion until a human deletes a file they were never told about. An atomic write-and-`os.replace` of the manifest removes the need for the lock entirely.
+
+**H-4 · §5.3 exposure — the band escape hatch is unfalsifiable.**
+`PriceBandRecord(is_unconstrained=True)` with `upper_limit=None` and `lower_limit=None` reports `has_circuit_evidence=True` (P6). NSE F&O underlyings do not trade band-free: they carry a dynamic base band (typically ±10%) that expands on demand, so "no fixed band" is not "no band", and those are exactly the scrips most capable of freezing. The flag can therefore exempt circuit-prone names from §5.3 while satisfying G2C-4 on paper. There is also no reconciliation between `band_percentage` and the declared upper/lower limits, so an internally inconsistent record is accepted. Required: the unconstrained claim must cite its publication source descriptor and be rejected without one; limits must be cross-checked against `band_percentage` around a reference price.
+
+**H-5 · §5.4 / E-12 risk — corporate-action ratio direction is unpinned, and an inverted split is silent.**
+`adjustment_factor = ratio_denominator / ratio_numerator`, documented only as "multiplier to apply to pre-event prices". Both `num=10/den=1` → 0.1 and `num=1/den=10` → 10.0 are accepted for a `SPLIT` (P8). A 1:10 split ingested with the natural "1-for-10" reading produces a factor 10.0 instead of 0.1 — a 100× error on every pre-event price — and it will pass every downstream check, because a uniformly mis-scaled series is still internally OHLC-coherent and still yields sane-looking returns. This is the failure mode E-12/F-7 exists to prevent, reintroduced one layer lower. Required: state the semantics in the field docs (numerator = new shares per old share), validate per type (`SPLIT`/`BONUS` require `numerator > denominator`), and add the one unit test asserting 1:10 → 0.1.
+
+**H-6 · Carried — no committed `PartitionSpec`.**
+None exists in `configs/`; the sole constructions are in `tests/` and `scripts/verify_phase2a_containment_and_trials.py`. This is §26 precondition 1, due before Wave 3, and it is also the structural fix for H-2: a committed `configs/partition_spec.yaml` holding the canonical windows and token hash, loaded by the engine as the default instead of `None`.
+
+**H-7 · Scope note — `PriceBandRecord` has no producer and no consumer.**
+Outside `contracts/price_band.py` and `contracts/__init__.py` there are zero references. Expected for a schema freeze, recorded here so it is not read as closure: circuit data still does not exist in Silver or Gold, so G-6 and G2C-4 remain tautological until Wave 3 loads a band publication.
+
+**H-8 · Cosmetic.** `generate_walk_forward_folds` has duplicated docstring lines for `embargo_sessions` and `anchored`.
+
+Also observed, consistent with §25: the run in P2 completed a fold with `trades=0` and returned a result rather than `NOT RUN`. G-3 is unchanged by this commit and is still open.
+
+---
+
+### 27.4 Computed verdict
+
+| Criterion | Result |
+|---|---|
+| C1 Unlabelled / `HOLDOUT`-labelled fold without verified unlock is refused | **PASS** (P3; 5 tests) |
+| C2 Containment applies on the default path (`partition_spec` omitted) | **FAIL** (P2) |
+| C3 Holdout boundary bound to the dataset, not to a caller argument | **FAIL** (P4, H-6) |
+| C4 Physical holdout separation implemented in storage | **FAIL** (H-1, 0 grep matches) |
+| C5 Ingest schemas reject malformed provenance / ISIN / interval records | **PASS** (12 new tests, 219/219) |
+| C6 Corporate-action ratio semantics unambiguous | **FAIL** (P8, H-5) |
+| C7 Circuit-limit evidence falsifiable | **FAIL** (P6, H-4) |
+| C8 Phase 2C blockers G-2/G-3/G-4/G-5/G-6 addressed | **FAIL — untouched by this commit** |
+
+**Verdict: Wave 0 — NOT ACCEPTED AS COMPLETE. G-1 — PARTIALLY CLOSED. Phase 2C — remains NO-GO.**
+
+The implementation work is real and the direction is right: the role label is enforced in both entry points, the schemas genuinely validate, and the suite grew by 12 tests that can fail. What is not real is the seal. Two of the three Wave 0 items were declared done on the strength of a guard that a caller can skip (H-2) and a document describing storage behaviour that does not exist (H-1). Since §26 deliberately front-loaded these two items *because* they are the irreversible ones, accepting them now would put the first 2025+ byte on disk behind a check that P2 shows does not run.
+
+---
+
+### 27.5 Instruction to the implementing agent
+
+Do these in order; they are small and none of them is a redesign.
+
+1. **H-1, one commit.** Either implement the date rejection in Silver plus the separate root, or correct the doc and the status row to "decision adopted; enforcement lands in Wave 3 with the first 2025+ byte". Correcting the prose now is acceptable and preferred — but the sentence "standard silver storage explicitly rejects dates falling within `[2025-01-01, 2026-11-11]`" must not remain in the tree until `grep` finds it in `src/signal_core/storage/`.
+2. **H-2, one commit.** Remove the fail-open default: `run_walk_forward`/`run_fold` must refuse when `partition_spec is None`, or the engine must load a committed spec and refuse when none exists. Add the P2 case as a test — identical dates, no spec, `VALIDATION` role, expect refusal.
+3. **H-6, same commit as (2).** Commit `configs/partition_spec.yaml` with the canonical windows (IS 2018-04-01→2023-12-31, VAL 2024-01-01→2024-12-31, HOLDOUT 2025-01-01→2026-11-11) and a token-hash placeholder, and make it the engine's default source.
+4. **H-5.** Document the ratio semantics, validate direction per action type, add the 1:10 → 0.1 test.
+5. **H-4.** Require a source descriptor for `is_unconstrained=True`; reject inconsistent `band_percentage` vs limits.
+6. **H-3.** Replace the lock with an atomic manifest write, or add stale-lock detection with a message that says what to do.
+
+Then re-audit. Wave 1 (one-month real NSE slice) may start in parallel **only** for dates wholly before 2025-01-01, and only because the provenance schema is now frozen — the Bronze bytes captured there cannot be re-captured identically later, so the schema freeze is the part of Wave 0 that must be right now. Nothing dated 2025-01-01 or later may be ingested until (1) and (2) are in.
+
+G-2/G-3/G-4/G-5/G-6 from §25 remain open and untouched. Phase 2C stays NO-GO.
+
+---
