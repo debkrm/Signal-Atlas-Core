@@ -287,6 +287,15 @@ def load_nse_trading_calendar(path: Optional[Union[str, Path]] = None) -> Tradin
     session_records_tuple = tuple(session_records_list)
     dates_tuple = tuple(r.date for r in session_records_tuple)
     fingerprint = compute_calendar_fingerprint(session_records_tuple)
+    expected_digest = fingerprint.replace("CAL-FPR-V1-", "")
+
+    # Audit §30 H-26: Reconcile declared provenance SHA-256 against actual session content digest
+    prov_sha256 = provenance.get("sha256")
+    if prov_sha256 is not None and prov_sha256.lower() != expected_digest.lower():
+        raise CalendarError(
+            f"Calendar provenance sha256 mismatch in {file_path}: declared {prov_sha256!r} != "
+            f"computed session content digest {expected_digest!r} per AGENTS.md Rule 6.5 (Audit §30 H-26)."
+        )
 
     binding_start_raw = data.get("binding_start_date", "2018-04-01")
     binding_start = datetime.date.fromisoformat(binding_start_raw)

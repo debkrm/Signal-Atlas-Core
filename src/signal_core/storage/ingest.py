@@ -1,13 +1,14 @@
 """
 Signal Atlas Core — Bhavcopy Ingestion Pipeline
-Frozen Ingestion Pipeline per AGENTS.md Rule 10 (Market Data Ingestion, Storage & Reproducibility)
-and Audit §26 (Wave 1 Thin Real-Data Vertical Slice).
+Frozen Ingestion Pipeline per AGENTS.md Rule 10 (Market Data Ingestion, Storage & Reproducibility),
+Audit §26 (Wave 1 Thin Real-Data Vertical Slice), and Audit §30 (Findings H-23, H-24, H-25).
 
 Handles:
 - Byte-exact content-addressed storage in Bronze with SHA-256 provenance manifest.
 - Parsing of real exchange Bhavcopy archives (both legacy and unified formats, handling trailing delimiters).
-- Type coercion to exact Decimal and genuine datetime.date for SilverRecord.
-- Fail-closed off-calendar and holdout containment enforcement.
+- Type coercion to exact Decimal (OHLC) and strict integral validation for volume (Rule 6.4, Finding H-23).
+- Strict multi-row trade_date cross-checking preventing mixed-date archives (Rule 6.3, Finding H-24).
+- Fail-closed truncation and duplicate row detection (Finding H-25).
 - Atomic, immutable Silver daily Parquet partition generation.
 """
 
@@ -65,6 +66,9 @@ def parse_bhavcopy_archive(
     - Legacy 2015-mid 2024 format: SYMBOL, SERIES, OPEN, HIGH, LOW, CLOSE, TOTTRDQTY, TOTTRDVAL, TIMESTAMP, ISIN...
     - Mid-2024 unified format: TCKRSYMB, SCTYSRS, OPNPRIC, HGHPRIC, LWPRIC, CLSPRIC, TTLTRADGVOL, TTLTRFVAL, TRADEDATE, ISIN...
     - Robust handling of trailing delimiters / empty trailing fields.
+    - Strict Decimal-based volume parsing preventing float rounding or fractional volumes (Finding H-23).
+    - Multi-row trade_date consistency validation preventing mixed-date archives (Finding H-24).
+    - Fail-closed truncation detection on targeted ISIN rows (Finding H-25).
     - Filtering by target_isins (case-insensitive) and target_series.
     
     Returns:
@@ -148,6 +152,14 @@ def parse_bhavcopy_archive(
 
     for line_no, row in enumerate(reader, start=2):
         if len(row) <= min_required_len:
+            # Audit §30 H-25: Fail closed if a truncated row contains a target ISIN
+            if target_isin_set is not None:
+                for cell in row:
+                    cleaned_cell = cell.strip().upper()
+                    if cleaned_cell in target_isin_set:
+                        raise BhavcopyIngestError(
+                            f"Line {line_no}: Truncated row detected for target ISIN {cleaned_cell}: {row} (Finding H-25)."
+                        )
             continue
 
         isin_val = row[isin_idx].strip().upper()
@@ -161,14 +173,23 @@ def parse_bhavcopy_archive(
         if target_series_set is not None and series_val not in target_series_set:
             continue
 
-        # Resolve date if not supplied
+        # Audit §30 H-24: Validate trade_date for EVERY row; fail closed on mixed-date archives
+        row_date: Optional[datetime.date] = None
+        if date_idx is not None and len(row) > date_idx and row[date_idx].strip():
+            row_date = parse_bhavcopy_date(row[date_idx])
+
         if inferred_date is None:
-            if date_idx is not None and len(row) > date_idx and row[date_idx].strip():
-                inferred_date = parse_bhavcopy_date(row[date_idx])
+            if row_date is not None:
+                inferred_date = row_date
             else:
                 raise BhavcopyIngestError(
                     f"Line {line_no}: trade_date was not provided and date column could not be parsed."
                 )
+        elif row_date is not None and row_date != inferred_date:
+            raise BhavcopyIngestError(
+                f"Line {line_no}: Row trade_date {row_date} does not match partition date {inferred_date} "
+                f"for ISIN {isin_val}. Mixed-date archives violate point-in-time partitioning per Rule 6.3 (Audit §30 H-24)."
+            )
 
         sym_val = row[sym_idx].strip()
 
@@ -177,11 +198,32 @@ def parse_bhavcopy_archive(
             h_dec = Decimal(row[h_idx].strip())
             l_dec = Decimal(row[l_idx].strip())
             c_dec = Decimal(row[c_idx].strip())
-            vol_int = int(float(row[vol_idx].strip()))
         except (InvalidOperation, ValueError) as exc:
             raise BhavcopyIngestError(
-                f"Line {line_no}: Failed to parse numeric OHLCV for {isin_val}: {exc}"
+                f"Line {line_no}: Failed to parse numeric OHLC for {isin_val}: {exc}"
             ) from exc
+
+        # Audit §30 H-23: Parse volume strictly via Decimal arithmetic, rejecting float truncation and fractions
+        vol_str = row[vol_idx].strip()
+        try:
+            vol_dec = Decimal(vol_str)
+        except InvalidOperation as exc:
+            raise BhavcopyIngestError(
+                f"Line {line_no}: Failed to parse volume for {isin_val} from {vol_str!r}: {exc}"
+            ) from exc
+
+        if not vol_dec.is_finite() or vol_dec < Decimal("0"):
+            raise BhavcopyIngestError(
+                f"Line {line_no}: Volume for {isin_val} must be non-negative finite value, got {vol_str!r}"
+            )
+
+        if vol_dec % Decimal("1") != Decimal("0"):
+            raise BhavcopyIngestError(
+                f"Line {line_no}: Volume for {isin_val} must be an integer, got fractional value {vol_str!r} "
+                "per AGENTS.md Rule 6.4 (Audit §30 H-23)."
+            )
+
+        vol_int = int(vol_dec)
 
         val_dec: Optional[Decimal] = None
         if val_idx is not None and len(row) > val_idx and row[val_idx].strip():
@@ -192,12 +234,12 @@ def parse_bhavcopy_archive(
 
         # Verify no duplicate ISIN within same daily partition
         if isin_val in seen_isins:
-            # If scrip appears in multiple series, prefer EQ
-            if series_val != "EQ":
-                continue
-            raise BhavcopyIngestError(
-                f"Duplicate ISIN {isin_val} encountered at line {line_no} for date {inferred_date}"
-            )
+            # If scrip appears in multiple series, fail closed on multiple EQ or duplicate target ISIN
+            if series_val == "EQ":
+                raise BhavcopyIngestError(
+                    f"Line {line_no}: Duplicate primary EQ series for ISIN {isin_val} encountered on {inferred_date}."
+                )
+            continue
 
         seen_isins.add(isin_val)
 

@@ -91,10 +91,10 @@ def run_phase_2b5_verification() -> bool:
         print("\n--- Gate G2B.5-1 (Part A / E-1): Calendar Completeness & Provenance ---")
         cal = load_nse_trading_calendar()
 
-        # 1. Total sessions and provenance
+        # 1. Total sessions and provenance (Audit §30 H-26)
         cal_total = cal.total_sessions
         cal_ok = (
-            cal_total in (2939, 2940)
+            cal_total == 2940
             and cal.start_date == datetime.date(2015, 1, 1)
             and cal.end_date == datetime.date(2026, 11, 11)
             and cal.binding_start_date == datetime.date(2018, 4, 1)
@@ -104,7 +104,7 @@ def run_phase_2b5_verification() -> bool:
         prov_ok = (
             prov.get("source") == "NSE_CIRCULARS_ANNUAL_TRADING_HOLIDAYS_AND_SPECIAL_SESSIONS"
             and len(prov.get("circular_references", [])) >= 12
-            and prov.get("sha256") == "a1d8824f894bb90047b4adcbac560181faebaafd72a0102e0175a367134ad773"
+            and prov.get("sha256") == "f9da922ed2c233cd43b0a6b701440fc25af769a169022f538a74e49de884a311"
         )
 
         # 2. Check special budget and DR sessions

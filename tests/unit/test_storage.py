@@ -109,18 +109,21 @@ def temp_storage_dirs():
 def test_e1_calendar_completeness_and_provenance():
     cal = load_nse_trading_calendar()
 
-    # 1. Total session count and date range
-    assert cal.total_sessions in (2939, 2940)
+    # 1. Total session count and date range (Audit §30 H-26: exact count, no loose set)
+    assert cal.total_sessions == 2940
     assert cal.start_date == datetime.date(2015, 1, 1)
     assert cal.end_date == datetime.date(2026, 11, 11)
     assert cal.binding_start_date == datetime.date(2018, 4, 1)
 
-    # 2. Provenance block verification (Rule 10.7)
+    # 2. Provenance block verification (Rule 10.7, Audit §30 H-26)
     prov = cal.provenance
     assert prov["source"] == "NSE_CIRCULARS_ANNUAL_TRADING_HOLIDAYS_AND_SPECIAL_SESSIONS"
     assert "circular_references" in prov
     assert len(prov["circular_references"]) >= 12
-    assert prov["sha256"] == "a1d8824f894bb90047b4adcbac560181faebaafd72a0102e0175a367134ad773"
+    assert "NSE/MSD/60300" in prov["circular_references"]
+    assert "NSE/MSD/60318" in prov["circular_references"]
+    assert prov["sha256"] == "f9da922ed2c233cd43b0a6b701440fc25af769a169022f538a74e49de884a311"
+    assert cal.fingerprint == "CAL-FPR-V1-f9da922ed2c233cd43b0a6b701440fc25af769a169022f538a74e49de884a311"
 
     # 3. All special/muhurat sessions identified in §23 are present
     budget_sats = [datetime.date(2020, 2, 1), datetime.date(2025, 2, 1)]

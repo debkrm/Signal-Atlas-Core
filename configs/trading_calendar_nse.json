@@ -17,10 +17,11 @@
       "NSE/CMTR/2024_HOLIDAYS",
       "NSE/CMTR/2025_HOLIDAYS",
       "NSE/CMTR/2026_HOLIDAYS",
-      "NSE/CMTR/60309"
+      "NSE/MSD/60300",
+      "NSE/MSD/60318"
     ],
     "retrieved_at": "2026-11-12T06:00:00Z",
-    "sha256": "a1d8824f894bb90047b4adcbac560181faebaafd72a0102e0175a367134ad773",
+    "sha256": "f9da922ed2c233cd43b0a6b701440fc25af769a169022f538a74e49de884a311",
     "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED"
   },
   "annual_session_counts": {
@@ -18665,7 +18666,7 @@
       "session_type": "SPECIAL",
       "open_time": "09:15:00",
       "close_time": "12:30:00",
-      "description": "Disaster Recovery Testing Live Session"
+      "description": "Special Live Trading Session (Primary site 09:15-10:00, DR site 11:30-12:30)"
     },
     {
       "date": "2024-01-23",

@@ -14,6 +14,13 @@ import tempfile
 from typing import Dict, List, Optional, Tuple
 import zipfile
 
+# Ensure stdout handles UTF-8 on Windows consoles without error (Audit §30 H-22)
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Ensure src is on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -156,23 +163,23 @@ def run_wave1_verification(raw_data_dir: Optional[Path] = None) -> bool:
         )
         print(f"[{'PASS' if ca_ok else 'FAIL'}] Real 2:1 Stock Split verified (ex-date 2024-01-10, factor=0.5): {ca_ok}")
 
-        # 5. Real Index Membership Interval Contract
-        print("\n--- Gate W1-4: Real Point-in-Time Index Membership Interval ---")
+        # 5. Index Membership Interval Contract (Interval Arithmetic Verification per Audit §30 H-27)
+        print("\n--- Gate W1-4: Index Membership Interval Contract (Interval Arithmetic Verification) ---")
+        # Audit §30 H-27: Test half-open interval mechanics [effective_from, effective_to) and non-overlap.
+        # Historical constituent feeds for Nifty 500 will be ingested from verified circular feeds in Wave 3.
         interval_old = IndexMembershipInterval(
             index_name="NIFTY500",
             isin="INE704P01017",
             effective_from=datetime.date(2024, 1, 1),
             effective_to=datetime.date(2024, 1, 10),
-            circular_ref="NSE/CML/60114",
-            source_publication="NSE_INDEX_CIRCULAR_COCHINSHIP_SPLIT",
+            source_publication="SYNTHETIC_INTERVAL_DEMO",
         )
         interval_new = IndexMembershipInterval(
             index_name="NIFTY500",
             isin="INE704P01025",
             effective_from=datetime.date(2024, 1, 10),
             effective_to=datetime.date(2024, 2, 1),
-            circular_ref="NSE/CML/60114",
-            source_publication="NSE_INDEX_CIRCULAR_COCHINSHIP_SPLIT",
+            source_publication="SYNTHETIC_INTERVAL_DEMO",
         )
 
         assert not interval_old.overlaps(interval_new), "Intervals must not overlap"
@@ -205,7 +212,7 @@ def run_wave1_verification(raw_data_dir: Optional[Path] = None) -> bool:
         assert jan10_raw.trade_date == datetime.date(2024, 1, 10)
         assert jan10_raw.close == Decimal("802.8"), f"Expected 802.8, got {jan10_raw.close}"
         assert jan10_raw.volume == 22442717
-        print(f"[PASS] Unadjusted Price Panel: Jan 9 close = ₹{jan9_raw.close} | Jan 10 close = ₹{jan10_raw.close}")
+        print(f"[PASS] Unadjusted Price Panel: Jan 9 close = Rs. {jan9_raw.close} | Jan 10 close = Rs. {jan10_raw.close}")
 
         # Split-adjusted snapshot
         snap, adj_panel = gold.build_dataset_snapshot(
@@ -224,7 +231,7 @@ def run_wave1_verification(raw_data_dir: Optional[Path] = None) -> bool:
         assert jan9_adj.close == expected_adj_close, f"Expected {expected_adj_close}, got {jan9_adj.close}"
         assert jan9_adj.volume == expected_adj_vol, f"Expected {expected_adj_vol}, got {jan9_adj.volume}"
         assert jan10_adj.close == Decimal("802.8")
-        print(f"[PASS] Split-Adjusted Price Panel: Jan 9 close = ₹{jan9_adj.close} (vol={jan9_adj.volume}) -> Jan 10 close = ₹{jan10_adj.close} (vol={jan10_adj.volume})")
+        print(f"[PASS] Split-Adjusted Price Panel: Jan 9 close = Rs. {jan9_adj.close} (vol={jan9_adj.volume}) -> Jan 10 close = Rs. {jan10_adj.close} (vol={jan10_adj.volume})")
 
         # Fingerprint reproducibility check (Gate G2B.5-2)
         snap2, _ = gold.build_dataset_snapshot(
@@ -261,7 +268,7 @@ def run_wave1_verification(raw_data_dir: Optional[Path] = None) -> bool:
         total_rows, min_c, max_c, tot_v = stats[0]
         assert total_rows == 22, f"Expected 22 rows, got {total_rows}"
         print(f"[PASS] DuckDB SQL Aggregates over real Parquet partitions:")
-        print(f"       Total sessions: {total_rows} | Min close: ₹{min_c} | Max close: ₹{max_c} | Total volume: {tot_v:,}")
+        print(f"       Total sessions: {total_rows} | Min close: Rs. {min_c} | Max close: Rs. {max_c} | Total volume: {tot_v:,}")
 
         # Query split ex-date boundary in SQL
         boundary_rows = views.query("""
@@ -272,8 +279,8 @@ def run_wave1_verification(raw_data_dir: Optional[Path] = None) -> bool:
         """)
         assert len(boundary_rows) == 2
         print(f"[PASS] SQL query of ISIN Transition Boundary:")
-        print(f"       2024-01-09: ISIN={boundary_rows[0][1]} Close=₹{boundary_rows[0][3]} Volume={boundary_rows[0][4]:,}")
-        print(f"       2024-01-10: ISIN={boundary_rows[1][1]} Close=₹{boundary_rows[1][3]} Volume={boundary_rows[1][4]:,}")
+        print(f"       2024-01-09: ISIN={boundary_rows[0][1]} Close=Rs. {boundary_rows[0][3]} Volume={boundary_rows[0][4]:,}")
+        print(f"       2024-01-10: ISIN={boundary_rows[1][1]} Close=Rs. {boundary_rows[1][3]} Volume={boundary_rows[1][4]:,}")
 
         views.close()
 
