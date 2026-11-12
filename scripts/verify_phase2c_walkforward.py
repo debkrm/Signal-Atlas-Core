@@ -283,7 +283,7 @@ def run_phase_2c_verification() -> bool:
         except WalkForwardEngineError:
             unknown_rejected = True
 
-        # Audit §31 H-28: Rejection of caller-invented / spoofed dataset fingerprint
+        # Audit §31 H-28 / §32 H-35: Rejection of caller-invented / spoofed dataset fingerprint at engine & trial boundaries
         spoofed_rejected = False
         try:
             engine.run_walk_forward(
@@ -294,19 +294,48 @@ def run_phase_2c_verification() -> bool:
         except WalkForwardEngineError:
             spoofed_rejected = True
 
+        to_trial_spoof_rejected = False
+        try:
+            res_a.to_trial_record(
+                trial_id="TRIAL-G4-SPOOF",
+                hypothesis="Spoof test",
+                rationale="Wave 2 verification",
+                fold_spec_fingerprint="FOLD-TEST",
+                dataset_fingerprint="DATA-CTNT-V2-" + "0" * 32,
+            )
+        except WalkForwardEngineError:
+            to_trial_spoof_rejected = True
+
         # Audit §31 H-34: Criteria version dynamically defaulted from criteria in force (1.1.0)
         criteria_version_correct = (trial_rec.criteria_version == "1.1.0")
 
-        # Audit §31 H-33: Execution config hashed into result fingerprint and carried on trial record
+        # Audit §31 H-33 / §32 H-37: Execution config hashed into result fingerprint, model parameters serialized, carried on trial record
         exec_config_bound = (trial_rec.execution_config == res_a.execution_config)
-        engine_diff_latency = WalkForwardEngine(
+        cost_params_serialized = (
+            isinstance(res_a.execution_config["cost_model"], dict)
+            and "parameters" in res_a.execution_config["cost_model"]
+            and "brokerage_per_order_inr" in res_a.execution_config["cost_model"]["parameters"]
+        )
+        slippage_params_serialized = (
+            isinstance(res_a.execution_config["slippage_model"], dict)
+            and "parameters" in res_a.execution_config["slippage_model"]
+            and "half_spread_bps" in res_a.execution_config["slippage_model"]["parameters"]
+        )
+
+        # Unconfounded probe (Audit §32 note): full_sessions_only=False on gapless data gives identical trades/equity but different fingerprint
+        engine_gapless = WalkForwardEngine(
             calendar=cal,
             gold_engine=gold,
             eligibility_policy=APPROVED_EQ_ONLY_POLICY,
-            execution_latency_sessions=2,
+            execution_latency_sessions=1,
+            full_sessions_only=False,
         )
-        res_diff_latency = engine_diff_latency.run_walk_forward(strategy=strat, folds=[fold], initial_capital=init_cap)
-        config_hashed_into_fpr = (res_diff_latency.fingerprint != res_a.fingerprint)
+        res_gapless = engine_gapless.run_walk_forward(strategy=strat, folds=[fold], initial_capital=init_cap)
+        config_hashed_into_fpr = (
+            res_gapless.final_equity == res_a.final_equity
+            and [t.executed_price for t in res_gapless.aggregate_trades] == [t.executed_price for t in res_a.aggregate_trades]
+            and res_gapless.fingerprint != res_a.fingerprint
+        )
 
         g2c_1_passed = (
             trades_executed
@@ -320,20 +349,24 @@ def run_phase_2c_verification() -> bool:
             and trial_fpr_bound
             and unknown_rejected
             and spoofed_rejected
+            and to_trial_spoof_rejected
             and criteria_version_correct
             and exec_config_bound
+            and cost_params_serialized
+            and slippage_params_serialized
             and config_hashed_into_fpr
         )
 
         all_passed = all_passed and g2c_1_passed
-        print(f"[{'PASS' if g2c_1_passed else 'FAIL'}] Gate G2C-1: Bit-for-bit determinism, execution config & dataset binding (H-28, H-33, H-34)")
+        print(f"[{'PASS' if g2c_1_passed else 'FAIL'}] Gate G2C-1: Bit-for-bit determinism, execution config & dataset binding (H-28, H-33, H-34, H-35, H-37)")
         print(f"       Live trades executed: {len(res_a.aggregate_trades)} (fills: {len(filled_trades)}) | Non-empty: {has_fills}")
         print(f"       Fingerprint: {res_a.fingerprint} == {res_b.fingerprint}")
         print(f"       Final Equity: Rs. {res_a.final_equity} == Rs. {res_b.final_equity} | Sharpe: {res_a.annualized_sharpe}")
         print(f"       Dataset Fingerprint Bound: {res_a.dataset_content_fingerprint} (trial bound: {trial_fpr_bound})")
-        print(f"       'UNKNOWN' & Spoofed Fingerprint Rejected: unknown={unknown_rejected}, spoofed={spoofed_rejected}")
+        print(f"       Spoofed Fingerprint Rejected: engine={spoofed_rejected}, trial_record={to_trial_spoof_rejected}")
         print(f"       Criteria Version: {trial_rec.criteria_version} (correct: {criteria_version_correct})")
-        print(f"       Execution Config Bound & Hashed into FPR: bound={exec_config_bound}, hashed={config_hashed_into_fpr}")
+        print(f"       Execution Config Bound & Models Parameterized (H-37): bound={exec_config_bound}, cost={cost_params_serialized}, slippage={slippage_params_serialized}")
+        print(f"       Unconfounded Fingerprint Discrimination (gapless full_sessions_only): {config_hashed_into_fpr}")
 
         # ----------------------------------------------------------------------
         # GATE G2C-2: SAME-SESSION LOOKAHEAD REJECTION (T close -> T fill)

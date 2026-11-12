@@ -464,12 +464,12 @@ def test_walk_forward_trial_registry_integration(wf_environment):
         hypothesis="Trend breakout on moving average cross",
         rationale="Preliminary walk-forward evaluation",
         fold_spec_fingerprint="FOLD-SPEC-V1-test",
-        dataset_fingerprint="DATA-CTNT-V2-test",
         partition="VALIDATION",
     )
 
     assert record.seq == 1
     assert record.trial_id == "TRIAL-WF-001"
+    assert record.dataset_fingerprint == res.dataset_content_fingerprint
     assert record.criteria_version == "1.1.0"
     assert record.execution_config is not None
     assert record.execution_config == res.execution_config
@@ -1004,15 +1004,56 @@ def test_wave2_dataset_content_fingerprint_binding_and_rejection(wf_environment)
     assert res.criteria_version == "1.1.0"
     assert trial_rec.criteria_version == "1.1.0"
 
-    # Execution configuration bound to WalkForwardResult, TrialRecord, and hashed into result fingerprint (Audit §31 H-33)
+    # Execution configuration bound to WalkForwardResult, TrialRecord, and hashed into result fingerprint (Audit §31 H-33 / §32 H-37)
     assert res.execution_config is not None
     assert res.execution_config["execution_latency_sessions"] == 1
     assert res.execution_config["criteria_version"] == "1.1.0"
     assert trial_rec.execution_config == res.execution_config
+    assert isinstance(res.execution_config["cost_model"], dict)
+    assert res.execution_config["cost_model"]["model"] == "TransactionCostModel"
+    assert "brokerage_per_order_inr" in res.execution_config["cost_model"]["parameters"]
+    assert isinstance(res.execution_config["slippage_model"], dict)
+    assert res.execution_config["slippage_model"]["model"] == "SlippageModel"
+    assert "impact_kappa" in res.execution_config["slippage_model"]["parameters"]
 
+    # Unconfounded probe (Audit §32 note): full_sessions_only=False on gapless data gives identical trades/equity but different fingerprint
+    engine_gapless = WalkForwardEngine(
+        calendar=cal,
+        gold_engine=gold,
+        execution_latency_sessions=1,
+        full_sessions_only=False,
+    )
+    res_gapless = engine_gapless.run_walk_forward(strategy=strat, folds=[fold])
+    assert res_gapless.final_equity == res.final_equity
+    assert [t.executed_price for t in res_gapless.aggregate_trades] == [t.executed_price for t in res.aggregate_trades]
+    assert res_gapless.fingerprint != res.fingerprint
+
+    # Latency 2 also differs
     engine_l2 = WalkForwardEngine(calendar=cal, gold_engine=gold, execution_latency_sessions=2)
     res_l2 = engine_l2.run_walk_forward(strategy=strat, folds=[fold])
     assert res_l2.fingerprint != res.fingerprint
+
+    # Audit §32 H-35: Rejection of spoofed dataset_fingerprint at to_trial_record boundary
+    with pytest.raises(WalkForwardEngineError, match="does not match authentic WalkForwardResult"):
+        res.to_trial_record(
+            trial_id="TRIAL-SPOOF-01",
+            hypothesis="Should fail",
+            rationale="Fail test",
+            fold_spec_fingerprint="TEST-FOLD-FPR",
+            dataset_fingerprint="DATA-CTNT-V2-" + "0" * 32,
+        )
+
+    # Audit §32 H-35: Rejection of spoofed dataset_fingerprint at register_in_trial_registry boundary
+    h35_registry = TrialRegistry(tmp_path / "h35_trials.jsonl")
+    with pytest.raises(WalkForwardEngineError, match="does not match authentic WalkForwardResult"):
+        res.register_in_trial_registry(
+            registry=h35_registry,
+            trial_id="TRIAL-SPOOF-02",
+            hypothesis="Should fail",
+            rationale="Fail test",
+            fold_spec_fingerprint="TEST-FOLD-FPR",
+            dataset_fingerprint="DATA-CTNT-V2-" + "0" * 32,
+        )
 
     # Rejection of UNKNOWN fingerprint in to_trial_record
     tampered_res = dataclasses.replace(res, dataset_content_fingerprint="DATA-CTNT-V2-UNKNOWN")

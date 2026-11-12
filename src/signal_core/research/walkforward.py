@@ -145,7 +145,7 @@ class WalkForwardResult:
     fingerprint: str
     dataset_content_fingerprint: str
     execution_config: Mapping[str, Any] = field(default_factory=dict)
-    criteria_version: str = "1.1.0"
+    criteria_version: str = ""
 
     def to_trial_record(
         self,
@@ -163,9 +163,15 @@ class WalkForwardResult:
         Creates an immutable, fully validated TrialRecord for registration into TrialRegistry.
         Binds dataset_fingerprint to authentic DATA-CTNT-V2 snapshot (Gate G-4).
         Defaults criteria_version from criteria in force (Audit §31 H-34).
-        Carries execution_config onto TrialRecord (Audit §31 H-33).
+        Carries execution_config onto TrialRecord (Audit §31 H-33 / §32 H-37).
         """
-        ds_fpr = dataset_fingerprint or self.dataset_content_fingerprint
+        # Audit §31 H-28 / §32 H-35: Dataset fingerprint cannot be overridden with spoofed or mismatched value
+        if dataset_fingerprint is not None and dataset_fingerprint != self.dataset_content_fingerprint:
+            raise WalkForwardEngineError(
+                f"Supplied dataset_fingerprint '{dataset_fingerprint}' does not match authentic WalkForwardResult "
+                f"dataset_content_fingerprint '{self.dataset_content_fingerprint}' (Gate G-4 / H-35)."
+            )
+        ds_fpr = self.dataset_content_fingerprint
         if not isinstance(ds_fpr, str) or not ds_fpr.startswith("DATA-CTNT-V2-") or ds_fpr == "DATA-CTNT-V2-UNKNOWN":
             raise WalkForwardEngineError(
                 f"Cannot create TrialRecord with invalid dataset_fingerprint {ds_fpr!r}. "
@@ -173,6 +179,8 @@ class WalkForwardResult:
             )
 
         resolved_criteria_version = criteria_version or self.criteria_version
+        if not resolved_criteria_version:
+            raise WalkForwardEngineError("criteria_version cannot be empty. Must be provided or present on WalkForwardResult.")
         resolved_exec_config = execution_config if execution_config is not None else self.execution_config
 
         ts = timestamp_utc or datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -239,7 +247,13 @@ class WalkForwardResult:
         Defaults criteria_version from criteria in force (Audit §31 H-34).
         Carries execution_config onto TrialRecord (Audit §31 H-33).
         """
-        ds_fpr = dataset_fingerprint or self.dataset_content_fingerprint
+        # Audit §31 H-28 / §32 H-35: Dataset fingerprint cannot be overridden with spoofed or mismatched value
+        if dataset_fingerprint is not None and dataset_fingerprint != self.dataset_content_fingerprint:
+            raise WalkForwardEngineError(
+                f"Supplied dataset_fingerprint '{dataset_fingerprint}' does not match authentic WalkForwardResult "
+                f"dataset_content_fingerprint '{self.dataset_content_fingerprint}' (Gate G-4 / H-35)."
+            )
+        ds_fpr = self.dataset_content_fingerprint
         if not isinstance(ds_fpr, str) or not ds_fpr.startswith("DATA-CTNT-V2-") or ds_fpr == "DATA-CTNT-V2-UNKNOWN":
             raise WalkForwardEngineError(
                 f"Cannot register trial with invalid dataset_fingerprint {ds_fpr!r}. "
@@ -247,6 +261,8 @@ class WalkForwardResult:
             )
 
         resolved_criteria_version = criteria_version or self.criteria_version
+        if not resolved_criteria_version:
+            raise WalkForwardEngineError("criteria_version cannot be empty. Must be provided or present on WalkForwardResult.")
         resolved_exec_config = execution_config if execution_config is not None else self.execution_config
 
         ts = timestamp_utc or datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -849,7 +865,54 @@ class WalkForwardEngine:
             circuit_complete = all(f.circuit_evidence_complete for f in fold_results)
             verif_status = "VERIFIED" if circuit_complete else "CIRCUIT_UNVERIFIED"
 
-        # Execution configuration dictionary (Audit §31 H-33)
+        # Execution configuration dictionary (Audit §31 H-33 / §32 H-37)
+        active_cost = self._cost_model if self._cost_model is not None else TransactionCostModel(self._criteria.statutory_costs)
+        if hasattr(active_cost, "criteria"):
+            c = active_cost.criteria
+            cost_parameters = {
+                "stt_delivery_rate": str(c.stt_delivery_rate),
+                "stt_intraday_sell_rate": str(c.stt_intraday_sell_rate),
+                "sebi_turnover_charge_rate": str(c.sebi_turnover_charge_rate),
+                "stamp_duty_delivery_buy_rate": str(c.stamp_duty_delivery_buy_rate),
+                "stamp_duty_intraday_buy_rate": str(c.stamp_duty_intraday_buy_rate),
+                "gst_rate": str(c.gst_rate),
+                "brokerage_per_order_inr": str(c.brokerage_per_order_inr),
+                "gst_taxable_base_components": sorted(c.gst_taxable_base_components),
+                "effective_dated_exchange_fees": [
+                    {
+                        "circular_ref": f.circular_ref,
+                        "from_date": f.from_date.isoformat(),
+                        "to_date": f.to_date.isoformat() if f.to_date is not None else None,
+                        "exchange_turnover_rate": str(f.exchange_turnover_rate),
+                        "ipft_rate": str(f.ipft_rate),
+                        "description": f.description,
+                    }
+                    for f in c.effective_dated_exchange_fees
+                ],
+            }
+        else:
+            cost_parameters = {}
+
+        cost_config = {
+            "model": active_cost.__class__.__name__,
+            "parameters": cost_parameters,
+        }
+
+        active_slip = self._slippage_model if self._slippage_model is not None else SlippageModel()
+        if hasattr(active_slip, "half_spread_bps"):
+            slippage_parameters = {
+                "half_spread_bps": str(active_slip.half_spread_bps),
+                "impact_kappa": str(active_slip.impact_kappa),
+                "impact_alpha": str(active_slip.impact_alpha),
+            }
+        else:
+            slippage_parameters = {}
+
+        slippage_config = {
+            "model": active_slip.__class__.__name__,
+            "parameters": slippage_parameters,
+        }
+
         exec_config = {
             "execution_latency_sessions": self._latency,
             "full_sessions_only": self._full_sessions_only,
@@ -858,8 +921,8 @@ class WalkForwardEngine:
                 "permitted_series": sorted(s.value for s in self._eligibility_policy.permitted_series),
                 "allow_series_transitions": self._eligibility_policy.allow_series_transitions,
             },
-            "cost_model": self._cost_model.__class__.__name__ if self._cost_model is not None else "DEFAULT_TRANSACTION_COST_MODEL",
-            "slippage_model": self._slippage_model.__class__.__name__ if self._slippage_model is not None else "DEFAULT_SLIPPAGE_MODEL",
+            "cost_model": cost_config,
+            "slippage_model": slippage_config,
             "criteria_version": self._criteria.version,
         }
 
