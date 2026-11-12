@@ -1270,3 +1270,158 @@ All five §21 findings are closed by execution, not by description: the fail-ope
 Three residuals are carried and none can manufacture a `PASS`: D-1b (a near-zero variance still deflates by nothing, though it is now at least a mathematically coherent input), D-6 (rounded verdicts), D-7 (`NOT RUN` has no schema). D-6 and D-7 land on the Phase 2C/2D report emitter, which is where `AGENTS.md` §9.3 becomes executable.
 
 **Next per the committed roadmap:** Phase 2B.5 (market data ingestion and immutable storage layer) before 2C, per the window decision recorded in `CURRENT_STAGE_OF_WORK.md` — binding corpus from 2018-04-01, warm-up from 2015, Parquet as system of record with DuckDB as a rebuildable engine.
+
+---
+
+## 23. Phase 2B.5 — Market Data Ingestion & Immutable Storage Layer (`fc9ecde`)
+
+**Commit audited:** `fc9ecde` — *"feat(storage): implement Phase 2B.5 market data ingestion and immutable storage layer"* (14 files, +5,516/−20).
+**Suite (measured):** `193 passed in 4.61s`.
+**Committed probe (measured):** `probe_phase2b5.py` exit 0, `ALL MEASURED GATES PASSED (7/7, 100.0%)`.
+**Scope of the slice as committed:** trading calendar, ISIN-keyed security master, Bronze/Silver/Gold storage, disposable DuckDB views, gating-window enforcement, for a five-scrip reference set.
+
+### 23.1 What is structurally right
+
+These are not ornaments and should survive the remediation unchanged:
+
+- **Layer boundaries exist and are honest about dependency direction.** `pyarrow`/`duckdb` land in a `storage` extra (`pyproject.toml`), both modules guard the import, and nothing in `research/`, `portfolio/`, or `execution/` imports storage. The core stays stdlib-pure as §10.2 requires.
+- **ISIN is the identity key** (§10.4). `SilverRecord.to_price_bar()` uses ISIN as `instrument_id`; symbol and series are per-row effective-dated attributes; nothing partitions by symbol.
+- **Interval semantics are correct.** `SymbolInterval`/`SurveillanceInterval` are half-open `[effective_from, effective_to)` with `effective_to=None` as open-ended, `effective_from >= effective_to` rejected, and overlap detection across an ISIN's own symbol intervals. Delisting and transition predicates are `as_of >= effective_date`, which is the right side of the boundary.
+- **Writes are atomic.** Both Bronze and Silver write to a temp file, `fsync`, then `replace()`; Silver refuses to create an empty partition and rejects a duplicate ISIN or a record whose `trade_date` disagrees with the partition date.
+- **Exactness is preserved on the round trip.** Prices are written as decimal *strings*, not floats, so `Decimal(str)` reads back bit-identical. No binary float enters the storage path.
+- **Fingerprints are deterministic** (sorted iteration, `sort_keys=True`, canonical row strings) and the DuckDB file is genuinely disposable — deleting it changes no fingerprint, which §10.2 requires.
+
+The architecture is the right shape. The problem is that four of the eight §10 rules are asserted in docstrings and in the docs but not enforced in code, and the probe only exercises the paths where they happen to hold.
+
+### 23.2 Findings
+
+#### E-1 · P1 · The trading calendar is unverified and structurally incomplete
+
+`configs/trading_calendar_nse.json` carries **no provenance of any kind** — no source URL, retrieval timestamp, SHA-256, or verification status. It is a weekday list minus a holiday list, which is why it contains **zero weekend sessions** and omits every special session NSE actually ran:
+
+| Missing session | What actually happened |
+|---|---|
+| 2020-02-01 (Sat), 2025-02-01 (Sat) | Special live Saturday sessions on Union Budget days |
+| 2024-05-18 (Sat) | Special live session from the disaster-recovery site |
+| 2020-11-14 (Sat), 2019-10-27 (Sun), 2016-10-30 (Sun), 2023-11-12 (Sun) | Diwali muhurat trading |
+| 2015-11-11, 2017-10-19, 2018-11-07, 2021-11-04, 2022-10-24, 2024-11-01, 2025-10-21 | Diwali muhurat trading on weekdays — i.e. full-weekday sessions that are still dropped |
+
+The weekday *closure* list is sound: 0 of 122 spot-checked NSE closures appear as sessions (Holi, Good Friday, Id-Ul-Fitr, Maharashtra Day, Ram Navami, Muharram, Guru Nanak Jayanti, election-day closures, and the 2024-01-22 Ram-temple closure are all correctly absent). That makes the defect precise: **the calendar models weekdays, not sessions.**
+
+Why this is a P1 and not a data-quality nit: the calendar is the authority every gap classification is measured against. A real session absent from the calendar can never be reported as `UNEXPLAINED_MISSING_RECORD` — the detector only walks dates the calendar already believes in — after which a bar on that date either is rejected as off-calendar or vanishes from the series (proved in E-2). The omission is invisible by construction. §10.7 (provenance and hash for every retrieved artifact) is also flatly unmet by the calendar file itself.
+
+Separately, a muhurat session is a ~1-hour session, not a full day. Its OHLC range and volume are not comparable with a 09:15–15:30 session, so a correct model carries `session_type` and `open_time`/`close_time`. Silently dropping the day is one failure; silently treating an evening session as a full day would be the other.
+
+#### E-2 · P1 · Silver has no calendar validation, and off-calendar bars vanish without a gap
+
+`silver.py`'s header and the docs both describe partitions as *"calendar-checked"* / *"calendar-validated"*. They are not: `write_daily_partition(trade_date, records)` takes no calendar and never consults one. Measured — both writes succeed with no error:
+
+```
+calendar.is_session(2024-05-18) = False  [real NSE session, DR-site] -> ACCEPTED, no calendar check
+calendar.is_session(2024-05-19) = False  [Sunday]                    -> ACCEPTED, no calendar check
+```
+
+Worse is the read side. `read_instrument_series_with_calendar_validation` iterates `calendar.sessions_in_range(...)` and therefore never visits an off-calendar partition, so the bar is neither returned nor classified:
+
+```
+[A] series dates = ['2024-05-16', '2024-05-17', '2024-05-21']   gaps = []
+```
+
+The 2024-05-18 bar is on disk, is absent from the returned series, and produces **no gap of any type** — numerically indistinguishable from a two-session jump. That is precisely the silent-bridging failure §6.3 forbids, and it composes with E-1: the calendar's own omissions are exactly the dates whose bars disappear this way.
+
+#### E-3 · P1 · `build_dataset_snapshot` fingerprints datasets that have holes in them
+
+`GoldEngine.load_price_panel` does support fail-closed behaviour (`fail_closed_on_missing=True` and it raises `GoldEngineError: Missing required silver partition for calendar session ...` when tested). But `build_dataset_snapshot` — the function that mints the `DatasetSnapshot` and its `DATA-CTNT-V2` content fingerprint — calls it with `fail_closed_on_missing=False`:
+
+```
+[B] calendar sessions = 4, snapshot.session_count = 4, bars returned = 3
+    dates = ['2024-01-10', '2024-01-11', '2024-01-15']      (2024-01-12 missing from disk)
+[B] snapshot built with a hole on 2024-01-12, no exception, fpr = DATA-CTNT-V2-b4b4125b04447e1dc86ff3bfa6f424fc
+```
+
+Three separate violations in one call: the snapshot claims `session_count=4` while carrying 3 bars; the missing session is recorded nowhere in the returned panel (no gap metadata, so a downstream feature engine sees three bars and assumes three consecutive sessions); and the content fingerprint certifies the truncated dataset as the identified artifact. `TrialRecord.dataset_fingerprint` would then point at data that was silently shortened. Additionally `return {k: tuple(v) for k, v in ... if v}` drops instruments with zero bars entirely, shrinking the universe without a record.
+
+#### E-4 · P2 · The DuckDB view exposes prices as `VARCHAR`, so numeric predicates silently return wrong answers
+
+Exactness is preserved on write (E-1's sibling strength), but the disposable query layer is where §10.6's `DECIMAL` requirement actually bites, and there the column type is text:
+
+```
+typeof(close) = 'VARCHAR'
+SELECT count(*) ... WHERE close >= '3000'   -> 1 row     (numeric answer: 0)
+'900.00' >= '1500'                          -> True
+SELECT avg(close)                           -> BinderException: No function matches
+```
+
+A researcher writing `WHERE close > 100` against the *analytical engine built for this exact purpose* gets lexicographic comparison: every three-digit price outranks every four-digit price. No error, no warning. Either the Parquet columns are `DECIMAL(p,s)` (or integer paise) and the view inherits it, or the view exposes explicit `CAST(close AS DECIMAL(18,4))` columns — with exactness documented, not left to the caller's memory.
+
+#### E-5 · P2 · The view layer fails open on corrupt partitions
+
+`register_views` wraps `CREATE OR REPLACE VIEW ... read_parquet(glob)` in `except Exception:` and substitutes an empty typed view. With a deliberately truncated Parquet file:
+
+```
+[C] TRUNCATED partition -> count(*) = 0        (silently empty view, no error raised)
+```
+
+"No files exist yet" and "the archive is corrupt" are indistinguishable, and the failing answer is the reassuring one. A backtest run against a corrupt partition would see zero rows for that instrument and quietly exclude it. The empty-view fallback should apply only when the glob matches no files.
+
+#### E-6 · P2 · Bronze accepts an overwrite of an archived path, orphaning the prior verification
+
+`store_payload` writes via temp file then `replace()`, so re-storing the same `relative_path` overwrites the archived bytes. The manifest keeps both entries and `get_manifest_entry` walks the manifest in reverse, so tamper verification always checks against the *newest* entry:
+
+```
+[D] overwrite accepted: True | bytes now: b'REVISED,DIFFERENT,BYTES\n'
+[D] manifest entries for path: 2 | original retrieval verifiable: its sha256 is in the manifest but its payload is gone
+```
+
+The old retrieval becomes unverifiable while still appearing in the audit trail, and Gate G2B.5-1 passes only because it never re-stores an existing path. §10.1 requires that corrections be *new appends carrying an effective date and a restatement reference* — an in-place replacement is exactly the edit it prohibits. Content-addressed payload filenames (`<sha256>.bin` plus a path index) would make this structurally impossible rather than policy-dependent.
+
+### 23.3 Residuals (non-blocking for 2B.5, must be settled before they touch a verdict)
+
+| ID | Sev | Finding |
+|---|---|---|
+| **E-7** | P3 | Surveillance intervals are never checked for overlap or contradiction, and `resolve_surveillance` returns *all* applicable stages as a tuple with no precedence rule — a scrip simultaneously ASM-LT-2 and GSM-2 resolves to both, and §5.2's "most restrictive" logic does not exist yet. |
+| **E-8** | P3 | Duplicate delisting/transition events for one ISIN are built into dicts (`{d.isin: d}`), so the last one silently wins instead of raising. |
+| **E-9** | P3 | `circular_ref` is free text with no verification status; committed values (`NSE/CML/2018/BONUS_INFY`, `NSE/CML/57531`) are not in NSE's circular identifier format. Under §6.5 these must be `SOURCE_UNVERIFIED` until a real circular is filed. |
+| **E-10** | P3 | `build_production_security_master()` hardcodes five scrips inside library code — reference data as a code literal, with no file, no fingerprint artifact, and no provenance. It is named "production" and will be consumed as such. |
+| **E-11** | P3 | The "point-in-time universe" is *every ISIN registered in the hardcoded master*, filtered by series — there is no Nifty membership data anywhere in the commit. G2B.5-3 therefore tests delisting arithmetic, not universe reconstruction. 2C must not assume a universe schedule exists. |
+| **E-12** | P3 | Adjustment scales prices but not `volume` or `traded_value`, so an adjusted dataset mixes post-split prices with pre-split share counts — which corrupts the §7.3 participation cap and any turnover-based slippage. Additionally `adjustment_factor` is a `Decimal` **division**, so non-terminating ratios (3:2, 2:3) round at the ambient context precision (28 digits): exactness is silently approximate and the content fingerprint becomes process-context-dependent. |
+| **E-13** | P3 | No OHLC sanity validation (`high < low` or `high < close` is accepted), and no whitelist on `series`, so §5.1's `EQ`/`BE`/`SM`/`BZ` semantics are carried as free text. |
+| **E-14** | P3 | `check_gating_verdict_eligibility` matches only the literal `"GO"`; `"APPROVED"`/`"PASS"` pass through unchecked. Narrow, because `resolve_gating_verdict` does force `NOT RUN` for pre-2018 windows. |
+| **E-15** | P3 | Manifest append has no inter-process lock; two concurrent ingests can interleave a partial line into `manifest.jsonl`. |
+
+### 23.4 Gate assessment
+
+All seven gates pass as written, but each fixture avoids the failure mode that the corresponding rule exists to prevent:
+
+| Gate | Probe result | What it actually establishes |
+|---|---|---|
+| G2B.5-1 | **PASS** | Bit-flip and truncation are caught. Never re-stores an existing path, so E-6 is invisible. |
+| G2B.5-2 | **PASS** | Determinism on identical input — genuine, and unaffected by these findings. |
+| G2B.5-3 | **PASS** | Delisting/transition boundary arithmetic is right. Universe reconstruction is untested because none exists (E-11). |
+| G2B.5-4 | **PASS** | Only tests a *whole partition missing on a calendar date*. Off-calendar bars (E-1/E-2) and the snapshot builder's own non-fail-closed path (E-3) are not exercised. |
+| G2B.5-5 | **PASS** | Rewrite through the API is refused. A second writer or a same-path Bronze restatement is not modelled. |
+| G2B.5-6 | **PASS** | Database deletion leaves fingerprints intact — genuine. Queries use equality on ISIN/date, so no numeric predicate ever touches the `VARCHAR` prices (E-4). |
+| G2B.5-7 | **PASS** | Preserving a computed verdict on a pre-2018 window does force `NOT RUN`. Literal-`GO`-only matching remains (E-14). |
+
+No gate tests calendar completeness against an authoritative source, no gate rejects an off-calendar bar, no gate asserts that a gapped dataset cannot be fingerprinted, and no gate performs arithmetic on a stored price. The gates are measured — but measured against the paths that already work.
+
+### 23.5 Documentation integrity
+
+The commit rewrites the Phase 2B.5 section heading to **"(Implemented & Verified)"**, states in the gate table that all seven gates are `PASS`, and describes Silver as *"Typed, calendar-validated daily Parquet partitions"*. The first two are defensible readings of the probe; the third is falsified by E-2, and "Verified" is a verdict this audit does not grant. The commit also **deletes the design rationale** that justified the window and the storage decision (why not 2022–2026, the structural-break inventory, Parquet-as-system-of-record, the artifact list, the original gate definitions). Under §9.1 the replaces are only as good as the computation behind them, and the reasoning that produced the plan is now missing from the document that is supposed to hold it.
+
+### 23.6 Verdict
+
+**Phase 2B.5 is NOT signed off.**
+
+This is a competent skeleton with the right module boundaries, the right identity key, correct interval semantics, atomic writes, deterministic fingerprints, and a genuinely disposable query engine — the hard architectural decisions are sound and none of them needs reversing. But four of the eight §10 rules are unenforced in code while being asserted in docstrings and documentation: §10.1 (Bronze overwrite, E-6), §10.3/§6.3 (holes inside a fingerprinted dataset, E-3; off-calendar bars dropped without a gap, E-2), §10.6 (text-typed prices in the query layer, E-4), and §10.7 (calendar with no provenance, E-1). Two of those — E-1 and E-2 — can silently remove real NSE sessions from a series, which is the exact class of failure this project has rejected at every prior phase.
+
+**Closure set (must all be closed, by execution, before 2C):**
+
+1. **E-1** — Rebuild the calendar as *sessions*, not weekdays: `session_type` (FULL / MUHURAT / SPECIAL) with open and close times, every special session included, plus a provenance block (source, retrieved_at, sha256, verification status) and a per-year completeness count asserted against NSE's annual holiday circular.
+2. **E-2** — Pass the calendar into Silver; reject any partition whose date is not an authoritative session; reject (never drop) an archived bar outside the calendar, and surface off-calendar storage as an explicit error type.
+3. **E-3** — `build_dataset_snapshot` must fail closed by default on a missing session, must carry gap metadata for any session it can legitimately skip, and must never emit a fingerprint over a non-contiguous series. Remove the `if v` silent universe shrinkage.
+4. **E-4** — Persist prices as `DECIMAL`/integer paise, or expose explicitly cast `DECIMAL` columns in the view, so numeric predicates and aggregates are exact and correct.
+5. **E-5** — Fail closed on unreadable partitions; reserve the empty-view fallback for "no files match".
+6. **E-6** — Make Bronze content-addressed and reject in-place restatement without an explicit restatement reference.
+
+E-7…E-15 are carried as residuals; E-11 and E-12 must be resolved before any universe or participation-cap computation is presented as measured. The gate table must gain tests for: calendar completeness and provenance, off-calendar bar rejection, fingerprint refusal over a gapped series, Bronze restatement, numeric typing through the view, and corrupt-partition fail-closed behaviour — each of which currently passes without being checked.

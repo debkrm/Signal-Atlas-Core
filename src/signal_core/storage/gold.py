@@ -1,12 +1,14 @@
 """
 Gold Layer: Derived Analytics, Forward Corporate Adjustments, and Point-in-Time Universe Schedules.
 
-Implements derived data generation per AGENTS.md Rule 10.3:
+Implements derived data generation per AGENTS.md Rule 10.3 and Rule 6.3:
 - Raw -> Typed/Validated (Silver) -> Derived (Gold).
 - Corporate action adjustments applied in Gold only, never in Silver or Bronze.
 - Point-in-time universe schedules generated strictly as-of date T with zero survivorship bias.
 - Merged/delisted scrips and transitioned ISINs pruned on exact effective dates (Gate G2B.5-3).
 - Deterministic cryptographic fingerprinting (DATA-CTNT-V2, UNIV-SCHED-V1) reproduced on rerun (Gate G2B.5-2).
+- Fail-closed snapshot generation: Refuses to emit a fingerprint over non-contiguous or gapped datasets (E-3).
+- Volume adjustment preservation: Splits adjust share volume inversely to preserve turnover representation (E-12).
 """
 
 from dataclasses import dataclass
@@ -22,12 +24,17 @@ from signal_core.contracts.provenance import (
 )
 from signal_core.contracts.universe import UniverseSchedule
 from signal_core.storage.calendar import TradingCalendar
-from signal_core.storage.security_master import CorporateAction, SecurityMaster
+from signal_core.storage.security_master import CorporateAction, CorporateActionType, SecurityMaster
 from signal_core.storage.silver import SilverStorage
 
 
 class GoldEngineError(ValueError):
     """Base exception for gold layer engine failures."""
+    pass
+
+
+class NonContiguousDatasetError(GoldEngineError):
+    """Raised when an attempt is made to fingerprint or build a snapshot over a gapped series (E-3)."""
     pass
 
 
@@ -112,6 +119,7 @@ class GoldEngine:
         """
         Loads unadjusted PriceBar sequences for specified instruments (or all registered instruments)
         across trading sessions in [start_date, end_date].
+        Fails closed with NonContiguousDatasetError if any active session is missing from storage (E-3).
         """
         sessions = self._calendar.sessions_in_range(start_date, end_date)
         target_isins = tuple(isins) if isins is not None else self._sec_master.registered_isins
@@ -121,7 +129,9 @@ class GoldEngine:
         for s in sessions:
             if not self._silver.partition_exists(s):
                 if fail_closed_on_missing:
-                    raise GoldEngineError(f"Missing required silver partition for calendar session {s}")
+                    raise NonContiguousDatasetError(
+                        f"Cannot load contiguous price panel: missing required silver partition for calendar session {s}"
+                    )
                 continue
 
             records = self._silver.read_daily_partition(s)
@@ -135,11 +145,24 @@ class GoldEngine:
                 if isin in records_by_isin:
                     prices_by_inst[isin].append(records_by_isin[isin].to_price_bar())
                 elif fail_closed_on_missing:
-                    raise GoldEngineError(
+                    raise NonContiguousDatasetError(
                         f"Active instrument {isin} has unexplained missing record on session {s}"
                     )
 
-        return {k: tuple(v) for k, v in prices_by_inst.items() if v}
+        # Enforce that instruments active during the range are not silently dropped with 'if v' (E-3)
+        result: Dict[str, Tuple[PriceBar, ...]] = {}
+        for isin, bars in prices_by_inst.items():
+            if bars:
+                result[isin] = tuple(bars)
+            elif fail_closed_on_missing:
+                # Check if instrument was active on any calendar session in [start_date, end_date]
+                active_days = [s for s in sessions if self._sec_master.is_active(isin, s)]
+                if active_days:
+                    raise NonContiguousDatasetError(
+                        f"Active instrument {isin} has 0 records across {len(active_days)} active calendar sessions."
+                    )
+
+        return result
 
     def build_dataset_snapshot(
         self,
@@ -148,14 +171,19 @@ class GoldEngine:
         price_convention: PriceConvention = PriceConvention.UNADJUSTED_RAW,
         dataset_id: str = "NSE-CASH-EQUITY-GOLD",
         isins: Optional[Sequence[str]] = None,
+        fail_closed_on_missing: bool = True,
     ) -> Tuple[DatasetSnapshot, Mapping[str, Sequence[PriceBar]]]:
         """
         Produces an immutable DatasetSnapshot descriptor and price panel.
+        Fails closed by default if any session is missing: never mints a fingerprint over a gapped series (E-3).
         Computes deterministic DATA-CTNT-V2 content fingerprint and UNIV-SCHED-V1 universe fingerprint.
         Guarantees bit-for-bit reproducibility across runs (Gate G2B.5-2).
         """
         sessions = self._calendar.sessions_in_range(start_date, end_date)
-        raw_prices = self.load_price_panel(start_date, end_date, isins=isins, fail_closed_on_missing=False)
+        # Fail closed on missing sessions by default (E-3)
+        raw_prices = self.load_price_panel(
+            start_date, end_date, isins=isins, fail_closed_on_missing=fail_closed_on_missing
+        )
 
         # Build universe schedule and fingerprint
         universe_sched = self.build_point_in_time_universe_schedule(start_date, end_date)
@@ -171,26 +199,31 @@ class GoldEngine:
                 adj_bars: List[PriceBar] = []
                 for b in bars:
                     # Compute cumulative adjustment factor from all corporate actions with ex_date > trade_date
-                    cum_factor = Decimal("1.0")
+                    cum_numerator = Decimal("1")
+                    cum_denominator = Decimal("1")
                     split_factor = Decimal("1.0")
+
                     for ca in corp_actions:
                         if ca.ex_date > b.trade_date:
-                            # Apply factor to pre-event price
-                            factor = ca.adjustment_factor
-                            cum_factor *= factor
+                            cum_numerator *= ca.ratio_numerator
+                            cum_denominator *= ca.ratio_denominator
                             if ca.action_type in (CorporateActionType.SPLIT, CorporateActionType.ISIN_TRANSITION):
-                                split_factor *= factor
+                                split_factor *= ca.adjustment_factor
 
-                    multipliers_by_inst_date[(isin, b.trade_date)] = (cum_factor, split_factor)
+                    cum_price_multiplier = cum_denominator / cum_numerator
+                    multipliers_by_inst_date[(isin, b.trade_date)] = (cum_price_multiplier, split_factor)
+
+                    # Inversely adjust volume to preserve turnover representation (E-12)
+                    adj_volume = (b.volume * int(cum_numerator)) // int(cum_denominator)
 
                     adj_bar = PriceBar(
                         instrument_id=isin,
                         trade_date=b.trade_date,
-                        open=b.open * cum_factor,
-                        high=b.high * cum_factor,
-                        low=b.low * cum_factor,
-                        close=b.close * cum_factor,
-                        volume=b.volume,
+                        open=b.open * cum_price_multiplier,
+                        high=b.high * cum_price_multiplier,
+                        low=b.low * cum_price_multiplier,
+                        close=b.close * cum_price_multiplier,
+                        volume=adj_volume,
                         traded_value=b.traded_value,
                         currency=b.currency,
                     )

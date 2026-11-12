@@ -59,9 +59,9 @@ def check_gating_verdict_eligibility(
         raise GatingWindowValidationError(f"start_date must be genuine datetime.date, got {type(start_date).__name__}")
 
     clean_verdict = proposed_verdict.strip().upper()
-    if start_date < BINDING_EVALUATION_START_DATE and clean_verdict == "GO":
+    if start_date < BINDING_EVALUATION_START_DATE and clean_verdict in ("GO", "APPROVED", "PASS"):
         raise GatingWindowValidationError(
-            f"Gate G2B.5-7 Violation: Cannot issue GO verdict for evaluation window starting {start_date}. "
+            f"Gate G2B.5-7 Violation: Cannot issue {clean_verdict} verdict for evaluation window starting {start_date}. "
             f"The binding evaluation window starts on {BINDING_EVALUATION_START_DATE}. "
             "Prior sessions lack authoritative surveillance history and are restricted to warm-up only; "
             "metrics computed on them must be classified as 'NOT RUN'."
@@ -83,3 +83,4 @@ def resolve_gating_verdict(
     if start_date < BINDING_EVALUATION_START_DATE:
         return "NOT RUN"
     return computed_verdict.strip().upper()
+

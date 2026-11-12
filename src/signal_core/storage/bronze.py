@@ -1,9 +1,14 @@
 """
-Bronze Layer: Byte-Exact Raw Archive Storage and Provenance Manifest.
+Bronze Layer: Byte-Exact Content-Addressed Raw Archive Storage and Provenance Manifest.
 
 Implements raw storage integrity per AGENTS.md Rule 10.1 and Rule 10.7:
-- Bronze payloads are byte-exact as retrieved and are never mutated or edited.
-- Every retrieval records source URL, retrieval timestamp, byte count, and SHA-256 in an append-only manifest.
+- Bronze payloads are byte-exact as retrieved and are never mutated or edited in place.
+- Payloads are stored content-addressed by SHA-256 digest in blobs/{sha256}.bin (E-6).
+- Every retrieval records source URL, retrieval timestamp, byte count, SHA-256, and optional
+  restatement reference in an append-only manifest.
+- Re-storing an existing path with differing bytes without an explicit restatement_ref raises
+  BronzeStorageError fail-closed (E-6).
+- Historical retrievals are never orphaned or overwritten; all historical states remain verifiable.
 - Tamper detection fails closed: any modification, bit flip, or truncation raises TamperedBronzePayloadError (Gate G2B.5-1).
 """
 
@@ -13,8 +18,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import tempfile
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 
 class BronzeStorageError(ValueError):
@@ -42,55 +46,58 @@ class BronzeManifestEntry:
     retrieved_at: str
     byte_count: int
     sha256: str
+    restatement_ref: Optional[str] = None
 
-    def to_json_dict(self) -> Dict[str, Union[str, int]]:
-        return {
+    def to_json_dict(self) -> Dict[str, Union[str, int, None]]:
+        d: Dict[str, Union[str, int, None]] = {
             "relative_path": self.relative_path,
             "source_url": self.source_url,
             "retrieved_at": self.retrieved_at,
             "byte_count": self.byte_count,
             "sha256": self.sha256,
         }
+        if self.restatement_ref is not None:
+            d["restatement_ref"] = self.restatement_ref
+        return d
 
     @classmethod
-    def from_json_dict(cls, data: Mapping[str, Union[str, int]]) -> "BronzeManifestEntry":
+    def from_json_dict(cls, data: Mapping[str, Any]) -> "BronzeManifestEntry":
         return cls(
             relative_path=str(data["relative_path"]),
             source_url=str(data["source_url"]),
             retrieved_at=str(data["retrieved_at"]),
             byte_count=int(data["byte_count"]),
             sha256=str(data["sha256"]),
+            restatement_ref=str(data["restatement_ref"]) if data.get("restatement_ref") else None,
         )
 
 
 class BronzeStorage:
     """
-    Manages byte-exact raw archives and their append-only audit manifest.
+    Manages content-addressed raw archives and their append-only audit manifest.
     """
     def __init__(self, root_dir: Union[str, Path]) -> None:
         self._root_dir = Path(root_dir).resolve()
+        self._blobs_dir = self._root_dir / "blobs"
         self._manifest_path = self._root_dir / "manifest.jsonl"
         self._root_dir.mkdir(parents=True, exist_ok=True)
+        self._blobs_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def root_dir(self) -> Path:
         return self._root_dir
 
     @property
+    def blobs_dir(self) -> Path:
+        return self._blobs_dir
+
+    @property
     def manifest_path(self) -> Path:
         return self._manifest_path
 
-    def _resolve_safe_path(self, relative_path: str) -> Path:
-        """Resolves relative path within root_dir, preventing directory traversal."""
-        clean_rel = Path(relative_path)
-        if clean_rel.is_absolute():
-            raise BronzeStorageError(f"Absolute paths not permitted in bronze storage: {relative_path}")
-        target = (self._root_dir / clean_rel).resolve()
-        try:
-            target.relative_to(self._root_dir)
-        except ValueError:
-            raise BronzeStorageError(f"Path traversal detected: {relative_path}")
-        return target
+    def get_blob_path(self, sha256_digest: str) -> Path:
+        """Returns storage path for a content-addressed blob."""
+        return self._blobs_dir / f"{sha256_digest}.bin"
 
     def store_payload(
         self,
@@ -98,9 +105,11 @@ class BronzeStorage:
         data: bytes,
         source_url: str,
         retrieved_at: Optional[datetime.datetime] = None,
+        restatement_ref: Optional[str] = None,
     ) -> BronzeManifestEntry:
         """
-        Atomically stores raw payload bytes and records provenance entry in manifest.
+        Stores raw payload bytes in content-addressed storage and appends provenance record to manifest.
+        Fails closed if attempting to overwrite an existing path with different bytes without an explicit restatement_ref (E-6).
         """
         if not isinstance(data, (bytes, bytearray)):
             raise BronzeStorageError(f"Payload data must be bytes, got {type(data).__name__}")
@@ -109,34 +118,46 @@ class BronzeStorage:
         if not source_url or not source_url.strip():
             raise BronzeStorageError("source_url cannot be empty.")
 
-        target_path = self._resolve_safe_path(relative_path)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Atomic write to temporary file then replace
-        temp_file = target_path.with_suffix(f".tmp_{os.getpid()}_{datetime.datetime.now().timestamp()}")
-        try:
-            with open(temp_file, "wb") as f:
-                f.write(data)
-                f.flush()
-                os.fsync(f.fileno())
-            temp_file.replace(target_path)
-        except Exception:
-            if temp_file.exists():
-                temp_file.unlink()
-            raise
-
-        # Compute SHA-256 and byte count
+        normalized_path = relative_path.replace("\\", "/")
         byte_count = len(data)
         sha256_digest = hashlib.sha256(data).hexdigest()
-        ts = retrieved_at or datetime.datetime.now(datetime.timezone.utc)
-        ts_str = ts.isoformat()
 
+        # Check existing manifest records for this relative_path
+        existing_entries = [e for e in self.load_manifest() if e.relative_path == normalized_path]
+        if existing_entries:
+            latest = existing_entries[-1]
+            if latest.sha256 != sha256_digest:
+                # Content has changed for an existing path!
+                if not restatement_ref:
+                    raise BronzeStorageError(
+                        f"Cannot overwrite archived path '{normalized_path}' with different payload "
+                        f"(existing sha={latest.sha256[:12]}, new sha={sha256_digest[:12]}) "
+                        "without an explicit restatement_ref per AGENTS.md Rule 10.1."
+                    )
+
+        # Store content-addressed blob atomically
+        blob_path = self.get_blob_path(sha256_digest)
+        if not blob_path.exists():
+            temp_file = blob_path.with_suffix(f".tmp_{os.getpid()}_{datetime.datetime.now().timestamp()}")
+            try:
+                with open(temp_file, "wb") as f:
+                    f.write(data)
+                    f.flush()
+                    os.fsync(f.fileno())
+                temp_file.replace(blob_path)
+            except Exception:
+                if temp_file.exists():
+                    temp_file.unlink()
+                raise
+
+        ts = retrieved_at or datetime.datetime.now(datetime.timezone.utc)
         entry = BronzeManifestEntry(
-            relative_path=relative_path.replace("\\", "/"),
+            relative_path=normalized_path,
             source_url=source_url,
-            retrieved_at=ts_str,
+            retrieved_at=ts.isoformat(),
             byte_count=byte_count,
             sha256=sha256_digest,
+            restatement_ref=restatement_ref,
         )
 
         # Append to manifest.jsonl
@@ -165,37 +186,54 @@ class BronzeStorage:
                     raise BronzeStorageError(f"Corrupt manifest line {line_no} in {self._manifest_path}: {line}") from exc
         return entries
 
-    def get_manifest_entry(self, relative_path: str) -> Optional[BronzeManifestEntry]:
-        """Finds latest manifest entry for relative_path."""
+    def get_manifest_entries(self, relative_path: str) -> List[BronzeManifestEntry]:
+        """Returns all historical manifest entries for relative_path, chronological order."""
         normalized = relative_path.replace("\\", "/")
-        entries = self.load_manifest()
-        for e in reversed(entries):
-            if e.relative_path == normalized:
-                return e
-        return None
+        return [e for e in self.load_manifest() if e.relative_path == normalized]
 
-    def read_payload(self, relative_path: str, verify: bool = True) -> bytes:
-        """
-        Reads payload bytes from disk. If verify is True (default), verifies
-        exact byte count and SHA-256 against manifest before returning.
-        Fails closed with TamperedBronzePayloadError if modified (Gate G2B.5-1).
-        """
-        target_path = self._resolve_safe_path(relative_path)
-        if not target_path.is_file():
-            raise FileNotFoundError(f"Bronze payload file not found: {target_path}")
+    def get_manifest_entry(
+        self, relative_path: str, sha256_digest: Optional[str] = None
+    ) -> Optional[BronzeManifestEntry]:
+        """Finds manifest entry for relative_path (optionally matching specific sha256)."""
+        entries = self.get_manifest_entries(relative_path)
+        if not entries:
+            return None
+        if sha256_digest is not None:
+            for e in entries:
+                if e.sha256 == sha256_digest:
+                    return e
+            return None
+        return entries[-1]
 
-        with open(target_path, "rb") as f:
+    def read_payload(
+        self,
+        relative_path: str,
+        sha256_digest: Optional[str] = None,
+        verify: bool = True,
+    ) -> bytes:
+        """
+        Reads payload bytes from content-addressed blob.
+        If verify is True, asserts exact byte count and SHA-256 against manifest before returning.
+        Fails closed with TamperedBronzePayloadError on corruption (Gate G2B.5-1).
+        """
+        entry = self.get_manifest_entry(relative_path, sha256_digest=sha256_digest)
+        if entry is None:
+            raise MissingBronzeManifestError(
+                f"No manifest entry found for payload {relative_path}. Unanchored payload fails closed."
+            )
+
+        blob_path = self.get_blob_path(entry.sha256)
+        if not blob_path.is_file():
+            raise FileNotFoundError(f"Content blob not found for digest {entry.sha256} at {blob_path}")
+
+        with open(blob_path, "rb") as f:
             data = f.read()
 
         if verify:
-            entry = self.get_manifest_entry(relative_path)
-            if entry is None:
-                raise MissingBronzeManifestError(
-                    f"No manifest entry found for payload {relative_path}. Unanchored payload fails closed."
-                )
             if len(data) != entry.byte_count:
                 raise TamperedBronzePayloadError(
-                    f"Payload size mismatch for {relative_path}: expected {entry.byte_count} bytes, got {len(data)}"
+                    f"Payload size mismatch for {relative_path} (blob {entry.sha256}): "
+                    f"expected {entry.byte_count} bytes, got {len(data)}"
                 )
             computed_sha = hashlib.sha256(data).hexdigest()
             if computed_sha != entry.sha256:

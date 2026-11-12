@@ -308,8 +308,17 @@ class SecurityMaster:
 
         # Build index for fast lookup
         self._intervals_by_isin = by_isin
-        self._delistings_by_isin: Dict[str, DelistingEvent] = {d.isin: d for d in self._delisting_events}
-        self._transitions_by_old_isin: Dict[str, ISINTransitionEvent] = {t.old_isin: t for t in self._isin_transitions}
+        self._delistings_by_isin: Dict[str, DelistingEvent] = {}
+        for d in self._delisting_events:
+            if d.isin in self._delistings_by_isin:
+                raise SecurityMasterError(f"Duplicate delisting event detected for ISIN {d.isin}")
+            self._delistings_by_isin[d.isin] = d
+
+        self._transitions_by_old_isin: Dict[str, ISINTransitionEvent] = {}
+        for t in self._isin_transitions:
+            if t.old_isin in self._transitions_by_old_isin:
+                raise SecurityMasterError(f"Duplicate ISIN transition event detected for old ISIN {t.old_isin}")
+            self._transitions_by_old_isin[t.old_isin] = t
 
         # Compute deterministic fingerprint
         self._fingerprint = compute_security_master_fingerprint(
@@ -515,3 +524,4 @@ def build_production_security_master() -> SecurityMaster:
         delisting_events=delisting_events,
         isin_transitions=isin_transitions,
     )
+

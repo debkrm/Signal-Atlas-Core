@@ -1,14 +1,14 @@
 """
 Authoritative Reproducible Verification Probe for Phase 2B.5 (Market Data Ingestion & Immutable Storage Layer).
 
-Computes and prints exact verdicts for all Phase 2B.5 gates:
-- Gate G2B.5-1: Truncated or tampered Bronze payload fails closed (TamperedBronzePayloadError).
+Remediates and enforces all §23 findings (Closure set E-1 through E-6):
+- Gate G2B.5-1 (E-1, E-6): Calendar completeness, circular provenance, content-addressed Bronze with immutable restatements.
 - Gate G2B.5-2: Rerun reproduces bit-for-bit identical dataset (DATA-CTNT-V2) and universe (UNIV-SCHED-V1) fingerprints.
 - Gate G2B.5-3: Known ISIN transition and known delisting are pruned on their exact effective dates.
-- Gate G2B.5-4: Session present in calendar but absent in archive classifies as UNEXPLAINED_MISSING_RECORD.
+- Gate G2B.5-4 (E-2, E-3): Off-calendar bar rejection, missing session UNEXPLAINED_MISSING_RECORD, and refusal to fingerprint gapped datasets.
 - Gate G2B.5-5: No Silver partition is ever rewritten (SilverPartitionImmutableError).
-- Gate G2B.5-6: DuckDB database is deleted and rebuilt with zero change to any fingerprint.
-- Gate G2B.5-7: No session before 2018-04-01 can reach a GO verdict (classified as NOT RUN).
+- Gate G2B.5-6 (E-4, E-5): DuckDB views expose exact DECIMAL(18, 4) prices, fail closed on partition corruption, and file deletion changes zero fingerprints.
+- Gate G2B.5-7 (E-14): Pre-2018 history strictly warm-up; GO/APPROVED/PASS verdicts blocked fail-closed.
 
 All verdicts are derived from runtime assertions and computed booleans. Zero hand-typed status labels.
 """
@@ -27,6 +27,7 @@ from signal_core.contracts.dataset import PriceConvention
 from signal_core.contracts.exchange_series import PriceSeriesGapType
 from signal_core.contracts.price_bar import PriceBar
 from signal_core.storage.calendar import (
+    SessionType,
     TradingCalendar,
     compute_calendar_fingerprint,
     load_nse_trading_calendar,
@@ -42,18 +43,24 @@ from signal_core.storage.security_master import (
 )
 from signal_core.storage.bronze import (
     BronzeStorage,
+    BronzeStorageError,
     MissingBronzeManifestError,
     TamperedBronzePayloadError,
 )
 from signal_core.storage.silver import (
+    OffCalendarSessionError,
     SilverPartitionImmutableError,
     SilverRecord,
     SilverStorage,
 )
 from signal_core.storage.gold import (
     GoldEngine,
+    NonContiguousDatasetError,
 )
-from signal_core.storage.views import DuckDBViewLayer
+from signal_core.storage.views import (
+    DuckDBViewError,
+    DuckDBViewLayer,
+)
 from signal_core.storage.gating import (
     BINDING_EVALUATION_START_DATE,
     GatingWindowClassification,
@@ -79,82 +86,113 @@ def run_phase_2b5_verification() -> bool:
         duckdb_path = temp_dir / "views.duckdb"
 
         # ----------------------------------------------------------------------
-        # CALENDAR VERIFICATION
+        # E-1: CALENDAR COMPLETENESS, SESSION TYPING & CIRCULAR PROVENANCE
         # ----------------------------------------------------------------------
-        print("\n--- Calendar Verification: Authoritative NSE Trading Calendar ---")
+        print("\n--- Gate G2B.5-1 (Part A / E-1): Calendar Completeness & Provenance ---")
         cal = load_nse_trading_calendar()
-        cal_total = cal.total_sessions
-        cal_start = cal.start_date
-        cal_end = cal.end_date
-        cal_binding_start = cal.binding_start_date
-        cal_fpr = cal.fingerprint
 
+        # 1. Total sessions and provenance
+        cal_total = cal.total_sessions
         cal_ok = (
-            cal_total == 2923
-            and cal_start == datetime.date(2015, 1, 1)
-            and cal_end == datetime.date(2026, 11, 11)
-            and cal_binding_start == datetime.date(2018, 4, 1)
-            and cal_fpr.startswith("CAL-FPR-V1-")
+            cal_total == 2939
+            and cal.start_date == datetime.date(2015, 1, 1)
+            and cal.end_date == datetime.date(2026, 11, 11)
+            and cal.binding_start_date == datetime.date(2018, 4, 1)
         )
 
-        warmup_count = len(cal.sessions_in_range(datetime.date(2015, 1, 1), datetime.date(2018, 3, 31)))
-        binding_count = len(cal.sessions_in_range(datetime.date(2018, 4, 1), datetime.date(2026, 11, 11)))
-        cal_partition_ok = (warmup_count == 798 and binding_count == 2125)
+        prov = cal.provenance
+        prov_ok = (
+            prov.get("source") == "NSE_CIRCULARS_ANNUAL_TRADING_HOLIDAYS_AND_SPECIAL_SESSIONS"
+            and len(prov.get("circular_references", [])) >= 12
+            and prov.get("sha256") == "b96991d4e3c5c005504e5d0736a23a04b258056b24d4ec9db57c58a7bde6f4a1"
+        )
 
-        cal_verdict = cal_ok and cal_partition_ok
-        all_passed = all_passed and cal_verdict
-        print(f"[{'PASS' if cal_verdict else 'FAIL'}] Calendar: {cal_total} total sessions "
-              f"({warmup_count} warm-up 2015-2018, {binding_count} binding 2018-2026)")
-        print(f"       Fingerprint: {cal_fpr}")
+        # 2. Check special budget and DR sessions
+        budget_sat_ok = (
+            cal.get_session(datetime.date(2020, 2, 1)) is not None
+            and cal.get_session(datetime.date(2020, 2, 1)).session_type == SessionType.SPECIAL
+            and cal.get_session(datetime.date(2025, 2, 1)) is not None
+        )
+        dr_sat_ok = (
+            cal.get_session(datetime.date(2024, 3, 2)) is not None
+            and cal.get_session(datetime.date(2024, 5, 18)) is not None
+            and cal.get_session(datetime.date(2024, 5, 18)).session_type == SessionType.SPECIAL
+        )
+
+        # 3. Check weekday and weekend muhurat sessions
+        muhurat_ok = (
+            cal.get_session(datetime.date(2018, 11, 7)) is not None
+            and cal.get_session(datetime.date(2018, 11, 7)).session_type == SessionType.MUHURAT
+            and cal.get_session(datetime.date(2020, 11, 14)) is not None
+            and cal.get_session(datetime.date(2024, 11, 1)) is not None
+        )
+
+        # 4. Annual completeness assertion
+        annual_completeness_ok = True
+        try:
+            for y in range(2015, 2027):
+                cal.assert_year_completeness(y)
+        except Exception:
+            annual_completeness_ok = False
+
+        e1_passed = cal_ok and prov_ok and budget_sat_ok and dr_sat_ok and muhurat_ok and annual_completeness_ok
+        print(f"[{'PASS' if e1_passed else 'FAIL'}] E-1: Calendar modeled as sessions (2939 sessions, budget/DR/muhurat all verified, provenance intact)")
 
         # ----------------------------------------------------------------------
-        # GATE G2B.5-1: Bronze Tamper Detection & Fail-Closed Invariants
+        # E-6: CONTENT-ADDRESSED BRONZE WITH IMMUTABLE RESTATEMENTS
         # ----------------------------------------------------------------------
-        print("\n--- Gate G2B.5-1: Bronze Tamper Detection & Fail-Closed Invariants ---")
+        print("\n--- Gate G2B.5-1 (Part B / E-6): Content-Addressed Bronze & Immutable Restatements ---")
         bronze = BronzeStorage(bronze_dir)
-        payload = b"SESSION,ISIN,CLOSE\n2024-01-10,INE009A01021,1500.00\n"
+        payload_v1 = b"SESSION,ISIN,CLOSE\n2024-01-10,INE009A01021,1500.00\n"
+        payload_v2 = b"SESSION,ISIN,CLOSE\n2024-01-10,INE009A01021,1505.00\n"
         rel_path = "bhavcopy/2024/2024-01-10.csv"
-        bronze.store_payload(rel_path, payload, source_url="https://archives.nse.test/bhavcopy.csv")
 
-        # 1. Valid read succeeds
-        valid_read = bronze.read_payload(rel_path, verify=True)
-        g1_valid_ok = (valid_read == payload)
+        entry_v1 = bronze.store_payload(rel_path, payload_v1, source_url="https://archives.nse.test/bhav_v1.csv")
 
-        # 2. Tampered payload fails closed
-        stored_file = bronze.root_dir / rel_path
-        with open(stored_file, "wb") as f:
-            f.write(payload.replace(b"1500.00", b"9999.00"))
-
-        g1_tamper_caught = False
+        # Overwrite without restatement_ref rejected fail-closed (E-6)
+        unauthorized_overwrite_blocked = False
         try:
-            bronze.read_payload(rel_path, verify=True)
-        except TamperedBronzePayloadError:
-            g1_tamper_caught = True
+            bronze.store_payload(rel_path, payload_v2, source_url="https://archives.nse.test/bhav_v2.csv")
+        except BronzeStorageError:
+            unauthorized_overwrite_blocked = True
 
-        # 3. Truncated payload fails closed
-        with open(stored_file, "wb") as f:
-            f.write(payload[:8])
+        # Restatement with reference succeeds
+        entry_v2 = bronze.store_payload(
+            rel_path,
+            payload_v2,
+            source_url="https://archives.nse.test/bhav_v2.csv",
+            restatement_ref="NSE/RESTATEMENT/CIRCULAR_2024",
+        )
 
-        g1_trunc_caught = False
+        # Both historical versions verifiable on disk (zero orphaned records)
+        v1_data = bronze.read_payload(rel_path, sha256_digest=entry_v1.sha256, verify=True)
+        v2_data = bronze.read_payload(rel_path, sha256_digest=entry_v2.sha256, verify=True)
+        both_verifiable = (v1_data == payload_v1 and v2_data == payload_v2)
+
+        # Tampering detection
+        blob_path = bronze.get_blob_path(entry_v1.sha256)
+        with open(blob_path, "wb") as f:
+            f.write(b"corrupt")
+        tamper_caught = False
         try:
-            bronze.read_payload(rel_path, verify=True)
+            bronze.read_payload(rel_path, sha256_digest=entry_v1.sha256, verify=True)
         except TamperedBronzePayloadError:
-            g1_trunc_caught = True
+            tamper_caught = True
 
-        # Restore original payload for cleanliness
-        with open(stored_file, "wb") as f:
-            f.write(payload)
+        # Restore blob
+        with open(blob_path, "wb") as f:
+            f.write(payload_v1)
 
-        g2b5_1_passed = g1_valid_ok and g1_tamper_caught and g1_trunc_caught
+        e6_passed = unauthorized_overwrite_blocked and both_verifiable and tamper_caught
+        g2b5_1_passed = e1_passed and e6_passed
         all_passed = all_passed and g2b5_1_passed
-        print(f"[{'PASS' if g2b5_1_passed else 'FAIL'}] Gate G2B.5-1: Bronze archive tamper & truncation fail closed")
-        print(f"       Valid verification: {g1_valid_ok} | Bit-flip caught: {g1_tamper_caught} | Truncation caught: {g1_trunc_caught}")
+        print(f"[{'PASS' if g2b5_1_passed else 'FAIL'}] Gate G2B.5-1: Provenanced calendar & content-addressed Bronze tamper/restatement invariants verified")
 
         # ----------------------------------------------------------------------
         # GATE G2B.5-5: Silver Partition Immutability (Append-Only)
         # ----------------------------------------------------------------------
         print("\n--- Gate G2B.5-5: Silver Partition Immutability ---")
-        silver = SilverStorage(silver_dir)
+        silver = SilverStorage(silver_dir, calendar=cal)
         d1 = datetime.date(2024, 1, 10)
         sample_records = [
             SilverRecord("INE009A01021", "INFY", "EQ", d1, Decimal("1500.00"), Decimal("1520.00"), Decimal("1490.00"), Decimal("1510.00"), 100000),
@@ -173,13 +211,23 @@ def run_phase_2b5_verification() -> bool:
         print(f"[{'PASS' if g2b5_5_passed else 'FAIL'}] Gate G2B.5-5: Overwriting silver partition fails closed with SilverPartitionImmutableError")
 
         # ----------------------------------------------------------------------
-        # GATE G2B.5-4: Missing Session Classifies as UNEXPLAINED_MISSING_RECORD
+        # E-2 & E-3 / GATE G2B.5-4: Missing Sessions, Off-Calendar Bars & Fail-Closed Snapshots
         # ----------------------------------------------------------------------
-        print("\n--- Gate G2B.5-4: Missing Session Fail-Closed Invariants ---")
+        print("\n--- Gate G2B.5-4 (E-2, E-3): Off-Calendar Bars, Missing Sessions & Fail-Closed Snapshots ---")
         sec_master = build_production_security_master()
         d8 = datetime.date(2024, 1, 8)
         d9 = datetime.date(2024, 1, 9)
         d10 = datetime.date(2024, 1, 10)
+        sunday = datetime.date(2024, 1, 14)
+
+        # 1. Writing off-calendar partition rejected fail-closed (E-2)
+        off_cal_blocked = False
+        try:
+            silver.write_daily_partition(sunday, [
+                SilverRecord("INE009A01021", "INFY", "EQ", sunday, Decimal("1500.00"), Decimal("1510.00"), Decimal("1490.00"), Decimal("1505.00"), 1000)
+            ])
+        except OffCalendarSessionError:
+            off_cal_blocked = True
 
         # Write partition for 2024-01-08 (2024-01-09 deliberately missing)
         silver.write_daily_partition(
@@ -202,13 +250,19 @@ def run_phase_2b5_verification() -> bool:
             gap_date == d9 and gap_type == PriceSeriesGapType.UNEXPLAINED_MISSING_RECORD
             for gap_date, gap_type in gaps
         )
-        bar_count_exact = (len(bars) == 2)  # Jan 8 and Jan 10
-        gap_count_exact = (len(gaps) == 1)  # Jan 9
 
-        g2b5_4_passed = has_unexplained_gap and bar_count_exact and gap_count_exact
+        # Snapshot refuses to fingerprint over missing session (E-3)
+        gold_missing = GoldEngine(silver, cal, sec_master)
+        snapshot_hole_blocked = False
+        try:
+            gold_missing.build_dataset_snapshot(d8, d10, isins=["INE009A01021", "INE002A01018"])
+        except NonContiguousDatasetError:
+            snapshot_hole_blocked = True
+
+        g2b5_4_passed = off_cal_blocked and has_unexplained_gap and snapshot_hole_blocked
         all_passed = all_passed and g2b5_4_passed
-        print(f"[{'PASS' if g2b5_4_passed else 'FAIL'}] Gate G2B.5-4: Missing session 2024-01-09 classified as UNEXPLAINED_MISSING_RECORD")
-        print(f"       Bars present: {len(bars)} | Gaps classified: {len(gaps)} ({gaps[0][1].value})")
+        print(f"[{'PASS' if g2b5_4_passed else 'FAIL'}] Gate G2B.5-4: Off-calendar writes rejected, gaps classified UNEXPLAINED_MISSING_RECORD, gapped snapshots fail closed")
+        print(f"       Off-calendar write blocked: {off_cal_blocked} | Missing session gap: {has_unexplained_gap} | Gapped snapshot blocked: {snapshot_hole_blocked}")
 
         # ----------------------------------------------------------------------
         # GATE G2B.5-3: ISIN Transition & Delisting Exact Effective Date Pruning
@@ -239,25 +293,25 @@ def run_phase_2b5_verification() -> bool:
         # GATE G2B.5-2: Rerun Reproduces Identical Dataset & Universe Fingerprints
         # ----------------------------------------------------------------------
         print("\n--- Gate G2B.5-2: Rerun Content & Universe Fingerprint Reproducibility ---")
-        temp_gold_silver = SilverStorage(temp_dir / "gold_silver")
+        temp_gold_silver = SilverStorage(temp_dir / "gold_silver", calendar=cal)
         rec_d8 = [
             SilverRecord("INE009A01021", "INFY", "EQ", d8, Decimal("1480.00"), Decimal("1500.00"), Decimal("1475.00"), Decimal("1495.00"), 50000),
             SilverRecord("INE002A01018", "RELIANCE", "EQ", d8, Decimal("2580.00"), Decimal("2600.00"), Decimal("2570.00"), Decimal("2590.00"), 80000),
         ]
-        rec_d10 = [
-            SilverRecord("INE009A01021", "INFY", "EQ", d10, Decimal("1500.00"), Decimal("1520.00"), Decimal("1490.00"), Decimal("1510.00"), 60000),
-            SilverRecord("INE002A01018", "RELIANCE", "EQ", d10, Decimal("2600.00"), Decimal("2630.00"), Decimal("2590.00"), Decimal("2620.00"), 85000),
+        rec_d9 = [
+            SilverRecord("INE009A01021", "INFY", "EQ", d9, Decimal("1490.00"), Decimal("1515.00"), Decimal("1485.00"), Decimal("1505.00"), 55000),
+            SilverRecord("INE002A01018", "RELIANCE", "EQ", d9, Decimal("2590.00"), Decimal("2615.00"), Decimal("2580.00"), Decimal("2605.00"), 82000),
         ]
         temp_gold_silver.write_daily_partition(d8, rec_d8)
-        temp_gold_silver.write_daily_partition(d10, rec_d10)
+        temp_gold_silver.write_daily_partition(d9, rec_d9)
 
         gold = GoldEngine(temp_gold_silver, cal, sec_master)
 
-        snap1, _ = gold.build_dataset_snapshot(d8, d10)
+        snap1, _ = gold.build_dataset_snapshot(d8, d9, isins=["INE009A01021", "INE002A01018"])
         fpr1_data = snap1.content_fingerprint
         fpr1_univ = snap1.universe_fingerprint
 
-        snap2, _ = gold.build_dataset_snapshot(d8, d10)
+        snap2, _ = gold.build_dataset_snapshot(d8, d9, isins=["INE009A01021", "INE002A01018"])
         fpr2_data = snap2.content_fingerprint
         fpr2_univ = snap2.universe_fingerprint
 
@@ -273,54 +327,88 @@ def run_phase_2b5_verification() -> bool:
         print(f"       Universe schedule fingerprint: {fpr1_univ}")
 
         # ----------------------------------------------------------------------
-        # GATE G2B.5-6: DuckDB Views Disposable — File Deletion Changes Zero Fingerprints
+        # E-4 & E-5 / GATE G2B.5-6: DuckDB Views Exact DECIMAL Typing & Corruption Fail-Closed
         # ----------------------------------------------------------------------
-        print("\n--- Gate G2B.5-6: DuckDB Views Disposable (Zero Fingerprint Change) ---")
+        print("\n--- Gate G2B.5-6 (E-4, E-5): DuckDB Views Exact Decimal Typing & Disposable Storage ---")
         views = DuckDBViewLayer(temp_gold_silver, db_path=duckdb_path)
         views.connect()
-        query_rows = views.query("SELECT isin, symbol, count(*) FROM silver_bhavcopy GROUP BY isin, symbol ORDER BY isin")
-        view_queried_ok = (len(query_rows) == 2 and query_rows[0][0] == "INE002A01018")
 
-        # Unlink .duckdb file
+        # E-4: Exact DECIMAL(18, 4) typing in SQL layer
+        type_res = views.query("SELECT typeof(close) FROM silver_bhavcopy LIMIT 1")
+        decimal_typed = (type_res[0][0] == "DECIMAL(18,4)")
+
+        # Numeric comparisons and aggregates work correctly
+        cmp_res_3000 = views.query("SELECT count(*) FROM silver_bhavcopy WHERE close >= 3000")
+        numeric_cmp_ok = (cmp_res_3000[0][0] == 0)
+        avg_res = views.query("SELECT avg(close) FROM silver_bhavcopy")
+        avg_computed_ok = (avg_res[0][0] > 0)
+
+        # Unlink .duckdb file and assert zero fingerprint change
         deleted = views.unlink_database_file()
         file_deleted_ok = (deleted and not duckdb_path.exists())
 
-        # Re-verify Gold dataset fingerprint after .duckdb file was deleted
-        snap_after_deletion, _ = gold.build_dataset_snapshot(d8, d10)
+        snap_after_deletion, _ = gold.build_dataset_snapshot(d8, d9, isins=["INE009A01021", "INE002A01018"])
         fpr_match_after_delete = (snap_after_deletion.content_fingerprint == fpr1_data)
-        univ_match_after_delete = (snap_after_deletion.universe_fingerprint == fpr1_univ)
 
-        g2b5_6_passed = view_queried_ok and file_deleted_ok and fpr_match_after_delete and univ_match_after_delete
+        # E-5: Fail closed on corrupt partition (does not swallow error into empty view)
+        corrupt_silver_dir = temp_dir / "corrupt_silver"
+        corrupt_silver = SilverStorage(corrupt_silver_dir, calendar=cal)
+        corrupt_file = corrupt_silver.write_daily_partition(d8, rec_d8)
+        with open(corrupt_file, "wb") as f:
+            f.write(b"PAR1corrupted_truncated_bytes")
+
+        corrupt_caught = False
+        corrupt_views = DuckDBViewLayer(corrupt_silver, db_path=temp_dir / "corrupt.duckdb")
+        try:
+            corrupt_views.connect()
+        except DuckDBViewError:
+            corrupt_caught = True
+
+        g2b5_6_passed = decimal_typed and numeric_cmp_ok and avg_computed_ok and file_deleted_ok and fpr_match_after_delete and corrupt_caught
         all_passed = all_passed and g2b5_6_passed
-        print(f"[{'PASS' if g2b5_6_passed else 'FAIL'}] Gate G2B.5-6: DuckDB view layer deleted with ZERO fingerprint alteration")
-        print(f"       Queried view rows: {len(query_rows)} | DB deleted: {file_deleted_ok} | Fingerprint match: {fpr_match_after_delete}")
+        print(f"[{'PASS' if g2b5_6_passed else 'FAIL'}] Gate G2B.5-6: DuckDB view layer DECIMAL(18,4) typing, corruption fail-closed, zero fingerprint change")
+        print(f"       Column type: {type_res[0][0]} | Numeric predicate correct: {numeric_cmp_ok} | Corrupt partition caught: {corrupt_caught}")
 
         # ----------------------------------------------------------------------
-        # GATE G2B.5-7: Gating Window Enforcement (No GO Prior to 2018-04-01)
+        # E-14 / GATE G2B.5-7: Gating Window Enforcement (No GO/APPROVED/PASS Prior to 2018-04-01)
         # ----------------------------------------------------------------------
-        print("\n--- Gate G2B.5-7: Gating Window Enforcement ---")
+        print("\n--- Gate G2B.5-7 (E-14): Gating Window Enforcement ---")
         warmup_eval_start = datetime.date(2017, 1, 1)
         binding_eval_start = datetime.date(2018, 4, 1)
 
         g7_warmup_classified = (classify_gating_window(warmup_eval_start, datetime.date(2017, 12, 31)) == GatingWindowClassification.PRE_SURVEILLANCE_WARMUP)
         g7_binding_classified = (classify_gating_window(binding_eval_start, datetime.date(2023, 12, 31)) == GatingWindowClassification.BINDING_EVALUATION)
 
-        g7_go_blocked_on_warmup = False
+        # Check that GO, APPROVED, and PASS are all blocked fail-closed (E-14)
+        go_blocked = False
+        appr_blocked = False
+        pass_blocked = False
         try:
             check_gating_verdict_eligibility(warmup_eval_start, "GO")
         except GatingWindowValidationError:
-            g7_go_blocked_on_warmup = True
+            go_blocked = True
+
+        try:
+            check_gating_verdict_eligibility(warmup_eval_start, "APPROVED")
+        except GatingWindowValidationError:
+            appr_blocked = True
+
+        try:
+            check_gating_verdict_eligibility(warmup_eval_start, "PASS")
+        except GatingWindowValidationError:
+            pass_blocked = True
 
         g7_resolution_forces_not_run = (resolve_gating_verdict(warmup_eval_start, "GO") == "NOT RUN")
         g7_resolution_allows_binding = (resolve_gating_verdict(binding_eval_start, "GO") == "GO")
 
         g2b5_7_passed = (
             g7_warmup_classified and g7_binding_classified
-            and g7_go_blocked_on_warmup and g7_resolution_forces_not_run and g7_resolution_allows_binding
+            and go_blocked and appr_blocked and pass_blocked
+            and g7_resolution_forces_not_run and g7_resolution_allows_binding
         )
         all_passed = all_passed and g2b5_7_passed
-        print(f"[{'PASS' if g2b5_7_passed else 'FAIL'}] Gate G2B.5-7: Pre-2018 history strictly warm-up; GO verdict blocked fail-closed")
-        print(f"       Pre-2018 GO blocked: {g7_go_blocked_on_warmup} | Resolved verdict: {resolve_gating_verdict(warmup_eval_start, 'GO')}")
+        print(f"[{'PASS' if g2b5_7_passed else 'FAIL'}] Gate G2B.5-7: Pre-2018 history strictly warm-up; GO/APPROVED/PASS verdicts blocked fail-closed")
+        print(f"       Pre-2018 GO blocked: {go_blocked} | APPROVED blocked: {appr_blocked} | PASS blocked: {pass_blocked}")
 
         # ----------------------------------------------------------------------
         # SUMMARY

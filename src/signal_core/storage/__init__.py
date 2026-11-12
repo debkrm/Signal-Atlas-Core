@@ -10,7 +10,9 @@ from signal_core.storage.calendar import (
     BINDING_EVALUATION_START_DATE,
     CalendarError,
     InvalidSessionError,
+    SessionType,
     TradingCalendar,
+    TradingSessionRecord,
     compute_calendar_fingerprint,
     load_nse_trading_calendar,
 )
@@ -38,6 +40,7 @@ from signal_core.storage.bronze import (
 )
 from signal_core.storage.silver import (
     MissingDependencyError,
+    OffCalendarSessionError,
     SilverPartitionImmutableError,
     SilverRecord,
     SilverStorage,
@@ -46,6 +49,7 @@ from signal_core.storage.silver import (
 from signal_core.storage.gold import (
     GoldEngine,
     GoldEngineError,
+    NonContiguousDatasetError,
 )
 from signal_core.storage.views import (
     DuckDBDependencyMissingError,
@@ -66,7 +70,9 @@ __all__ = [
     "BINDING_EVALUATION_START_DATE",
     "CalendarError",
     "InvalidSessionError",
+    "SessionType",
     "TradingCalendar",
+    "TradingSessionRecord",
     "compute_calendar_fingerprint",
     "load_nse_trading_calendar",
     # Security Master
@@ -91,6 +97,7 @@ __all__ = [
     "TamperedBronzePayloadError",
     # Silver
     "MissingDependencyError",
+    "OffCalendarSessionError",
     "SilverPartitionImmutableError",
     "SilverRecord",
     "SilverStorage",
@@ -98,6 +105,7 @@ __all__ = [
     # Gold
     "GoldEngine",
     "GoldEngineError",
+    "NonContiguousDatasetError",
     # DuckDB Views
     "DuckDBDependencyMissingError",
     "DuckDBViewError",

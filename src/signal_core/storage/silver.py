@@ -6,7 +6,9 @@ Implements storage invariants per AGENTS.md Rule 10.1, Rule 10.4, and Rule 10.6:
 - Record identity is ISIN. Symbols and series are effective-dated attributes.
 - Immutability: Partitions are strictly append-only. Rewriting an existing partition raises
   SilverPartitionImmutableError (Gate G2B.5-5).
-- Exactness: Prices, turnover, and quantities persist and read back as exact Decimal (zero binary floats).
+- Calendar validation: Writing an off-calendar partition or archiving an off-calendar bar raises
+  OffCalendarSessionError fail-closed (E-2).
+- Exactness: Prices, turnover, and quantities persist as DECIMAL(18, 4) / int64 and read back as exact Decimal (E-4).
 - Missing session invariants: Sessions present in the calendar but absent in storage classify
   as PriceSeriesGapType.UNEXPLAINED_MISSING_RECORD (Gate G2B.5-4).
 """
@@ -14,11 +16,9 @@ Implements storage invariants per AGENTS.md Rule 10.1, Rule 10.4, and Rule 10.6:
 from dataclasses import dataclass
 import datetime
 from decimal import Decimal
-import hashlib
 import os
 from pathlib import Path
-import tempfile
-from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 try:
     import pyarrow as pa
@@ -40,6 +40,11 @@ class SilverStorageError(ValueError):
 
 class SilverPartitionImmutableError(SilverStorageError):
     """Raised when an attempt is made to overwrite an existing immutable silver partition (Gate G2B.5-5)."""
+    pass
+
+
+class OffCalendarSessionError(SilverStorageError):
+    """Raised when an off-calendar session or bar is written, or found on disk (E-2)."""
     pass
 
 
@@ -83,6 +88,12 @@ class SilverRecord:
         for name, val in [("open", self.open), ("high", self.high), ("low", self.low), ("close", self.close)]:
             if not isinstance(val, Decimal) or not val.is_finite() or val <= Decimal("0"):
                 raise SilverStorageError(f"{name} must be a strictly positive finite Decimal, got {val}")
+        # OHLC coherence check (E-13)
+        if not (self.low <= self.open <= self.high):
+            raise SilverStorageError(f"Incoherent OHLC: open ({self.open}) must be within [low={self.low}, high={self.high}]")
+        if not (self.low <= self.close <= self.high):
+            raise SilverStorageError(f"Incoherent OHLC: close ({self.close}) must be within [low={self.low}, high={self.high}]")
+
         if not isinstance(self.volume, int) or isinstance(self.volume, bool) or self.volume < 0:
             raise SilverStorageError(f"volume must be a non-negative integer, got {self.volume}")
         if self.traded_value is not None:
@@ -108,8 +119,13 @@ class SilverStorage:
     Manages typed daily Parquet partitions partitioned by year and session date:
     {root_dir}/bhavcopy/{year}/{trade_date}.parquet
     """
-    def __init__(self, root_dir: Union[str, Path]) -> None:
+    def __init__(
+        self,
+        root_dir: Union[str, Path],
+        calendar: Optional[TradingCalendar] = None,
+    ) -> None:
         self._root_dir = Path(root_dir).resolve()
+        self._calendar = calendar
         self._bhavcopy_dir = self._root_dir / "bhavcopy"
         self._bhavcopy_dir.mkdir(parents=True, exist_ok=True)
 
@@ -120,6 +136,10 @@ class SilverStorage:
     @property
     def bhavcopy_dir(self) -> Path:
         return self._bhavcopy_dir
+
+    @property
+    def calendar(self) -> Optional[TradingCalendar]:
+        return self._calendar
 
     def get_partition_path(self, trade_date: datetime.date) -> Path:
         """Returns standard path for a daily session partition."""
@@ -134,10 +154,13 @@ class SilverStorage:
         self,
         trade_date: datetime.date,
         records: Sequence[SilverRecord],
+        calendar: Optional[TradingCalendar] = None,
     ) -> Path:
         """
         Writes a daily partition to Parquet format.
-        Fails closed with SilverPartitionImmutableError if partition already exists (Gate G2B.5-5).
+        Fails closed with:
+        - SilverPartitionImmutableError if partition already exists (Gate G2B.5-5).
+        - OffCalendarSessionError if date or any record is off-calendar (E-2).
         """
         _require_pyarrow()
 
@@ -145,6 +168,15 @@ class SilverStorage:
             raise SilverStorageError(f"trade_date must be genuine datetime.date, got {type(trade_date).__name__}")
         if not records:
             raise SilverStorageError(f"Cannot write empty partition for {trade_date}")
+
+        # Calendar validation at write time (E-2)
+        active_cal = calendar or self._calendar
+        if active_cal is not None:
+            if not active_cal.is_session(trade_date):
+                raise OffCalendarSessionError(
+                    f"Cannot write silver partition for off-calendar session {trade_date}. "
+                    f"Not an authoritative session in calendar {active_cal.calendar_id}."
+                )
 
         partition_path = self.get_partition_path(trade_date)
         if partition_path.exists():
@@ -155,23 +187,27 @@ class SilverStorage:
 
         partition_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Build columnar arrays using exact Decimal strings to preserve precision across boundaries
+        # Build columnar arrays using Decimal128(18, 4) to preserve precision across boundaries (E-4)
         isins: List[str] = []
         symbols: List[str] = []
         series_list: List[str] = []
-        dates: List[str] = []
-        opens: List[str] = []
-        highs: List[str] = []
-        lows: List[str] = []
-        closes: List[str] = []
+        dates: List[datetime.date] = []
+        opens: List[Decimal] = []
+        highs: List[Decimal] = []
+        lows: List[Decimal] = []
+        closes: List[Decimal] = []
         volumes: List[int] = []
-        traded_values: List[str] = []
+        traded_values: List[Optional[Decimal]] = []
 
         seen_isins: Set[str] = set()
         for r in records:
             if r.trade_date != trade_date:
                 raise SilverStorageError(
                     f"Record trade_date {r.trade_date} does not match partition date {trade_date} for ISIN {r.isin}"
+                )
+            if active_cal is not None and not active_cal.is_session(r.trade_date):
+                raise OffCalendarSessionError(
+                    f"Record trade_date {r.trade_date} for ISIN {r.isin} is an off-calendar date."
                 )
             if r.isin in seen_isins:
                 raise SilverStorageError(f"Duplicate ISIN {r.isin} in daily partition for {trade_date}")
@@ -180,26 +216,26 @@ class SilverStorage:
             isins.append(r.isin)
             symbols.append(r.symbol)
             series_list.append(r.series)
-            dates.append(r.trade_date.isoformat())
-            opens.append(str(r.open))
-            highs.append(str(r.high))
-            lows.append(str(r.low))
-            closes.append(str(r.close))
+            dates.append(r.trade_date)
+            opens.append(r.open)
+            highs.append(r.high)
+            lows.append(r.low)
+            closes.append(r.close)
             volumes.append(r.volume)
-            traded_values.append(str(r.traded_value) if r.traded_value is not None else "")
+            traded_values.append(r.traded_value)
 
         table = pa.Table.from_arrays(
             [
                 pa.array(isins, type=pa.string()),
                 pa.array(symbols, type=pa.string()),
                 pa.array(series_list, type=pa.string()),
-                pa.array(dates, type=pa.string()),
-                pa.array(opens, type=pa.string()),
-                pa.array(highs, type=pa.string()),
-                pa.array(lows, type=pa.string()),
-                pa.array(closes, type=pa.string()),
+                pa.array(dates, type=pa.date32()),
+                pa.array(opens, type=pa.decimal128(18, 4)),
+                pa.array(highs, type=pa.decimal128(18, 4)),
+                pa.array(lows, type=pa.decimal128(18, 4)),
+                pa.array(closes, type=pa.decimal128(18, 4)),
                 pa.array(volumes, type=pa.int64()),
-                pa.array(traded_values, type=pa.string()),
+                pa.array(traded_values, type=pa.decimal128(18, 4)),
             ],
             names=[
                 "isin",
@@ -250,18 +286,20 @@ class SilverStorage:
         tv_col = table["traded_value"].to_pylist()
 
         for i in range(len(isin_col)):
-            tv_str = tv_col[i]
-            tv = Decimal(tv_str) if tv_str else None
+            raw_d = date_col[i]
+            d = raw_d if isinstance(raw_d, datetime.date) else datetime.date.fromisoformat(str(raw_d))
+            raw_tv = tv_col[i]
+            tv = Decimal(str(raw_tv)) if raw_tv is not None else None
             records.append(
                 SilverRecord(
-                    isin=isin_col[i],
-                    symbol=symbol_col[i],
-                    series=series_col[i],
-                    trade_date=datetime.date.fromisoformat(date_col[i]),
-                    open=Decimal(open_col[i]),
-                    high=Decimal(high_col[i]),
-                    low=Decimal(low_col[i]),
-                    close=Decimal(close_col[i]),
+                    isin=str(isin_col[i]),
+                    symbol=str(symbol_col[i]),
+                    series=str(series_col[i]),
+                    trade_date=d,
+                    open=Decimal(str(open_col[i])),
+                    high=Decimal(str(high_col[i])),
+                    low=Decimal(str(low_col[i])),
+                    close=Decimal(str(close_col[i])),
                     volume=int(vol_col[i]),
                     traded_value=tv,
                 )
@@ -280,10 +318,24 @@ class SilverStorage:
         """
         Reads continuous price series for ISIN across trading sessions in [start_date, end_date].
         Validates every expected trading session in calendar against storage:
+        - If an off-calendar partition exists on disk within [start_date, end_date]: raises OffCalendarSessionError (E-2).
         - If a session is present in calendar but absent in storage: classifies as UNEXPLAINED_MISSING_RECORD (Gate G2B.5-4).
         - If security was delisted or transitioned, classifies appropriately.
         - Fails closed: Never forward-fills, never linearly interpolates, never masks with NaN.
         """
+        # Audit on-disk partitions within [start_date, end_date] to reject off-calendar storage fail-closed (E-2)
+        if self._bhavcopy_dir.exists():
+            for p_file in self._bhavcopy_dir.glob("*/*.parquet"):
+                try:
+                    p_date = datetime.date.fromisoformat(p_file.stem)
+                except ValueError:
+                    continue
+                if start_date <= p_date <= end_date and not calendar.is_session(p_date):
+                    raise OffCalendarSessionError(
+                        f"Found archived silver partition for off-calendar date {p_date} on disk ({p_file}). "
+                        "Archiving price bars outside authoritative trading calendar fails closed per AGENTS.md Rule 6.3."
+                    )
+
         expected_sessions = calendar.sessions_in_range(start_date, end_date)
         bars: List[PriceBar] = []
         gaps: List[Tuple[datetime.date, PriceSeriesGapType]] = []
