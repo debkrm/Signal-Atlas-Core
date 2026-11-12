@@ -1,0 +1,23 @@
+# Signal Atlas Core — Canonical Dataset Partition Specification
+# Committed artifact per AGENTS.md Rule 8.1, Rule 9.2, and Audit §26 / §27 (Finding H-6).
+# Invariant: in_sample_start <= in_sample_end < validation_start <= validation_end < holdout_start <= holdout_end
+
+schema_version: "PART-SPEC-V1"
+dataset_fingerprint: "DATA-CTNT-V2-CANONICAL-TIER-A"
+
+# Placeholder token hash for the sealed out-of-sample holdout partition.
+# Actual human unsealing requires a HOLDOUT_UNLOCK sentinel file matching this hash.
+holdout_token_hash: "0000000000000000000000000000000000000000000000000000000000000000"
+
+partitions:
+  # Tier A In-Sample Window (Model estimation, preliminary exploration, feature extraction)
+  in_sample_start: 2018-04-01
+  in_sample_end: 2023-12-31
+
+  # Tier A Validation / Calibration Window (Walk-forward tuning, threshold calibration)
+  validation_start: 2024-01-01
+  validation_end: 2024-12-31
+
+  # Out-of-Sample Holdout Window (Cryptographically sealed confirmatory evaluation)
+  holdout_start: 2025-01-01
+  holdout_end: 2026-11-11

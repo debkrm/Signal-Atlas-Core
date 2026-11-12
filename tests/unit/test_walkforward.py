@@ -515,10 +515,10 @@ def test_g1_holdout_fold_without_spec_rejected_fail_closed(wf_environment):
     strat = TechnicalCrossStrategy(strategy_id="TEST-HOLDOUT-NOSPEC")
     engine = WalkForwardEngine(calendar=cal, gold_engine=gold)
 
-    with pytest.raises(HoldoutSealedError, match="no PartitionSpec was supplied"):
+    with pytest.raises(HoldoutSealedError):
         engine.run_fold(strat, holdout_fold)
 
-    with pytest.raises(HoldoutSealedError, match="no PartitionSpec was supplied"):
+    with pytest.raises(HoldoutSealedError):
         engine.run_walk_forward(strat, [holdout_fold])
 
 
@@ -684,3 +684,62 @@ def test_g1_validation_fold_outside_holdout_executes_cleanly(wf_environment):
     res = engine.run_walk_forward(strat, [val_fold], partition_spec=spec)
     assert res is not None
     assert len(res.fold_results) == 1
+
+
+def test_h2_p2_no_spec_validation_role_intersecting_canonical_holdout_rejected_fail_closed(wf_environment):
+    """
+    Finding H-2 / Probe P2: With NO partition_spec passed, a fold whose dates intersect
+    the canonical holdout window (2025+) with role VALIDATION must NOT run.
+    It must be refused fail-closed with HoldoutSealedError via the canonical spec default.
+    """
+    cal, sec_master, silver, gold, tmp_path = wf_environment
+
+    # Fold spanning 2025 dates (canonical holdout window: 2025-01-01 -> 2026-11-11)
+    holdout_dates_fold = WalkForwardFold(
+        fold_index=0,
+        train_start=datetime.date(2025, 1, 6),
+        train_end=datetime.date(2025, 1, 10),
+        test_start=datetime.date(2025, 1, 13),
+        test_end=datetime.date(2025, 1, 17),
+        embargo_sessions=1,
+        partition_role=PartitionRole.VALIDATION,  # Mislabeled or default validation role
+    )
+
+    strat = TechnicalCrossStrategy(strategy_id="TEST-H2-P2", allocation_weight=Decimal("0.10"))
+    engine = WalkForwardEngine(calendar=cal, gold_engine=gold)  # Uses canonical spec default
+
+    # Must raise HoldoutSealedError fail-closed even when partition_spec is omitted
+    with pytest.raises(HoldoutSealedError, match="intersects sealed HOLDOUT partition"):
+        engine.run_fold(strat, holdout_dates_fold)
+
+    with pytest.raises(HoldoutSealedError, match="intersects sealed HOLDOUT partition"):
+        engine.run_walk_forward(strat, [holdout_dates_fold], partition_spec=None)
+
+
+def test_h2_absent_spec_refuses_fail_closed(wf_environment):
+    """
+    Finding H-2: If no authoritative PartitionSpec can be resolved, execution must
+    refuse fail-closed rather than defaulting to open.
+    """
+    cal, sec_master, silver, gold, tmp_path = wf_environment
+
+    fold = WalkForwardFold(
+        fold_index=0,
+        train_start=datetime.date(2024, 1, 8),
+        train_end=datetime.date(2024, 1, 11),
+        test_start=datetime.date(2024, 1, 15),
+        test_end=datetime.date(2024, 1, 19),
+        embargo_sessions=1,
+        partition_role=PartitionRole.VALIDATION,
+    )
+
+    strat = TechnicalCrossStrategy(strategy_id="TEST-H2-NO-SPEC")
+    engine = WalkForwardEngine(calendar=cal, gold_engine=gold)
+    object.__setattr__(engine, "_partition_spec", None)
+
+    with pytest.raises(HoldoutSealedError, match="without an authoritative PartitionSpec"):
+        engine.run_fold(strat, fold, partition_spec=None)
+
+    with pytest.raises(HoldoutSealedError, match="without an authoritative PartitionSpec"):
+        engine.run_walk_forward(strat, [fold], partition_spec=None)
+

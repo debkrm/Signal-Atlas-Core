@@ -50,6 +50,7 @@ from signal_core.research.containment import (
     WalkForwardFold,
     check_partition_access,
     compute_fold_spec_fingerprint,
+    load_canonical_partition_spec,
 )
 from signal_core.research.significance import (
     annualized_sharpe,
@@ -269,7 +270,13 @@ class WalkForwardEngine:
         self._slippage_model = slippage_model
         self._eligibility_policy = eligibility_policy
         self._latency = execution_latency_sessions
-        self._partition_spec = partition_spec
+        if partition_spec is not None:
+            self._partition_spec = partition_spec
+        else:
+            try:
+                self._partition_spec = load_canonical_partition_spec()
+            except Exception:
+                self._partition_spec = None
         self._unlock_file_path = unlock_file_path
 
     @property
@@ -319,28 +326,32 @@ class WalkForwardEngine:
         active_spec = partition_spec or self._partition_spec
         active_unlock = unlock_file_path or self._unlock_file_path
 
-        if active_spec is not None:
-            # Check if fold window [train_start, test_end] intersects sealed HOLDOUT partition
-            intersects_holdout = (
-                fold.train_start <= active_spec.holdout_end
-                and active_spec.holdout_start <= fold.test_end
+        if active_spec is None:
+            raise HoldoutSealedError(
+                f"Cannot evaluate fold {fold.fold_index} without an authoritative PartitionSpec. "
+                "Evaluating folds without partition boundaries is strictly prohibited per AGENTS.md Rule 8.1 (H-2)."
             )
-            if intersects_holdout:
-                if fold.partition_role != PartitionRole.HOLDOUT:
-                    raise HoldoutSealedError(
-                        f"Fold {fold.fold_index} date window [{fold.train_start}, {fold.test_end}] "
-                        f"intersects sealed HOLDOUT partition [{active_spec.holdout_start}, {active_spec.holdout_end}], "
-                        f"but fold role is declared as '{fold.partition_role.value}'. Refusing execution fail-closed."
-                    )
-                check_partition_access(active_spec, PartitionRole.HOLDOUT, unlock_file_path=active_unlock)
-            else:
-                check_partition_access(active_spec, fold.partition_role, unlock_file_path=active_unlock)
+
+        # Check if fold window [train_start, test_end] intersects sealed HOLDOUT partition
+        intersects_holdout = (
+            fold.train_start <= active_spec.holdout_end
+            and active_spec.holdout_start <= fold.test_end
+        )
+        if intersects_holdout:
+            if fold.partition_role != PartitionRole.HOLDOUT:
+                raise HoldoutSealedError(
+                    f"Fold {fold.fold_index} date window [{fold.train_start}, {fold.test_end}] "
+                    f"intersects sealed HOLDOUT partition [{active_spec.holdout_start}, {active_spec.holdout_end}], "
+                    f"but fold role is declared as '{fold.partition_role.value}'. Refusing execution fail-closed."
+                )
+            check_partition_access(active_spec, PartitionRole.HOLDOUT, unlock_file_path=active_unlock)
         else:
             if fold.partition_role == PartitionRole.HOLDOUT:
                 raise HoldoutSealedError(
-                    f"Fold {fold.fold_index} is declared as PartitionRole.HOLDOUT, but no PartitionSpec was supplied "
-                    f"to verify holdout token hash and authorization. Execution refused fail-closed per AGENTS.md Rule 8.1."
+                    f"Fold {fold.fold_index} declared as HOLDOUT does not fall within holdout window "
+                    f"[{active_spec.holdout_start}, {active_spec.holdout_end}]."
                 )
+            check_partition_access(active_spec, fold.partition_role, unlock_file_path=active_unlock)
 
         # 1. Trading calendar sessions in test window
         test_sessions = self._calendar.sessions_in_range(fold.test_start, fold.test_end)
@@ -573,34 +584,38 @@ class WalkForwardEngine:
         active_spec = partition_spec or self._partition_spec
         active_unlock = unlock_file_path or self._unlock_file_path
 
-        # Gate G-1 pre-flight validation across all folds
+        # Gate G-1 pre-flight validation across all folds (H-2)
         for fold in folds:
             if fold.partition_role is None:
                 raise HoldoutSealedError(
                     f"Fold {fold.fold_index} has no declared partition role (unlabelled). "
                     f"Unlabelled folds are strictly refused fail-closed per AGENTS.md Rule 8.1."
                 )
-            if active_spec is not None:
-                intersects = (
-                    fold.train_start <= active_spec.holdout_end
-                    and active_spec.holdout_start <= fold.test_end
+            if active_spec is None:
+                raise HoldoutSealedError(
+                    f"Cannot evaluate fold {fold.fold_index} without an authoritative PartitionSpec. "
+                    "Evaluating folds without partition boundaries is strictly prohibited per AGENTS.md Rule 8.1 (H-2)."
                 )
-                if intersects:
-                    if fold.partition_role != PartitionRole.HOLDOUT:
-                        raise HoldoutSealedError(
-                            f"Fold {fold.fold_index} date window [{fold.train_start}, {fold.test_end}] "
-                            f"intersects sealed HOLDOUT partition [{active_spec.holdout_start}, {active_spec.holdout_end}], "
-                            f"but fold role is declared as '{fold.partition_role.value}'. Refusing execution fail-closed."
-                        )
-                    check_partition_access(active_spec, PartitionRole.HOLDOUT, unlock_file_path=active_unlock)
-                else:
-                    check_partition_access(active_spec, fold.partition_role, unlock_file_path=active_unlock)
+
+            intersects = (
+                fold.train_start <= active_spec.holdout_end
+                and active_spec.holdout_start <= fold.test_end
+            )
+            if intersects:
+                if fold.partition_role != PartitionRole.HOLDOUT:
+                    raise HoldoutSealedError(
+                        f"Fold {fold.fold_index} date window [{fold.train_start}, {fold.test_end}] "
+                        f"intersects sealed HOLDOUT partition [{active_spec.holdout_start}, {active_spec.holdout_end}], "
+                        f"but fold role is declared as '{fold.partition_role.value}'. Refusing execution fail-closed."
+                    )
+                check_partition_access(active_spec, PartitionRole.HOLDOUT, unlock_file_path=active_unlock)
             else:
                 if fold.partition_role == PartitionRole.HOLDOUT:
                     raise HoldoutSealedError(
-                        f"Fold {fold.fold_index} is declared as PartitionRole.HOLDOUT, but no PartitionSpec was supplied "
-                        f"to verify holdout token hash and authorization. Execution refused fail-closed per AGENTS.md Rule 8.1."
+                        f"Fold {fold.fold_index} declared as HOLDOUT does not fall within holdout window "
+                        f"[{active_spec.holdout_start}, {active_spec.holdout_end}]."
                     )
+                check_partition_access(active_spec, fold.partition_role, unlock_file_path=active_unlock)
 
         fold_results: List[FoldExecutionResult] = []
         agg_daily_returns: List[Decimal] = []

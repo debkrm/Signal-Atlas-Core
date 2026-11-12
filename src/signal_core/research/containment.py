@@ -20,6 +20,11 @@ from enum import Enum
 import hashlib
 from pathlib import Path
 from typing import Any, Optional, Sequence, Tuple, Union
+import yaml
+
+DEFAULT_PARTITION_SPEC_PATH = (
+    Path(__file__).resolve().parent.parent.parent.parent / "configs" / "partition_spec.yaml"
+)
 
 
 class ContainmentError(ValueError):
@@ -134,6 +139,43 @@ def compute_partition_fingerprint(spec: PartitionSpec) -> str:
     )
     digest = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
     return f"PART-SPEC-V1-{digest}"
+
+
+def load_canonical_partition_spec(path: Optional[Union[str, Path]] = None) -> PartitionSpec:
+    """
+    Loads and validates the committed canonical PartitionSpec from configs/partition_spec.yaml (H-6).
+    Enforces committed partition boundaries per AGENTS.md Rule 8.1 and Rule 9.2.
+    """
+    spec_path = Path(path) if path is not None else DEFAULT_PARTITION_SPEC_PATH
+    if not spec_path.is_file():
+        raise PartitionSpecValidationError(
+            f"Committed canonical PartitionSpec not found at {spec_path}. "
+            "A committed partition spec is mandatory to enforce holdout containment per AGENTS.md Rule 8.1."
+        )
+
+    try:
+        with open(spec_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except Exception as exc:
+        raise PartitionSpecValidationError(f"Failed to parse YAML from {spec_path}: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise PartitionSpecValidationError(f"Expected mapping in {spec_path}, got {type(data).__name__}")
+
+    raw_part = data.get("partitions", data)
+    try:
+        return PartitionSpec(
+            dataset_fingerprint=str(data["dataset_fingerprint"]),
+            holdout_token_hash=str(data["holdout_token_hash"]),
+            in_sample_start=datetime.date.fromisoformat(str(raw_part["in_sample_start"])),
+            in_sample_end=datetime.date.fromisoformat(str(raw_part["in_sample_end"])),
+            validation_start=datetime.date.fromisoformat(str(raw_part["validation_start"])),
+            validation_end=datetime.date.fromisoformat(str(raw_part["validation_end"])),
+            holdout_start=datetime.date.fromisoformat(str(raw_part["holdout_start"])),
+            holdout_end=datetime.date.fromisoformat(str(raw_part["holdout_end"])),
+        )
+    except (KeyError, ValueError, TypeError) as exc:
+        raise PartitionSpecValidationError(f"Malformed PartitionSpec in {spec_path}: {exc}") from exc
 
 
 def verify_holdout_unlock(
