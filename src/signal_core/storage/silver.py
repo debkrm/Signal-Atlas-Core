@@ -141,6 +141,16 @@ class SilverStorage:
         self._root_dir = Path(root_dir).resolve()
         self._calendar = calendar
         self._is_holdout_storage = is_holdout_storage
+        if self._is_holdout_storage:
+            # Audit §28 H-12 / Probe P12b: Physical root enforcement.
+            # Holdout partitions must not be written into or located within standard storage/silver root.
+            # Root directory must be an explicit segregated holdout root (directory name contains 'holdout').
+            if "holdout" not in self._root_dir.name.lower():
+                raise SilverStorageError(
+                    f"Holdout storage root directory must be an explicit segregated holdout root (containing 'holdout'), "
+                    f"got {self._root_dir.name!r} at {self._root_dir}. Writing holdout partitions into the "
+                    "standard silver tree is strictly prohibited per AGENTS.md Rule 8.1 (Audit §28 H-12)."
+                )
         self._bhavcopy_dir = self._root_dir / "bhavcopy"
         self._bhavcopy_dir.mkdir(parents=True, exist_ok=True)
 
@@ -166,7 +176,16 @@ class SilverStorage:
         return year_dir / f"{trade_date.isoformat()}.parquet"
 
     def partition_exists(self, trade_date: datetime.date) -> bool:
-        """Checks if a silver partition exists for trade_date."""
+        """
+        Checks if a silver partition exists for trade_date.
+        Fails closed with HoldoutPartitionIsolationError if standard storage queries a holdout date (H-12 / P12d).
+        """
+        if not self._is_holdout_storage:
+            if CANONICAL_HOLDOUT_START_DATE <= trade_date <= CANONICAL_HOLDOUT_END_DATE:
+                raise HoldoutPartitionIsolationError(
+                    f"Standard silver storage cannot query existence of partitions in holdout window "
+                    f"[{CANONICAL_HOLDOUT_START_DATE}, {CANONICAL_HOLDOUT_END_DATE}] ({trade_date}) (Finding H-12)."
+                )
         return self.get_partition_path(trade_date).is_file()
 
     def write_daily_partition(

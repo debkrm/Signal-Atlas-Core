@@ -47,6 +47,7 @@ from signal_core.research.containment import (
     HoldoutSealedError,
     PartitionRole,
     PartitionSpec,
+    PartitionSpecValidationError,
     WalkForwardFold,
     check_partition_access,
     compute_fold_spec_fingerprint,
@@ -62,6 +63,7 @@ from signal_core.research.significance import (
 from signal_core.research.trials import TrialRecord, TrialRegistry
 from signal_core.storage.calendar import TradingCalendar
 from signal_core.storage.gold import GoldEngine
+from signal_core.storage.silver import CANONICAL_HOLDOUT_END_DATE, CANONICAL_HOLDOUT_START_DATE
 from signal_core.strategy.base import (
     LookaheadIntentError,
     OrderIntent,
@@ -237,6 +239,20 @@ class WalkForwardResult:
         )
 
 
+def _validate_partition_spec_widening(spec: PartitionSpec) -> PartitionSpec:
+    """
+    Validates that a caller-supplied PartitionSpec does not narrow or shift the canonical holdout window.
+    An explicit PartitionSpec may only widen the sealed holdout window per Audit §28 C3.
+    """
+    if spec.holdout_start > CANONICAL_HOLDOUT_START_DATE or spec.holdout_end < CANONICAL_HOLDOUT_END_DATE:
+        raise HoldoutSealedError(
+            f"Caller-supplied PartitionSpec holdout window [{spec.holdout_start}, {spec.holdout_end}] "
+            f"cannot narrow or shift canonical holdout window [{CANONICAL_HOLDOUT_START_DATE}, {CANONICAL_HOLDOUT_END_DATE}]. "
+            "An explicit PartitionSpec may only widen the sealed holdout window per Audit §28 C3."
+        )
+    return spec
+
+
 class WalkForwardEngine:
     """
     Authoritative Walk-Forward Simulation and Cross-Validation Engine.
@@ -271,11 +287,12 @@ class WalkForwardEngine:
         self._eligibility_policy = eligibility_policy
         self._latency = execution_latency_sessions
         if partition_spec is not None:
-            self._partition_spec = partition_spec
+            self._partition_spec = _validate_partition_spec_widening(partition_spec)
         else:
             try:
                 self._partition_spec = load_canonical_partition_spec()
-            except Exception:
+            except (PartitionSpecValidationError, FileNotFoundError):
+                # Audit §28 H-13: Catch specification and missing-file errors only; allow programming bugs to surface
                 self._partition_spec = None
         self._unlock_file_path = unlock_file_path
 
@@ -323,7 +340,7 @@ class WalkForwardEngine:
                 f"Unlabelled folds are strictly refused fail-closed per AGENTS.md Rule 8.1."
             )
 
-        active_spec = partition_spec or self._partition_spec
+        active_spec = _validate_partition_spec_widening(partition_spec) if partition_spec is not None else self._partition_spec
         active_unlock = unlock_file_path or self._unlock_file_path
 
         if active_spec is None:
@@ -581,7 +598,7 @@ class WalkForwardEngine:
         if not folds:
             raise WalkForwardEngineError("Cannot run walk-forward backtest with empty folds sequence.")
 
-        active_spec = partition_spec or self._partition_spec
+        active_spec = _validate_partition_spec_widening(partition_spec) if partition_spec is not None else self._partition_spec
         active_unlock = unlock_file_path or self._unlock_file_path
 
         # Gate G-1 pre-flight validation across all folds (H-2)

@@ -79,6 +79,7 @@ class CorporateActionType(str, Enum):
     RIGHTS = "RIGHTS"
     DELISTING = "DELISTING"
     ISIN_TRANSITION = "ISIN_TRANSITION"
+    CONSOLIDATION = "CONSOLIDATION"
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,13 +202,23 @@ class CorporateAction:
             raise SecurityMasterError("Ratios must be finite Decimals.")
 
         # Invariant H-5: Invert-proof ratio direction per action type.
-        # SPLIT and BONUS increase total share count (ratio_numerator > ratio_denominator).
+        # SPLIT and BONUS increase total share count (ratio_numerator > ratio_denominator, factor < 1.0).
         if self.action_type in (CorporateActionType.SPLIT, CorporateActionType.BONUS):
             if self.ratio_numerator <= self.ratio_denominator:
                 raise SecurityMasterError(
                     f"{self.action_type.value} requires ratio_numerator > ratio_denominator (post-event shares > pre-event shares). "
                     f"For a 1:10 split (1 old share subdivided into 10 new shares), use ratio_numerator=10, ratio_denominator=1, "
                     f"yielding adjustment_factor=0.1. Received ratio_numerator={self.ratio_numerator}, ratio_denominator={self.ratio_denominator}."
+                )
+
+        # Invariant H-10: CONSOLIDATION (reverse split) merges multiple old shares into fewer new shares
+        # (ratio_numerator < ratio_denominator, adjustment_factor > 1.0).
+        if self.action_type == CorporateActionType.CONSOLIDATION:
+            if self.ratio_numerator >= self.ratio_denominator:
+                raise SecurityMasterError(
+                    f"CONSOLIDATION requires ratio_numerator < ratio_denominator (post-event shares < pre-event shares). "
+                    f"For a 10:1 consolidation (10 old shares consolidated into 1 new share), use ratio_numerator=1, ratio_denominator=10, "
+                    f"yielding adjustment_factor=10.0. Received ratio_numerator={self.ratio_numerator}, ratio_denominator={self.ratio_denominator}."
                 )
 
         if self.action_type == CorporateActionType.ISIN_TRANSITION:

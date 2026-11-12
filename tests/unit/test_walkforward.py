@@ -538,7 +538,7 @@ def test_g1_fold_intersecting_holdout_window_without_unlock_rejected_fail_closed
         validation_start=datetime.date(2024, 1, 11),
         validation_end=datetime.date(2024, 1, 12),
         holdout_start=datetime.date(2024, 1, 15),
-        holdout_end=datetime.date(2024, 1, 19),
+        holdout_end=datetime.date(2026, 11, 11),  # Widens holdout to include canonical 2025-2026 (Audit §28 C3)
     )
 
     holdout_fold = WalkForwardFold(
@@ -575,7 +575,7 @@ def test_g1_fold_intersecting_holdout_window_with_mismatched_role_rejected_fail_
         validation_start=datetime.date(2024, 1, 11),
         validation_end=datetime.date(2024, 1, 12),
         holdout_start=datetime.date(2024, 1, 15),
-        holdout_end=datetime.date(2024, 1, 19),
+        holdout_end=datetime.date(2026, 11, 11),  # Widens holdout to include canonical 2025-2026 (Audit §28 C3)
     )
 
     # Date span [2024-01-08, 2024-01-19] intersects holdout [2024-01-15, 2024-01-19]
@@ -619,7 +619,7 @@ def test_g1_fold_intersecting_holdout_with_valid_unlock_permitted(wf_environment
         validation_start=datetime.date(2024, 1, 11),
         validation_end=datetime.date(2024, 1, 12),
         holdout_start=datetime.date(2024, 1, 15),
-        holdout_end=datetime.date(2024, 1, 19),
+        holdout_end=datetime.date(2026, 11, 11),  # Widens holdout to include canonical 2025-2026 (Audit §28 C3)
     )
 
     holdout_fold = WalkForwardFold(
@@ -664,7 +664,7 @@ def test_g1_validation_fold_outside_holdout_executes_cleanly(wf_environment):
         validation_start=datetime.date(2024, 1, 11),
         validation_end=datetime.date(2024, 1, 19),
         holdout_start=datetime.date(2025, 1, 1),
-        holdout_end=datetime.date(2025, 12, 31),
+        holdout_end=datetime.date(2026, 11, 11),
     )
 
     val_fold = WalkForwardFold(
@@ -742,4 +742,50 @@ def test_h2_absent_spec_refuses_fail_closed(wf_environment):
 
     with pytest.raises(HoldoutSealedError, match="without an authoritative PartitionSpec"):
         engine.run_walk_forward(strat, [fold], partition_spec=None)
+
+
+def test_c3_p11_caller_spec_narrowing_canonical_holdout_rejected_fail_closed(wf_environment):
+    """
+    Criterion C3 / Probe P11 (Audit §28): An explicit caller-supplied PartitionSpec
+    cannot narrow or shift the sealed holdout window away from [2025-01-01, 2026-11-11].
+    Any override that attempts to narrow the window must be refused fail-closed.
+    """
+    import hashlib
+    cal, sec_master, silver, gold, tmp_path = wf_environment
+
+    # Probe P11 attempt: caller sets holdout_start=2030 to bypass 2025 holdout
+    narrow_spec = PartitionSpec(
+        dataset_fingerprint="DATA-CTNT-V2-TEST",
+        holdout_token_hash=hashlib.sha256(b"token").hexdigest(),
+        in_sample_start=datetime.date(2024, 1, 8),
+        in_sample_end=datetime.date(2024, 1, 10),
+        validation_start=datetime.date(2024, 1, 11),
+        validation_end=datetime.date(2024, 1, 12),
+        holdout_start=datetime.date(2030, 1, 1),
+        holdout_end=datetime.date(2031, 12, 31),
+    )
+
+    strat = TechnicalCrossStrategy(strategy_id="TEST-C3-P11")
+    fold = WalkForwardFold(
+        fold_index=0,
+        train_start=datetime.date(2024, 1, 8),
+        train_end=datetime.date(2024, 1, 11),
+        test_start=datetime.date(2024, 1, 15),
+        test_end=datetime.date(2024, 1, 19),
+        embargo_sessions=1,
+        partition_role=PartitionRole.VALIDATION,
+    )
+
+    # 1. Refused at engine instantiation
+    with pytest.raises(HoldoutSealedError, match="cannot narrow or shift canonical holdout window"):
+        WalkForwardEngine(calendar=cal, gold_engine=gold, partition_spec=narrow_spec)
+
+    # 2. Refused if passed explicitly to run_walk_forward
+    engine = WalkForwardEngine(calendar=cal, gold_engine=gold)
+    with pytest.raises(HoldoutSealedError, match="cannot narrow or shift canonical holdout window"):
+        engine.run_walk_forward(strat, [fold], partition_spec=narrow_spec)
+
+    # 3. Refused if passed explicitly to run_fold
+    with pytest.raises(HoldoutSealedError, match="cannot narrow or shift canonical holdout window"):
+        engine.run_fold(strat, fold, partition_spec=narrow_spec)
 

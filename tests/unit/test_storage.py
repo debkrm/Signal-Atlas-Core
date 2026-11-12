@@ -488,7 +488,7 @@ def test_f1_f2_f3_remediation(sample_calendar, temp_storage_dirs):
     # PriceBar carries session_type
     bar = PriceBar(
         instrument_id="INE009A01021",
-        trade_date=datetime.date(2024, 1, 1),
+        trade_date=datetime.date(2024, 11, 1),
         open=Decimal("1500.00"),
         high=Decimal("1520.00"),
         low=Decimal("1495.00"),
@@ -526,17 +526,26 @@ def test_h1_physical_holdout_separation_silver_rejection(temp_storage_dirs):
         traded_value=Decimal("18100000.00"),
     )
 
-    # 1. Standard storage MUST reject writing holdout session fail-closed
+    # 1. Standard storage MUST reject writing holdout session fail-closed (P12a)
     with pytest.raises(HoldoutPartitionIsolationError, match="explicitly rejects dates falling within"):
         standard_silver.write_daily_partition(holdout_date, [rec])
 
-    # 2. Standard storage MUST reject reading holdout session fail-closed
+    # 2. Standard storage MUST reject reading holdout session fail-closed (P12c)
     with pytest.raises(HoldoutPartitionIsolationError, match="explicitly rejects dates falling within"):
         standard_silver.read_daily_partition(holdout_date)
 
-    # 3. Dedicated holdout storage is permitted to write holdout session
+    # 3. Standard storage MUST reject partition_exists query on holdout session fail-closed (P12d / H-12)
+    with pytest.raises(HoldoutPartitionIsolationError, match="cannot query existence of partitions in holdout window"):
+        standard_silver.partition_exists(holdout_date)
+
+    # 4. Probe P12b / H-12: is_holdout_storage=True on STANDARD root directory without 'holdout' fails closed
+    with pytest.raises(SilverStorageError, match="must be an explicit segregated holdout root"):
+        SilverStorage(silver_dir, is_holdout_storage=True)
+
+    # 5. Dedicated segregated holdout storage is permitted to write and read holdout session
     partition_path = holdout_silver.write_daily_partition(holdout_date, [rec])
     assert partition_path.is_file()
+    assert holdout_silver.partition_exists(holdout_date) is True
     read_recs = holdout_silver.read_daily_partition(holdout_date)
     assert len(read_recs) == 1
     assert read_recs[0].trade_date == holdout_date

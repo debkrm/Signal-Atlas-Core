@@ -110,7 +110,7 @@ def test_bronze_manifest_entry_validation():
 
 
 def test_bronze_manifest_lock_concurrent_serialization_e15():
-    """Verify BronzeStorage inter-process lock serializes concurrent manifest writes (Finding E-15, H-3)."""
+    """Verify BronzeStorage inter-process lock serializes concurrent manifest writes fail-closed (E-15, H-3, H-9)."""
     with tempfile.TemporaryDirectory(prefix="bronze_lock_test_") as tmpdir:
         storage = BronzeStorage(tmpdir)
         payload = b"test-content-bytes"
@@ -124,39 +124,28 @@ def test_bronze_manifest_lock_concurrent_serialization_e15():
         assert entry1 is not None
         assert storage.manifest_path.exists()
 
-        # Artificially held lock causes timeout fail-closed with clear remediation message (H-3)
+        # Audit §28 H-9 / Probe P15: An aged/held lock (e.g. 6s old) is NEVER stolen.
+        # Second writer must wait fail-closed and not steal or unlink the lock.
         lock_path = storage.manifest_path.with_suffix(".lock")
-        lock_path.write_text("held by another process")
+        lock_path.write_text("held by live writer process")
+        # Age the lock file by 6 seconds
+        aged_time = time.time() - 6.0
+        os.utime(str(lock_path), (aged_time, aged_time))
+
         try:
             with pytest.raises(BronzeStorageError, match=r"Remediation: remove the lock file"):
                 storage.store_payload(
                     relative_path="raw/session_2.csv",
                     data=b"other-payload",
                     source_url="https://example.com/session_2.csv",
-                    lock_timeout_seconds=0.1,
-                    stale_timeout_seconds=5.0,
+                    lock_timeout_seconds=0.2,
                 )
+            # Critical H-9 invariant: Lock was NOT stolen/unlinked by the second writer
+            assert lock_path.exists()
+            assert lock_path.read_text() == "held by live writer process"
         finally:
             if lock_path.exists():
                 lock_path.unlink()
-
-        # Stale lock auto-clearing (H-3): if lock file is older than stale_timeout_seconds, clear and proceed
-        lock_path.write_text("orphaned lock from crashed process")
-        # Backdate the lock file mtime by 10 seconds
-        past_time = time.time() - 10.0
-        os.utime(str(lock_path), (past_time, past_time))
-
-        entry2 = storage.store_payload(
-            relative_path="raw/session_2.csv",
-            data=b"other-payload",
-            source_url="https://example.com/session_2.csv",
-            lock_timeout_seconds=1.0,
-            stale_timeout_seconds=2.0,
-        )
-        assert entry2 is not None
-        assert entry2.relative_path == "raw/session_2.csv"
-        # The lock was cleaned up after successful write
-        assert not lock_path.exists()
 
 
 # ==============================================================================
@@ -206,6 +195,30 @@ def test_corporate_action_record_invariants_and_serialization():
             ex_date=datetime.date(2024, 2, 1),
             action_type=CorporateActionType.BONUS,
             ratio_numerator=Decimal("1"),
+            ratio_denominator=Decimal("1"),
+        )
+
+    # Audit §28 H-10 / Probe P14a: 10:1 Consolidation / Reverse Split (num=1, den=10) produces factor 10.0
+    ca_consolidation = CorporateAction(
+        isin="INE002A01018",
+        ex_date=datetime.date(2024, 2, 1),
+        action_type=CorporateActionType.CONSOLIDATION,
+        ratio_numerator=Decimal("1"),
+        ratio_denominator=Decimal("10"),
+        circular_ref="NSE/CML/2024/CONSOL10",
+        description="10:1 Stock Consolidation",
+    )
+    assert ca_consolidation.adjustment_factor == Decimal("10")
+    d_consol = ca_consolidation.to_dict()
+    assert CorporateAction.from_dict(d_consol) == ca_consolidation
+
+    # Inverted consolidation (num >= den) must be rejected fail-closed
+    with pytest.raises(SecurityMasterError, match="CONSOLIDATION requires ratio_numerator < ratio_denominator"):
+        CorporateAction(
+            isin="INE002A01018",
+            ex_date=datetime.date(2024, 2, 1),
+            action_type=CorporateActionType.CONSOLIDATION,
+            ratio_numerator=Decimal("10"),
             ratio_denominator=Decimal("1"),
         )
 

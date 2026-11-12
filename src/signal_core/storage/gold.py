@@ -221,7 +221,7 @@ class GoldEngine:
                         if ca.ex_date > b.trade_date:
                             cum_numerator *= ca.ratio_numerator
                             cum_denominator *= ca.ratio_denominator
-                            if ca.action_type in (CorporateActionType.SPLIT, CorporateActionType.ISIN_TRANSITION):
+                            if ca.action_type in (CorporateActionType.SPLIT, CorporateActionType.ISIN_TRANSITION, CorporateActionType.CONSOLIDATION):
                                 split_factor *= ca.adjustment_factor
 
                     cum_price_multiplier = cum_denominator / cum_numerator

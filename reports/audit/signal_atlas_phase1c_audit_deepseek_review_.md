@@ -1705,3 +1705,120 @@ Then re-audit. Wave 1 (one-month real NSE slice) may start in parallel **only** 
 G-2/G-3/G-4/G-5/G-6 from §25 remain open and untouched. Phase 2C stays NO-GO.
 
 ---
+
+## 28. Wave 0 Remediation Re-Audit — `b15a57d`, `1033dda`, `bf64c5a`
+
+**Scope:** §27 findings H-1…H-8, implemented across three commits — `b15a57d` (H-1 storage date rejection), `1033dda` (H-2 fail-open default, H-6 committed spec), `bf64c5a` (H-3, H-4, H-5, H-8). Diffs read in full; suite re-run; eight fresh probes (P9…P16) run against the new code, including the two places where the fix is a caller-supplied flag.
+
+**Suite:** `222 passed`, exit 0 (219 + 3 new tests). The +102 lines in `test_ingest_schemas.py` are assertions folded into two existing tests, not new test functions; both H-4 and H-5 paths are still exercised and still able to fail.
+
+*Note:* nothing in the working tree has been altered by the author except a trailing-newline-only change to `configs/partition_spec.yaml`, which does not modify any committed date. The sealed window in the committed file is unchanged: `[2025-01-01, 2026-11-11]`.
+
+---
+
+### 28.1 Closure Table — §27 findings
+
+| Finding | Claimed | Measured | Verdict |
+|---|---|---|---|
+| **H-1** date rejection | Silver rejects 2025+ on write, read, series query; Gold rejects intersecting ranges | P12a refused, P12c refused, P16 refused | **CLOSED as a date guard** |
+| **H-1** physical root + token | Doc: "explicit holdout root and authorization token" | P12b: `is_holdout_storage=True` on the **standard** root wrote `storage/silver/bhavcopy/2025/2025-01-15.parquet` | **NOT CLOSED — H-12** |
+| **H-2** fail-open default | Canonical spec is the default; `None` refuses | P9: no-spec + 2025 fold → `HoldoutSealedError`; P10: 2024 validation fold still runs | **CLOSED** |
+| **H-6** committed spec | `configs/partition_spec.yaml` | Present, correct windows, default-loaded | **CLOSED** |
+| **H-3** orphaned lock | Stale-lock auto-clear + remediation text | P15: a 6 s-old **live** lock is deleted and the write proceeds | **REGRESSED — H-9** |
+| **H-4** band evidence | `is_unconstrained` requires descriptor + band/limits | P13a refused; P13b descriptor + 10% → evidence True | **CLOSED** |
+| **H-5** ratio direction | `num > den` for SPLIT/BONUS; 1:10 → 0.1 | Inverted split refused; 1:10 → 0.1 asserted | **CLOSED for SPLIT/BONUS** |
+| **H-8** docstring | Deduplicated | Clean | **CLOSED** |
+
+---
+
+### 28.2 Measured probe output
+
+```
+P9   no-spec + 2025-01-06 fold, canonical default  -> HoldoutSealedError: intersects sealed HOLDOUT [2025-01-01, ...]
+P10  no-spec + 2024-01-08 validation fold          -> RAN, folds=1  (not over-blocked)
+P11  caller spec holdout=2030 + 2025 fold          -> containment PASSED (died later: "No trading sessions in test window")
+P12a standard write of 2025-01-15                  -> refused
+P12b is_holdout_storage=True on STANDARD root      -> wrote storage/silver/bhavcopy/2025/2025-01-15.parquet
+P12c standard read of that partition               -> refused (date guard active)
+P12d partition_exists(2025-01-15), standard storage-> True, no refusal
+P13a anonymous is_unconstrained=True                -> refused
+P13b unconstrained + descriptor + band 10%, no limits -> has_circuit_evidence=True
+P14a 10:1 CONSOLIDATION (num=1, den=10, SPLIT)     -> REJECTED
+P14b RIGHTS with inverted ratio (num=1, den=10)    -> accepted, factor=10
+P15  lock aged 6s (== any holder alive >5s)        -> STOLEN, write succeeded
+P16  gold range 2024-12-01..2025-03-31             -> refused
+```
+
+`P9` versus `P2` of §27 is the measure of this remediation: the identical case that ran unguarded now refuses, and `P10` confirms the guard does not over-block the legitimate 2024 validation window.
+
+`P9`/`P12a`/`P16` together give G-1 three independent layers — engine, silver, gold — instead of one opt-in argument. That part of §27 is genuinely closed.
+
+---
+
+### 28.3 Findings
+
+**H-9 · Blocking, introduced by this remediation — the stale-lock auto-clear can break a live lock, turning a liveness bug into a manifest-integrity bug.**
+`_lock_manifest` sets the lock file's mtime once, at `os.open`, and never refreshes it; `stale_timeout_seconds` defaults to **5.0** while the same lock's own `timeout_seconds` defaults to **10.0**. Any `store_payload` that takes longer than five seconds therefore looks exactly like a crashed process. P15 measures it: a lock aged six seconds — by construction a lock whose holder is still inside the context manager — is unlinked and the second writer proceeds. The written `{"pid", "timestamp"}` payload is never read: `lock_path` appears in `bronze.py` only at `os.open`, `stat`, `unlink`, and `exists` (lines 150/155/165/168/191/192), so no liveness test exists anywhere.
+
+The consequence is code-level, not measured here: two writers can both pass the `existing_entries` check in `store_payload` and both append a manifest row for the same `relative_path`, and the first holder then unlinks the second holder's lock on exit, admitting a third. Duplicate or interleaved manifest rows are exactly the provenance record §6.5 made content-addressed, and the fix as written is *fail-open* where the code it replaced was fail-closed. That is a net regression on the invariant the finding was raised to protect.
+
+Minimal correct fixes, in order of preference: (a) delete the auto-break and keep the improved remediation message — five seconds of operator time is cheaper than a corrupted manifest; (b) break only after verifying the recorded PID is dead (`os.kill(pid, 0)`); (c) refresh mtime on a heartbeat while held. If the lock is retained at all, `stale_timeout_seconds` must exceed `timeout_seconds` — as shipped, the two defaults contradict each other.
+
+**H-10 · New regression — reverse splits / consolidations are now unrepresentable.**
+P14a: a 10:1 consolidation (`num=1, den=10`) is rejected by the `SPLIT` direction invariant. Consolidations are real NSE corporate actions (face-value mergers), and before this commit such a record could at least be constructed. The invariant is right for sub-division and wrong for its inverse, and there is no `CONSOLIDATION` action type to hold it. Fix: add the type (or an explicit `is_consolidation` flag) with `adjustment_factor > 1`; do not weaken the sub-division check.
+
+**H-11 · Carried — `RIGHTS` has no usable adjustment semantics, and no direction check.**
+P14b: a `RIGHTS` record with an inverted ratio is accepted and yields factor 10. More fundamentally, an ex-rights adjustment is not a share-ratio operation at all — it needs the subscription price and the theoretical ex-rights price: `factor = (P_cum − Theoretical) / P_cum`-style arithmetic over `(P_cum, subscription_price, ratio)`. Applying `den/num` to `RIGHTS` in Wave 3 will silently mis-adjust every rights-affected series, and a negative or >1 factor will not be caught. Since no consumer exists yet this is not blocking today, but it belongs with E-12/F-7 in Wave 3 and must not be closed by the SPLIT/BONUS invariant.
+
+**H-12 · Minor — the seal's authorization half is still a boolean, and holdout bytes can land in the standard tree.**
+P12b: `SilverStorage("<standard root>", is_holdout_storage=True)` writes `storage/silver/bhavcopy/2025/2025-01-15.parquet` — inside the very tree the Gold layer globs — with no root-name check and no token. The author's own test does the same thing one level down (`silver_dir / "holdout_sub"`), which is a subdirectory, not a separate physical root. So the doc sentence "unless instantiated with the explicit holdout root and authorization token" is still not true: there is no token, and `holdout_token_hash` in `configs/partition_spec.yaml` is never consulted by storage. The improvement is real (the default path now refuses, P12a/P12c/P16) but the claim should be narrowed to "rejects by date unless explicitly flagged", or the flag replaced by a root-name + `holdout_token_hash` check. P12d additionally shows `partition_exists()` is unguarded — it leaks the existence of a holdout partition, which is minor but trivially avoidable.
+
+**H-13 · Minor — `__init__` swallows spec-loading failure.**
+`except Exception: self._partition_spec = None` turns a malformed or missing committed spec into the generic "without an authoritative PartitionSpec" refusal at run time. The direction is fail-closed and therefore acceptable, but a broken `configs/partition_spec.yaml` will be diagnosed as a missing spec, not a bad one. Catch `PartitionSpecValidationError` specifically; let programming errors propagate.
+
+**H-14 · Cosmetic — untraceable fixture edit.**
+`test_f1_f2_f3_remediation` changed a `PriceBar.trade_date` from 2024-11-01 to 2024-01-01 in the H-1 commit. The test asserts only `session_type`, so nothing breaks, but the edit traces to nothing in H-1 (§3, surgical changes).
+
+**Status-document overclaim.** `CURRENT_STAGE_OF_WORK.md` now reads "Wave 0 — REMEDIATED & **COMPLETE** (§27 audit findings H-1, H-2/H-6, H-5, H-4, H-3, H-8 **closed and verified**)". Closure is the auditor's output, not the author's, and at the time of writing H-3 had been regressed (H-9), H-5 covered only SPLIT/BONUS (H-10/H-11), and H-1's token half was unimplemented (H-12). The status row has been corrected as part of this audit.
+
+Pre-existing and not attributed to these commits: `pyproject.toml` declares `dependencies = []` while `containment.py` now imports `yaml` at module scope; `contracts/criteria.py` already did the same, so a clean stdlib-only install was already unable to import the research package. Worth fixing before packaging, separately.
+
+---
+
+### 28.4 Computed verdict
+
+| Criterion | §27 | Now |
+|---|---|---|
+| C1 Unlabelled / `HOLDOUT`-labelled fold without unlock refused | PASS | **PASS** |
+| C2 Containment applies on the default path | FAIL | **PASS** (P9) |
+| C3 Holdout boundary not narrowable by a caller argument | FAIL | **FAIL** (P11) |
+| C4a Storage rejects holdout dates on the default path | FAIL | **PASS** (P12a/c, P16) |
+| C4b Physical root + authorization token enforced | FAIL | **FAIL** (P12b, H-12) |
+| C5 Ingest schemas reject malformed records | PASS | **PASS** |
+| C6 Corporate-action ratio semantics unambiguous | FAIL | **PASS for SPLIT/BONUS** (P14a regression noted, H-10) |
+| C7 Circuit-limit evidence falsifiable | FAIL | **PASS** (P13) |
+| C8 Phase 2C blockers G-2…G-6 addressed | FAIL | **FAIL — untouched** |
+| C9 Bronze manifest locking remains fail-closed | PASS (§27 state) | **FAIL** (P15, H-9) |
+
+**Verdict: Wave 0 — NOT SIGNED OFF; one blocking item. G-1 — CLOSED. Phase 2C — remains NO-GO.**
+
+This is a materially better commit set than `eae376d`. G-1 is now enforced at three independent layers with a committed boundary, the default path is fail-closed, anonymous circuit-band claims are refused, and the split direction that would have produced a silent 100× adjusted-price error is pinned and tested. Six of the eight §27 findings are closed outright.
+
+It is not signable because the H-3 remediation introduced a worse defect than the one it fixed: a lock held longer than five seconds is stolen, and the manifest is the one artifact where a duplicate row is permanent. `H-9` is a ten-line change — remove the auto-break — and it is the only thing standing between this wave and a GO.
+
+---
+
+### 28.5 Instruction to the implementing agent
+
+1. **H-9, blocking, one commit.** Remove the stale-lock auto-break and keep the remediation message, or gate it on a verified-dead PID. If any timeout remains, `stale_timeout_seconds` must be greater than `lock_timeout_seconds`. Add the P15 case as a test: age a lock by 6 s while a writer holds it, and assert the second writer *waits* rather than stealing.
+2. **C3, cheap, same commit or next.** An explicit `partition_spec` may only **widen** the sealed window — refuse any override whose `[holdout_start, holdout_end]` does not contain the committed canonical window. That preserves testability and closes P11.
+3. **H-12.** Either narrow the doc/status wording to "rejects by date unless flagged as holdout storage", or replace the boolean with a root-name + `holdout_token_hash` check; guard `partition_exists`.
+4. **H-10.** Add `CONSOLIDATION` (or an explicit flag) so reverse splits are representable without weakening the sub-division invariant.
+5. **H-13/H-14.** Catch `PartitionSpecValidationError` only; revert the unrelated fixture date.
+6. **H-11** is carried to Wave 3 and must be resolved before any rights-affected series is adjusted.
+
+Then re-audit. On H-9 alone, Wave 0 becomes GO and Wave 1 (one scrip, one month, real NSE bhavcopy, pre-2025) may start; the C3 and H-12 items should land before the first 2025+ byte, not before Wave 1.
+
+G-2/G-3/G-4/G-5/G-6 from §25 remain open. Phase 2C stays NO-GO.
+
+---
