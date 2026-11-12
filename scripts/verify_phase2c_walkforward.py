@@ -259,7 +259,7 @@ def run_phase_2c_verification() -> bool:
             == [t.executed_price for t in res_b.aggregate_trades]
         )
 
-        # Audit §25 G-4: Bound directly to authoritative Gold dataset fingerprint
+        # Audit §25 G-4 / §31 H-28: Bound directly to authoritative Gold dataset fingerprint
         dataset_fpr_valid = (
             res_a.dataset_content_fingerprint.startswith("DATA-CTNT-V2-")
             and res_a.dataset_content_fingerprint != "DATA-CTNT-V2-UNKNOWN"
@@ -272,7 +272,7 @@ def run_phase_2c_verification() -> bool:
         )
         trial_fpr_bound = (trial_rec.dataset_fingerprint == res_a.dataset_content_fingerprint)
 
-        # Unknown dataset fingerprint rejection check
+        # Unknown dataset fingerprint rejection check (G-4)
         unknown_rejected = False
         try:
             engine.run_walk_forward(
@@ -282,6 +282,31 @@ def run_phase_2c_verification() -> bool:
             )
         except WalkForwardEngineError:
             unknown_rejected = True
+
+        # Audit §31 H-28: Rejection of caller-invented / spoofed dataset fingerprint
+        spoofed_rejected = False
+        try:
+            engine.run_walk_forward(
+                strategy=strat,
+                folds=[fold],
+                dataset_content_fingerprint="DATA-CTNT-V2-" + "0" * 32,
+            )
+        except WalkForwardEngineError:
+            spoofed_rejected = True
+
+        # Audit §31 H-34: Criteria version dynamically defaulted from criteria in force (1.1.0)
+        criteria_version_correct = (trial_rec.criteria_version == "1.1.0")
+
+        # Audit §31 H-33: Execution config hashed into result fingerprint and carried on trial record
+        exec_config_bound = (trial_rec.execution_config == res_a.execution_config)
+        engine_diff_latency = WalkForwardEngine(
+            calendar=cal,
+            gold_engine=gold,
+            eligibility_policy=APPROVED_EQ_ONLY_POLICY,
+            execution_latency_sessions=2,
+        )
+        res_diff_latency = engine_diff_latency.run_walk_forward(strategy=strat, folds=[fold], initial_capital=init_cap)
+        config_hashed_into_fpr = (res_diff_latency.fingerprint != res_a.fingerprint)
 
         g2c_1_passed = (
             trades_executed
@@ -294,15 +319,21 @@ def run_phase_2c_verification() -> bool:
             and dataset_fpr_valid
             and trial_fpr_bound
             and unknown_rejected
+            and spoofed_rejected
+            and criteria_version_correct
+            and exec_config_bound
+            and config_hashed_into_fpr
         )
 
         all_passed = all_passed and g2c_1_passed
-        print(f"[{'PASS' if g2c_1_passed else 'FAIL'}] Gate G2C-1: Bit-for-bit determinism & dataset binding verified")
+        print(f"[{'PASS' if g2c_1_passed else 'FAIL'}] Gate G2C-1: Bit-for-bit determinism, execution config & dataset binding (H-28, H-33, H-34)")
         print(f"       Live trades executed: {len(res_a.aggregate_trades)} (fills: {len(filled_trades)}) | Non-empty: {has_fills}")
         print(f"       Fingerprint: {res_a.fingerprint} == {res_b.fingerprint}")
         print(f"       Final Equity: Rs. {res_a.final_equity} == Rs. {res_b.final_equity} | Sharpe: {res_a.annualized_sharpe}")
         print(f"       Dataset Fingerprint Bound: {res_a.dataset_content_fingerprint} (trial bound: {trial_fpr_bound})")
-        print(f"       'UNKNOWN' Fingerprint Rejected Fail-Closed: {unknown_rejected}")
+        print(f"       'UNKNOWN' & Spoofed Fingerprint Rejected: unknown={unknown_rejected}, spoofed={spoofed_rejected}")
+        print(f"       Criteria Version: {trial_rec.criteria_version} (correct: {criteria_version_correct})")
+        print(f"       Execution Config Bound & Hashed into FPR: bound={exec_config_bound}, hashed={config_hashed_into_fpr}")
 
         # ----------------------------------------------------------------------
         # GATE G2C-2: SAME-SESSION LOOKAHEAD REJECTION (T close -> T fill)
@@ -531,6 +562,34 @@ def run_phase_2c_verification() -> bool:
             and fill_lat2.latency_sessions == 2
         )
 
+        # 3. Strategy cannot bypass engine execution latency (Audit §31 H-29)
+        class BypassLatencyStrategy(Strategy):
+            @property
+            def strategy_id(self) -> str:
+                return "BYPASS-LAT-STRAT"
+
+            def generate_signals(self, as_of, next_session, universe, features):
+                if as_of == datetime.date(2024, 1, 15):
+                    # Engine has latency=2 (target_session is Jan 17).
+                    # Attempt to bypass engine and execute on Jan 16 (T+1)!
+                    return (
+                        OrderIntent(
+                            instrument_id=infy_isin,
+                            signal_date=as_of,
+                            target_date=datetime.date(2024, 1, 16),
+                            side=OrderSide.BUY,
+                            quantity=10,
+                        ),
+                    )
+                return ()
+
+        latency_bypass_blocked = False
+        try:
+            engine_lat2.run_walk_forward(strategy=BypassLatencyStrategy(), folds=[fold])
+        except WalkForwardEngineError as exc:
+            if "does not match engine configured execution session" in str(exc):
+                latency_bypass_blocked = True
+
         g2c_5_passed = (
             has_costs
             and stt_present
@@ -542,6 +601,7 @@ def run_phase_2c_verification() -> bool:
             and zero_heavy_fills
             and heavy_equity_preserved
             and latency_differentiated
+            and latency_bypass_blocked
         )
         all_passed = all_passed and g2c_5_passed
         print(f"[{'PASS' if g2c_5_passed else 'FAIL'}] Gate G2C-5: Authoritative engine, latency realism & risk rejections")
@@ -549,6 +609,7 @@ def run_phase_2c_verification() -> bool:
         print(f"       Cash deducted on fill: {cash_deducted} | Position tracked: {position_opened}")
         print(f"       Risk limit rejection recorded (G-3, G-9): {risk_limit_rejected} (REJECTED_RISK_LIMIT, 0 fills, equity preserved)")
         print(f"       Latency realism verified (G-5): {latency_differentiated} (L=1 -> {fill_lat1.fill_date}, L=2 -> {fill_lat2.fill_date})")
+        print(f"       Latency bypass rejected fail-closed (H-29): {latency_bypass_blocked}")
 
         # ----------------------------------------------------------------------
         # SUMMARY

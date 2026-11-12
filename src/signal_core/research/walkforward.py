@@ -20,7 +20,7 @@ Implements quantitative walk-forward backtesting per AGENTS.md Rules 5, 6, 7, 8,
   Emits WalkForwardResult capable of direct registration into Phase 2A TrialRegistry.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import datetime
 from decimal import Decimal
 import hashlib
@@ -144,6 +144,8 @@ class WalkForwardResult:
     verification_status: str
     fingerprint: str
     dataset_content_fingerprint: str
+    execution_config: Mapping[str, Any] = field(default_factory=dict)
+    criteria_version: str = "1.1.0"
 
     def to_trial_record(
         self,
@@ -152,13 +154,16 @@ class WalkForwardResult:
         rationale: str,
         fold_spec_fingerprint: str,
         dataset_fingerprint: Optional[str] = None,
-        criteria_version: str = "v1.0",
+        criteria_version: Optional[str] = None,
         partition: Union[str, PartitionRole] = PartitionRole.VALIDATION,
         timestamp_utc: Optional[str] = None,
+        execution_config: Optional[Mapping[str, Any]] = None,
     ) -> TrialRecord:
         """
         Creates an immutable, fully validated TrialRecord for registration into TrialRegistry.
         Binds dataset_fingerprint to authentic DATA-CTNT-V2 snapshot (Gate G-4).
+        Defaults criteria_version from criteria in force (Audit §31 H-34).
+        Carries execution_config onto TrialRecord (Audit §31 H-33).
         """
         ds_fpr = dataset_fingerprint or self.dataset_content_fingerprint
         if not isinstance(ds_fpr, str) or not ds_fpr.startswith("DATA-CTNT-V2-") or ds_fpr == "DATA-CTNT-V2-UNKNOWN":
@@ -166,6 +171,9 @@ class WalkForwardResult:
                 f"Cannot create TrialRecord with invalid dataset_fingerprint {ds_fpr!r}. "
                 "Must be a genuine DATA-CTNT-V2 content fingerprint; 'UNKNOWN' prohibited (Gate G-4)."
             )
+
+        resolved_criteria_version = criteria_version or self.criteria_version
+        resolved_exec_config = execution_config if execution_config is not None else self.execution_config
 
         ts = timestamp_utc or datetime.datetime.now(datetime.timezone.utc).isoformat()
         returns_list = list(self.aggregate_daily_returns)
@@ -197,7 +205,7 @@ class WalkForwardResult:
             canonical_params=self.canonical_params,
             fold_spec_fingerprint=fold_spec_fingerprint,
             dataset_fingerprint=ds_fpr,
-            criteria_version=criteria_version,
+            criteria_version=resolved_criteria_version,
             timestamp_utc=ts,
             returns_digest=returns_digest,
             observation_count=obs_count,
@@ -207,6 +215,7 @@ class WalkForwardResult:
             kurtosis=kurt,
             sharpe_ratio=self.annualized_sharpe,
             max_drawdown=self.max_drawdown,
+            execution_config=resolved_exec_config,
         )
 
     def register_in_trial_registry(
@@ -217,15 +226,18 @@ class WalkForwardResult:
         rationale: str,
         fold_spec_fingerprint: str,
         dataset_fingerprint: Optional[str] = None,
-        criteria_version: str = "v1.0",
+        criteria_version: Optional[str] = None,
         partition: Union[str, PartitionRole] = PartitionRole.VALIDATION,
         timestamp_utc: Optional[str] = None,
         partition_spec: Optional[PartitionSpec] = None,
         unlock_file_path: Optional[Union[str, Path]] = None,
+        execution_config: Optional[Mapping[str, Any]] = None,
     ) -> TrialRecord:
         """
         Registers this walk-forward evaluation directly into an authoritative TrialRegistry.
         Binds dataset_fingerprint to authentic DATA-CTNT-V2 snapshot (Gate G-4).
+        Defaults criteria_version from criteria in force (Audit §31 H-34).
+        Carries execution_config onto TrialRecord (Audit §31 H-33).
         """
         ds_fpr = dataset_fingerprint or self.dataset_content_fingerprint
         if not isinstance(ds_fpr, str) or not ds_fpr.startswith("DATA-CTNT-V2-") or ds_fpr == "DATA-CTNT-V2-UNKNOWN":
@@ -233,6 +245,9 @@ class WalkForwardResult:
                 f"Cannot register trial with invalid dataset_fingerprint {ds_fpr!r}. "
                 "Must be a genuine DATA-CTNT-V2 content fingerprint; 'UNKNOWN' prohibited (Gate G-4)."
             )
+
+        resolved_criteria_version = criteria_version or self.criteria_version
+        resolved_exec_config = execution_config if execution_config is not None else self.execution_config
 
         ts = timestamp_utc or datetime.datetime.now(datetime.timezone.utc).isoformat()
         returns_list = list(self.aggregate_daily_returns)
@@ -260,7 +275,7 @@ class WalkForwardResult:
             canonical_params=self.canonical_params,
             fold_spec_fingerprint=fold_spec_fingerprint,
             dataset_fingerprint=ds_fpr,
-            criteria_version=criteria_version,
+            criteria_version=resolved_criteria_version,
             timestamp_utc=ts,
             returns_digest=returns_digest,
             observation_count=obs_count,
@@ -272,6 +287,7 @@ class WalkForwardResult:
             max_drawdown=self.max_drawdown,
             partition_spec=partition_spec,
             unlock_file_path=unlock_file_path,
+            execution_config=resolved_exec_config,
         )
 
 
@@ -613,6 +629,14 @@ class WalkForwardEngine:
                             )
                         continue
 
+                    # Audit §31 H-29: Configured execution latency is authoritative, not advisory
+                    if intent.target_date != target_session:
+                        raise WalkForwardEngineError(
+                            f"Gate G-5 / H-29 Violation: Intent target_date ({intent.target_date}) does not match "
+                            f"engine configured execution session ({target_session}) for signal_date={t} with "
+                            f"execution_latency_sessions={self._latency}. Strategy cannot bypass engine execution latency."
+                        )
+
                     # Sizing calculation
                     computed_qty = intent.quantity
                     if computed_qty is None and intent.target_weight is not None:
@@ -730,27 +754,35 @@ class WalkForwardEngine:
         min_start = min(f.train_start for f in folds)
         max_end = max(f.test_end for f in folds)
 
+        # Audit §25 G-4 / §31 H-28: Compute authentic Gold dataset snapshot over fold window
+        snap, _ = self._gold_engine.build_dataset_snapshot(
+            start_date=min_start,
+            end_date=max_end,
+            isins=target_isins,
+            full_sessions_only=self._full_sessions_only,
+        )
+        authentic_fingerprint = snap.content_fingerprint
+
         if dataset_content_fingerprint is None:
-            # Audit §25 G-4: Bind result directly to the authoritative Gold dataset snapshot
-            snap, _ = self._gold_engine.build_dataset_snapshot(
-                start_date=min_start,
-                end_date=max_end,
-                isins=target_isins,
-                full_sessions_only=self._full_sessions_only,
-            )
-            resolved_dataset_fingerprint = snap.content_fingerprint
+            resolved_dataset_fingerprint = authentic_fingerprint
         else:
-            # Validate explicit dataset fingerprint fail-closed per AGENTS.md Rule 6.5 & Rule 8.2
             if (
                 not isinstance(dataset_content_fingerprint, str)
                 or not dataset_content_fingerprint.startswith("DATA-CTNT-V2-")
                 or dataset_content_fingerprint == "DATA-CTNT-V2-UNKNOWN"
             ):
                 raise WalkForwardEngineError(
-                    f"Invalid dataset_content_fingerprint '{dataset_content_fingerprint}'. "
-                    f"Must be a genuine DATA-CTNT-V2 content fingerprint; 'UNKNOWN' or arbitrary strings prohibited (Gate G-4)."
+                    f"Invalid dataset_content_fingerprint {dataset_content_fingerprint!r}. "
+                    "Must be a genuine DATA-CTNT-V2 content fingerprint; 'UNKNOWN' prohibited (Gate G-4)."
                 )
-            resolved_dataset_fingerprint = dataset_content_fingerprint
+            # Audit §31 H-28: Strict equality check against authentic snapshot; caller cannot spoof
+            if dataset_content_fingerprint != authentic_fingerprint:
+                raise WalkForwardEngineError(
+                    f"Supplied dataset_content_fingerprint '{dataset_content_fingerprint}' does not match authentic "
+                    f"Gold dataset snapshot fingerprint '{authentic_fingerprint}' for evaluation window "
+                    f"[{min_start}, {max_end}] (Gate G-4 / H-28)."
+                )
+            resolved_dataset_fingerprint = authentic_fingerprint
 
         fold_results: List[FoldExecutionResult] = []
         agg_daily_returns: List[Decimal] = []
@@ -817,7 +849,21 @@ class WalkForwardEngine:
             circuit_complete = all(f.circuit_evidence_complete for f in fold_results)
             verif_status = "VERIFIED" if circuit_complete else "CIRCUIT_UNVERIFIED"
 
-        # Deterministic Result Fingerprint (Gate G2C-1)
+        # Execution configuration dictionary (Audit §31 H-33)
+        exec_config = {
+            "execution_latency_sessions": self._latency,
+            "full_sessions_only": self._full_sessions_only,
+            "fail_closed_on_unexplained": self._fail_closed_on_unexplained,
+            "eligibility_policy": {
+                "permitted_series": sorted(s.value for s in self._eligibility_policy.permitted_series),
+                "allow_series_transitions": self._eligibility_policy.allow_series_transitions,
+            },
+            "cost_model": self._cost_model.__class__.__name__ if self._cost_model is not None else "DEFAULT_TRANSACTION_COST_MODEL",
+            "slippage_model": self._slippage_model.__class__.__name__ if self._slippage_model is not None else "DEFAULT_SLIPPAGE_MODEL",
+            "criteria_version": self._criteria.version,
+        }
+
+        # Deterministic Result Fingerprint (Gate G2C-1 / H-33)
         fold_spec_fpr = compute_fold_spec_fingerprint(folds)
         canon_params = strategy.parameters
 
@@ -829,6 +875,8 @@ class WalkForwardEngine:
         hasher.update(fold_spec_fpr.encode("utf-8"))
         hasher.update(b"|")
         hasher.update(resolved_dataset_fingerprint.encode("utf-8"))
+        hasher.update(b"|")
+        hasher.update(json.dumps(exec_config, sort_keys=True).encode("utf-8"))
         hasher.update(b"|")
         hasher.update(str(initial_capital).encode("utf-8"))
         hasher.update(b"|")
@@ -856,6 +904,8 @@ class WalkForwardEngine:
             max_drawdown=max_dd,
             circuit_evidence_complete=circuit_complete,
             verification_status=verif_status,
-            fingerprint=result_fpr,
             dataset_content_fingerprint=resolved_dataset_fingerprint,
+            fingerprint=result_fpr,
+            execution_config=exec_config,
+            criteria_version=self._criteria.version,
         )

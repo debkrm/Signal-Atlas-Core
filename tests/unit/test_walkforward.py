@@ -465,12 +465,14 @@ def test_walk_forward_trial_registry_integration(wf_environment):
         rationale="Preliminary walk-forward evaluation",
         fold_spec_fingerprint="FOLD-SPEC-V1-test",
         dataset_fingerprint="DATA-CTNT-V2-test",
-        criteria_version="v1.0",
         partition="VALIDATION",
     )
 
     assert record.seq == 1
     assert record.trial_id == "TRIAL-WF-001"
+    assert record.criteria_version == "1.1.0"
+    assert record.execution_config is not None
+    assert record.execution_config == res.execution_config
     assert record.sharpe_ratio == res.annualized_sharpe
     assert registry.verify_integrity() is True
     assert registry.total_trial_count == 1
@@ -912,6 +914,28 @@ def test_wave2_latency_realism_dispatch(wf_environment):
     engine_l0 = WalkForwardEngine(calendar=cal, gold_engine=gold, execution_latency_sessions=0)
     assert engine_l0._latency == 1
 
+    # Adversarial test (Audit §31 H-29): strategy ignores next_session and tries to execute at T+1 when L=2
+    class LatencyBypassingStrategy(Strategy):
+        @property
+        def strategy_id(self) -> str:
+            return "LATENCY-BYPASS"
+
+        def generate_signals(self, as_of, next_session, universe, features):
+            if as_of == datetime.date(2024, 1, 15):
+                return (
+                    OrderIntent(
+                        instrument_id="INE009A01021",
+                        signal_date=as_of,
+                        target_date=datetime.date(2024, 1, 16),  # Bypassing engine latency
+                        side=OrderSide.BUY,
+                        quantity=10,
+                    ),
+                )
+            return ()
+
+    with pytest.raises(WalkForwardEngineError, match="does not match engine configured execution session"):
+        engine_l2.run_walk_forward(strategy=LatencyBypassingStrategy(), folds=[fold])
+
 
 def test_wave2_dataset_content_fingerprint_binding_and_rejection(wf_environment):
     """
@@ -967,6 +991,28 @@ def test_wave2_dataset_content_fingerprint_binding_and_rejection(wf_environment)
             folds=[fold],
             dataset_content_fingerprint="DATA-CTNT-V2-UNKNOWN",
         )
+
+    # Rejection of fabricated / caller-typed fingerprint (Audit §31 H-28)
+    with pytest.raises(WalkForwardEngineError, match="does not match authentic Gold dataset snapshot"):
+        engine.run_walk_forward(
+            strategy=strat,
+            folds=[fold],
+            dataset_content_fingerprint="DATA-CTNT-V2-" + "0" * 32,
+        )
+
+    # Criteria version dynamic default (Audit §31 H-34)
+    assert res.criteria_version == "1.1.0"
+    assert trial_rec.criteria_version == "1.1.0"
+
+    # Execution configuration bound to WalkForwardResult, TrialRecord, and hashed into result fingerprint (Audit §31 H-33)
+    assert res.execution_config is not None
+    assert res.execution_config["execution_latency_sessions"] == 1
+    assert res.execution_config["criteria_version"] == "1.1.0"
+    assert trial_rec.execution_config == res.execution_config
+
+    engine_l2 = WalkForwardEngine(calendar=cal, gold_engine=gold, execution_latency_sessions=2)
+    res_l2 = engine_l2.run_walk_forward(strategy=strat, folds=[fold])
+    assert res_l2.fingerprint != res.fingerprint
 
     # Rejection of UNKNOWN fingerprint in to_trial_record
     tampered_res = dataclasses.replace(res, dataset_content_fingerprint="DATA-CTNT-V2-UNKNOWN")

@@ -14,6 +14,7 @@ import datetime
 from decimal import Decimal
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
+from signal_core.contracts.criteria import load_go_no_go_criteria
 from signal_core.execution.types import (
     ExecutionOrder,
     ExecutionOrderValidationError,
@@ -265,12 +266,18 @@ class TechnicalCrossStrategy(Strategy):
         strategy_id: str = "TECH-CROSS-V1",
         fast_indicator: str = "sma_20",
         slow_indicator: str = "sma_50",
-        allocation_weight: Decimal = Decimal("0.08"),
+        allocation_weight: Optional[Decimal] = None,
     ) -> None:
         self._strategy_id = strategy_id
         self._fast_indicator = fast_indicator
         self._slow_indicator = slow_indicator
-        self._allocation_weight = allocation_weight
+        if allocation_weight is not None:
+            self._allocation_weight = allocation_weight
+        else:
+            # Audit §31 H-32: Derive sizing default from committed criteria (80% of max_single_position_weight)
+            # avoids hardcoded literal drift against criteria
+            criteria = load_go_no_go_criteria()
+            self._allocation_weight = criteria.max_single_position_weight * Decimal("0.80")
 
     @property
     def strategy_id(self) -> str:

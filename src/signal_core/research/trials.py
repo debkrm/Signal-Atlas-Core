@@ -100,6 +100,7 @@ class TrialRecord:
     kurtosis: Optional[Decimal] = None
     sharpe_ratio: Optional[Decimal] = None
     max_drawdown: Optional[Decimal] = None
+    execution_config: Optional[Mapping[str, Any]] = None
 
     def __post_init__(self) -> None:
         # B-4 Remediation: Validate observation_count (int, not bool, >= 0) and returns_digest (str, not bool)
@@ -159,6 +160,7 @@ class TrialRecord:
             "kurtosis": str(self.kurtosis) if self.kurtosis is not None else None,
             "sharpe_ratio": str(self.sharpe_ratio) if self.sharpe_ratio is not None else None,
             "max_drawdown": str(self.max_drawdown) if self.max_drawdown is not None else None,
+            "execution_config": _canonicalize_value(self.execution_config) if self.execution_config is not None else None,
         }
 
     @classmethod
@@ -207,6 +209,10 @@ class TrialRecord:
                 if isinstance(raw_rd, bool) or not isinstance(raw_rd, str) or not raw_rd.strip():
                     raise RegistryTamperedError(f"Field 'returns_digest' must be non-empty string, got {raw_rd!r}")
 
+            raw_exec_cfg = data.get("execution_config")
+            if raw_exec_cfg is not None and not isinstance(raw_exec_cfg, Mapping):
+                raise RegistryTamperedError(f"Field 'execution_config' must be a mapping, got {type(raw_exec_cfg).__name__}")
+
             return cls(
                 seq=raw_seq,
                 prev_hash=str(data["prev_hash"]),
@@ -228,6 +234,7 @@ class TrialRecord:
                 kurtosis=parse_dec("kurtosis"),
                 sharpe_ratio=parse_dec("sharpe_ratio"),
                 max_drawdown=parse_dec("max_drawdown"),
+                execution_config=dict(raw_exec_cfg) if raw_exec_cfg is not None else None,
             )
         except (KeyError, TypeError, ValueError) as err:
             raise RegistryTamperedError(f"Malformed record structure in trial registry: {err}") from err
@@ -456,6 +463,7 @@ class TrialRegistry:
         max_drawdown: Optional[Decimal] = None,
         partition_spec: Optional[PartitionSpec] = None,
         unlock_file_path: Optional[Union[str, Path]] = None,
+        execution_config: Optional[Mapping[str, Any]] = None,
     ) -> TrialRecord:
         """
         Atomically appends a new verified trial record to the registry.
@@ -595,6 +603,7 @@ class TrialRegistry:
             "kurtosis": str(kurtosis) if kurtosis is not None else None,
             "sharpe_ratio": str(sharpe_ratio) if sharpe_ratio is not None else None,
             "max_drawdown": str(max_drawdown) if max_drawdown is not None else None,
+            "execution_config": _canonicalize_value(execution_config) if execution_config is not None else None,
         }
 
         record_hash = _compute_record_hash(payload)
@@ -620,6 +629,7 @@ class TrialRegistry:
             kurtosis=kurtosis,
             sharpe_ratio=sharpe_ratio,
             max_drawdown=max_drawdown,
+            execution_config=dict(execution_config) if execution_config is not None else None,
         )
 
         # 8. Write atomically with strict POSIX LF and fsync (A-12, B-3)
