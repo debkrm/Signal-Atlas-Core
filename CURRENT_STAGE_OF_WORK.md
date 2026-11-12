@@ -4,9 +4,9 @@
 
 | Attribute | Current Status |
 |---|---|
-| **Active Project Phase** | **Phase 2B signed off** (§22) · **Phase 2B.5 signed off — GO** (§24) · **Phase 2C implemented — NOT SIGNED OFF** (§25: G-1, G-2/G-3, G-4, G-5) · **Wave 0 signed off — GO** (§29 at `d2fd8e0`) · **Wave 1 — SIGNED OFF, GO** (§30 at `95ac584`: thin real vertical slice verified against the archive set — 22 January 2024 sessions for `COCHINSHIP` through Bronze → Silver → Gold → DuckDB → `DATA-CTNT-V2`; byte-exact Bronze, 249 == 249 calendar/archive agreement for 2024, real 2:1 split on the correct side of the ex-date, DR session 2024-01-20 present, 2024-01-22 correctly absent) · **Next** — Wave 2 (close Phase 2C blockers: G-2/G-3 risk limit fill rejection, G-5 execution latency, G-4 Gold dataset binding, falsifiable gates) · **Gates on Wave 3** — H-21 (regression test silently exercises fixtures), H-22 (verification script dies on cp1252), H-23 (volume parsed through float), H-24 (trade date latched from first row), H-26 (calendar `sha256` stale, `total_sessions` assertion loosened), H-27 (W1-4 is interval arithmetic, not membership evidence; DR circular ref unverifiable) |
-| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash book, multi-fill position accounting, mark-to-market portfolio valuation, committed risk tracker, holdout containment with physical storage rejection, tamper-evident trial registry, statistical significance engine, strategy contract, walk-forward engine with canonical partition spec defaults, frozen ingest schemas, real Bhavcopy ingestion pipeline, and invert-proof corporate action & circuit band contracts |
-| **Offline Test Suite** | **227 passed in 4.84s** (100% pass rate, zero warnings) |
+| **Active Project Phase** | **Phase 2B signed off** (§22) · **Phase 2B.5 signed off — GO** (§24) · **Wave 0 signed off — GO** (§29 at `d2fd8e0`) · **Wave 1 signed off — GO** (§30 at `95ac584`) · **Wave 2 implemented & verified** (all Phase 2C blockers closed: G-2/G-3 risk limit fill rejection, G-5 execution latency realism, G-4 Gold dataset binding, falsifiable gates G2C-1 with live trades, G2C-4 circuit freeze refusal, G-7 Decimal geometric CAGR, G-13 cash sufficiency) · **Next** — Auditor Review & Sign-Off of Wave 2 / Phase 2C → Wave 3 (Full Historical Backfill 2015–2026) |
+| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash book, multi-fill position accounting, mark-to-market portfolio valuation, committed risk tracker, holdout containment with physical storage rejection, tamper-evident trial registry, statistical significance engine, strategy contract, walk-forward engine with canonical partition spec defaults and Gold dataset binding, frozen ingest schemas, real Bhavcopy ingestion pipeline, invert-proof corporate action & circuit band contracts, and falsifiable circuit auditing |
+| **Offline Test Suite** | **237 passed in 7.00s** (100% pass rate, zero warnings) |
 | **External Dependencies** | Zero network calls, zero shadow simulators. Research storage is planned as embedded Parquet + DuckDB in an optional extra (no server process); the core package stays stdlib-pure. |
 | **Historical Provenance** | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` (Strictly maintained, zero false promotions) |
 | **Holdout Containment** | `HOLDOUT_UNLOCK` is strictly **ABSENT**; out-of-sample data remains completely sealed |
@@ -482,6 +482,32 @@ Unit tests: [`tests/unit/test_wave1_thin_slice.py`](file:///C:/Users/DEB/Full%20
   - **DuckDB View Layer**: Attached disposable DuckDB engine over 22 Silver Parquet files. Verified `silver_bhavcopy` schema with exact `DECIMAL(18, 4)` precision, `BIGINT` volume, `DATE` trade_date, and executed SQL aggregations (22 rows, ₹753.85 min close to ₹1,363.25 max close, 130,613,155 total volume).
   - **Index Membership Interval (interval arithmetic only)**: `IndexMembershipInterval.contains` verified half-open `[effective_from, effective_to)` across `INE704P01017` → `INE704P01025`. The two intervals are constructed from literals inside the verification script; no circular-backed NIFTY500 membership data exists, and membership does not end on a split ex-date (only the ISIN changes). Labelled a real-data gate in error (§30 H-27).
   - **Ingest contract limits (§30)**: volume parsed via `int(float(...))` (measured: `100000000000000001` → `100000000000000000`; fractional accepted silently — H-23); trade date latched from the first matching row so a multi-date archive stamps every row with that date (H-24); truncated rows and duplicate non-`EQ` rows dropped without a count (H-25). None affect the single-day January 2024 slice; all must be fixed before any multi-date archive or bulk backfill.
+
+#### Wave 2 — Strategy Contract, Walk-Forward Engine & Falsifiable Gates (Completed & Verified)
+Modules: `src/signal_core/strategy/base.py`, `src/signal_core/execution/types.py`, `src/signal_core/portfolio/portfolio.py`, `src/signal_core/storage/security_master.py`, `src/signal_core/research/walkforward.py`.
+Verification script: [`scripts/verify_phase2c_walkforward.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/scripts/verify_phase2c_walkforward.py).
+Runner: [`probe_phase2c.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/probe_phase2c.py).
+Unit tests: [`tests/unit/test_walkforward.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/tests/unit/test_walkforward.py).
+
+- **G-2 / G-3 Strategy Sizing & Portfolio Risk Limit Handling**:
+  - `TechnicalCrossStrategy.allocation_weight` default set to `Decimal("0.08")` (comfortably below committed `max_single_position_weight = 0.10`).
+  - `WalkForwardEngine.run_fold` catches `PortfolioRiskLimitError` raised during `portfolio.process_fill(enforce_risk_limits=True)` and converts the outcome into `ExecutionFillResult(status=FillStatus.REJECTED_RISK_LIMIT, filled_quantity=0, ...)`. Preserves fold continuity and records the rejected attempt in the fold's trade journal instead of aborting the backtest.
+- **G-5 Execution Latency Realism**:
+  - `execution_latency_sessions` on `WalkForwardEngine` actively advances signal generation dates via `calendar.advance_sessions(t, self._latency)`. Clamped with `max(1, latency)`. Verified: signal on Jan 15 executes on Jan 16 for $L=1$ (`latency_sessions=1`), and on Jan 17 for $L=2$ (`latency_sessions=2`).
+- **G-4 Gold Layer Dataset Binding**:
+  - `dataset_content_fingerprint` in `WalkForwardEngine.run_walk_forward` automatically resolves from `GoldEngine.build_dataset_snapshot()` when omitted, binding the authentic `DATA-CTNT-V2-...` hash into `WalkForwardResult`.
+  - Passing `"DATA-CTNT-V2-UNKNOWN"` or invalid digests fails closed at both engine invocation and `to_trial_record()` / `register_in_trial_registry()`.
+- **Falsifiable Gates (G-8, G-6, G-7, G-9, G-11, G-12, G-13)**:
+  - **Gate G2C-1 (Live Trades & Bit-for-Bit Determinism)**: Exercises live trade entries (4 trades, 1 fill) on INFY; verifies exact bit-for-bit identity across reruns on fingerprint, final equity, Sharpe, returns, and prices.
+  - **Gate G2C-4 (Falsifiable Circuit Auditing & Freeze Refusal)**:
+    * Zero-trade runs explicitly flag `verification_status = "NOT RUN"` and `circuit_evidence_complete = False`.
+    * BUY fills at/above Upper Circuit limit are refused fail-closed with `FillStatus.REJECTED_UPPER_CIRCUIT`.
+    * Runs with complete price bands achieve `verification_status = "VERIFIED"`.
+  - **G-7 Geometric Compounded Annualized Return**: Added `compute_compounded_annualized_return` implementing exact Decimal geometric CAGR: `(factor * (1 + R).ln()).exp() - 1` with committed `sessions_per_year = 250`.
+  - **G-9 Bare Exception Removal**: Removed bare `except Exception:` from risk limit checks in `verify_phase2c_walkforward.py`.
+  - **G-11 Length Mismatch Fail-Closed**: Added check in `WalkForwardEngine` asserting `len(f_res.daily_returns) == len(f_res.portfolio_snapshots)` before zip, raising `WalkForwardEngineError` on discrepancy.
+  - **G-12 Storage Invariants Exposed**: Exposed `full_sessions_only` and `fail_closed_on_unexplained` parameters on `WalkForwardEngine` forwarding to `GoldEngine`.
+  - **G-13 Cash Sufficiency Pre-Check**: Added available cash check in `Portfolio.process_fill` before `validate_allocation`, raising `PortfolioRiskLimitError` if outlay exceeds available cash.
 
 #### Phase 2D — Automated Verdict Engine & End-to-End Regression
 Module: `src/signal_core/reporting/verdicts.py`.

@@ -41,7 +41,7 @@ from signal_core.execution.simulator import ExecutionFillResult, ExecutionFillSi
 from signal_core.execution.slippage import SlippageModel
 from signal_core.execution.types import ExecutionOrder, FillStatus, OrderSide
 from signal_core.features.engine import InstrumentTechnicalFeatures, SubsegmentIndicatorEngine
-from signal_core.portfolio.portfolio import Portfolio
+from signal_core.portfolio.portfolio import Portfolio, PortfolioRiskLimitError
 from signal_core.portfolio.types import PortfolioSnapshot
 from signal_core.research.containment import (
     HoldoutSealedError,
@@ -61,7 +61,7 @@ from signal_core.research.significance import (
     sample_std,
 )
 from signal_core.research.trials import TrialRecord, TrialRegistry
-from signal_core.storage.calendar import TradingCalendar
+from signal_core.storage.calendar import CalendarError, TradingCalendar
 from signal_core.storage.gold import GoldEngine
 from signal_core.storage.silver import CANONICAL_HOLDOUT_END_DATE, CANONICAL_HOLDOUT_START_DATE
 from signal_core.strategy.base import (
@@ -70,6 +70,25 @@ from signal_core.strategy.base import (
     OrderIntentValidationError,
     Strategy,
 )
+
+
+def compute_compounded_annualized_return(
+    total_return: Decimal,
+    session_count: int,
+    sessions_per_year: int = 250,
+) -> Decimal:
+    """
+    Computes geometric compounded annualized return (CAGR) per AGENTS.md Rule 6.4 and Audit §25 G-7:
+    CAGR = (1 + total_return)^(sessions_per_year / session_count) - 1.
+    Evaluated in exact Decimal arithmetic via exp( (q / N) * ln(1 + R) ) - 1.
+    """
+    if session_count <= 0 or total_return == Decimal("0"):
+        return Decimal("0.00")
+    if total_return <= Decimal("-1.0"):
+        return Decimal("-1.00")
+    one_plus_r = Decimal("1") + total_return
+    ann_factor = Decimal(sessions_per_year) / Decimal(session_count)
+    return (ann_factor * one_plus_r.ln()).exp() - Decimal("1")
 
 
 class WalkForwardEngineError(ValueError):
@@ -124,6 +143,7 @@ class WalkForwardResult:
     circuit_evidence_complete: bool
     verification_status: str
     fingerprint: str
+    dataset_content_fingerprint: str
 
     def to_trial_record(
         self,
@@ -131,14 +151,22 @@ class WalkForwardResult:
         hypothesis: str,
         rationale: str,
         fold_spec_fingerprint: str,
-        dataset_fingerprint: str,
-        criteria_version: str,
+        dataset_fingerprint: Optional[str] = None,
+        criteria_version: str = "v1.0",
         partition: Union[str, PartitionRole] = PartitionRole.VALIDATION,
         timestamp_utc: Optional[str] = None,
     ) -> TrialRecord:
         """
         Creates an immutable, fully validated TrialRecord for registration into TrialRegistry.
+        Binds dataset_fingerprint to authentic DATA-CTNT-V2 snapshot (Gate G-4).
         """
+        ds_fpr = dataset_fingerprint or self.dataset_content_fingerprint
+        if not isinstance(ds_fpr, str) or not ds_fpr.startswith("DATA-CTNT-V2-") or ds_fpr == "DATA-CTNT-V2-UNKNOWN":
+            raise WalkForwardEngineError(
+                f"Cannot create TrialRecord with invalid dataset_fingerprint {ds_fpr!r}. "
+                "Must be a genuine DATA-CTNT-V2 content fingerprint; 'UNKNOWN' prohibited (Gate G-4)."
+            )
+
         ts = timestamp_utc or datetime.datetime.now(datetime.timezone.utc).isoformat()
         returns_list = list(self.aggregate_daily_returns)
         obs_count = len(returns_list)
@@ -168,7 +196,7 @@ class WalkForwardResult:
             partition=str(partition.value if isinstance(partition, PartitionRole) else partition),
             canonical_params=self.canonical_params,
             fold_spec_fingerprint=fold_spec_fingerprint,
-            dataset_fingerprint=dataset_fingerprint,
+            dataset_fingerprint=ds_fpr,
             criteria_version=criteria_version,
             timestamp_utc=ts,
             returns_digest=returns_digest,
@@ -188,8 +216,8 @@ class WalkForwardResult:
         hypothesis: str,
         rationale: str,
         fold_spec_fingerprint: str,
-        dataset_fingerprint: str,
-        criteria_version: str,
+        dataset_fingerprint: Optional[str] = None,
+        criteria_version: str = "v1.0",
         partition: Union[str, PartitionRole] = PartitionRole.VALIDATION,
         timestamp_utc: Optional[str] = None,
         partition_spec: Optional[PartitionSpec] = None,
@@ -197,7 +225,15 @@ class WalkForwardResult:
     ) -> TrialRecord:
         """
         Registers this walk-forward evaluation directly into an authoritative TrialRegistry.
+        Binds dataset_fingerprint to authentic DATA-CTNT-V2 snapshot (Gate G-4).
         """
+        ds_fpr = dataset_fingerprint or self.dataset_content_fingerprint
+        if not isinstance(ds_fpr, str) or not ds_fpr.startswith("DATA-CTNT-V2-") or ds_fpr == "DATA-CTNT-V2-UNKNOWN":
+            raise WalkForwardEngineError(
+                f"Cannot register trial with invalid dataset_fingerprint {ds_fpr!r}. "
+                "Must be a genuine DATA-CTNT-V2 content fingerprint; 'UNKNOWN' prohibited (Gate G-4)."
+            )
+
         ts = timestamp_utc or datetime.datetime.now(datetime.timezone.utc).isoformat()
         returns_list = list(self.aggregate_daily_returns)
         obs_count = len(returns_list)
@@ -223,7 +259,7 @@ class WalkForwardResult:
             partition=partition,
             canonical_params=self.canonical_params,
             fold_spec_fingerprint=fold_spec_fingerprint,
-            dataset_fingerprint=dataset_fingerprint,
+            dataset_fingerprint=ds_fpr,
             criteria_version=criteria_version,
             timestamp_utc=ts,
             returns_digest=returns_digest,
@@ -277,6 +313,8 @@ class WalkForwardEngine:
         execution_latency_sessions: int = 1,
         partition_spec: Optional[PartitionSpec] = None,
         unlock_file_path: Optional[Union[str, Path]] = None,
+        full_sessions_only: bool = True,
+        fail_closed_on_unexplained: bool = True,
     ) -> None:
         self._calendar = calendar
         self._gold_engine = gold_engine
@@ -285,7 +323,9 @@ class WalkForwardEngine:
         self._cost_model = cost_model
         self._slippage_model = slippage_model
         self._eligibility_policy = eligibility_policy
-        self._latency = execution_latency_sessions
+        self._latency = max(1, execution_latency_sessions)
+        self._full_sessions_only = full_sessions_only
+        self._fail_closed_on_unexplained = fail_closed_on_unexplained
         if partition_spec is not None:
             self._partition_spec = _validate_partition_spec_widening(partition_spec)
         else:
@@ -321,6 +361,18 @@ class WalkForwardEngine:
     @property
     def unlock_file_path(self) -> Optional[Union[str, Path]]:
         return self._unlock_file_path
+
+    @property
+    def latency(self) -> int:
+        return self._latency
+
+    @property
+    def full_sessions_only(self) -> bool:
+        return self._full_sessions_only
+
+    @property
+    def fail_closed_on_unexplained(self) -> bool:
+        return self._fail_closed_on_unexplained
 
     def run_fold(
         self,
@@ -385,7 +437,7 @@ class WalkForwardEngine:
             start_date=fold.train_start,
             end_date=fold.test_end,
             isins=target_isins,
-            full_sessions_only=False,
+            full_sessions_only=self._full_sessions_only,
         )
 
         # 3. Compute technical features for each instrument strictly within subsegments
@@ -396,7 +448,7 @@ class WalkForwardEngine:
             feat_list = SubsegmentIndicatorEngine.compute_standard_features_for_instrument(
                 expected_calendar_sessions=all_cal_sessions,
                 actual_price_bars=bars,
-                fail_closed_on_unexplained=False,
+                fail_closed_on_unexplained=self._fail_closed_on_unexplained,
             )
             for f in feat_list:
                 features_by_inst_date[(isin, f.trade_date)] = f
@@ -466,10 +518,17 @@ class WalkForwardEngine:
                 except ValueError:
                     ex_series = ExchangeSeries.UNKNOWN
 
+                # Resolve price band / circuit limits from Security Master (Audit §25 G-6 / Wave 2)
+                band = self._sec_master.get_price_band(ord_req.instrument_id, t)
+                u_lim = band.upper_circuit_limit if band else None
+                l_lim = band.lower_circuit_limit if band else None
+
                 # Gate G2C-3: Verify against eligibility policy
                 fill_res = simulator.simulate_order(
                     order=ord_req,
                     bar=bar,
+                    upper_circuit_limit=u_lim,
+                    lower_circuit_limit=l_lim,
                     explicit_series=ex_series,
                 )
 
@@ -482,8 +541,26 @@ class WalkForwardEngine:
                             f"Gate G2C-3 Violation: Ineligible series {ex_series} produced fill {fill_res.fill_id}."
                         )
 
-                    # Post fill through authoritative single ledger
-                    portfolio.process_fill(fill_res, enforce_risk_limits=True)
+                    # Post fill through authoritative single ledger (Audit §25 G-3: handle risk limit rejections gracefully)
+                    try:
+                        portfolio.process_fill(fill_res, enforce_risk_limits=True)
+                    except PortfolioRiskLimitError as exc:
+                        # Convert to REJECTED_RISK_LIMIT fill result rather than aborting run
+                        rejected_fill = ExecutionFillResult(
+                            order=ord_req,
+                            status=FillStatus.REJECTED_RISK_LIMIT,
+                            fill_date=t,
+                            latency_sessions=fill_res.latency_sessions,
+                            filled_quantity=0,
+                            unfilled_quantity=ord_req.quantity,
+                            executed_price=None,
+                            slippage=None,
+                            costs=None,
+                            circuit_evidence_present=fill_res.circuit_evidence_present,
+                            rejection_reason=str(exc),
+                            fill_id=f"REJ_RISK_{ord_req.order_id}_{t}#1" if ord_req.order_id else None,
+                        )
+                        fold_trades[-1] = rejected_fill
 
             # --- Step B: Mark-to-Market Session Valuation ---
             market_prices_today: Dict[str, Decimal] = {}
@@ -501,10 +578,13 @@ class WalkForwardEngine:
             daily_returns.append(day_ret)
             prev_equity = cur_equity
 
-            # --- Step C: Formulate next-session trade intents (t -> t+1) ---
-            if t < test_sessions[-1]:
-                next_session = self._calendar.next_session(t)
+            # --- Step C: Formulate next-session trade intents (t -> t + latency) (Audit §25 G-5) ---
+            try:
+                target_session = self._calendar.advance_sessions(t, self._latency)
+            except CalendarError:
+                target_session = None
 
+            if target_session is not None and target_session <= fold.test_end:
                 # Point-in-time universe as-of session t
                 univ_sched = self._gold_engine.build_point_in_time_universe_schedule(t, t, series_filter="EQ")
                 active_universe_t = univ_sched.get_universe_for_date(t)
@@ -518,7 +598,7 @@ class WalkForwardEngine:
 
                 intents = strategy.generate_signals(
                     as_of=t,
-                    next_session=next_session,
+                    next_session=target_session,
                     universe=active_universe_t,
                     features=features_at_t,
                 )
@@ -558,15 +638,25 @@ class WalkForwardEngine:
         final_equity = portfolio.snapshots[-1].total_portfolio_value if portfolio.snapshots else initial_capital
         total_ret = (final_equity - initial_capital) / initial_capital
 
-        # Annualized return and Sharpe
-        ann_sharpe = annualized_sharpe(daily_returns) if len(daily_returns) > 1 else Decimal("0")
+        # Annualized return and Sharpe (Audit §25 G-7: geometric compounding)
+        ann_sharpe = (
+            annualized_sharpe(daily_returns, sessions_per_year=self._criteria.sessions_per_year)
+            if len(daily_returns) > 1
+            else Decimal("0")
+        )
         obs_sessions = len(test_sessions)
-        ann_factor = Decimal("252") / Decimal(obs_sessions) if obs_sessions > 0 else Decimal("1")
-        ann_ret = total_ret * ann_factor
+        ann_ret = compute_compounded_annualized_return(
+            total_return=total_ret,
+            session_count=obs_sessions,
+            sessions_per_year=self._criteria.sessions_per_year,
+        )
 
-        # Circuit evidence audit (Gate G2C-4)
+        # Circuit evidence audit (Gate G2C-4 / G-6)
         executed_fills = [f for f in fold_trades if f.status in (FillStatus.FILLED, FillStatus.PARTIALLY_FILLED)]
-        circuit_complete = all(f.circuit_evidence_present for f in executed_fills) if executed_fills else True
+        if not executed_fills:
+            circuit_complete = False
+        else:
+            circuit_complete = all(f.circuit_evidence_present for f in executed_fills)
 
         return FoldExecutionResult(
             fold=fold,
@@ -587,7 +677,7 @@ class WalkForwardEngine:
         folds: Sequence[WalkForwardFold],
         initial_capital: Decimal = Decimal("1000000.00"),
         isins: Optional[Sequence[str]] = None,
-        dataset_content_fingerprint: str = "DATA-CTNT-V2-UNKNOWN",
+        dataset_content_fingerprint: Optional[str] = None,
         fail_on_lookahead: bool = True,
         partition_spec: Optional[PartitionSpec] = None,
         unlock_file_path: Optional[Union[str, Path]] = None,
@@ -636,6 +726,32 @@ class WalkForwardEngine:
                     )
                 check_partition_access(active_spec, fold.partition_role, unlock_file_path=active_unlock)
 
+        target_isins = tuple(isins) if isins is not None else self._sec_master.registered_isins
+        min_start = min(f.train_start for f in folds)
+        max_end = max(f.test_end for f in folds)
+
+        if dataset_content_fingerprint is None:
+            # Audit §25 G-4: Bind result directly to the authoritative Gold dataset snapshot
+            snap, _ = self._gold_engine.build_dataset_snapshot(
+                start_date=min_start,
+                end_date=max_end,
+                isins=target_isins,
+                full_sessions_only=self._full_sessions_only,
+            )
+            resolved_dataset_fingerprint = snap.content_fingerprint
+        else:
+            # Validate explicit dataset fingerprint fail-closed per AGENTS.md Rule 6.5 & Rule 8.2
+            if (
+                not isinstance(dataset_content_fingerprint, str)
+                or not dataset_content_fingerprint.startswith("DATA-CTNT-V2-")
+                or dataset_content_fingerprint == "DATA-CTNT-V2-UNKNOWN"
+            ):
+                raise WalkForwardEngineError(
+                    f"Invalid dataset_content_fingerprint '{dataset_content_fingerprint}'. "
+                    f"Must be a genuine DATA-CTNT-V2 content fingerprint; 'UNKNOWN' or arbitrary strings prohibited (Gate G-4)."
+                )
+            resolved_dataset_fingerprint = dataset_content_fingerprint
+
         fold_results: List[FoldExecutionResult] = []
         agg_daily_returns: List[Decimal] = []
         agg_trades: List[ExecutionFillResult] = []
@@ -656,18 +772,30 @@ class WalkForwardEngine:
             fold_results.append(f_res)
             agg_trades.extend(f_res.trades)
 
-            # Stitch out-of-fold daily returns into aggregate return stream
+            # Stitch out-of-fold daily returns into aggregate return stream (G-11 fail-closed on length mismatch)
+            if len(f_res.daily_returns) != len(f_res.portfolio_snapshots):
+                raise WalkForwardEngineError(
+                    f"Length mismatch in fold {fold.fold_index}: daily_returns count ({len(f_res.daily_returns)}) "
+                    f"!= portfolio_snapshots count ({len(f_res.portfolio_snapshots)}) (Gate G-11)."
+                )
             for ret, snap in zip(f_res.daily_returns, f_res.portfolio_snapshots):
                 agg_daily_returns.append(ret)
                 compounded_equity *= (Decimal("1") + ret)
                 agg_equity_curve.append((snap.as_of_date, compounded_equity))
 
-        # Global aggregate metrics
+        # Global aggregate metrics (Audit §25 G-7: geometric compounding)
         total_ret = (compounded_equity - initial_capital) / initial_capital if initial_capital > 0 else Decimal("0")
         total_sessions = len(agg_daily_returns)
-        ann_factor = Decimal("252") / Decimal(total_sessions) if total_sessions > 0 else Decimal("1")
-        ann_ret = total_ret * ann_factor
-        agg_sharpe = annualized_sharpe(agg_daily_returns) if len(agg_daily_returns) > 1 else Decimal("0")
+        ann_ret = compute_compounded_annualized_return(
+            total_return=total_ret,
+            session_count=total_sessions,
+            sessions_per_year=self._criteria.sessions_per_year,
+        )
+        agg_sharpe = (
+            annualized_sharpe(agg_daily_returns, sessions_per_year=self._criteria.sessions_per_year)
+            if len(agg_daily_returns) > 1
+            else Decimal("0")
+        )
 
         # Global peak and drawdown
         peak = initial_capital
@@ -680,9 +808,14 @@ class WalkForwardEngine:
                 if dd > max_dd:
                     max_dd = dd
 
-        # Circuit evidence audit across all folds (Gate G2C-4)
-        circuit_complete = all(f.circuit_evidence_complete for f in fold_results)
-        verif_status = "VERIFIED" if circuit_complete else "CIRCUIT_UNVERIFIED"
+        # Circuit evidence audit across all folds (Gate G2C-4 / G-6)
+        all_executed_fills = [f for f in agg_trades if f.status in (FillStatus.FILLED, FillStatus.PARTIALLY_FILLED)]
+        if not all_executed_fills:
+            circuit_complete = False
+            verif_status = "NOT RUN"  # Audit §25 G-6: zero-trade run is NOT RUN, never VERIFIED
+        else:
+            circuit_complete = all(f.circuit_evidence_complete for f in fold_results)
+            verif_status = "VERIFIED" if circuit_complete else "CIRCUIT_UNVERIFIED"
 
         # Deterministic Result Fingerprint (Gate G2C-1)
         fold_spec_fpr = compute_fold_spec_fingerprint(folds)
@@ -695,7 +828,7 @@ class WalkForwardEngine:
         hasher.update(b"|")
         hasher.update(fold_spec_fpr.encode("utf-8"))
         hasher.update(b"|")
-        hasher.update(dataset_content_fingerprint.encode("utf-8"))
+        hasher.update(resolved_dataset_fingerprint.encode("utf-8"))
         hasher.update(b"|")
         hasher.update(str(initial_capital).encode("utf-8"))
         hasher.update(b"|")
@@ -724,4 +857,5 @@ class WalkForwardEngine:
             circuit_evidence_complete=circuit_complete,
             verification_status=verif_status,
             fingerprint=result_fpr,
+            dataset_content_fingerprint=resolved_dataset_fingerprint,
         )

@@ -257,9 +257,14 @@ class Portfolio:
                     f"only {held_quantity} held in portfolio."
                 )
 
-        # 2. Pre-validate risk limits with full capital outlay (gross + charges) (I-3)
+        # 2. Pre-validate risk limits with full capital outlay (gross + charges) (I-3, G-13)
         if enforce_risk_limits and fill.order.side == OrderSide.BUY:
             capital_outlay = paise_costs.gross_amount + paise_costs.total_charges
+            if not self._ledger.allow_overdraft and self._ledger.current_cash < capital_outlay:
+                raise PortfolioRiskLimitError(
+                    f"Insufficient cash for '{inst_id}': capital outlay ₹{capital_outlay} "
+                    f"exceeds available cash ₹{self._ledger.current_cash}."
+                )
             self.validate_allocation(inst_id, capital_outlay, latest_market_prices)
 
         # 3. O(1) Replay check for the exact same in-memory fill instance (N-1, R-5)

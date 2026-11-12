@@ -265,7 +265,7 @@ class TechnicalCrossStrategy(Strategy):
         strategy_id: str = "TECH-CROSS-V1",
         fast_indicator: str = "sma_20",
         slow_indicator: str = "sma_50",
-        allocation_weight: Decimal = Decimal("0.20"),
+        allocation_weight: Decimal = Decimal("0.08"),
     ) -> None:
         self._strategy_id = strategy_id
         self._fast_indicator = fast_indicator

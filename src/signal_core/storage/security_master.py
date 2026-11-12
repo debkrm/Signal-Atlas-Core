@@ -17,6 +17,8 @@ from enum import Enum
 import hashlib
 from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
+from signal_core.contracts.price_band import PriceBandRecord
+
 FORBIDDEN_CHARACTERS = (",", ";", "\n", "\r", "\t")
 
 
@@ -328,6 +330,7 @@ def compute_security_master_fingerprint(
     corporate_actions: Sequence[CorporateAction],
     delisting_events: Sequence[DelistingEvent],
     isin_transitions: Sequence[ISINTransitionEvent],
+    price_bands: Optional[Sequence[PriceBandRecord]] = None,
 ) -> str:
     """Computes a deterministic SHA-256 fingerprint for security master state."""
     hasher = hashlib.sha256()
@@ -362,6 +365,14 @@ def compute_security_master_fingerprint(
         row = f"{t.old_isin},{t.new_isin},{t.effective_date.isoformat()},{t.reason}\n"
         hasher.update(row.encode("utf-8"))
 
+    # 5. Price Bands (Audit §25 G-6 / Wave 2)
+    if price_bands:
+        hasher.update(b"PRICE_BANDS:\n")
+        sorted_bands = sorted(price_bands, key=lambda b: (b.isin, b.trade_date))
+        for b in sorted_bands:
+            row = f"{b.isin},{b.trade_date.isoformat()},{b.series},{b.upper_circuit_limit},{b.lower_circuit_limit}\n"
+            hasher.update(row.encode("utf-8"))
+
     digest = hasher.hexdigest()[:32]
     return f"SEC-MSTR-V1-{digest}"
 
@@ -377,12 +388,17 @@ class SecurityMaster:
         corporate_actions: Optional[Sequence[CorporateAction]] = None,
         delisting_events: Optional[Sequence[DelistingEvent]] = None,
         isin_transitions: Optional[Sequence[ISINTransitionEvent]] = None,
+        price_bands: Optional[Sequence[PriceBandRecord]] = None,
     ) -> None:
         self._symbol_intervals: Tuple[SymbolInterval, ...] = tuple(symbol_intervals)
         self._surveillance_intervals: Tuple[SurveillanceInterval, ...] = tuple(surveillance_intervals or ())
         self._corporate_actions: Tuple[CorporateAction, ...] = tuple(corporate_actions or ())
         self._delisting_events: Tuple[DelistingEvent, ...] = tuple(delisting_events or ())
         self._isin_transitions: Tuple[ISINTransitionEvent, ...] = tuple(isin_transitions or ())
+        self._price_bands: Tuple[PriceBandRecord, ...] = tuple(price_bands or ())
+        self._price_bands_by_isin_date: Dict[Tuple[str, datetime.date], PriceBandRecord] = {
+            (b.isin, b.trade_date): b for b in self._price_bands
+        }
 
         # Validate non-overlapping symbol intervals per ISIN
         by_isin: Dict[str, List[SymbolInterval]] = {}
@@ -419,6 +435,7 @@ class SecurityMaster:
             self._corporate_actions,
             self._delisting_events,
             self._isin_transitions,
+            self._price_bands,
         )
 
     @property
@@ -493,6 +510,16 @@ class SecurityMaster:
             if ca.isin == isin and (up_to is None or ca.ex_date <= up_to)
         ]
         return tuple(sorted(actions, key=lambda ca: ca.ex_date))
+
+    def get_price_band(self, isin: str, as_of: datetime.date) -> Optional[PriceBandRecord]:
+        """Returns PriceBandRecord for an ISIN on session date as_of, if registered."""
+        _validate_identifier(isin, "isin")
+        _validate_date(as_of, "as_of")
+        return self._price_bands_by_isin_date.get((isin, as_of))
+
+    @property
+    def price_bands(self) -> Tuple[PriceBandRecord, ...]:
+        return self._price_bands
 
 
 def build_production_security_master() -> SecurityMaster:
