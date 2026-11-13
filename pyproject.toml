@@ -23,7 +23,9 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Office/Business :: Financial :: Investment",
 ]
-dependencies = []
+dependencies = [
+    "PyYAML>=6.0.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -32,6 +34,11 @@ dev = [
 storage = [
     "pyarrow>=14.0.0",
     "duckdb>=1.0.0",
+]
+all = [
+    "pyarrow>=14.0.0",
+    "duckdb>=1.0.0",
+    "pytest>=8.0.0",
 ]
 
 [tool.pytest.ini_options]
