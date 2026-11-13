@@ -2940,3 +2940,117 @@ So `non_target_count` never moves (it counts `target_isins` filtering, not serie
 What changed in this round is worth stating plainly: H-49 is closed properly — validated in three places, at construction and at the storage boundary, with the test that asserted the phantom corrected rather than deleted. That was the last *unit-level* defect in the band path. The defects that remain are all one class, and it is the class this wave exists to get right: **identity that is asserted rather than sourced**. A 2,377-row CSV with no provenance, dated on Sundays and holidays, unable to express a transition, silently trusted, and covering 58% of one year of a nine-year window is worse than an absence, because it produces a `VERIFIED` fold with which no external party can disagree.
 
 ---
+## 40 — Review of `581ac0f`: sourced identity, and a coverage number that measures itself
+
+**Context.** `581ac0f` claims H-50, H-51, N-19, N-20, N-21 and N-23, replaces the hand-authored `cash_equity_symbol_intervals_2024.csv` with `cash_equity_symbol_intervals.csv` (4,510 intervals), adds `data/reference/manifest.jsonl`, `scripts/verify_cash_universe_coverage.py`, `scripts/derive_cash_universe_intervals.py`, a committed `sec_list_20240116.csv`, and `.github/workflows/ci.yml`; deletes five `probe_*.py` files.
+
+### 40.1 Checks run
+
+- `python -m pytest -q` → **264 passed in 10.16s**.
+- `python scripts/verify_audit_append_only.py` → all three gates PASS; discovered **7** verification scripts (dynamic, up from the hardcoded 6) and each exited 0.
+- `python scripts/verify_cash_universe_coverage.py` → COV-1..COV-4 PASS, exit 0.
+- Full diff read (16 files, +9,035/−2,621); `derive_cash_universe_intervals.py` and `verify_cash_universe_coverage.py` read in full.
+- Independent probes: manifest-vs-bytes hash, artifact re-derivation into a temp path, per-symbol resolution on the real 2024-01-16 publication, threshold sweep, corrupt-row and missing-file load, hand-built overlapping intervals, resolution before 2022.
+- The raw archive directory the deriver reads (`C:\Users\DEB\Full Stack Documentation\Practice Projects\Signal-Atlas\data\raw`) exists on this machine with **1,195** zips across 2022–2026, so the claim "sourced from 1,195 archives" is checkable here.
+
+### 40.2 H-50 — CLOSED at `581ac0f`
+
+The asserted table is gone and the replacement is genuinely derived:
+
+- **Reproducible.** Re-running `scripts/derive_cash_universe_intervals.py` (pointed at a temp output) reproduced the committed artifact **byte for byte**: 4,510 intervals, 174,725 bytes, `sha256 b1746c9ec38a7f59962b39c87f72461872c3f5f718f09d212704f4636f79c1f4`. The manifest's last entry carries that same SHA, byte count and record count, plus derivation script, UTC timestamp, source coverage and an explicit limitation note.
+- **Session-dated.** Gate COV-1 checks every `effective_from`/`effective_to` in all 4,510 rows against the authoritative calendar and reports 100% on sessions — the 28 non-session dates of §39.3 are gone.
+- **Transitions are expressible and correct.** The two §39.3 failures now resolve on the right side of the ex-date: `NESTLEIND` 2024-01-02 → `INE239A01016`, 2024-01-05 → `INE239A01024`; `MAZDOCK` 2024-12-26 → `INE249Z01012`, 2024-12-30 → `INE249Z01020`; `COCHINSHIP` 2024-01-09/01-10 correctly split. Ambiguity is no longer silently resolved: `resolve_isin_by_symbol` now collects all active matches and raises `SecurityMasterError` on more than one, and `SecurityMaster.__init__` validates non-overlapping, non-unclosed intervals per `(symbol, series)`.
+- **The loader fails closed.** See 40.3.
+
+This is a real repair of the finding: the wave now has an identity artifact that a second party could recompute and disagree with. It is closed.
+
+### 40.3 H-51 — CLOSED at `581ac0f`
+
+`except (FileNotFoundError, SecurityMasterError): pass` is removed; `build_production_security_master` now propagates. Measured:
+
+```
+load_cash_universe_symbol_intervals(<csv with effective_from=not-a-date>)
+  -> SecurityMasterError: Corrupt row 2 in cash universe artifact 'bad.csv': Invalid isoformat string: 'not-a-date'
+load_cash_universe_symbol_intervals(<missing path>) -> FileNotFoundError
+```
+
+A hand-built pair of overlapping `KRBL` intervals is refused at construction: `Overlapping or unclosed symbol intervals detected for symbol 'KRBL' (series EQ)`. The silent five-ISIN degradation is no longer reachable.
+
+### 40.4 N-19 — counting fixed, gating still absent
+
+Series partitioning now happens before resolution, and both sides are printed on every parse:
+
+```
+total_rows=3624 in_scope_('EQ',)=2763 out_of_scope=861 extracted=1839 unresolved_in_scope=924 non_target=861 duplicates=0
+```
+
+That is the accounting N-14/N-19 asked for, so the *counting* half is closed. The *gating* half is not, and this is where the wave still fails: with 924 unresolved in-scope rows the threshold sweep on the real publication is
+
+```
+max_unresolved_threshold=0   -> PriceBandIngestError
+max_unresolved_threshold=50  -> PriceBandIngestError
+max_unresolved_threshold=900 -> PriceBandIngestError
+max_unresolved_threshold=924 -> passes, 1,839 records written
+```
+
+so the only threshold that lets a real day through is one that can never fail. The verdict `ALL CASH UNIVERSE COVERAGE GATES PASSED` is computed over a publication of which a third was dropped. N-19 is closed as an accounting note and carried forward inside H-52.
+
+### 40.5 H-52 — blocking, new: the 100% is circular and measured on the subset that must succeed
+
+COV-2's headline is `Successfully Resolved to Exact ISIN: 1794 / 1794 (100.00%)`, and it does not mean what it reads as:
+
+- **It validates the artifact against its own source.** The intervals are derived from bhavcopy `ISIN`+`SYMBOL` per session; COV-2 then resolves bhavcopy symbols of 2024-01-16 back through those intervals. A security that traded that day is by construction in the derivation set, so 100% is a tautology, not a measurement. It cannot fail except through a resolver bug.
+- **It measures the trading subset, not the universe.** The real band publication for 2024-01-16 has **2,763** `EQ` rows; bhavcopy that day has **1,794** `EQ` scrips. The 969 securities that were listed with a published price band but did not trade are exactly the ones identity cannot cover.
+- **Measured coverage of what the band pipeline actually consumes: 1,839 of 2,763 `EQ` rows = 66.6%.**
+- **Why:** identity starts at first *trade*, not at listing. Of the 921 unresolved `EQ` symbols, 911 exist in the artifact with intervals that *begin after* 2024-01-16 — `AASTHA` 2026-07-06, `ABANSENT` 2026-04-20, `AONELIQUID` 2025-03-28 — i.e. they are absent from every bhavcopy session before that date, so they were listed but never traded in the window before it. Failing closed is the right behaviour (§10.4/§10.8); a 33.4% hole on a real session is not a closed finding.
+- **COV-3 tolerates it.** It asserts `total_rows == 3624`, `in_scope_series_count == 2763`, `out_of_scope_series_count == 861` — and nothing about `unresolved_isin_count == 924`, so the gate reports PASS on the same run whose input it discarded.
+- **COV-4 still does not use a real band archive.** The `VERIFIED` fold ingests a one-line hand-written CSV (`ISIN,SYMBOL,SERIES,UPPER_LIMIT,LOWER_LIMIT,BAND` / `INE144J01027,20MICRONS,EQ,180.00,120.00,20.00`) against synthetic closes. The identity behind it is now real; the circuit evidence is not.
+
+Consequence for H-44: it stays **OPEN**, and the "100%" figure must not enter any document. Coverage of the binding window is also now 2022-01-03..2026-10-31 only — the 2018-04-01..2021-12-31 archives do not exist locally and the manifest says so rather than bridging, which is the correct instinct, but a shorter window is a scoping decision that belongs in `CURRENT_STAGE_OF_WORK.md` and the GO/NO-GO config, not only in a manifest note.
+
+### 40.6 H-53 — blocking, new: the gate skips itself, and the derivation cannot leave this machine
+
+Third instance of the class H-51 was supposed to end:
+
+```python
+RAW_JAN_BHAV = Path(r"C:\Users\DEB\Full Stack Documentation\Practice Projects\Signal-Atlas\data\raw\2024\cm16JAN2024bhav.csv.zip")
+...
+if not RAW_JAN_BHAV.is_file():
+    print(f"[SKIP] Raw Bhavcopy archive not found at: {RAW_JAN_BHAV}")
+    return True          # counted as a PASS by main()
+```
+
+and the same absolute prefix in `derive_cash_universe_intervals.py` (`RAW_ARCHIVES_DIR`). Effects:
+
+- On any machine but this one — including the GitHub runner the new `ci.yml` provisions, which discovers and runs this script — COV-2 prints `[SKIP]` and contributes PASS to `OVERALL VERDICT: ALL CASH UNIVERSE COVERAGE GATES PASSED`, while reaching into a path that does not exist. A gate that reports success when its evidence is absent is the defect, not the missing file.
+- The artifact cannot be re-derived anywhere else, so its provenance is reproducible in this working directory only. §10.7 asks for a run record that lets someone else audit the retrieval; a hardcoded local path defeats that even with a correct SHA.
+
+A missing archive must fail the gate with a named reason, and the archive location must be configuration (env var with a documented local root), not a literal path.
+
+### 40.7 Wave 0.5 (N-20, N-21, N-23) and this round's notes
+
+- **N-20 — CLOSED.** `git log -p -m` now diffs merge commits, and `check_verification_scripts` discovers `scripts/verify_*.py` dynamically (7 found, all exit 0) instead of a hardcoded six. Both holes named in §39.6 are shut.
+- **N-21 — OPEN.** `.github/workflows/ci.yml` exists (pytest + `verify_audit_append_only.py`, `fetch-depth: 0`), so 0.5b is half done; 0.5a is untouched — the only tags are `wave0-…`, `wave1-…`, `wave2-…`, and none names `d0e18c5`, `427eb05`, `30cc4c8` or `581ac0f`. Branch protection remains unverifiable from the repository.
+- **N-23 — CLOSED.** The `probe_*.py` files are gone and `data/reference/sec_list_20240116.csv` is committed with a manifest entry, so §39.2's measurement is now re-runnable from the repository alone.
+
+- **N-24** — `assert` is used for validation in `derive_cash_universe_intervals.py` (session-dating, overlap, ordering) and in COV-3/COV-4. Under `python -O` every one of those checks disappears and the artifact is written unchecked; §9.3 wants a raise.
+- **N-25** — `manifest.jsonl` holds three entries for `cash_equity_symbol_intervals.csv` (3,037 / 4,510 / 4,510 records; only the last matches the committed bytes). Append-only is right, but there is no "current" marker and the verifier silently takes `[-1]`, so a stale artifact plus an appended entry passes. A manifest should state which entry the committed file is.
+- **N-26** — `non_target_count` now absorbs out-of-scope series rows, so it means two different things (series exclusion and `target_isins` filtering) and COV-3 asserts 861 for both. Three drop reasons need three counters.
+- **N-27** — `CURRENT_STAGE_OF_WORK.md` was not updated by `581ac0f` (repeat of N-22): it still reads "Wave 3 — NO-GO at `427eb05`" with H-50/H-51 blocking, and "Wave 0.5 — partially implemented at `427eb05`" with no workflow file.
+- **N-28** — the derivation declares 1,195 archives but reports `Processed 1193 sessions`; two archives contributed no session. Minor, but the provenance note should state archives parsed = sessions kept, not the archive count.
+- **N-29** — `build_production_security_master` drops sourced intervals for a `(symbol, series)` pair already present in the hardcoded core list (5 rows: `INFY`, `RELIANCE`, `HDFC`, `COCHINSHIP` old/new). Today they agree; a divergence between sourced and hardcoded would be silently resolved in favour of the constant. It should compare and raise.
+
+### 40.8 Verdict
+
+**Closed at `581ac0f`:** H-50, H-51, N-19 (accounting), N-20, N-23. §36–§39 closures are unaffected. **Open: H-44, N-21.**
+
+**Wave 3 — Full Historical Backfill: NO-GO at `581ac0f`**, on two new blockers and the carried finding:
+
+1. **H-44** — coverage of the real band publication is 1,839 of 2,763 `EQ` rows (66.6%) on 2024-01-16 because identity begins at first trade. Either extend the artifact with a sourcing path that covers listed-but-untraded securities (a listing/series master, or band-snapshot corroboration), or record the per-session coverage floor as an explicit, computed input to the GO/NO-GO criteria — and drive one fold over a real band archive month to `VERIFIED`.
+2. **H-52** — stop reporting resolution against the derivation source. Measure what the pipeline consumes (band publication rows, resolved / total, per session), make COV-3 assert the unresolved count rather than tolerate it, and report the number in the phase record.
+3. **H-53** — make COV-2 fail (not skip) when its archive is absent, and move the archive root out of source into configuration so the derivation and the gate run wherever they are checked out.
+4. Then **N-21** (tags at the verdict SHAs, branch protection or an explicit statement that it is out of scope) and **N-24..N-29**.
+
+What changed this round, precisely: the identity table that §39.3 called worse than an absence is now an artifact that regenerates to the same SHA from 1,195 real archives and resolves real ISIN transitions correctly. That is the hard part of this wave done. What has not changed is how the wave reports on itself: the number that closes the gap is computed over the set that cannot fail, and the gate that would catch it declares success when the evidence is missing. Both are the failure §9.1 and §10.7 exist to prevent, and neither is a data problem — each is one line of policy.
+
+---
