@@ -2824,3 +2824,119 @@ The counters exist (`unresolved_isin_count`, `non_target_count`, `duplicate_isin
 This is the first round in which every blocker named by the preceding verdict was actually closed, and the closures survive adversarial input rather than only their own tests: the bhavcopy can no longer outrank a band file, a header without a band column can no longer become "No Band", and the fabricated split-day limit is gone. What remains is that the band facts now live in three places (intervals, discrete records, Silver partition) with no rule for which governs, and that not one real band could be attached to a real instrument at scale until identity is resolved. The next round should therefore be about *unification and coverage*, not about tightening another parser branch.
 
 ---
+## 39. H-49 / H-44 / N-14 / N-15 / N-16 Remediation Audit — `427eb05` (Wave 3 gate, fifth pass)
+
+Reviewed commit `427eb05` ("feat(storage): remediate audit §38 findings H-49, H-44, N-14, N-15, N-16 and add Wave 0.5 gate"), 8 files, +3,273 / −42, against §38.2–§38.5 and the §38.6 instruction order. Checks run in the working tree at `427eb05`: `261 passed in 10.26s` (5 new tests, zero skipped, zero xfailed); every `scripts/verify_*.py` exits 0, including the new `verify_audit_append_only.py`; the full source diff read; and four probe scripts run independently of the tests, on the real cached `sec_list.csv` of 16 Jan 2024 (3,624 data rows, 2,763 of them `EQ`) and on a local clone of this repository.
+
+### 39.1 Closed, measured
+
+- **H-49 — CLOSED.** Discrete records are now validated at three points: `SecurityMaster.__init__` (every record against its covering interval), a public `validate_price_band_record()`, and `SilverStorage.write_price_band_partition(..., security_master=...)` before the atomic write. The §37.2 / §38.2 phantom is refused:
+
+  ```
+  with_price_bands([INE704P01025, 2024-01-10, 20.00%, 802.80 / 535.20])
+  -> SecurityMasterError: ... has is_unconstrained=False, contradicting covering unconstrained interval (Finding H-49)
+  ```
+
+  `test_security_master_with_price_bands` now asserts `is_unconstrained is True, band_percentage is None` — the corrected state, not the artifact. Coverage caveat: the production master holds **zero constrained intervals** (all five are `is_unconstrained=True`), so the constrained branch — percentage equality, implied-percentage cross-check — has fixture-only coverage and no live data path. Flagged as N-19 rather than a finding, because the branch is correct on inspection and the live path is genuinely all-unconstrained.
+- **N-15 — CLOSED.** The ZIP header probe no longer swallows: an undecodable candidate member raises `PriceBandIngestError` naming the member, instead of being silently treated as non-qualifying.
+- **N-16 — CLOSED.** `write_price_band_partition` now demands an explicit calendar: measured `SilverStorageError: A TradingCalendar is required to write a Silver price band partition` when the storage object carries `calendar=None`. The F-6 inheritance is closed at this boundary, and `ingest_daily_price_bands` threads a `calendar=` argument through.
+- **N-14 — addressed in structure, not in substance.** A `PriceBandParseSummary` is returned, carried on the result objects (backwards-compatible 2-tuple), written into the Bronze manifest, and enforceable via `max_unresolved_threshold`. That is the shape §38.4 asked for. What the counters *count* is wrong; see §39.3.
+
+### 39.2 H-44 · Still open — identity now exists in name, on one year of a nine-year window
+
+The commit adds `data/reference/cash_equity_symbol_intervals_2024.csv` (2,377 intervals), `load_cash_universe_symbol_intervals()`, a `resolve_isin_by_symbol` index, `load_from_silver_price_bands()`, and an end-to-end test that reaches a `VERIFIED` fold. Measured against the real publication:
+
+```
+parse(sec_list.csv 2024-01-16, build_production_security_master())
+  -> total_rows=3624  extracted=1603  unresolved=2021  non_target=0  dup=0
+
+resolve_isin_by_symbol over the 2763 EQ rows:
+  -> 1603 resolved (58.0%), 1160 real EQ scrips with no identity
+     e.g. A2ZINFRA, ATALREAL, BOHRAIND, CASHIETF ...
+```
+
+And for the binding evaluation window, which §10.8 fixes at **2018-04-01** onward:
+
+```
+resolve_isin_by_symbol("KRBL", 2018-06-01) -> None
+resolve_isin_by_symbol("KRBL", 2023-06-01) -> None
+```
+
+The artifact is named `_2024` and its `effective_from` values span 2024-01-01..2024-12-31 only. Outside the five hardcoded core ISINs, the entire pre-2024 window — 5.75 of the 8.6 years the backfill must cover — resolves to nothing. So the finding is not "identity is thin"; it is that **the window the project is allowed to evaluate has no identity source at all**, and 42% of a mid-window publication still resolves to nothing.
+
+The commit message states H-44 remediated. What is measured is: 58% of one session's EQ universe inside one calendar year, with no production caller (`ingest_daily_price_bands`, `write_price_band_partition` and `load_from_silver_price_bands` are still called only from tests and `__init__` re-exports), and the one `VERIFIED` fold is built on a two-row hand-written `sec_list` plus synthetic bhavcopy closes. It is a correct unit-level demonstration of the path; it is not coverage.
+
+### 39.3 H-50 · Blocking, new — the identity table is unsourced and cannot represent an ISIN transition
+
+`data/reference/cash_equity_symbol_intervals_2024.csv` is the only thing standing between a band report and an ISIN, and nothing about it is verifiable:
+
+- **No provenance of any kind.** No source URL, no retrieval timestamp, no byte count, no SHA-256, no manifest entry, no derivation script, no documentation reference. `grep -rn cash_equity` finds exactly one hit in the repository: the hardcoded path in `load_cash_universe_symbol_intervals`. Compare §10.7 ("every retrieval records source URL, retrieval timestamp, byte count, and SHA-256"), §10.5 and §10.8. This is an identity authority committed as a bare file, indistinguishable in the audit trail from hand-typed data.
+- **Its dates do not look like session dates.** 70 rows take effect or expire on 28 non-session dates — Saturdays and Sundays (`2024-01-13`, `2024-01-20`, `2024-03-02`, `2024-05-11`, `2024-05-18`) and exchange holidays (`2024-01-22`, `2024-01-26`, `2024-04-17`, `2024-05-01`, `2024-08-15`, `2024-10-02`, `2024-11-15`). A listing, delisting or ISIN change always takes effect on a trading session; a table whose effective dates fall on closed days was not taken from an exchange record.
+- **It cannot express a transition, and the resolver does not notice.** Symbol intervals have no overlap or ambiguity check — unlike band intervals, which enforce non-overlap in `SecurityMaster.__init__` — and the new `_intervals_by_symbol` index returns the first `contains()` hit. Measured:
+
+  ```
+  artifact:  NESTLEIND  [2024-01-01, 2024-01-05) INE239A01016
+             NESTLEIND  [2024-01-01, open)      INE239A01024     <- both cover 01-01..01-04
+  resolve NESTLEIND 2024-01-02 -> INE239A01016   (the superseded ISIN)
+
+  artifact:  MAZDOCK    [2024-01-01, open)      INE249Z01012
+             MAZDOCK    [2024-12-27, open)      INE249Z01020     <- old interval never closed
+  resolve MAZDOCK 2024-12-30 -> INE249Z01012
+  resolve MAZDOCK 2025-03-03 -> INE249Z01012     (two months after its replacement took effect)
+  ```
+
+  This is §10.4 read literally: "An ISIN transition is an explicit event with a verified effective date; histories are never stitched across differing ISINs." As encoded, every MAZDOCK session from 2024-12-27 onward is attributed to the retired ISIN, and the master has no mechanism to say so. Two such pairs are in the file; nobody counted them, because nothing validates this artifact.
+
+  Requirement: derive the table from a source that actually carries both fields per session — the NSE bhavcopy has `ISIN` and `SYMBOL` on every row — over 2018-04-01..2026, closing each interval on the last session its ISIN appears and opening the next on the first session of the new one; validate that every effective date is a calendar session and that no symbol has two open intervals; publish the per-session resolved/total coverage; and register the derived artifact (URL, timestamp, byte count, SHA-256, derivation command) as §10.7 requires. Then the fail-closed rule of §39.4 below makes an incomplete artifact impossible to deploy by accident.
+
+### 39.4 H-51 · Blocking, new — a corrupt or missing identity table silently degrades to five ISINs
+
+```python
+try:
+    cash_intervals = load_cash_universe_symbol_intervals()
+    ...
+except (FileNotFoundError, SecurityMasterError):
+    pass
+```
+
+Measured with the loader forced to raise `SecurityMasterError("corrupt artifact row")`:
+
+```
+FAIL-OPEN: built with 5 ISINs, no error
+```
+
+A malformed row, an unreadable file, a validation failure inside `SymbolInterval`, or a deleted artifact all produce a perfectly valid `SecurityMaster` that resolves almost nothing — silently, with no warning, no log line and no manifest flag. Since §38's H-44 defect *was* exactly "3 of 3,624", this swallow reintroduces it behind one bad byte, and the ingest will then report `unresolved_isin_count=2021` on a run that looks configured. Under §6.3 and §9.3 an identity source that is required must be required: build must raise, and the exception must name the artifact path and the failing row.
+
+### 39.5 N-19 · Required — the drop accounting cannot tell "out of scope" from "unresolved"
+
+`unresolved_isin_count` counts every row whose symbol does not resolve, without first partitioning by series. The publication carries 861 rows that are not `EQ` (`SM` 482, `BE` 201, `ST` 100, `BZ` 42, `IV` 21, `RR` 6, `E1` 5, `SZ` 2, `IT` 1, `W1` 1) and the master registers no `BE`/`SM` identity by design. Measured on a normal publication:
+
+```
+summary: total_rows=3624 extracted=1603 unresolved_isin_count=2021 non_target_count=0 duplicate=0
+max_unresolved_threshold=50 -> PriceBandIngestError: Unresolved ISINs (2021) exceeded ...
+```
+
+So `non_target_count` never moves (it counts `target_isins` filtering, not series scope), and no threshold value is usable: at least 861 rows are unresolvable on any healthy day, so any threshold tight enough to catch the 1,160 missing `EQ` scrips also fires every day, and any threshold loose enough to pass fires on nothing. Split the counts by series first (`EQ` in-scope vs not), then apply the threshold to the in-scope remainder, and report both on every run. Until then N-14's numbers exist but cannot gate anything, which §9.1 treats as not implemented.
+
+### 39.6 Notes
+
+- **N-20** — the Wave 0.5 gate works but has two holes. Verified positively: on a local clone, deleting one line of the audit report fails the gate with exit 1, both as an uncommitted change and as a committed one (`[FAIL] Working tree / staged changes contain 1 deleted lines`, `[FAIL] Commits since a3a40f1 contain 1 deleted lines`). Holes: `git log -p <base>..HEAD` does not diff merge commits by default, so an audit deletion introduced by a merge is invisible; and `VERIFICATION_SCRIPTS` is a hardcoded six-entry list, so a newly added `scripts/verify_*.py` is silently ungated — a fixed guest list, not a registry. (Whole-file deletion is handled: `AUDIT_FILE.exists()` fails first.)
+- **N-21** — Wave 0.5 is one third done. 0.5c (gate honesty) is implemented and works. 0.5b has no continuous integration: there is no `.github/` directory and no workflow file, so the gate is a script someone must remember to run. 0.5a is untouched: no tag exists for `d0e18c5` or `427eb05` (the tags present are `wave0-…`, `wave1-…`, `wave2-…`), and branch protection cannot be verified from the repository at all.
+- **N-22** — `CURRENT_STAGE_OF_WORK.md` was not touched by `427eb05`. Wave 3 still reads "NO-GO at `0b1504a`" with H-49 and H-44 blocking, and Wave 0.5 still reads "NOT STARTED". That is stale rather than false, which §9.3 prefers to invention, but the document is the phase record and a commit that claims six findings remediated should leave the phase row matching what it measured.
+- **N-23** — hygiene. Six `probe_*.py` scripts sit in the repository root (`probe_b7bd8ba.py`, `probe_phase2a.py`, `probe_phase2b.py`, `probe_phase2b5.py`, `probe_phase2c.py`), tracked at the root of a repository whose §12 is about verifiable structure. The original `sec_list.csv` used by this audit is not committed either, so the measurement in §39.2 cannot be re-run by anyone else from the repository alone.
+
+### 39.7 Verdict
+
+**Closed at `427eb05`:** H-49, N-15, N-16. §36's and §37's closures are unaffected; H-30, H-40/H-41/H-42, H-43, H-45/H-46/H-47/H-48 stay CLOSED. H-44 stays **OPEN**.
+
+**Wave 3 — Full Historical Backfill: NO-GO at `427eb05`**, on three blockers and one required item:
+
+1. **H-50** — replace the unsourced 2024 table with an effective-dated symbol→ISIN artifact derived from bhavcopy sessions over 2018-04-01..2026, closed at every ISIN change, manifest-registered with URL/timestamp/bytes/SHA-256, and validated for session-dated effectivity and single-open-interval-per-symbol.
+2. **H-51** — remove the `except ...: pass`; a missing or corrupt identity artifact must fail the build, naming the artifact and the row.
+3. **H-44** — after 1 and 2, measure coverage per session (resolved / total `EQ`) and drive one fold over a real archive month to `VERIFIED`; if any part of the binding window cannot be sourced, record that limitation with its source instead of bridging it.
+4. **N-19** — partition drops by series before counting, so the threshold can actually gate.
+5. Then N-20/N-21 to finish Wave 0.5 (workflow file, tags, merge-diff hole, script discovery), and N-22/N-23.
+
+What changed in this round is worth stating plainly: H-49 is closed properly — validated in three places, at construction and at the storage boundary, with the test that asserted the phantom corrected rather than deleted. That was the last *unit-level* defect in the band path. The defects that remain are all one class, and it is the class this wave exists to get right: **identity that is asserted rather than sourced**. A 2,377-row CSV with no provenance, dated on Sundays and holidays, unable to express a transition, silently trusted, and covering 58% of one year of a nine-year window is worse than an absence, because it produces a `VERIFIED` fold with which no external party can disagree.
+
+---
