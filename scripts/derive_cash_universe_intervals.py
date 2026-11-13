@@ -19,6 +19,7 @@ import datetime
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import time
@@ -27,7 +28,25 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-RAW_ARCHIVES_DIR = Path(r"C:\Users\DEB\Full Stack Documentation\Practice Projects\Signal-Atlas\data\raw")
+
+
+def resolve_raw_archives_dir() -> Path:
+    """Configurable archive directory discovery per Audit §40 Note H-53."""
+    env_dir = os.environ.get("NSE_RAW_ARCHIVES_DIR")
+    if env_dir:
+        cand = Path(env_dir)
+        if cand.is_dir():
+            return cand
+    cand1 = REPO_ROOT / "data" / "raw"
+    if cand1.is_dir():
+        return cand1
+    cand2 = REPO_ROOT.parent / "Signal-Atlas" / "data" / "raw"
+    if cand2.is_dir():
+        return cand2
+    return Path(r"C:\Users\DEB\Full Stack Documentation\Practice Projects\Signal-Atlas\data\raw")
+
+
+RAW_ARCHIVES_DIR = resolve_raw_archives_dir()
 OUTPUT_CSV = REPO_ROOT / "data" / "reference" / "cash_equity_symbol_intervals.csv"
 MANIFEST_PATH = REPO_ROOT / "data" / "reference" / "manifest.jsonl"
 
@@ -62,6 +81,12 @@ def extract_session_observations() -> Tuple[List[datetime.date], Dict[datetime.d
     """
     cal = load_nse_trading_calendar()
     valid_sessions = set(cal.sessions)
+
+    if not RAW_ARCHIVES_DIR.is_dir():
+        raise FileNotFoundError(
+            f"Raw archives directory not found at: {RAW_ARCHIVES_DIR}. "
+            "Set NSE_RAW_ARCHIVES_DIR environment variable per Note H-53."
+        )
 
     zip_files = []
     for y_dir in sorted(RAW_ARCHIVES_DIR.iterdir()):
@@ -129,7 +154,14 @@ def extract_session_observations() -> Tuple[List[datetime.date], Dict[datetime.d
 
     elapsed = time.perf_counter() - start_t
     sorted_sessions = sorted(session_observations.keys())
-    print(f"[INFO] Processed {len(sorted_sessions)} sessions in {elapsed:.2f}s.")
+    # Note N-28: 1,195 archives discovered across 2022-2026. Exactly 2 archives (2026-03-20 and 2026-05-27)
+    # fall on non-trading calendar dates and were rejected per Rule 6.3 fail-closed calendar invariants,
+    # resulting in exactly 1,193 valid trading sessions kept.
+    rejected_non_cal = len(zip_files) - len(sorted_sessions)
+    print(
+        f"[INFO] Processed {len(sorted_sessions)} trading sessions from {len(zip_files)} raw archives in {elapsed:.2f}s "
+        f"({rejected_non_cal} non-calendar archives rejected per Rule 6.3 fail-closed calendar invariants, Note N-28)."
+    )
     return sorted_sessions, session_observations
 
 
@@ -221,10 +253,14 @@ def validate_and_save_intervals(
     by_isin: Dict[str, List[Tuple[str, str, str, datetime.date, Optional[datetime.date]]]] = defaultdict(list)
     for row in sorted_intervals:
         isin, sym, srs, ef, et = row
-        assert ef in valid_sessions, f"effective_from {ef} is not a valid trading session for {sym}"
+        # Note N-24: Explicit raise instead of bare assert to survive python -O
+        if ef not in valid_sessions:
+            raise ValueError(f"effective_from {ef} is not a valid trading session for {sym} (Note N-24)")
         if et is not None:
-            assert et in valid_sessions, f"effective_to {et} is not a valid trading session for {sym}"
-            assert ef < et, f"effective_from {ef} must precede effective_to {et} for {sym}"
+            if et not in valid_sessions:
+                raise ValueError(f"effective_to {et} is not a valid trading session for {sym} (Note N-24)")
+            if not (ef < et):
+                raise ValueError(f"effective_from {ef} must precede effective_to {et} for {sym} (Note N-24)")
         by_sym[(sym, srs)].append(row)
         by_isin[isin].append(row)
 
@@ -236,8 +272,10 @@ def validate_and_save_intervals(
             nxt = sym_list_sorted[i + 1]
             cur_et = cur[4]
             nxt_ef = nxt[3]
-            assert cur_et is not None, f"Intermediate interval for symbol {sym} cannot have None effective_to"
-            assert cur_et <= nxt_ef, f"Symbol {sym} ({srs}) intervals overlap: {cur} overlaps {nxt}"
+            if cur_et is None:
+                raise ValueError(f"Intermediate interval for symbol {sym} cannot have None effective_to (Note N-24)")
+            if not (cur_et <= nxt_ef):
+                raise ValueError(f"Symbol {sym} ({srs}) intervals overlap: {cur} overlaps {nxt} (Note N-24)")
 
     # Check non-overlapping per ISIN
     for isin, isin_list in by_isin.items():
@@ -247,8 +285,10 @@ def validate_and_save_intervals(
             nxt = isin_list_sorted[i + 1]
             cur_et = cur[4]
             nxt_ef = nxt[3]
-            assert cur_et is not None, f"Intermediate interval for ISIN {isin} cannot have None effective_to"
-            assert cur_et <= nxt_ef, f"ISIN {isin} intervals overlap: {cur} overlaps {nxt}"
+            if cur_et is None:
+                raise ValueError(f"Intermediate interval for ISIN {isin} cannot have None effective_to (Note N-24)")
+            if not (cur_et <= nxt_ef):
+                raise ValueError(f"ISIN {isin} intervals overlap: {cur} overlaps {nxt} (Note N-24)")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", newline="\n", encoding="utf-8") as f:

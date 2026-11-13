@@ -118,6 +118,10 @@ class GoNoGoCriteria:
     # Statutory cost schedule
     statutory_costs: StatutoryCostCriteria
 
+    # Market data and accounting invariants (§10.8, Audit §40.5, Finding H-44)
+    min_binding_evaluation_start_date: datetime.date = datetime.date(2022, 1, 3)
+    min_session_price_band_coverage_pct: Decimal = Decimal("65.0")
+
 
 def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCriteria:
     """
@@ -217,6 +221,13 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         prohibit_sell_at_lower_circuit=bool(exec_liq["prohibit_sell_at_lower_circuit"]),
         min_execution_latency_sessions=int(exec_liq["min_execution_latency_sessions"]),
         statutory_costs=costs,
+        min_binding_evaluation_start_date=datetime.date.fromisoformat(
+            str(data.get("market_data_and_accounting_invariants", {}).get("min_binding_evaluation_start_date", "2022-01-03"))
+        ),
+        min_session_price_band_coverage_pct=_to_decimal(
+            data.get("market_data_and_accounting_invariants", {}).get("min_session_price_band_coverage_pct", "65.0"),
+            "min_session_price_band_coverage_pct",
+        ),
     )
 
 

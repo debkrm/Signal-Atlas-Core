@@ -55,7 +55,7 @@ class PriceBandIngestError(Exception):
 @dataclass(frozen=True, slots=True)
 class PriceBandParseSummary:
     """
-    Dropped-row and extraction accounting for a price band report ingest per Note N-14 / Note N-19.
+    Dropped-row and extraction accounting for a price band report ingest per Note N-14 / Note N-19 / Note N-26.
     Tracks series scope partitioning, unresolved in-scope rows, and non-target filtering.
     """
     total_rows: int
@@ -65,6 +65,7 @@ class PriceBandParseSummary:
     duplicate_isin_count: int
     in_scope_series_count: int = 0
     out_of_scope_series_count: int = 0
+    filtered_target_isin_count: int = 0
 
     def to_dict(self) -> Dict[str, int]:
         return {
@@ -75,6 +76,7 @@ class PriceBandParseSummary:
             "duplicate_isin_count": self.duplicate_isin_count,
             "in_scope_series_count": self.in_scope_series_count,
             "out_of_scope_series_count": self.out_of_scope_series_count,
+            "filtered_target_isin_count": self.filtered_target_isin_count,
         }
 
     @classmethod
@@ -87,6 +89,7 @@ class PriceBandParseSummary:
             duplicate_isin_count=int(d["duplicate_isin_count"]),
             in_scope_series_count=int(d.get("in_scope_series_count", 0)),
             out_of_scope_series_count=int(d.get("out_of_scope_series_count", 0)),
+            filtered_target_isin_count=int(d.get("filtered_target_isin_count", d.get("non_target_count", 0))),
         )
 
 
@@ -614,7 +617,6 @@ def parse_price_band_report(
         # Note N-19: Partition by series scope first
         if in_scope_series_set is not None and series_val not in in_scope_series_set:
             out_of_scope_series_count += 1
-            non_target_count += 1
             continue
 
         in_scope_series_count += 1
@@ -717,13 +719,14 @@ def parse_price_band_report(
         duplicate_isin_count=duplicate_isin_count,
         in_scope_series_count=in_scope_series_count,
         out_of_scope_series_count=out_of_scope_series_count,
+        filtered_target_isin_count=non_target_count,
     )
 
-    # Note N-14 / Note N-19: Report counts on every run
+    # Note N-14 / Note N-19 / Note N-26: Report counts on every run
     print(
         f"[INFO] PriceBand Parse: total_rows={len(rows)} in_scope_{target_series}={in_scope_series_count} "
         f"out_of_scope={out_of_scope_series_count} extracted={len(records)} "
-        f"unresolved_in_scope={unresolved_isin_count} non_target={non_target_count} duplicates={duplicate_isin_count}"
+        f"unresolved_in_scope={unresolved_isin_count} filtered_target_isins={non_target_count} duplicates={duplicate_isin_count}"
     )
 
     # Note N-14 / Note N-19: Fail closed if unresolved in-scope drops exceed allowable threshold

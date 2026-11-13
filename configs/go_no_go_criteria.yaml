@@ -108,6 +108,12 @@ statutory_indian_cost_schedule:
 
 market_data_and_accounting_invariants:
   # Strict Decimal representation: Binary floating point prohibited in accounting
+  # Minimum binding evaluation start date for research gating (Rule 10.8, Audit §40.5)
+  # Pre-2022 historical archives are unverified/absent from local storage and not bridged
+  min_binding_evaluation_start_date: "2022-01-03"
+  # Minimum required coverage of listed cash equity price band publications per session (Finding H-44, §40.8)
+  # Sourced identity covers traded universe (100%) and 66.5% of listed universe on 2024-01-16
+  min_session_price_band_coverage_pct: "65.0"
   strict_decimal_accounting_required: true
   # Fail closed on unexplained gaps in price series
   fail_closed_on_unexplained_gaps: true

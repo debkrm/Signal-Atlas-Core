@@ -1340,7 +1340,8 @@ def test_n19_series_partitioning_accounting_and_threshold(test_calendar):
     assert res.summary.out_of_scope_series_count == 2
     assert res.summary.extracted_records == 1
     assert res.summary.unresolved_isin_count == 1  # only the 1 unresolved EQ row!
-    assert res.summary.non_target_count == 2       # 2 out-of-scope non-EQ rows
+    assert res.summary.non_target_count == 0       # 0 target ISIN filter drops (Note N-26)
+    assert res.summary.filtered_target_isin_count == 0
 
     # Threshold of 1 allows the 1 unresolved EQ row without firing on the 2 out-of-scope rows
     res2 = parse_price_band_report(
@@ -1359,4 +1360,43 @@ def test_n19_series_partitioning_accounting_and_threshold(test_calendar):
             target_series=("EQ",),
             max_unresolved_threshold=0,
         )
+
+
+def test_n29_build_production_security_master_detects_core_divergence(monkeypatch):
+    """
+    Audit §40 Note N-29:
+    - Divergence between sourced intervals and hardcoded core symbols must raise SecurityMasterError.
+    - Sourced interval cannot silently disagree with core interval for overlapping dates.
+    """
+    import signal_core.storage.security_master as sm_mod
+
+    # 1. Divergent ISIN for INFY raises SecurityMasterError
+    divergent_intervals = (
+        SymbolInterval(
+            isin="INE999A01099",  # Divergent ISIN
+            symbol="INFY",
+            series="EQ",
+            effective_from=datetime.date(2022, 1, 3),
+            effective_to=None,
+        ),
+    )
+    monkeypatch.setattr(sm_mod, "load_cash_universe_symbol_intervals", lambda *args, **kwargs: divergent_intervals)
+
+    with pytest.raises(SecurityMasterError, match="Divergence detected between hardcoded core interval for INFY"):
+        build_production_security_master(include_cash_universe=True)
+
+    # 2. Harmonious sourced interval succeeds
+    harmonious_intervals = (
+        SymbolInterval(
+            isin="INE009A01021",  # Matches authentic INFY ISIN
+            symbol="INFY",
+            series="EQ",
+            effective_from=datetime.date(2022, 1, 3),
+            effective_to=None,
+        ),
+    )
+    monkeypatch.setattr(sm_mod, "load_cash_universe_symbol_intervals", lambda *args, **kwargs: harmonious_intervals)
+    sm = build_production_security_master(include_cash_universe=True)
+    assert sm.resolve_isin_by_symbol("INFY", datetime.date(2024, 1, 16)) == "INE009A01021"
+
 

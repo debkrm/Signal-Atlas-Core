@@ -202,11 +202,55 @@ def check_test_suite_zero_skip_xfail() -> bool:
     return True
 
 
+REQUIRED_VERDICT_TAGS = {
+    "wave0-signed-off-d2fd8e0": "d2fd8e0",
+    "wave1-signed-off-95ac584": "95ac584",
+    "wave2-signed-off-982c9fa": "982c9fa",
+    "verdict-s38-d0e18c5": "d0e18c5",
+    "feat-s38-427eb05": "427eb05",
+    "verdict-s39-30cc4c8": "30cc4c8",
+    "feat-s39-581ac0f": "581ac0f",
+    "verdict-s40-57d8562": "57d8562",
+}
+
+
+def check_verdict_tags() -> bool:
+    """Verifies that sign-offs and audit verdicts carry immutable git tags (§12.2, Note N-21)."""
+    print("--- Gate W0.5-4: Sign-Off and Verdict Tag Integrity (§12.2, Note N-21) ---")
+    all_ok = True
+    for tag_name, expected_sha in REQUIRED_VERDICT_TAGS.items():
+        try:
+            proc = subprocess.run(
+                ["git", "rev-parse", "--short", f"{tag_name}^{{commit}}"],
+                cwd=str(REPO_ROOT),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=True,
+            )
+            actual_sha = proc.stdout.strip()
+            if actual_sha != expected_sha:
+                print(f"[FAIL] Tag '{tag_name}' points to {actual_sha}, expected {expected_sha}")
+                all_ok = False
+            else:
+                print(f"[PASS] Tag '{tag_name}' -> {actual_sha} (verified)")
+        except Exception as e:
+            print(f"[FAIL] Tag '{tag_name}' does not exist or failed rev-parse: {e}")
+            all_ok = False
+
+    if all_ok:
+        print("[PASS] Gate W0.5-4: All sign-off and audit verdict tags verified.\n")
+    else:
+        print("[FAIL] Gate W0.5-4: One or more required verdict tags missing.\n")
+    return all_ok
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Wave 0.5 Repository Foundation Gate Verification")
     parser.add_argument("--check-audit-only", action="store_true", help="Run audit append-only check only")
     parser.add_argument("--check-scripts-only", action="store_true", help="Run verification scripts only")
     parser.add_argument("--check-suite-only", action="store_true", help="Run pytest suite check only")
+    parser.add_argument("--check-tags-only", action="store_true", help="Run verdict tags check only")
     args = parser.parse_args()
 
     print("=" * 80)
@@ -214,7 +258,7 @@ def main() -> int:
     print(f"Target: AGENTS.md §11.1, §12.3, §12.4 Compliance")
     print("=" * 80 + "\n")
 
-    run_all = not (args.check_audit_only or args.check_scripts_only or args.check_suite_only)
+    run_all = not (args.check_audit_only or args.check_scripts_only or args.check_suite_only or args.check_tags_only)
 
     results = []
     if run_all or args.check_audit_only:
@@ -225,6 +269,9 @@ def main() -> int:
 
     if run_all or args.check_suite_only:
         results.append(check_test_suite_zero_skip_xfail())
+
+    if run_all or args.check_tags_only:
+        results.append(check_verdict_tags())
 
     print("=" * 80)
     if all(results):

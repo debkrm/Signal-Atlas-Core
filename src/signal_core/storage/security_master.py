@@ -10,6 +10,7 @@ Implements security identity and point-in-time intervals per AGENTS.md Rule 10.4
 - Deterministic cryptographic fingerprinting (SEC-MSTR-V1).
 """
 
+from collections import defaultdict
 import csv
 from dataclasses import dataclass
 import datetime
@@ -860,11 +861,31 @@ def build_production_security_master(include_cash_universe: bool = True) -> Secu
 
     if include_cash_universe:
         cash_intervals = load_cash_universe_symbol_intervals()
-        core_isins = {s.isin for s in symbol_intervals}
-        core_symbols = {(s.symbol, s.series) for s in symbol_intervals}
+        core_by_sym: Dict[Tuple[str, str], List[SymbolInterval]] = defaultdict(list)
+        for s in symbol_intervals:
+            core_by_sym[(s.symbol, s.series)].append(s)
+
         for ci in cash_intervals:
-            if ci.isin not in core_isins and (ci.symbol, ci.series) not in core_symbols:
+            matching_core = core_by_sym.get((ci.symbol, ci.series), [])
+            if not matching_core:
                 symbol_intervals.append(ci)
+                continue
+
+            # Compare sourced interval with matching core intervals per Note N-29
+            # Verify no conflicting ISINs for overlapping effective intervals
+            for core in matching_core:
+                overlap = (
+                    (ci.effective_to is None or ci.effective_to > core.effective_from)
+                    and (core.effective_to is None or core.effective_to > ci.effective_from)
+                )
+                if overlap:
+                    if ci.isin != core.isin:
+                        raise SecurityMasterError(
+                            f"Divergence detected between hardcoded core interval for {core.symbol} ({core.series}) "
+                            f"[ISIN {core.isin}, {core.effective_from}..{core.effective_to}] and sourced interval "
+                            f"[ISIN {ci.isin}, {ci.effective_from}..{ci.effective_to}] (Note N-29)."
+                        )
+                    # Sourced agrees with core on ISIN; core interval (extending earlier history) is preserved.
 
     corporate_actions = [
         # INFY 1:1 Bonus ex-date 2018-09-12 (1 old share gives 1 additional share, total 2)

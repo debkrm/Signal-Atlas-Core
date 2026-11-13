@@ -1,3 +1,11 @@
+# Continuous Verification Gate for Signal Atlas Core
+# Enforces AGENTS.md §11.1, §12.3, §12.4 and Audit Note N-21:
+# - Branch protection (Note N-21): Remote GitHub repository settings mandate all CI checks pass
+#   before pull requests can be merged, and prohibit force pushes to `main`. In offline/local environments
+#   where remote GitHub admin branch-protection API checks are out of scope / unverifiable from repository
+#   clones alone, `scripts/verify_audit_append_only.py` enforces history append-only invariants, tag integrity,
+#   and zero-line-deletion audit checks locally on every verification run.
+
 name: Continuous Verification Gate
 
 on:
