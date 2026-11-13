@@ -7,6 +7,7 @@ Bronze -> Silver -> Gold -> DuckDB -> DATA-CTNT-V2, plus real corporate action a
 import datetime
 from decimal import Decimal
 import io
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -41,6 +42,29 @@ from signal_core.storage.security_master import (
 from signal_core.storage.silver import SilverStorage
 from signal_core.storage.views import DuckDBViewLayer
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def resolve_jan2024_bhav_dir(raw_data_dir_arg: Optional[Path] = None) -> Path:
+    """Configurable Bhavcopy archive directory lookup per Audit §40 Note H-53, §12.5."""
+    if raw_data_dir_arg and raw_data_dir_arg.is_dir():
+        return raw_data_dir_arg
+    env_dir = os.environ.get("NSE_RAW_ARCHIVES_DIR")
+    if env_dir:
+        cand_2024 = Path(env_dir) / "2024"
+        if cand_2024.is_dir() and len(list(cand_2024.glob("cm*JAN2024bhav.csv.zip"))) == 22:
+            return cand_2024
+        cand_root = Path(env_dir)
+        if cand_root.is_dir() and len(list(cand_root.glob("cm*JAN2024bhav.csv.zip"))) == 22:
+            return cand_root
+    repo_ref = REPO_ROOT / "data" / "reference" / "bhavcopy_2024"
+    if repo_ref.is_dir() and len(list(repo_ref.glob("cm*JAN2024bhav.csv.zip"))) == 22:
+        return repo_ref
+    repo_cand = REPO_ROOT / "data" / "raw" / "2024"
+    if repo_cand.is_dir() and len(list(repo_cand.glob("cm*JAN2024bhav.csv.zip"))) == 22:
+        return repo_cand
+    return repo_ref
+
 
 def run_wave1_verification(raw_data_dir: Optional[Path] = None) -> bool:
     print("=" * 80)
@@ -68,17 +92,16 @@ def run_wave1_verification(raw_data_dir: Optional[Path] = None) -> bool:
         return False
 
     # 2. Locate Raw Bhavcopy Archives
-    if raw_data_dir is None:
-        raw_data_dir = Path(__file__).resolve().parent.parent.parent / "Signal-Atlas" / "data" / "raw" / "2024"
+    raw_data_dir = resolve_jan2024_bhav_dir(raw_data_dir)
     
     if not raw_data_dir.is_dir():
         print(f"[FAIL] Raw data directory not found at: {raw_data_dir}")
         return False
 
     jan_zips = sorted(list(raw_data_dir.glob("cm*JAN2024bhav.csv.zip")))
-    print(f"[INFO] Raw Bhavcopy archives discovered for Jan 2024: {len(jan_zips)}")
+    print(f"[INFO] Raw Bhavcopy archives discovered for Jan 2024: {len(jan_zips)} at {raw_data_dir}")
     if len(jan_zips) != 22:
-        print(f"[FAIL] Expected 22 raw Bhavcopy archives for January 2024, found {len(jan_zips)}")
+        print(f"[FAIL] Expected 22 raw Bhavcopy archives for January 2024 at {raw_data_dir}, found {len(jan_zips)}")
         return False
 
     # Setup isolated test storage directories

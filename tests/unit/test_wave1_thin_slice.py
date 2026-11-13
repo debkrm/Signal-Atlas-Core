@@ -8,6 +8,7 @@ Remediates findings H-21, H-23, H-24, H-25, H-27.
 import datetime
 from decimal import Decimal
 import io
+import os
 from pathlib import Path
 import tempfile
 import zipfile
@@ -210,18 +211,24 @@ def test_wave1_thin_slice_synthetic_split_and_gold_pipeline(wave1_test_env):
 def test_wave1_thin_slice_real_data_ingestion_and_duckdb(wave1_test_env):
     """
     Real-data test that exercises the full 22-session January 2024 Bhavcopy archives.
-    Skips with an explicit reason if external archives are not present (Finding H-21).
+    Fails closed if the required 22 January 2024 Bhavcopy archives are not found (AGENTS.md §12.4, §12.5).
     """
     bronze, silver, duckdb_path, cal, sec_master = wave1_test_env
 
-    raw_data_dir = Path(__file__).resolve().parents[3] / "Signal-Atlas" / "data" / "raw" / "2024"
-    if not raw_data_dir.is_dir() or len(list(raw_data_dir.glob("cm*JAN2024bhav.csv.zip"))) != 22:
-        pytest.skip(
-            f"Real NSE Bhavcopy archives for January 2024 (22 files) not found at {raw_data_dir}. "
-            "Skipping real-data execution per Audit §30 H-21."
-        )
+    env_dir = os.environ.get("NSE_RAW_ARCHIVES_DIR")
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    if env_dir and (Path(env_dir) / "2024").is_dir() and len(list((Path(env_dir) / "2024").glob("cm*JAN2024bhav.csv.zip"))) == 22:
+        raw_data_dir = Path(env_dir) / "2024"
+    elif env_dir and Path(env_dir).is_dir() and len(list(Path(env_dir).glob("cm*JAN2024bhav.csv.zip"))) == 22:
+        raw_data_dir = Path(env_dir)
+    elif (repo_root / "data" / "reference" / "bhavcopy_2024").is_dir() and len(list((repo_root / "data" / "reference" / "bhavcopy_2024").glob("cm*JAN2024bhav.csv.zip"))) == 22:
+        raw_data_dir = repo_root / "data" / "reference" / "bhavcopy_2024"
+    else:
+        raw_data_dir = repo_root / "data" / "raw" / "2024"
 
+    assert raw_data_dir.is_dir(), f"Raw Bhavcopy archive directory not found: {raw_data_dir}"
     zips = sorted(list(raw_data_dir.glob("cm*JAN2024bhav.csv.zip")))
+    assert len(zips) == 22, f"Expected 22 Bhavcopy archives in {raw_data_dir}, found {len(zips)}"
     target_isins = ["INE704P01017", "INE704P01025"]
 
     for zf in zips:

@@ -63,3 +63,6 @@ venv.bak/
 .DS_Store
 Thumbs.db
 
+# Cached uncompressed reference fixtures (gzipped source committed)
+data/reference/historical_dev_dataset_2022_2024.json
+

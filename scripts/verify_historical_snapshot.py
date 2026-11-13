@@ -7,8 +7,12 @@ recorded manifest expectations.
 
 import argparse
 import datetime
+import gzip
+import os
 from pathlib import Path
+import shutil
 import sys
+from typing import Optional
 
 # Ensure src is on sys.path for standalone script execution
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -24,20 +28,60 @@ from signal_core.loaders.historical_snapshot import (
 )
 
 
-DEFAULT_SNAPSHOT_PATH = Path(
-    r"C:\Users\DEB\Full Stack Documentation\Practice Projects\Signal-Atlas\data\snapshots\historical_dev_dataset_2022_2024.json"
-)
 EXPECTED_FILE_SHA256 = "502c6424c79f4856b70608434d6cfab6ef78cd38e4241d38ed5dced4d8c06980"
 EXPECTED_CONTENT_FP = "DATA-CTNT-V2-659aea8f18d3b23ba1b9267425bbde8b"
 EXPECTED_UNIVERSE_FP = "UNIV-SCHED-V1-5f4d979ba7e62055a171f4e34b45d698"
 
 
+def resolve_snapshot_path(cli_path: Optional[Path] = None) -> Path:
+    """
+    Resolves the historical development snapshot JSON path:
+    1. Explicit CLI argument if provided and exists
+    2. NSE_SNAPSHOT_PATH environment variable if set and exists
+    3. Cached uncompressed file at data/reference/historical_dev_dataset_2022_2024.json
+    4. Compressed fixture at data/reference/historical_dev_dataset_2022_2024.json.gz (decompressed on-demand)
+    5. Fails closed with FileNotFoundError if no valid fixture is found (AGENTS.md §6.3, §12.5).
+    """
+    if cli_path is not None and cli_path.is_file():
+        return cli_path
+
+    env_path = os.environ.get("NSE_SNAPSHOT_PATH")
+    if env_path:
+        ep = Path(env_path)
+        if ep.is_file():
+            return ep
+
+    ref_json = _REPO_ROOT / "data" / "reference" / "historical_dev_dataset_2022_2024.json"
+    if ref_json.is_file():
+        return ref_json
+
+    ref_gz = _REPO_ROOT / "data" / "reference" / "historical_dev_dataset_2022_2024.json.gz"
+    if ref_gz.is_file():
+        print(f"[INFO] Decompressing cached snapshot fixture: {ref_gz.name} -> {ref_json.name}")
+        with gzip.open(ref_gz, "rb") as f_in, open(ref_json, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
+        return ref_json
+
+    legacy_cand = Path(r"C:\Users\DEB\Full Stack Documentation\Practice Projects\Signal-Atlas\data\snapshots\historical_dev_dataset_2022_2024.json")
+    if legacy_cand.is_file():
+        return legacy_cand
+
+    raise FileNotFoundError(
+        f"Historical development dataset snapshot not found. Looked for:\n"
+        f"  - CLI argument: {cli_path}\n"
+        f"  - NSE_SNAPSHOT_PATH: {env_path}\n"
+        f"  - Repository fixture: {ref_json}\n"
+        f"  - Gzipped fixture: {ref_gz}\n"
+        f"Fail closed per AGENTS.md §6.3, §12.5."
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Verify Historical Snapshot")
-    parser.add_argument("--snapshot-path", type=Path, default=DEFAULT_SNAPSHOT_PATH, help="Path to snapshot JSON")
+    parser.add_argument("--snapshot-path", type=Path, default=None, help="Path to snapshot JSON")
     args = parser.parse_args()
 
-    snapshot_path = args.snapshot_path
+    snapshot_path = resolve_snapshot_path(args.snapshot_path)
     print(f"Loading snapshot from: {snapshot_path}")
 
     # 1. File SHA-256

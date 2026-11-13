@@ -55,21 +55,24 @@ MANIFEST_FILE = REPO_ROOT / "data" / "reference" / "manifest.jsonl"
 
 
 def resolve_raw_bhavcopy_archive(filename: str = "cm16JAN2024bhav.csv.zip") -> Path:
-    """Configurable Bhavcopy archive lookup per Audit §40 Note H-53."""
+    """Configurable Bhavcopy archive lookup per Audit §40 Note H-53, §12.5."""
     env_dir = os.environ.get("NSE_RAW_ARCHIVES_DIR")
     if env_dir:
         cand = Path(env_dir) / "2024" / filename
         if cand.is_file():
             return cand
+        cand_root = Path(env_dir) / filename
+        if cand_root.is_file():
+            return cand_root
     ref_cand = REPO_ROOT / "data" / "reference" / filename
     if ref_cand.is_file():
         return ref_cand
+    bhav_cand = REPO_ROOT / "data" / "reference" / "bhavcopy_2024" / filename
+    if bhav_cand.is_file():
+        return bhav_cand
     raw_cand = REPO_ROOT / "data" / "raw" / "2024" / filename
     if raw_cand.is_file():
         return raw_cand
-    parent_cand = REPO_ROOT.parent / "Signal-Atlas" / "data" / "raw" / "2024" / filename
-    if parent_cand.is_file():
-        return parent_cand
     return ref_cand
 
 
