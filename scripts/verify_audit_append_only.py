@@ -211,6 +211,7 @@ REQUIRED_VERDICT_TAGS = {
     "verdict-s39-30cc4c8": "30cc4c8",
     "feat-s39-581ac0f": "581ac0f",
     "verdict-s40-57d8562": "57d8562",
+    "feat-s40-cf873fc": "cf873fc",
 }
 
 
