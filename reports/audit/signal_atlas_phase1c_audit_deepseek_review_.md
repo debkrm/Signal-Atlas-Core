@@ -3158,3 +3158,129 @@ Four things to do before Phase 2D produces a research verdict, in this order:
 One observation worth keeping. Two rounds ago the defect was an identity table nobody could check; last round it was one that checked itself; this round the identity is right and the threshold that grades it is wrong. The data layer is now the most verifiable part of this project — the failure mode has moved entirely into the files that decide what counts as passing.
 
 ---
+
+## 42 — Review of `c7d3e88`: the threshold moved to the measurement; the enforcement is still one session wide
+
+`c7d3e88` — *feat(remediation): remediate H-54, N-21, N-30, N-31, N-32 across criteria, walkforward, and gates* — 10 files, +208/−137.
+
+### 42.1 Checks run
+
+- `python scripts/verify_audit_append_only.py` → all four gates PASS, exit 0; audit file 3,160 lines (unchanged by this round), 0 deleted lines in the working tree and in commits since `a3a40f1`; all 7 verification scripts exit 0; `267 passed in 10.23s` with 0 skipped and 0 xfailed; Gate W0.5-4 verifies 4 required wave tags plus 16 discovered commit-bearing tags, `wave3-signed-off-a093682 -> a093682`.
+- Full diff of all 10 files read; `grep` for the removed criterion name across `.py/.yaml/.md/.yml` to confirm no consumer survived the rename.
+- Two probes run outside the suite: a partial-overlap security-master probe (§42.7) and a boundary read of the fold predicate.
+- Not run: any Phase 2D verdict computation (the module does not exist yet). The 1,195-session resolution sweep was not re-executed this round — §41.3's measurement stands as measured at `a093682`, against the derived table `sha256 b1746c9e…`, which `c7d3e88` does not touch.
+
+### 42.2 H-54 — CLOSED at `c7d3e88`; the replacement criterion is admissible
+
+```yaml
+min_traded_eq_resolution_pct: "100.0"
+```
+
+The calibrated `min_session_price_band_coverage_pct: "65.0"` is gone — field, loader, dataclass field and consumer. COV-2, which resolves the traded `EQ` set as of a session, now reads the committed criterion; COV-3's listed-universe coverage is printed as `(Informational)` and gates nothing. Listed coverage was never the right thing to gate: the 924 unextracted scrips are scrips that had not traded yet, and no price-based universe can contain them, so a floor over that ratio graded the denominator rather than the work.
+
+The new floor is not the old defect in a new unit. `100.0%` of the actively traded `EQ` set is a correctness bound, not a threshold chosen from a measurement: every traded row has exactly one true ISIN, and any unresolved row is a defect with no legitimate value a floor could be set beneath. A criterion that equals the measured value is admissible when that value is the only defensible one — which is what separates this from §41.5, where 66.56% was a consequence of the data and 65.0% was chosen to sit under it. Fixed.
+
+### 42.3 N-34 — new, and the condition on Phase 2D: the invariant says "per session"; the gate measures one session
+
+COV-2 opens `cm16JAN2024bhav.csv.zip` and resolves 1,794 traded scrips on 2024-01-16. That is the entire enforcement of `min_traded_eq_resolution_pct`. The number that justified the criterion — 2,390,165/2,390,165 across 1,195 sessions — exists in this repository as a comment:
+
+```yaml
+# Audit measurement: 2,390,165 / 2,390,165 traded EQ rows across all 1,195 daily Bhavcopy sessions resolve 100.0000% with 0 failures
+```
+
+So the criterion's name is session-scoped, its evidence is window-scoped, and its computation is single-session. A regression on any one of the other 1,194 sessions — a symbol reused before its first sourced transition, an ISIN typo in one archive — passes this gate. That is strictly better than §41.5, where the number could not fail at all; it is not yet the invariant the project now claims.
+
+The remedy is a loop, not a judgment call: iterate every archived session, resolve its traded `EQ` rows, and fail on the first non-100% session with the session date, the symbol and both ISINs named. The sweep is ~2.4M resolutions and finished in seconds when I ran it for §41.3. Recording it as a note with a hard condition: **no Phase 2D research verdict may be computed through this criterion until the per-session loop is the thing that computes it.** The honest state today is "100% on one verified session, 100.0000% measured once by the auditor over 1,195, unenforced on 1,194."
+
+### 42.4 N-32 — CLOSED at `c7d3e88`
+
+`min_binding_evaluation_start_date` is now consumed at all three boundaries that can produce a research artifact:
+
+- `WalkForwardEngine.run_fold`, before the fold is evaluated — `Fold {i} starts on {date}, which precedes the minimum binding evaluation start date (2022-01-03) …`
+- `WalkForwardEngine.run_walk_forward`, over the whole fold set, so a run cannot straddle the window even when each fold is checked individually.
+- `WalkForwardResult.to_trial_record`, so a sealed result cannot be registered as a trial.
+
+The predicate is `earliest_fold_date = min(fold.train_start, fold.test_start)` compared with `<`, so a fold anchored exactly on 2022-01-03 is admitted and one that reaches a single session earlier is refused — the boundary is inclusive on the side the criterion states, which is the side that matters. `test_n32_pre_window_fold_refused_fail_closed` exercises a 2021-12 fold through `run_fold` and `run_walk_forward`, both raising `WalkForwardEngineError` with the named reason.
+
+One semantic note, recorded so it cannot drift: by including `train_start`, the gate prohibits *training* on pre-window history, not merely gating on it. Rule 10.8 calls those sessions warm-up-only, which permits training but not verdicts; this is the stricter reading and it is compatible with the data, since no archive exists before 2022-01-03 to train on anyway. If archives are ever sourced back to 2018, reopening the training window must be a criteria change with its own review, not a quiet edit to a `min()`.
+
+### 42.5 N-35 — new: the trial-record check reads the criteria file, not the criteria that judged the run
+
+`to_trial_record` enforces N-32 by calling `load_go_no_go_criteria()` — a fresh read of the working-tree config at record time. `WalkForwardResult` carries `criteria_version: str` and not the criteria object, and the N-32 site does not compare the freshly loaded criteria's version against `self.criteria_version`. So the date invariant applied to a sealed result is whatever the committed config says *now*.
+
+The direction matters, and it is asymmetric: if the window later moves later, older results are refused more than they were judged (safe); if the window ever moves **earlier** — the exact change someone would make when sourcing 2018 archives — then a result sealed under the 2022 rule can register folds from 2021 under the new one, carrying `criteria_version` from the run and a window from the file. The check should use a criteria object carried on the result, or fail when the loaded criteria's version differs from `self.criteria_version`. The third path also has no test: the new test stops at `run_walk_forward`.
+
+### 42.6 N-21 — CLOSED at `c7d3e88` (written as unverified)
+
+The `ci.yml` header no longer asserts branch protection:
+
+```
+# - Branch protection (Note N-21): NOT VERIFIED from repository files alone (remote GitHub branch protection
+#   settings cannot be computed or evidenced offline from repository clones; Rule 9.1, Note N-21).
+```
+
+That is the correct disposition and the one §11.3 requires: the statement now matches what the repository can show. It does not make the protection exist; it stops the repository from claiming that it does. Closed as a documentation-integrity finding, not as a satisfied control.
+
+### 42.7 N-30 — CLOSED for the disjoint case; N-33 — new: partial overlap still drops the pre-core tail
+
+The fix appends a sourced interval when it overlaps no core interval for that `(symbol, series)`:
+
+```python
+if not has_overlap:
+    symbol_intervals.append(ci)
+```
+
+Measured, with `load_cash_universe_symbol_intervals` injected:
+
+```
+A disjoint   INFY 2010-01-01..2014-12-31, core starts 2015-01-01
+             2012-06-01 -> INE009A01021      (appended; was None before this commit)
+B overlaps   INFY 2010-01-01..2020-12-31, core starts 2015-01-01
+             2012-06-01 -> None              (dropped whole)
+             2016-06-01 -> INE009A01021
+```
+
+Case B is the residue: a sourced interval that spans the core start is discarded in full, so its documented 2010–2014 tail vanishes while the master reports "no identity" for a period its own sources cover. `has_overlap` is a per-interval boolean where the correct question is per-*segment*: the complement of the core intervals should be appended, and the overlap either verified or dropped explicitly with a count. Unreachable from real data today (sourced intervals derive from 2022+ archives, core intervals start 2015, and the only overlap — `HDFC` — is the intended one), so it is a note and not a blocking finding, but it is the same class as the drops this project has spent three rounds removing: a fail-closed layer answering `None` silently.
+
+### 42.8 N-31 — partially closed; N-36 — new: the requirement the gate derives can be deleted by the party it constrains
+
+Good half: tags are now discovered rather than listed. `git tag -l`, keep every name ending in a hex SHA, verify the name's suffix against the tag's target — 16 tags verified that way, which catches a re-pointed tag for any tag anyone ever adds, not just the ones someone remembered to register.
+
+The other half derives *requirements* from `CURRENT_STAGE_OF_WORK.md`:
+
+```python
+for m in re.finditer(r"Wave\s+(\d+)[^·]*?`([0-9a-f]{7,8})`", line):
+```
+
+behind `if cur_stage_file.is_file()`, with `except Exception: print(f"[WARN] …")` and no failure. Three consequences:
+
+1. The file is absent → no requirements from it and no failure; a parse failure prints a `WARN` and continues. A gate whose input can be deleted, or made unparsable by an en dash, silently collapses back to the hardcoded entries.
+2. Whoever owns the status cell can remove a wave citation and thereby remove the requirement that its tag exists. The document that must *cite* the verdict now also *generates* the constraint enforcing that the verdict was cited — self-weakening, in the one gate that polices self-reporting.
+3. The hardcoded baseline includes `wave3-signed-off-a093682`, a tag named "signed-off" created by the implementer. §41 grants *Wave 3 — GO at `a093682`* for a window; a tag name is not a second grant and cannot be cited in place of §41 under §11.3. A tag minted by the party being signed off is a pointer to evidence, never the evidence.
+
+Requirements should be derived from the audit report's own citations (the `§N at `sha`` headings the auditor writes), and a missing or unparsable document should fail the gate rather than shrink it.
+
+### 42.9 N-37 — minor: a typed count inside a PASS line, and a `Decimal` crossing into `float`
+
+```python
+print(f"[PASS] Gate COV-2: ... verified (1,794 / 1,794, {pct:.2f}% >= {required_pct:.2f}%).")
+```
+
+The counts in the pass line are literal; the computed values appear only in the line above and in the fail branch. §9.1 asks that PASS text be generated from the values that were checked. Same line: `float(criteria.min_traded_eq_resolution_pct)` converts a `Decimal` criterion to binary float for the comparison (§6.4). It is safe here only because the boundary is exactly `100.0` and `n/n` is exactly `1.0`; the integer check `resolved_count != total_eq` beside it is what actually protects the gate. Compare as `Decimal` and interpolate the computed counts.
+
+### 42.10 Verdict
+
+**Closed at `c7d3e88`:** H-54, N-32, N-21, and N-30 for the disjoint case. N-31 is half closed — tag discovery is genuine, requirement derivation is not. **New: N-33** (partial overlap drops the pre-core tail), **N-34** (the per-session invariant is enforced on one session), **N-35** (trial record re-reads the criteria file), **N-36** (a deletable document generates the tag requirement), **N-37** (typed counts in a PASS line). No finding from §36–§41 is reopened; all gates pass at `c7d3e88` and the suite is `267 passed` with 0 skipped and 0 xfailed.
+
+**Wave 3 — GO stands at `a093682`, and extends to `c7d3e88` for the window 2022-01-03..2026-10-31.** Nothing in this commit touches the derived identity table, the archives, the execution path or the cost schedule; the data deliverable is exactly as verified in §41, and the remediation is confined to criteria, gates and fold admission.
+
+**Phase 2D — conditional, and the condition is one loop.** The defect class that blocked the last three rounds — a number that grades itself — is now absent from the criteria: 100% of the traded `EQ` set is a correctness bound, and fold admission refuses pre-window dates under `python -O` as well as under `pytest`. What remains is that the criterion's evidence and its enforcement have different scopes (N-34). Order:
+
+1. **N-34** — script the per-session sweep into COV-2 so the criterion computes `2390165/2390165` over 1,195 sessions instead of quoting it, failing on the first non-100% session with date, symbol and both ISINs named. This is the gate any Phase 2D GO will rest on.
+2. **N-35** — judge a sealed result by the criteria version it carries, and cover the trial-record path in the N-32 test.
+3. **N-36** — derive tag requirements from the audit report's citations; fail when the document is missing or unparsable.
+4. **N-33** — append the complement of the core intervals instead of dropping a partially overlapping sourced interval.
+
+The pattern in this round is worth naming plainly. Every finding I have raised for three rounds has been about a claim outrunning its computation: a gate that skipped itself, a threshold under its own measurement, a tag list that had to be edited by hand to stay true. `c7d3e88` fixes the instance of each one I named and, in each case, leaves the same shape alive one step out — the threshold is now honest but measured on one session, the date is now load-bearing but read from a file at record time, the tags are now discovered but the requirement is deletable. That is progress, measured correctly; it is not yet a gate that can fail for a reason nobody chose in advance. The per-session loop in N-34 is the last place where the honest number is still a comment.
+
+---
