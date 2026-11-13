@@ -135,39 +135,47 @@ def wf_environment(wf_calendar):
                     effective_from=datetime.date(2024, 1, 1),
                     effective_to=datetime.date(2024, 12, 31),
                 ),
-            ],
-            price_band_intervals=[
-                PriceBandInterval(
-                    isin="INE009A01021",
-                    band_percentage=Decimal("10.00"),
+                SymbolInterval(
+                    isin="INE888C01010",
+                    symbol="TESTCASH",
+                    series="EQ",
                     effective_from=datetime.date(2024, 1, 1),
                     effective_to=datetime.date(2024, 12, 31),
-                    is_unconstrained=False,
+                ),
+            ],
+            price_band_intervals=[
+                # Audit §37 Note N-12: INFY and RELIANCE are honest F&O underlyings ("No Band")
+                PriceBandInterval(
+                    isin="INE009A01021",
+                    band_percentage=None,
+                    effective_from=datetime.date(2024, 1, 1),
+                    effective_to=datetime.date(2024, 12, 31),
+                    is_unconstrained=True,
                     source_descriptor=PriceBandSourceDescriptor(
                         source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
-                        publication_name="NSE_CASH_PRICE_BANDS",
-                        archive_url_template="https://archives.nseindia.com/content/equities/sec_list.csv",
+                        publication_name="NSE_FO_UNDERLYING_PRICE_BANDS",
+                        archive_url_template="https://archives.nseindia.com/content/fo/fo_sec_list.csv",
                         retrieval_frequency="DAILY",
-                        circular_ref="NSE/SURV/TEST",
-                        description="NSE Cash Price Bands 10%",
+                        circular_ref="NSE/FAOP/60350",
+                        description="NSE F&O Underlyings Dynamic Flexing Price Bands",
                     ),
-                    circular_ref="NSE/SURV/TEST",
+                    circular_ref="NSE/FAOP/60350",
                 ),
                 PriceBandInterval(
                     isin="INE002A01018",
-                    band_percentage=Decimal("10.00"),
+                    band_percentage=None,
                     effective_from=datetime.date(2024, 1, 1),
                     effective_to=datetime.date(2024, 12, 31),
-                    is_unconstrained=False,
+                    is_unconstrained=True,
                     source_descriptor=PriceBandSourceDescriptor(
                         source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
-                        publication_name="NSE_CASH_PRICE_BANDS",
-                        archive_url_template="https://archives.nseindia.com/content/equities/sec_list.csv",
+                        publication_name="NSE_FO_UNDERLYING_PRICE_BANDS",
+                        archive_url_template="https://archives.nseindia.com/content/fo/fo_sec_list.csv",
                         retrieval_frequency="DAILY",
-                        circular_ref="NSE/SURV/TEST",
-                        description="NSE Cash Price Bands 10%",
+                        circular_ref="NSE/FAOP/60350",
+                        description="NSE F&O Underlyings Dynamic Flexing Price Bands",
                     ),
-                    circular_ref="NSE/SURV/TEST",
+                    circular_ref="NSE/FAOP/60350",
                 ),
                 PriceBandInterval(
                     isin="INE999B01019",
@@ -185,18 +193,37 @@ def wf_environment(wf_calendar):
                     ),
                     circular_ref="NSE/SURV/TEST",
                 ),
+                # Audit §37 Note N-12: Genuine fixed-band cash instrument for engine verification
+                PriceBandInterval(
+                    isin="INE888C01010",
+                    band_percentage=Decimal("10.00"),
+                    effective_from=datetime.date(2024, 1, 1),
+                    effective_to=datetime.date(2024, 12, 31),
+                    is_unconstrained=False,
+                    source_descriptor=PriceBandSourceDescriptor(
+                        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+                        publication_name="NSE_CASH_PRICE_BANDS",
+                        archive_url_template="https://archives.nseindia.com/content/equities/sec_list.csv",
+                        retrieval_frequency="DAILY",
+                        circular_ref="NSE/SURV/TEST",
+                        description="NSE Cash Equity Price Band 10%",
+                    ),
+                    circular_ref="NSE/SURV/TEST",
+                ),
             ],
         )
 
-        # Seed 10 sessions of data for INFY (INE009A01021), RELIANCE (INE002A01018), and TESTBE (INE999B01019)
+        # Seed 10 sessions of data for INFY (INE009A01021), RELIANCE (INE002A01018), TESTBE (INE999B01019), and TESTCASH (INE888C01010)
         base_infy = Decimal("1500.00")
         base_rel = Decimal("2500.00")
         base_be = Decimal("500.00")
+        base_cash = Decimal("1000.00")
 
         for i, session_date in enumerate(wf_calendar.sessions):
             p_infy = base_infy + Decimal(str(i * 10))
             p_rel = base_rel - Decimal(str(i * 15))
             p_be = base_be + Decimal(str(i * 5))
+            p_cash = base_cash + Decimal(str(i * 10))
 
             records = [
                 SilverRecord(
@@ -234,6 +261,18 @@ def wf_environment(wf_calendar):
                     close=p_be,
                     volume=100000,
                     traded_value=p_be * Decimal("100000"),
+                ),
+                SilverRecord(
+                    isin="INE888C01010",
+                    symbol="TESTCASH",
+                    series="EQ",
+                    trade_date=session_date,
+                    open=p_cash,
+                    high=p_cash + Decimal("15.00"),
+                    low=p_cash - Decimal("10.00"),
+                    close=p_cash + Decimal("5.00"),
+                    volume=200000,
+                    traded_value=p_cash * Decimal("200000"),
                 ),
             ]
             silver.write_daily_partition(session_date, records)
@@ -548,7 +587,7 @@ def test_walk_forward_trial_registry_integration(wf_environment):
     )
 
     engine = WalkForwardEngine(calendar=cal, gold_engine=gold)
-    res = engine.run_walk_forward(strategy=strat, folds=[fold])
+    res = engine.run_walk_forward(strategy=strat, folds=[fold], isins=["INE888C01010"])
 
     registry_path = tmp_path / "trials.jsonl"
     registry = TrialRegistry(registry_path)
@@ -1058,13 +1097,13 @@ def test_wave2_dataset_content_fingerprint_binding_and_rejection(wf_environment)
     )
 
     engine = WalkForwardEngine(calendar=cal, gold_engine=gold)
-    res = engine.run_walk_forward(strategy=strat, folds=[fold])
+    res = engine.run_walk_forward(strategy=strat, folds=[fold], isins=["INE888C01010"])
 
     # Verified automatic binding
     expected_snap, _ = gold.build_dataset_snapshot(
         start_date=fold.train_start,
         end_date=fold.test_end,
-        isins=sec_master.registered_isins,
+        isins=["INE888C01010"],
     )
     expected_dataset_fp = expected_snap.content_fingerprint
     assert res.dataset_content_fingerprint == expected_dataset_fp
@@ -1084,6 +1123,7 @@ def test_wave2_dataset_content_fingerprint_binding_and_rejection(wf_environment)
         engine.run_walk_forward(
             strategy=strat,
             folds=[fold],
+            isins=["INE888C01010"],
             dataset_content_fingerprint="DATA-CTNT-V2-UNKNOWN",
         )
 
@@ -1092,6 +1132,7 @@ def test_wave2_dataset_content_fingerprint_binding_and_rejection(wf_environment)
         engine.run_walk_forward(
             strategy=strat,
             folds=[fold],
+            isins=["INE888C01010"],
             dataset_content_fingerprint="DATA-CTNT-V2-" + "0" * 32,
         )
 
@@ -1118,14 +1159,14 @@ def test_wave2_dataset_content_fingerprint_binding_and_rejection(wf_environment)
         execution_latency_sessions=1,
         full_sessions_only=False,
     )
-    res_gapless = engine_gapless.run_walk_forward(strategy=strat, folds=[fold])
+    res_gapless = engine_gapless.run_walk_forward(strategy=strat, folds=[fold], isins=["INE888C01010"])
     assert res_gapless.final_equity == res.final_equity
     assert [t.executed_price for t in res_gapless.aggregate_trades] == [t.executed_price for t in res.aggregate_trades]
     assert res_gapless.fingerprint != res.fingerprint
 
     # Latency 2 also differs
     engine_l2 = WalkForwardEngine(calendar=cal, gold_engine=gold, execution_latency_sessions=2)
-    res_l2 = engine_l2.run_walk_forward(strategy=strat, folds=[fold])
+    res_l2 = engine_l2.run_walk_forward(strategy=strat, folds=[fold], isins=["INE888C01010"])
     assert res_l2.fingerprint != res.fingerprint
 
     # Audit §32 H-35: Rejection of spoofed dataset_fingerprint at to_trial_record boundary
@@ -1407,7 +1448,7 @@ def test_audit33_h38_h39_criteria_and_exec_config_sealing(wf_environment):
         allocation_weight=Decimal("0.08"),
     )
     engine = WalkForwardEngine(calendar=cal, gold_engine=gold, execution_latency_sessions=1)
-    res = engine.run_walk_forward(strategy=strat, folds=[fold])
+    res = engine.run_walk_forward(strategy=strat, folds=[fold], isins=["INE888C01010"])
 
     # ---- H-39: criteria identified by content, not by version string ----
     criteria_fpr = res.execution_config["criteria_fingerprint"]
@@ -1429,7 +1470,7 @@ def test_audit33_h38_h39_criteria_and_exec_config_sealing(wf_environment):
         criteria=edited,
         execution_latency_sessions=1,
     )
-    res_edited = engine_edited.run_walk_forward(strategy=strat, folds=[fold])
+    res_edited = engine_edited.run_walk_forward(strategy=strat, folds=[fold], isins=["INE888C01010"])
     assert res_edited.final_equity == res.final_equity
     assert [t.executed_price for t in res_edited.aggregate_trades] == [
         t.executed_price for t in res.aggregate_trades

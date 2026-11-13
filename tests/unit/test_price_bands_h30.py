@@ -45,7 +45,7 @@ from signal_core.storage.security_master import (
     SymbolInterval,
     build_production_security_master,
 )
-from signal_core.storage.silver import SilverRecord, SilverStorage
+from signal_core.storage.silver import SilverPartitionImmutableError, SilverRecord, SilverStorage
 from signal_core.strategy.base import OrderIntent, Strategy
 
 
@@ -252,13 +252,15 @@ def test_production_security_master_h30_audit_closure():
     """
     sm = build_production_security_master()
 
-    # Measured: get_price_band("INE704P01025", 2024-01-10) is NO LONGER None
+    # Audit §37 H-48: Dropped hand-authored split-day discrete record in favor of the interval.
+    # On 2024-01-10, resolves to the unconstrained interval ("No Band" under F&O framework)
     band_split = sm.get_price_band("INE704P01025", datetime.date(2024, 1, 10))
     assert band_split is not None
-    assert band_split.upper_circuit_limit == Decimal("802.80")
-    assert band_split.lower_circuit_limit == Decimal("535.20")
-    assert band_split.band_percentage == Decimal("20.00")
-    assert band_split.has_circuit_evidence is True
+    assert band_split.is_unconstrained is True
+    assert band_split.band_percentage is None
+    assert band_split.upper_circuit_limit is None
+    assert band_split.lower_circuit_limit is None
+    assert band_split.has_circuit_evidence is False
 
     # Audit §36 H-43 & Note N-8: Hand-authored 20% removed from baseline intervals for COCHINSHIP.
     # Baseline interval master now honestly encodes COCHINSHIP as unconstrained ("No Band" under F&O framework).
@@ -713,3 +715,203 @@ def test_n9_one_sided_observed_limits_preserved_and_validated():
     )
     with pytest.raises(PriceBandValidationError, match="Observed upper_circuit_limit.*contradicts derived upper"):
         rec_contradicting.derive_limits(Decimal("1000.00"))
+
+
+def test_h45_zip_member_selection_avoids_bhavcopy_and_selects_band_file():
+    """
+    Audit §37 H-45: In a ZIP archive holding both a daily bhavcopy and the band file,
+    the band file must be positively selected and the price/bhavcopy file excluded.
+    """
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 1. Bhavcopy member (matches 'bh' previously, must now be excluded)
+        bhav_csv = (
+            "SYMBOL,SERIES,DATE1,PREV_CLOSE,OPEN_PRICE,HIGH_PRICE,LOW_PRICE,CLOSE_PRICE,ISIN\n"
+            "INFY,EQ,16-Jan-2024,1500.00,1505.00,1515.00,1495.00,1510.00,INE009A01021\n"
+        )
+        zf.writestr("fo_sec_bhavdata_full_16012024.csv", bhav_csv)
+        # 2. Authoritative band file
+        band_csv = (
+            "ISIN,SYMBOL,SERIES,SECURITY_NAME,BAND,UPPER_PRICE_BAND,LOWER_PRICE_BAND\n"
+            "INE009A01021,INFY,EQ,Infosys Limited,5%,1575.00,1425.00\n"
+        )
+        zf.writestr("sec_list_16012024.csv", band_csv)
+
+    zip_bytes = zip_buf.getvalue()
+    trade_date, records = parse_price_band_report(
+        report_data=zip_bytes,
+        trade_date=datetime.date(2024, 1, 16),
+    )
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.isin == "INE009A01021"
+    assert rec.band_percentage == Decimal("5.00")
+    assert rec.upper_circuit_limit == Decimal("1575.00")
+    assert rec.lower_circuit_limit == Decimal("1425.00")
+    assert rec.has_circuit_evidence is True
+
+
+def test_h45_zip_without_band_member_fails_closed():
+    """
+    Audit §37 H-45: A ZIP archive containing only bhavcopy or files without band columns
+    must fail closed with PriceBandIngestError rather than parsing bhavcopy as bands.
+    """
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        bhav_csv = (
+            "SYMBOL,SERIES,DATE1,PREV_CLOSE,OPEN_PRICE,HIGH_PRICE,LOW_PRICE,CLOSE_PRICE,ISIN\n"
+            "INFY,EQ,16-Jan-2024,1500.00,1505.00,1515.00,1495.00,1510.00,INE009A01021\n"
+        )
+        zf.writestr("fo_sec_bhavdata_full_16012024.csv", bhav_csv)
+
+    zip_bytes = zip_buf.getvalue()
+    with pytest.raises(PriceBandIngestError, match="No qualifying price band CSV member.*Finding H-45"):
+        parse_price_band_report(
+            report_data=zip_bytes,
+            trade_date=datetime.date(2024, 1, 16),
+        )
+
+
+def test_h46_header_without_band_columns_fails_closed():
+    """
+    Audit §37 H-46: Reject any report whose header carries NO BAND, UPPER_*, or LOWER_* column
+    by raising PriceBandIngestError. An absence of band columns must NEVER be read as 'No Band'.
+    """
+    bhav_csv = (
+        "SYMBOL,SERIES,DATE1,PREV_CLOSE,OPEN_PRICE,HIGH_PRICE,LOW_PRICE,CLOSE_PRICE,ISIN\n"
+        "INFY,EQ,16-Jan-2024,1500.00,1505.00,1515.00,1495.00,1510.00,INE009A01021\n"
+    ).encode("utf-8")
+
+    with pytest.raises(PriceBandIngestError, match="lacks band/circuit limit columns.*Finding H-46"):
+        parse_price_band_report(
+            report_data=bhav_csv,
+            trade_date=datetime.date(2024, 1, 16),
+        )
+
+
+def test_h47_missing_security_master_with_symbol_only_fails_closed():
+    """
+    Audit §37 H-47: A report with only Symbol and Band (no ISIN column) parsed without a
+    SecurityMaster must fail closed with PriceBandIngestError, diagnosing unresolved rows.
+    """
+    cash_csv = (
+        "Symbol,Series,Security Name,Band,Remarks\n"
+        "INFY,EQ,Infosys Limited,No Band,-\n"
+        "RELIANCE,EQ,Reliance Industries Limited,No Band,-\n"
+    ).encode("utf-8")
+
+    with pytest.raises(PriceBandIngestError, match="report lacks an ISIN column and security_master was None.*Finding H-47"):
+        parse_price_band_report(
+            report_data=cash_csv,
+            trade_date=datetime.date(2024, 1, 16),
+            security_master=None,
+        )
+
+
+def test_h44_silver_price_band_partition_round_trip(test_calendar):
+    """
+    Audit §37 H-44 / Note N-1:
+    Verify write_price_band_partition and read_price_band_partition in Silver storage.
+    Enforces exact Decimal types, holdout isolation, calendar validation, and immutability.
+    """
+    with tempfile.TemporaryDirectory(prefix="silver_band_") as tmpdir:
+        tmp_path = Path(tmpdir)
+        silver = SilverStorage(tmp_path / "silver", calendar=test_calendar)
+        t_date = datetime.date(2024, 1, 10)
+
+        source_desc = PriceBandSourceDescriptor(
+            source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+            publication_name="NSE_TEST_BANDS",
+            archive_url_template="https://archives.nseindia.com/sec_list.csv",
+            retrieval_frequency="DAILY",
+            circular_ref="NSE/TEST/01",
+        )
+        records = [
+            PriceBandRecord(
+                isin="INE704P01025",
+                trade_date=t_date,
+                series="EQ",
+                upper_circuit_limit=Decimal("802.80"),
+                lower_circuit_limit=Decimal("535.20"),
+                band_percentage=Decimal("20.00"),
+                is_unconstrained=False,
+                source_descriptor=source_desc,
+                source_ref="NSE/TEST/01",
+            ),
+            PriceBandRecord(
+                isin="INE009A01021",
+                trade_date=t_date,
+                series="EQ",
+                upper_circuit_limit=None,
+                lower_circuit_limit=None,
+                band_percentage=None,
+                is_unconstrained=True,
+                source_descriptor=source_desc,
+                source_ref="NSE/TEST/01",
+            ),
+        ]
+
+        part_path = silver.write_price_band_partition(t_date, records)
+        assert part_path.is_file()
+        assert silver.price_band_partition_exists(t_date) is True
+
+        # Immutability: writing again raises SilverPartitionImmutableError
+        with pytest.raises(SilverPartitionImmutableError, match="already exists"):
+            silver.write_price_band_partition(t_date, records)
+
+        # Read back and verify exact Decimal types and fields
+        loaded = silver.read_price_band_partition(t_date)
+        assert len(loaded) == 2
+        by_isin = {r.isin: r for r in loaded}
+
+        rec1 = by_isin["INE704P01025"]
+        assert rec1.trade_date == t_date
+        assert rec1.series == "EQ"
+        assert rec1.upper_circuit_limit == Decimal("802.80")
+        assert rec1.lower_circuit_limit == Decimal("535.20")
+        assert rec1.band_percentage == Decimal("20.00")
+        assert rec1.is_unconstrained is False
+        assert rec1.has_circuit_evidence is True
+        assert rec1.source_descriptor is not None
+        assert rec1.source_descriptor.publication_name == "NSE_TEST_BANDS"
+
+        rec2 = by_isin["INE009A01021"]
+        assert rec2.trade_date == t_date
+        assert rec2.upper_circuit_limit is None
+        assert rec2.lower_circuit_limit is None
+        assert rec2.band_percentage is None
+        assert rec2.is_unconstrained is True
+        assert rec2.has_circuit_evidence is False
+
+
+def test_security_master_with_price_bands():
+    """
+    Audit §37 H-44: SecurityMaster.with_price_bands attaches discrete price band records,
+    updating the deterministic fingerprint and discrete lookups while keeping the original master immutable.
+    """
+    sm = build_production_security_master()
+    t_date = datetime.date(2024, 1, 10)
+    # Baseline on 2024-01-10 has no discrete bands
+    assert len(sm.price_bands) == 0
+
+    new_band = PriceBandRecord(
+        isin="INE704P01025",
+        trade_date=t_date,
+        series="EQ",
+        upper_circuit_limit=Decimal("802.80"),
+        lower_circuit_limit=Decimal("535.20"),
+        band_percentage=Decimal("20.00"),
+        is_unconstrained=False,
+    )
+
+    sm_updated = sm.with_price_bands([new_band])
+    # Original remains immutable
+    assert len(sm.price_bands) == 0
+    assert len(sm_updated.price_bands) == 1
+    assert sm_updated.fingerprint != sm.fingerprint
+
+    # Lookup resolves discrete band
+    resolved = sm_updated.get_price_band("INE704P01025", t_date)
+    assert resolved is not None
+    assert resolved.upper_circuit_limit == Decimal("802.80")
+    assert resolved.has_circuit_evidence is True

@@ -629,6 +629,27 @@ class SecurityMaster:
     def price_band_intervals(self) -> Tuple[PriceBandInterval, ...]:
         return self._price_band_intervals
 
+    def with_price_bands(self, price_bands: Sequence[PriceBandRecord]) -> "SecurityMaster":
+        """
+        Returns a new SecurityMaster with additional discrete PriceBandRecords attached (Audit §37 H-44).
+        Deduplicates against existing discrete price bands (new records take precedence).
+        """
+        existing_bands_by_key = {(b.isin, b.trade_date): b for b in self._price_bands}
+        for b in price_bands:
+            existing_bands_by_key[(b.isin, b.trade_date)] = b
+
+        merged_bands = tuple(sorted(existing_bands_by_key.values(), key=lambda b: (b.isin, b.trade_date)))
+
+        return SecurityMaster(
+            symbol_intervals=self._symbol_intervals,
+            surveillance_intervals=self._surveillance_intervals,
+            corporate_actions=self._corporate_actions,
+            delisting_events=self._delisting_events,
+            isin_transitions=self._isin_transitions,
+            price_bands=merged_bands,
+            price_band_intervals=self._price_band_intervals,
+        )
+
 
 def build_production_security_master() -> SecurityMaster:
     """
@@ -755,14 +776,6 @@ def build_production_security_master() -> SecurityMaster:
         circular_ref="NSE/FAOP/60350",
         description="NSE F&O Underlyings Dynamic Flexing Price Bands",
     )
-    cash_source = PriceBandSourceDescriptor(
-        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
-        publication_name="NSE_PRICE_BANDS",
-        archive_url_template="https://archives.nseindia.com/content/equities/sec_list.csv",
-        retrieval_frequency="DAILY",
-        circular_ref="NSE/SURV/PRICE_BANDS_2024",
-        description="NSE Cash Equity Daily Price Bands 20%",
-    )
 
     price_band_intervals = [
         # INFY (F&O stock: dynamic flexing band, exchange publishes "No Band", Audit §35 H-41)
@@ -817,29 +830,9 @@ def build_production_security_master() -> SecurityMaster:
         ),
     ]
 
-    # Discrete daily price bands (Audit §25 G-6, §26 Wave 1, §31 H-30)
-    # COCHINSHIP 2:1 Stock Split ex-date 2024-01-10: 20% Upper Circuit at Rs. 802.80, Lower Circuit at Rs. 535.20
-    split_circuit_source = PriceBandSourceDescriptor(
-        source_type=PriceBandPublicationSource.NSE_SURVEILLANCE_CIRCULAR,
-        publication_name="NSE_EX_SPLIT_CIRCUIT_ADJUSTMENT",
-        archive_url_template="https://archives.nseindia.com/content/equities/sec_list.csv",
-        retrieval_frequency="EVENT_DRIVEN",
-        circular_ref="NSE/CML/60114",
-        description="Cochin Shipyard 2:1 stock split circuit limit adjustment",
-    )
-    price_bands = [
-        PriceBandRecord(
-            isin="INE704P01025",
-            trade_date=datetime.date(2024, 1, 10),
-            series="EQ",
-            upper_circuit_limit=Decimal("802.80"),
-            lower_circuit_limit=Decimal("535.20"),
-            band_percentage=Decimal("20.00"),
-            is_unconstrained=False,
-            source_descriptor=split_circuit_source,
-            source_ref="NSE/CML/60114",
-        )
-    ]
+    # Audit §37 H-48: Drop hand-authored 2024-01-10 split-day discrete record in favor of interval resolution.
+    # Discrete daily records must be ingested from verified daily exchange reports (H-44), not hand-authored.
+    price_bands: Tuple[PriceBandRecord, ...] = ()
 
     return SecurityMaster(
         symbol_intervals=symbol_intervals,

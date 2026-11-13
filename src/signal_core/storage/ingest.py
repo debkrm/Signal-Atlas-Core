@@ -17,6 +17,7 @@ import datetime
 from decimal import Decimal, InvalidOperation
 import io
 from pathlib import Path
+import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 import zipfile
 
@@ -370,10 +371,55 @@ def parse_price_band_report(
             csv_names = [n for n in zf.namelist() if n.lower().endswith(".csv")]
             if not csv_names:
                 raise PriceBandIngestError("Price band ZIP archive contains no CSV files.")
-            # Note N-2: Select explicit price band member if archive contains multiple CSVs
-            target_csvs = [n for n in csv_names if any(k in n.lower() for k in ("sec_list", "band", "pd", "bh"))]
-            chosen_csv = target_csvs[0] if target_csvs else csv_names[0]
+
+            # Audit §37 H-45: Positively select price band member; exclude bhavcopy/bhavdata members
+            # Do NOT match "bh" which falsely matches bhavdata/bhavcopy.
+            non_bhav_csvs = [n for n in csv_names if "bhav" not in n.lower()]
+
+            def _is_candidate_band_name(name: str) -> bool:
+                lower = name.lower()
+                if any(k in lower for k in ("sec_list", "price_band", "band")):
+                    return True
+                # Match pd followed by digits (e.g. pd160124.csv)
+                if re.search(r"\bpd\d+", lower) or re.search(r"pd\d+\.csv", lower):
+                    return True
+                return False
+
+            candidate_csvs = [n for n in non_bhav_csvs if _is_candidate_band_name(n)]
+
+            if not candidate_csvs:
+                # Probe headers of non-bhavcopy CSV members for band/circuit columns
+                qualifying_probe = []
+                for n in non_bhav_csvs:
+                    try:
+                        sample = zf.read(n)[:2048].decode("utf-8", errors="replace")
+                        first_line = sample.splitlines()[0].upper() if sample.splitlines() else ""
+                        if any(k in first_line for k in ("BAND", "UPPER_PRICE_BAND", "LOWER_PRICE_BAND", "UPPER_BAND", "LOWER_BAND", "CIRCUIT_BAND")):
+                            qualifying_probe.append(n)
+                    except Exception:
+                        pass
+                candidate_csvs = qualifying_probe
+
+            if len(candidate_csvs) == 0:
+                raise PriceBandIngestError(
+                    f"No qualifying price band CSV member found in ZIP archive (members: {csv_names}) (Finding H-45)."
+                )
+            if len(candidate_csvs) > 1:
+                # Disambiguate if exactly one matches sec_list
+                sec_list_matches = [n for n in candidate_csvs if "sec_list" in n.lower()]
+                if len(sec_list_matches) == 1:
+                    chosen_csv = sec_list_matches[0]
+                else:
+                    raise PriceBandIngestError(
+                        f"Ambiguous price band members in ZIP archive: {candidate_csvs}. "
+                        "Cannot disambiguate candidate price band members fail-closed (Finding H-45)."
+                    )
+            else:
+                chosen_csv = candidate_csvs[0]
+
             text = zf.read(chosen_csv).decode("utf-8", errors="replace")
+        except PriceBandIngestError:
+            raise
         except Exception as exc:
             raise PriceBandIngestError(f"Failed to decompress price band ZIP archive: {exc}") from exc
     else:
@@ -414,6 +460,14 @@ def parse_price_band_report(
             f"Price band report header lacks both ISIN and Symbol columns. Found: {header}"
         )
 
+    # Audit §37 H-46: Require at least one band or circuit limit column in header.
+    # An absence of band columns must NEVER be interpreted as "No Band" or unconstrained.
+    if band_idx is None and upper_idx is None and lower_idx is None:
+        raise PriceBandIngestError(
+            f"Price band report header lacks band/circuit limit columns (Finding H-46). "
+            f"Header must contain at least one of BAND, UPPER_PRICE_BAND, or LOWER_PRICE_BAND. Found: {header}"
+        )
+
     # Note N-3: Determine inferred_date strictly upfront; datetime.date.today() prohibited in historical pipeline
     inferred_date = trade_date
     if inferred_date is None and date_idx is not None:
@@ -443,6 +497,10 @@ def parse_price_band_report(
     seen_isins: Set[str] = set()
     target_set = {i.upper() for i in target_isins} if target_isins is not None else None
 
+    unresolved_isin_count = 0
+    non_target_count = 0
+    duplicate_isin_count = 0
+
     line_no = 1
     for row in rows:
         line_no += 1
@@ -461,9 +519,11 @@ def parse_price_band_report(
                 isin_val = resolved
 
         if not isin_val or len(isin_val) != 12:
+            unresolved_isin_count += 1
             continue
 
         if target_set is not None and isin_val not in target_set:
+            non_target_count += 1
             continue
 
         # Parse circuit limits and band percentage
@@ -501,6 +561,7 @@ def parse_price_band_report(
             band_p = None  # Audit §35 H-41: Do not fabricate 10.00
 
         if isin_val in seen_isins:
+            duplicate_isin_count += 1
             continue
         seen_isins.add(isin_val)
 
@@ -523,6 +584,21 @@ def parse_price_band_report(
                 f"Line {line_no}: PriceBandRecord validation failed for ISIN {isin_val}: {exc} (Finding H-42)."
             ) from exc
 
+    # Audit §37 H-47: Fail closed when zero records are extracted from report rows.
+    # Track dropped row counts and diagnose missing ISIN / security master.
+    if len(records) == 0:
+        if isin_idx is None and security_master is None:
+            raise PriceBandIngestError(
+                f"Zero price band records extracted from {len(rows)} data rows: "
+                f"report lacks an ISIN column and security_master was None (Finding H-47). "
+                f"Unresolved rows: {unresolved_isin_count}."
+            )
+        raise PriceBandIngestError(
+            f"Zero price band records extracted from {len(rows)} data rows (Finding H-47). "
+            f"Unresolved ISINs: {unresolved_isin_count}, Non-target ISINs: {non_target_count}, "
+            f"Duplicates: {duplicate_isin_count}."
+        )
+
     return inferred_date, records
 
 
@@ -535,10 +611,12 @@ def ingest_daily_price_bands(
     source_descriptor: Optional[PriceBandSourceDescriptor] = None,
     security_master: Optional[SecurityMaster] = None,
     target_isins: Optional[Sequence[str]] = None,
+    silver: Optional[SilverStorage] = None,
 ) -> Tuple[BronzeManifestEntry, List[PriceBandRecord]]:
     """
     Ingests a daily price band report or PR-archive into Bronze storage with SHA-256 provenance manifest,
     and returns parsed PriceBandRecord objects per AGENTS.md Rule 10.7 and Audit §31 H-30.
+    If silver is provided, also atomically writes an immutable Silver daily price band partition (Note N-1, Audit §37 H-44).
     """
     resolved_date, records = parse_price_band_report(
         report_data=report_bytes,
@@ -560,5 +638,8 @@ def ingest_daily_price_bands(
         source_url=source_url,
         source_archive_format=archive_format,
     )
+
+    if silver is not None:
+        silver.write_price_band_partition(trade_date=resolved_date, records=records)
 
     return bronze_entry, records

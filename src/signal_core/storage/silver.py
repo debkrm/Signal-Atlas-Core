@@ -28,6 +28,11 @@ except ImportError:
     _PYARROW_AVAILABLE = False
 
 from signal_core.contracts.exchange_series import PriceSeriesGapType
+from signal_core.contracts.price_band import (
+    PriceBandPublicationSource,
+    PriceBandRecord,
+    PriceBandSourceDescriptor,
+)
 from signal_core.contracts.price_bar import PriceBar
 from signal_core.storage.calendar import TradingCalendar
 from signal_core.storage.security_master import SecurityMaster
@@ -158,6 +163,8 @@ class SilverStorage:
                     )
         self._bhavcopy_dir = self._root_dir / "bhavcopy"
         self._bhavcopy_dir.mkdir(parents=True, exist_ok=True)
+        self._price_bands_dir = self._root_dir / "price_bands"
+        self._price_bands_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def root_dir(self) -> Path:
@@ -166,6 +173,10 @@ class SilverStorage:
     @property
     def bhavcopy_dir(self) -> Path:
         return self._bhavcopy_dir
+
+    @property
+    def price_bands_dir(self) -> Path:
+        return self._price_bands_dir
 
     @property
     def calendar(self) -> Optional[TradingCalendar]:
@@ -364,6 +375,225 @@ class SilverStorage:
                     close=Decimal(str(close_col[i])),
                     volume=int(vol_col[i]),
                     traded_value=tv,
+                )
+            )
+
+        return tuple(records)
+
+    def get_price_band_partition_path(self, trade_date: datetime.date) -> Path:
+        """Returns standard path for a daily price band session partition."""
+        year_dir = self._price_bands_dir / str(trade_date.year)
+        return year_dir / f"{trade_date.isoformat()}.parquet"
+
+    def price_band_partition_exists(self, trade_date: datetime.date) -> bool:
+        """
+        Checks if a silver price band partition exists for trade_date.
+        Fails closed with HoldoutPartitionIsolationError if standard storage queries a holdout date (H-12).
+        """
+        if not self._is_holdout_storage:
+            if CANONICAL_HOLDOUT_START_DATE <= trade_date <= CANONICAL_HOLDOUT_END_DATE:
+                raise HoldoutPartitionIsolationError(
+                    f"Standard silver storage cannot query existence of price band partitions in holdout window "
+                    f"[{CANONICAL_HOLDOUT_START_DATE}, {CANONICAL_HOLDOUT_END_DATE}] ({trade_date}) (Finding H-12)."
+                )
+        return self.get_price_band_partition_path(trade_date).is_file()
+
+    def write_price_band_partition(
+        self,
+        trade_date: datetime.date,
+        records: Sequence[PriceBandRecord],
+        calendar: Optional[TradingCalendar] = None,
+    ) -> Path:
+        """
+        Writes a daily price band partition to Parquet format (Note N-1, Audit §37 H-44).
+        Enforces exact Decimal types, calendar validation, immutability, and physical holdout isolation.
+        """
+        _require_pyarrow()
+
+        if type(trade_date) is not datetime.date:
+            raise SilverStorageError(f"trade_date must be genuine datetime.date, got {type(trade_date).__name__}")
+        if not records:
+            raise SilverStorageError(f"Cannot write empty price band partition for {trade_date}")
+
+        if not self._is_holdout_storage:
+            if CANONICAL_HOLDOUT_START_DATE <= trade_date <= CANONICAL_HOLDOUT_END_DATE:
+                raise HoldoutPartitionIsolationError(
+                    f"Standard silver storage explicitly rejects price band dates falling within "
+                    f"[{CANONICAL_HOLDOUT_START_DATE}, {CANONICAL_HOLDOUT_END_DATE}] ({trade_date}). "
+                    f"Holdout partitions must be written to an isolated physical root per AGENTS.md Rule 8.1."
+                )
+
+        active_cal = calendar or self._calendar
+        if active_cal is not None:
+            if not active_cal.is_session(trade_date):
+                raise OffCalendarSessionError(
+                    f"Cannot write silver price band partition for off-calendar session {trade_date}. "
+                    f"Not an authoritative session in calendar {active_cal.calendar_id}."
+                )
+
+        partition_path = self.get_price_band_partition_path(trade_date)
+        if partition_path.exists():
+            raise SilverPartitionImmutableError(
+                f"Silver price band partition for {trade_date} already exists at {partition_path}. "
+                "Updating or overwriting existing silver partitions is strictly prohibited per AGENTS.md Rule 10.1."
+            )
+
+        partition_path.parent.mkdir(parents=True, exist_ok=True)
+
+        isins: List[str] = []
+        series_list: List[str] = []
+        dates: List[datetime.date] = []
+        uppers: List[Optional[Decimal]] = []
+        lowers: List[Optional[Decimal]] = []
+        percentages: List[Optional[Decimal]] = []
+        unconstrained_list: List[bool] = []
+        src_types: List[Optional[str]] = []
+        pub_names: List[Optional[str]] = []
+        url_templates: List[Optional[str]] = []
+        ret_freqs: List[Optional[str]] = []
+        circ_refs: List[Optional[str]] = []
+        src_refs: List[Optional[str]] = []
+
+        seen_isins: Set[str] = set()
+        for r in records:
+            if r.trade_date != trade_date:
+                raise SilverStorageError(
+                    f"Record trade_date {r.trade_date} does not match partition date {trade_date} for ISIN {r.isin}"
+                )
+            if active_cal is not None and not active_cal.is_session(r.trade_date):
+                raise OffCalendarSessionError(
+                    f"Record trade_date {r.trade_date} for ISIN {r.isin} is an off-calendar date."
+                )
+            if r.isin in seen_isins:
+                raise SilverStorageError(f"Duplicate ISIN {r.isin} in price band partition for {trade_date}")
+            seen_isins.add(r.isin)
+
+            isins.append(r.isin)
+            series_list.append(r.series)
+            dates.append(r.trade_date)
+            uppers.append(r.upper_circuit_limit)
+            lowers.append(r.lower_circuit_limit)
+            percentages.append(r.band_percentage)
+            unconstrained_list.append(r.is_unconstrained)
+
+            if r.source_descriptor is not None:
+                src_types.append(r.source_descriptor.source_type.value)
+                pub_names.append(r.source_descriptor.publication_name)
+                url_templates.append(r.source_descriptor.archive_url_template)
+                ret_freqs.append(r.source_descriptor.retrieval_frequency)
+                circ_refs.append(r.source_descriptor.circular_ref)
+            else:
+                src_types.append(None)
+                pub_names.append(None)
+                url_templates.append(None)
+                ret_freqs.append(None)
+                circ_refs.append(None)
+            src_refs.append(r.source_ref)
+
+        table = pa.Table.from_arrays(
+            [
+                pa.array(isins, type=pa.string()),
+                pa.array(series_list, type=pa.string()),
+                pa.array(dates, type=pa.date32()),
+                pa.array(uppers, type=pa.decimal128(18, 4)),
+                pa.array(lowers, type=pa.decimal128(18, 4)),
+                pa.array(percentages, type=pa.decimal128(18, 4)),
+                pa.array(unconstrained_list, type=pa.bool_()),
+                pa.array(src_types, type=pa.string()),
+                pa.array(pub_names, type=pa.string()),
+                pa.array(url_templates, type=pa.string()),
+                pa.array(ret_freqs, type=pa.string()),
+                pa.array(circ_refs, type=pa.string()),
+                pa.array(src_refs, type=pa.string()),
+            ],
+            names=[
+                "isin",
+                "series",
+                "trade_date",
+                "upper_circuit_limit",
+                "lower_circuit_limit",
+                "band_percentage",
+                "is_unconstrained",
+                "source_type",
+                "publication_name",
+                "archive_url_template",
+                "retrieval_frequency",
+                "circular_ref",
+                "source_ref",
+            ],
+        )
+
+        temp_file = partition_path.with_suffix(f".tmp_{os.getpid()}_{datetime.datetime.now().timestamp()}.parquet")
+        try:
+            pq.write_table(table, temp_file, compression="SNAPPY")
+            temp_file.replace(partition_path)
+        except Exception:
+            if temp_file.exists():
+                temp_file.unlink()
+            raise
+
+        return partition_path
+
+    def read_price_band_partition(self, trade_date: datetime.date) -> Tuple[PriceBandRecord, ...]:
+        """Reads daily price band partition and returns typed PriceBandRecord instances."""
+        _require_pyarrow()
+
+        if not self._is_holdout_storage:
+            if CANONICAL_HOLDOUT_START_DATE <= trade_date <= CANONICAL_HOLDOUT_END_DATE:
+                raise HoldoutPartitionIsolationError(
+                    f"Standard silver storage explicitly rejects dates falling within "
+                    f"[{CANONICAL_HOLDOUT_START_DATE}, {CANONICAL_HOLDOUT_END_DATE}] ({trade_date}). "
+                    f"Physical holdout separation forbids reading holdout partitions from standard storage."
+                )
+
+        partition_path = self.get_price_band_partition_path(trade_date)
+        if not partition_path.is_file():
+            raise FileNotFoundError(f"No silver price band partition found for date {trade_date} at {partition_path}")
+
+        table = pq.read_table(partition_path)
+        records: List[PriceBandRecord] = []
+
+        isin_col = table["isin"].to_pylist()
+        series_col = table["series"].to_pylist()
+        date_col = table["trade_date"].to_pylist()
+        upper_col = table["upper_circuit_limit"].to_pylist()
+        lower_col = table["lower_circuit_limit"].to_pylist()
+        pct_col = table["band_percentage"].to_pylist()
+        unc_col = table["is_unconstrained"].to_pylist()
+        st_col = table["source_type"].to_pylist()
+        pn_col = table["publication_name"].to_pylist()
+        at_col = table["archive_url_template"].to_pylist()
+        rf_col = table["retrieval_frequency"].to_pylist()
+        cr_col = table["circular_ref"].to_pylist()
+        sr_col = table["source_ref"].to_pylist()
+
+        for i in range(len(isin_col)):
+            raw_d = date_col[i]
+            d = raw_d if isinstance(raw_d, datetime.date) else datetime.date.fromisoformat(str(raw_d))
+            u = Decimal(str(upper_col[i])) if upper_col[i] is not None else None
+            l = Decimal(str(lower_col[i])) if lower_col[i] is not None else None
+            pct = Decimal(str(pct_col[i])) if pct_col[i] is not None else None
+            unc = bool(unc_col[i])
+            src_desc = None
+            if st_col[i] is not None and pn_col[i] is not None:
+                src_desc = PriceBandSourceDescriptor(
+                    source_type=PriceBandPublicationSource(st_col[i]),
+                    publication_name=str(pn_col[i]),
+                    archive_url_template=str(at_col[i] or ""),
+                    retrieval_frequency=str(rf_col[i] or "DAILY"),
+                    circular_ref=str(cr_col[i]) if cr_col[i] is not None else None,
+                )
+            records.append(
+                PriceBandRecord(
+                    isin=str(isin_col[i]),
+                    trade_date=d,
+                    series=str(series_col[i]),
+                    upper_circuit_limit=u,
+                    lower_circuit_limit=l,
+                    band_percentage=pct,
+                    is_unconstrained=unc,
+                    source_descriptor=src_desc,
+                    source_ref=str(sr_col[i]) if sr_col[i] is not None else None,
                 )
             )
 
