@@ -12,10 +12,12 @@ and Audit §25 / §26 (Wave 2 Closure):
 
 import datetime
 from decimal import Decimal
+import io
 from pathlib import Path
 import shutil
 import sys
 import tempfile
+import zipfile
 
 # Ensure stdout handles UTF-8 on Windows consoles without error (H-22 pattern)
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -110,19 +112,21 @@ def run_phase_2c_verification() -> bool:
         infy_isin = "INE009A01021"
         rel_isin = "INE002A01018"
         be_isin = "INE999B01019"
-        base_infy = Decimal("1500.00")
-        base_rel = Decimal("2500.00")
-        base_be = Decimal("500.00")
 
-        # Price bands (Audit §35.4 point 4 & Note N-6: parse real report bytes -> master -> fold)
-        # Parse real daily price band report bytes for Jan 16:
+        # Price bands (Audit §35.4 point 4 & Notes N-6, N-11: parse real ZIP archive bytes -> master -> fold)
+        # Parse real daily price band report bytes inside a ZIP archive for Jan 16:
         # RELIANCE on 2024-01-16 has upper circuit at 2400.00 (below open 2410.00) to test freeze refusal (Rule 5.3)
-        raw_band_report_bytes = (
+        raw_csv_text = (
             "ISIN,SYMBOL,SERIES,SECURITY_NAME,BAND,UPPER_PRICE_BAND,LOWER_PRICE_BAND\n"
             f"{rel_isin},RELIANCE,EQ,Reliance Industries Limited,10%,2400.00,2000.00\n"
-        ).encode("utf-8")
+        )
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("sec_list_20240116.csv", raw_csv_text)
+        raw_band_archive_bytes = zip_buf.getvalue()
+
         _, parsed_band_records = parse_price_band_report(
-            report_data=raw_band_report_bytes,
+            report_data=raw_band_archive_bytes,
             trade_date=datetime.date(2024, 1, 16),
             security_master=None,
             target_isins=[rel_isin],

@@ -10,7 +10,7 @@ per AGENTS.md Rule 5.3, Rule 10.5 and Audit §25 / §26 (Wave 0):
 
 from dataclasses import dataclass
 import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_FLOOR, ROUND_CEILING
 from enum import Enum
 from typing import Any, Dict, Mapping, Optional, Union
 
@@ -201,8 +201,18 @@ class PriceBandRecord:
         Derives concrete numeric upper and lower circuit limits from prev_close and band_percentage.
         If numeric limits are already present or band_percentage is None, returns self.
         Per Audit §35 H-40: upper = prev_close * (1 + pct/100), lower = prev_close * (1 - pct/100).
+        Per Audit §36 Notes:
+        - Note N-8: Derivation is gated strictly to fixed-band sources (is_unconstrained=False).
+          For unconstrained scrips with dynamic flexing bands, static limits are not derived.
+        - Note N-7: Derived limits are tick-rounded to NSE tick grid (Rs. 0.05).
+          Upper is rounded DOWN (ROUND_FLOOR) and lower is rounded UP (ROUND_CEILING).
+        - Note N-9: One-sided observed limits are preserved rather than overwritten.
+          Observed limits are consistency-checked against derived values.
         """
         if self.upper_circuit_limit is not None and self.lower_circuit_limit is not None:
+            return self
+        if self.is_unconstrained:
+            # Audit §36 Note N-8: Dynamic flexing bands do not derive static fixed limits
             return self
         if self.band_percentage is None:
             return self
@@ -212,14 +222,46 @@ class PriceBandRecord:
             raise PriceBandValidationError(f"prev_close must be strictly positive, got {prev_close}")
 
         pct_factor = self.band_percentage / Decimal("100")
-        derived_upper = prev_close * (Decimal("1") + pct_factor)
-        derived_lower = prev_close * (Decimal("1") - pct_factor)
+        raw_upper = prev_close * (Decimal("1") + pct_factor)
+        raw_lower = prev_close * (Decimal("1") - pct_factor)
+
+        # Audit §36 Note N-7: Tick-rounding to NSE 0.05 grid (upper DOWN, lower UP)
+        tick_size = Decimal("0.05")
+        upper_ticks = (raw_upper / tick_size).to_integral_value(rounding=ROUND_FLOOR)
+        derived_upper = (upper_ticks * tick_size).quantize(Decimal("0.01"))
+        lower_ticks = (raw_lower / tick_size).to_integral_value(rounding=ROUND_CEILING)
+        derived_lower = (lower_ticks * tick_size).quantize(Decimal("0.01"))
+
+        # Audit §36 Note N-9: Preserve one-sided observed limits with consistency validation
+        final_upper = self.upper_circuit_limit
+        final_lower = self.lower_circuit_limit
+
+        if final_upper is not None and final_lower is None:
+            max_discrepancy = max(Decimal("1.5"), prev_close * pct_factor * Decimal("0.10"))
+            if abs(final_upper - derived_upper) > max_discrepancy:
+                raise PriceBandValidationError(
+                    f"Observed upper_circuit_limit ({final_upper}) contradicts derived upper ({derived_upper}) "
+                    f"from prev_close {prev_close} and band {self.band_percentage}% for ISIN {self.isin} on {self.trade_date}"
+                )
+            final_lower = derived_lower
+        elif final_lower is not None and final_upper is None:
+            max_discrepancy = max(Decimal("1.5"), prev_close * pct_factor * Decimal("0.10"))
+            if abs(final_lower - derived_lower) > max_discrepancy:
+                raise PriceBandValidationError(
+                    f"Observed lower_circuit_limit ({final_lower}) contradicts derived lower ({derived_lower}) "
+                    f"from prev_close {prev_close} and band {self.band_percentage}% for ISIN {self.isin} on {self.trade_date}"
+                )
+            final_upper = derived_upper
+        else:
+            final_upper = derived_upper
+            final_lower = derived_lower
+
         return PriceBandRecord(
             isin=self.isin,
             trade_date=self.trade_date,
             series=self.series,
-            upper_circuit_limit=derived_upper,
-            lower_circuit_limit=derived_lower,
+            upper_circuit_limit=final_upper,
+            lower_circuit_limit=final_lower,
             band_percentage=self.band_percentage,
             is_unconstrained=self.is_unconstrained,
             source_descriptor=self.source_descriptor,

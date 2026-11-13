@@ -795,25 +795,25 @@ def build_production_security_master() -> SecurityMaster:
             source_descriptor=fo_source,
             circular_ref="NSE/FAOP/57531",
         ),
-        # COCHINSHIP Old ISIN (standard 20% price band)
+        # COCHINSHIP Old ISIN (exchange publishes "No Band" under F&O dynamic flexing framework, Audit §36 H-43)
         PriceBandInterval(
             isin="INE704P01017",
-            band_percentage=Decimal("20.00"),
+            band_percentage=None,
             effective_from=datetime.date(2017, 8, 11),
             effective_to=datetime.date(2024, 1, 10),
-            is_unconstrained=False,
-            source_descriptor=cash_source,
-            circular_ref="NSE/SURV/PRICE_BANDS_2017",
+            is_unconstrained=True,
+            source_descriptor=fo_source,
+            circular_ref="NSE/FAOP/60350",
         ),
-        # COCHINSHIP New ISIN (standard 20% price band)
+        # COCHINSHIP New ISIN (exchange publishes "No Band" under F&O dynamic flexing framework, Audit §36 H-43)
         PriceBandInterval(
             isin="INE704P01025",
-            band_percentage=Decimal("20.00"),
+            band_percentage=None,
             effective_from=datetime.date(2024, 1, 10),
             effective_to=None,
-            is_unconstrained=False,
-            source_descriptor=cash_source,
-            circular_ref="NSE/SURV/PRICE_BANDS_2024",
+            is_unconstrained=True,
+            source_descriptor=fo_source,
+            circular_ref="NSE/FAOP/60350",
         ),
     ]
 

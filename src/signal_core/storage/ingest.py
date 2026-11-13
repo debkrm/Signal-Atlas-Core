@@ -371,7 +371,7 @@ def parse_price_band_report(
             if not csv_names:
                 raise PriceBandIngestError("Price band ZIP archive contains no CSV files.")
             # Note N-2: Select explicit price band member if archive contains multiple CSVs
-            target_csvs = [n for n in csv_names if any(k in n.lower() for k in ("sec_list", "band", "pd"))]
+            target_csvs = [n for n in csv_names if any(k in n.lower() for k in ("sec_list", "band", "pd", "bh"))]
             chosen_csv = target_csvs[0] if target_csvs else csv_names[0]
             text = zf.read(chosen_csv).decode("utf-8", errors="replace")
         except Exception as exc:

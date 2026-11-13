@@ -368,7 +368,24 @@ def test_price_band_source_descriptor_and_record():
     assert rec_recovered.lower_circuit_limit == record.lower_circuit_limit
     assert rec_recovered.source_descriptor.source_type == record.source_descriptor.source_type
 
-    # Unconstrained scrip (F&O stock) with authoritative publication descriptor and dynamic band
+    # Fixed-band scrip (standard equity with declared band percentage)
+    fixed_record = PriceBandRecord(
+        isin="INE009A01021",
+        trade_date=datetime.date(2024, 1, 15),
+        series="EQ",
+        is_unconstrained=False,
+        band_percentage=Decimal("10.00"),
+        source_descriptor=source_desc,
+        source_ref="NSE/CASH/2024/01",
+    )
+    # Audit §35 H-40: numeric limits required for circuit evidence; percentage alone is not evidence
+    assert fixed_record.has_circuit_evidence is False
+    fixed_derived = fixed_record.derive_limits(Decimal("1500.00"))
+    assert fixed_derived.upper_circuit_limit == Decimal("1650.00")
+    assert fixed_derived.lower_circuit_limit == Decimal("1350.00")
+    assert fixed_derived.has_circuit_evidence is True
+
+    # Unconstrained scrip (F&O stock) with dynamic flexing framework (Audit §36 Note N-8)
     fno_record = PriceBandRecord(
         isin="INE009A01021",
         trade_date=datetime.date(2024, 1, 15),
@@ -378,12 +395,12 @@ def test_price_band_source_descriptor_and_record():
         source_descriptor=source_desc,
         source_ref="NSE/FO/2024/01",
     )
-    # Audit §35 H-40: numeric limits required for circuit evidence; percentage alone is not evidence
     assert fno_record.has_circuit_evidence is False
+    # Dynamic flexing bands do not derive static fixed limits
     fno_derived = fno_record.derive_limits(Decimal("1500.00"))
-    assert fno_derived.upper_circuit_limit == Decimal("1650.00")
-    assert fno_derived.lower_circuit_limit == Decimal("1350.00")
-    assert fno_derived.has_circuit_evidence is True
+    assert fno_derived.upper_circuit_limit is None
+    assert fno_derived.lower_circuit_limit is None
+    assert fno_derived.has_circuit_evidence is False
 
     # Audit §27 H-4: Anonymous unconstrained claim without source descriptor is rejected fail-closed
     with pytest.raises(PriceBandValidationError, match="requires an authoritative source_descriptor"):

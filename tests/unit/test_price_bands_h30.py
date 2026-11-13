@@ -228,11 +228,11 @@ def test_security_master_as_of_resolution_and_precedence():
     assert band_jan11.lower_circuit_limit is None
     assert band_jan11.has_circuit_evidence is False
 
-    # With prev_close=802.80: derived limits 963.36 / 642.24, has_circuit_evidence is True (Audit §35 H-40)
+    # With prev_close=802.80: derived limits tick-rounded (Audit §36 Note N-7: upper down to 963.35, lower up to 642.25)
     band_jan11_derived = sm.get_price_band("INE704P01025", datetime.date(2024, 1, 11), prev_close=Decimal("802.80"))
     assert band_jan11_derived is not None
-    assert band_jan11_derived.upper_circuit_limit == Decimal("963.36")
-    assert band_jan11_derived.lower_circuit_limit == Decimal("642.24")
+    assert band_jan11_derived.upper_circuit_limit == Decimal("963.35")
+    assert band_jan11_derived.lower_circuit_limit == Decimal("642.25")
     assert band_jan11_derived.has_circuit_evidence is True
 
     # 3. Before effective_from (Jan 9): outside interval and no discrete band -> returns None
@@ -260,21 +260,26 @@ def test_production_security_master_h30_audit_closure():
     assert band_split.band_percentage == Decimal("20.00")
     assert band_split.has_circuit_evidence is True
 
-    # Measured: a band registered on 2024-01-10 is NO LONGER None for 2024-01-11 or 2024-01-12
+    # Audit §36 H-43 & Note N-8: Hand-authored 20% removed from baseline intervals for COCHINSHIP.
+    # Baseline interval master now honestly encodes COCHINSHIP as unconstrained ("No Band" under F&O framework).
+    # On Jan 11 without daily records, resolves to unconstrained with band_percentage=None and no circuit evidence:
     band_jan11 = sm.get_price_band("INE704P01025", datetime.date(2024, 1, 11))
     assert band_jan11 is not None
-    assert band_jan11.band_percentage == Decimal("20.00")
+    assert band_jan11.is_unconstrained is True
+    assert band_jan11.band_percentage is None
     assert band_jan11.upper_circuit_limit is None
     assert band_jan11.has_circuit_evidence is False
 
+    # Calling derive_limits with prev_close on unconstrained scrip does NOT derive static limits (Audit §36 Note N-8)
     band_jan11_derived = sm.get_price_band("INE704P01025", datetime.date(2024, 1, 11), prev_close=Decimal("802.80"))
-    assert band_jan11_derived.upper_circuit_limit == Decimal("963.36")
-    assert band_jan11_derived.lower_circuit_limit == Decimal("642.24")
-    assert band_jan11_derived.has_circuit_evidence is True
+    assert band_jan11_derived.upper_circuit_limit is None
+    assert band_jan11_derived.lower_circuit_limit is None
+    assert band_jan11_derived.has_circuit_evidence is False
 
     band_jan12 = sm.get_price_band("INE704P01025", datetime.date(2024, 1, 12))
     assert band_jan12 is not None
-    assert band_jan12.band_percentage == Decimal("20.00")
+    assert band_jan12.is_unconstrained is True
+    assert band_jan12.band_percentage is None
     assert band_jan12.upper_circuit_limit is None
     assert band_jan12.has_circuit_evidence is False
 
@@ -604,3 +609,107 @@ def test_h42_corrupt_band_row_fails_closed():
             report_data=corrupt_csv,
             trade_date=datetime.date(2024, 1, 10),
         )
+
+
+def test_n7_tick_rounding_derived_limits():
+    """
+    Audit §36 Note N-7:
+    NSE publishes circuit limits on a Rs. 0.05 tick grid.
+    Derived limits must round upper DOWN to tick and lower UP to tick:
+    prev_close 1234.55 * 1.2 = 1481.4600 -> upper rounded down to 1481.45.
+    prev_close 1234.55 * 0.8 = 987.6400  -> lower rounded up to 987.65.
+    """
+    source_desc = PriceBandSourceDescriptor(
+        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+        publication_name="NSE_TEST_BANDS",
+        archive_url_template="https://archives.nseindia.com/sec_list.csv",
+        retrieval_frequency="DAILY",
+        circular_ref="NSE/TEST/01",
+    )
+    rec = PriceBandRecord(
+        isin="INE704P01025",
+        trade_date=datetime.date(2024, 1, 11),
+        series="EQ",
+        band_percentage=Decimal("20.00"),
+        is_unconstrained=False,
+        source_descriptor=source_desc,
+    )
+    derived = rec.derive_limits(Decimal("1234.55"))
+    assert derived.upper_circuit_limit == Decimal("1481.45")
+    assert derived.lower_circuit_limit == Decimal("987.65")
+    assert (derived.upper_circuit_limit % Decimal("0.05")) == Decimal("0")
+    assert (derived.lower_circuit_limit % Decimal("0.05")) == Decimal("0")
+    assert derived.has_circuit_evidence is True
+
+
+def test_n8_dynamic_flex_unconstrained_gated():
+    """
+    Audit §36 Note N-8:
+    Derivation is only valid for fixed bands.
+    For an unconstrained scrip with dynamic flexing bands (e.g. F&O underlying),
+    derive_limits must NOT derive static fixed limits (returns self with None limits).
+    """
+    source_desc = PriceBandSourceDescriptor(
+        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+        publication_name="NSE_FO_BANDS",
+        archive_url_template="https://archives.nseindia.com/content/fo/fo_sec_list.csv",
+        retrieval_frequency="DAILY",
+        circular_ref="NSE/FAOP/60350",
+    )
+    rec = PriceBandRecord(
+        isin="INE009A01021",
+        trade_date=datetime.date(2024, 1, 15),
+        series="EQ",
+        is_unconstrained=True,
+        band_percentage=Decimal("10.00"),
+        source_descriptor=source_desc,
+        source_ref="NSE/FAOP/60350",
+    )
+    derived = rec.derive_limits(Decimal("1500.00"))
+    assert derived.upper_circuit_limit is None
+    assert derived.lower_circuit_limit is None
+    assert derived.has_circuit_evidence is False
+
+
+def test_n9_one_sided_observed_limits_preserved_and_validated():
+    """
+    Audit §36 Note N-9:
+    A record with a one-sided observed limit must NOT have its authoritative limit silently overwritten.
+    The missing side must be derived, and the observed side validated for consistency.
+    """
+    source_desc = PriceBandSourceDescriptor(
+        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+        publication_name="NSE_TEST_BANDS",
+        archive_url_template="https://archives.nseindia.com/sec_list.csv",
+        retrieval_frequency="DAILY",
+        circular_ref="NSE/TEST/01",
+    )
+    # Valid one-sided upper: upper=1200.00 observed, lower=None, pct=20.00, prev_close=1000.00
+    rec_upper_only = PriceBandRecord(
+        isin="INE704P01025",
+        trade_date=datetime.date(2024, 1, 11),
+        series="EQ",
+        upper_circuit_limit=Decimal("1200.00"),
+        lower_circuit_limit=None,
+        band_percentage=Decimal("20.00"),
+        is_unconstrained=False,
+        source_descriptor=source_desc,
+    )
+    derived = rec_upper_only.derive_limits(Decimal("1000.00"))
+    assert derived.upper_circuit_limit == Decimal("1200.00")  # Preserved observed limit!
+    assert derived.lower_circuit_limit == Decimal("800.00")   # Filled missing side!
+    assert derived.has_circuit_evidence is True
+
+    # Inconsistent one-sided upper: observed upper=1100.00 contradicts derived upper=1200.00
+    rec_contradicting = PriceBandRecord(
+        isin="INE704P01025",
+        trade_date=datetime.date(2024, 1, 11),
+        series="EQ",
+        upper_circuit_limit=Decimal("1100.00"),
+        lower_circuit_limit=None,
+        band_percentage=Decimal("20.00"),
+        is_unconstrained=False,
+        source_descriptor=source_desc,
+    )
+    with pytest.raises(PriceBandValidationError, match="Observed upper_circuit_limit.*contradicts derived upper"):
+        rec_contradicting.derive_limits(Decimal("1000.00"))
