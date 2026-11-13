@@ -212,6 +212,7 @@ REQUIRED_VERDICT_TAGS = {
     "feat-s39-581ac0f": "581ac0f",
     "verdict-s40-57d8562": "57d8562",
     "feat-s40-cf873fc": "cf873fc",
+    "feat-ci-fixtures-d7817d2": "d7817d2",
 }
 
 
