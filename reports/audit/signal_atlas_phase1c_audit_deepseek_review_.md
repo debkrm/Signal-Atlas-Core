@@ -2712,3 +2712,115 @@ No limits-bearing source was added: `ingest.py`'s diff is one line of filename m
 The direction of travel is sound — three of four notes closed, the mock 20% limits gone from the interval table, and the honesty of the fail-closed path intact. What this round shows is that the ingest layer is still the weak seam: every remaining blocker is a case where a file that does not say what the parser wants is read as saying something permissive, rather than refused.
 
 ---
+## 38. H-45 / H-46 / H-47 / H-48 Remediation Audit — `0b1504a` (Wave 3 gate, fourth pass)
+
+Scope of review: `0b1504a` (5 files, +609/−62: `ingest.py`, `security_master.py`, `silver.py`, `test_price_bands_h30.py`, `test_walkforward.py`). No gate script changed in this commit.
+
+Measurements: `python -m pytest -q` → **256 passed in 11.39s**; all six `scripts/verify_*.py` → exit 0 (`verify_phase2a_containment_and_trials`, `verify_phase2b_significance`, `verify_phase2b5_storage`, `verify_phase2c_walkforward`, `verify_wave1_thin_slice`, `verify_historical_snapshot`). Probe battery run against the working tree at `0b1504a` with `PYTHONPATH=src`.
+
+### 38.1 Closed, measured
+
+- **H-45 — CLOSED.** The §37.3 scenario is inverted. A ZIP holding `fo_sec_bhavdata_full_16012024.csv` **and** a band member now parses the band member:
+
+```
+P1 bhavcopy+band zip       -> n=1 isin=INE009A01021 pct=5 up=1575.00 lo=1425.00 ev=True
+P2 bhavcopy-only zip       -> PriceBandIngestError: No qualifying price band CSV member found in ZIP archive
+                              (members: ['fo_sec_bhavdata_full_16012024.csv']) (Finding H-45)
+P1b bhavcopy BhavCopy_NSE_CM_* + real sec_list.csv (production master)
+                           -> n=3, band member parsed (not the bhavcopy)
+```
+
+The mechanism is the right one: `"bhav"` members are excluded outright, the name filter no longer contains the `"bh"` substring, a unique `sec_list` member disambiguates, and any residual ambiguity raises rather than picking `target_csvs[0]`. The header-probe fallback gives an unnamed-but-real band file a second chance. At `79fe49e` the band was discarded and INFY returned unconstrained; that no longer happens.
+
+- **H-46 — CLOSED.** A bhavcopy-shaped CSV supplied directly raises:
+
+```
+P3 -> PriceBandIngestError: Price band report header lacks band/circuit limit columns (Finding H-46).
+      Header must contain at least one of BAND, UPPER_PRICE_BAND, or LOWER_PRICE_BAND.
+```
+
+The §37.4 record `('INE009A01021', None, True, False)` — a price file read as "every instrument unconstrained" — is no longer producible.
+
+- **H-47 — CLOSED for the zero-record case.** The real archive with no security master now raises instead of returning an empty ingest:
+
+```
+P4 real sec_list.csv, security_master=None
+   -> PriceBandIngestError: Zero price band records extracted from 3624 data rows:
+      report lacks an ISIN column and security_master was None (Finding H-47). Unresolved rows: 3624.
+```
+
+- **H-48 — CLOSED.** The hand-authored 2024-01-10 record is deleted; `build_production_security_master()` now carries no discrete bands at all, and both split-day sessions resolve from the interval layer:
+
+```
+P6 -> discrete=0 intervals=5
+      2024-01-10: pct=None up=None ev=False
+      2024-01-11: pct=None up=None ev=False
+```
+
+Dropping the record is the correct resolution of the §37.2 contradiction: the master now says one thing about that ISIN-date instead of two. Its consequence — the master holds zero evidenced band facts, so the whole table is `CIRCUIT_UNVERIFIED` — is H-44, not a regression of H-48.
+
+- **N-12 — CLOSED.** `INE009A01021` and `INE002A01018` are restored to `band_percentage=None, is_unconstrained=True` with the F&O citation, and a genuine fixed-band instrument `TESTCASH` (`INE888C01010`, 10%) carries the verified-fill path. The runs are pinned with `isins=["INE888C01010"]` and the expected dataset fingerprint narrowed with them, which keeps the binding test honest about what it fingerprints.
+- **N-13 — CLOSED.** `cash_source` is deleted; `PriceBandSourceDescriptor` and `PriceBandPublicationSource` remain in use through `fo_source`.
+
+### 38.2 H-49 · Blocking, new — `with_price_bands` can recreate H-48 in one call, and the new test asserts that state as correct
+
+`SecurityMaster.with_price_bands()` merges discrete `PriceBandRecord`s into `_price_bands` without consulting `_price_band_intervals`, and discrete records win at resolution. So the contradiction §37.2 spent a round removing can be reintroduced by any caller, with no check at all:
+
+```
+Q2 interval on 2024-01-10        -> pct=None unconstrained=True evidence=False
+Q2 after with_price_bands(20%, 802.80, 535.20)
+                                 -> pct=20.00 up=802.80 evidence=True      <-- contradiction restored
+Q2 2024-01-11                    -> pct=None
+```
+
+The ISIN is `INE704P01025`, the date 2024-01-10, the values `802.80 / 535.20 / 20.00%` — the same numbers §37.2 ruled a fabricated split-day artifact, now reachable through a public method and surviving for exactly one session. The new test `test_security_master_with_price_bands` builds precisely that record and asserts `has_circuit_evidence is True`.
+
+This is not a style objection. Two authorities now govern the same fact and the merge is the only place they meet, silently. Requirement: a discrete record must be validated against the interval covering its date and fail closed on disagreement; and discrete bands must have exactly one writer. Under §7.4/§10.5 the same reasoning applies to the new Silver band partition — a third copy of the same fact, with no fingerprint and no resolver rule saying which copy governs.
+
+### 38.3 H-44 · Still open — the obstruction changed shape, not substance
+
+Added in this commit: `SilverStorage.write_price_band_partition` / `read_price_band_partition`, `SecurityMaster.with_price_bands`, and an optional `silver=` argument on `ingest_daily_price_bands`. Not added: a source, a caller, or a resolver.
+
+```
+P6 build_production_security_master() -> discrete=0 intervals=5, every interval No Band / evidence=False
+   grep: no production caller passes silver=; ingest_daily_price_bands(silver=...) is exercised by one test only;
+         with_price_bands and read_price_band_partition have no production caller at all.
+```
+
+So an ingested report still cannot change what the engine resolves. The commit message lists H-44 among the remediated findings for the third consecutive commit; it is not remediated, and the new layer is unwired.
+
+The measurement that matters is P5, because it identifies the real obstruction:
+
+```
+P5 parse(real sec_list.csv, production master) -> records=3 of 3624 data rows; registered_isins=5
+```
+
+The archive the project already holds carries a usable `Band` column (2,192 rows `20`, 619 `5`, 211 `10`, 558 `No Band`). It does not need a different publication to become limits-bearing: the §37 N-7/N-8 machinery already derives tick-rounded numeric limits from a previous close for fixed-band scrips. What fails is **identity**, not availability — the security master registers five ISINs and holds no effective-dated symbol→ISIN table for the cash universe, so 3,621 of 3,624 rows have nowhere to go.
+
+Requirement, restated concretely: (a) an effective-dated symbol→ISIN identity table for the `EQ` universe, keyed by ISIN with symbol and series as attributes (§10.4); (b) the daily cash band report ingested per session to Bronze/Silver; (c) fixed-band rows deriving limits from the previous close; (d) at least one fold reaching `verification_status = VERIFIED` with all executed fills carrying circuit evidence. If any step cannot be sourced for the binding window, that is recorded as a sourced limitation, not bridged.
+
+### 38.4 N-14 · Required — dropped rows are counted and then discarded
+
+The counters exist (`unresolved_isin_count`, `non_target_count`, `duplicate_isin_count`) but are only ever rendered inside the zero-record error string. On success the caller sees the same return value for a clean ingest and for P5's 3-of-3,624 ingest. §37.5 asked for dropped-row accounting, not only the zero-row abort; the zero-row half is fixed, the accounting half is not. Per-run counts must be returned (or a threshold exceeded must raise) and carried into the Bronze manifest, so a band fold cannot silently rest on one instrument in a thousand.
+
+### 38.5 Notes
+
+- **N-15** — the ZIP header probe swallows every exception: `except Exception: pass` around `zf.read(n)`. A member that cannot be read, decoded or split is treated as non-qualifying, so a real band file can be routed into the `No qualifying member` path or skipped in favour of a worse-named sibling. This is the pattern G-9 removed from `verify_phase2c_walkforward.py`; an unreadable candidate is a fact to report, not to ignore.
+- **N-16** — the new Silver band writer accepts an off-calendar partition when the storage instance was built with `calendar=None`: measured `OffCalendarSessionError` with a calendar supplied, file written without one. That is inherited from F-6 in `write_daily_partition`, not a regression, but this path extends it — `ingest_daily_price_bands(..., silver=...)` passes no calendar, so calendar enforcement depends entirely on how the storage object was constructed.
+- **N-18** — process (§11.1). `a3a40f1` ("docs(audit): record §37 verdict and updated AGENTS.md rules") committed the §37 append while it was still an uncommitted audit draft in the working tree, together with `AGENTS.md` §12/§13 and the Wave 3 rewrite. The appended text is byte-identical to what was written — nothing was reworded, which is why this is a note and not a finding — but §11.1 exists to keep the auditor's pending text out of implementer commits, and it was not honoured here. From `a3a40f1` onward the audit append and the rulebook changes arrive as separate commits authored by the auditor; `0b1504a` correctly left the report alone.
+- **N-17** — scope and gate coverage. 230 lines of new storage landed inside a findings-remediation commit, and no script changed in `0b1504a`: the band→Silver→master path is verified by two unit tests and by no gate, so it is precisely the surface §37.7 predicted would need one. The band partition also carries no content fingerprint, the same gap as the bhavcopy writer (a pre-existing §10.5 / G2B.5-2 seam, inherited rather than introduced).
+
+### 38.6 Verdict
+
+**Closed at `0b1504a`:** H-45, H-46, H-47 (zero-record case), H-48, N-12, N-13. §33's Wave 2 sign-off and its gates are unaffected; H-30 stays CLOSED.
+
+**Wave 3 — Full Historical Backfill: NO-GO at `0b1504a`**, on two blockers and one required item:
+
+1. **H-49** — a discrete band record must be validated against the interval covering its date and refused on disagreement; discrete bands must have one writer, and the Silver band partition must not be a third unvalidated authority.
+2. **H-44** — close it by resolving identity for the cash universe and ingesting the daily band report per session, through to one fold reaching `VERIFIED`; or record, with a source, that the binding window cannot be covered.
+3. **N-14** — carry dropped-row counts out of the parser into the run manifest.
+4. Then N-15/N-16; **H-16 / H-20** when `storage_holdout/` is first created.
+
+This is the first round in which every blocker named by the preceding verdict was actually closed, and the closures survive adversarial input rather than only their own tests: the bhavcopy can no longer outrank a band file, a header without a band column can no longer become "No Band", and the fabricated split-day limit is gone. What remains is that the band facts now live in three places (intervals, discrete records, Silver partition) with no rule for which governs, and that not one real band could be attached to a real instrument at scale until identity is resolved. The next round should therefore be about *unification and coverage*, not about tightening another parser branch.
+
+---
