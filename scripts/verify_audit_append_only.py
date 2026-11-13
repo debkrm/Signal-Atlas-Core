@@ -72,7 +72,7 @@ def check_audit_report_append_only() -> bool:
     # 2. Check commits since Rule 11 was ratified
     try:
         log_proc = subprocess.run(
-            ["git", "log", "-p", "-U0", f"{RULE_11_BASE_COMMIT}..HEAD", "--", str(AUDIT_FILE)],
+            ["git", "log", "-p", "-m", "-U0", f"{RULE_11_BASE_COMMIT}..HEAD", "--", str(AUDIT_FILE)],
             cwd=str(REPO_ROOT),
             capture_output=True,
             text=True,
@@ -98,8 +98,8 @@ def check_audit_report_append_only() -> bool:
 
 
 def check_verification_scripts() -> bool:
-    """Verifies that all registered scripts/verify_*.py exit with code 0."""
-    print("--- Gate W0.5-2: Verification Scripts Exit Status (§12.3) ---")
+    """Verifies that all scripts/verify_*.py in scripts/ exit with code 0 (Note N-20)."""
+    print("--- Gate W0.5-2: Verification Scripts Exit Status (§12.3, Note N-20) ---")
     all_passed = True
     env = os.environ.copy()
     src_path = str(REPO_ROOT / "src")
@@ -108,7 +108,15 @@ def check_verification_scripts() -> bool:
     else:
         env["PYTHONPATH"] = src_path
 
-    for script_rel in VERIFICATION_SCRIPTS:
+    # Note N-20: Dynamic discovery of all scripts/verify_*.py instead of hardcoded list
+    discovered_scripts = sorted([
+        p.relative_to(REPO_ROOT).as_posix()
+        for p in (REPO_ROOT / "scripts").glob("verify_*.py")
+        if p.name != "verify_audit_append_only.py"
+    ])
+    print(f"[INFO] Discovered {len(discovered_scripts)} verification scripts: {', '.join(discovered_scripts)}")
+
+    for script_rel in discovered_scripts:
         script_path = REPO_ROOT / script_rel
         if not script_path.exists():
             print(f"[FAIL] Script does not exist: {script_rel}")
@@ -137,7 +145,7 @@ def check_verification_scripts() -> bool:
             print(f"[PASS] {script_rel} (exit 0, {elapsed:.2f}s)")
 
     if all_passed:
-        print(f"[PASS] Gate W0.5-2: All {len(VERIFICATION_SCRIPTS)} verification scripts passed exit 0.\n")
+        print(f"[PASS] Gate W0.5-2: All {len(discovered_scripts)} verification scripts passed exit 0.\n")
     else:
         print("[FAIL] Gate W0.5-2: One or more verification scripts failed.\n")
     return all_passed

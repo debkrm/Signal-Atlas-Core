@@ -55,13 +55,16 @@ class PriceBandIngestError(Exception):
 @dataclass(frozen=True, slots=True)
 class PriceBandParseSummary:
     """
-    Dropped-row and extraction accounting for a price band report ingest per Note N-14 / Audit §38.4.
+    Dropped-row and extraction accounting for a price band report ingest per Note N-14 / Note N-19.
+    Tracks series scope partitioning, unresolved in-scope rows, and non-target filtering.
     """
     total_rows: int
     extracted_records: int
     unresolved_isin_count: int
     non_target_count: int
     duplicate_isin_count: int
+    in_scope_series_count: int = 0
+    out_of_scope_series_count: int = 0
 
     def to_dict(self) -> Dict[str, int]:
         return {
@@ -70,6 +73,8 @@ class PriceBandParseSummary:
             "unresolved_isin_count": self.unresolved_isin_count,
             "non_target_count": self.non_target_count,
             "duplicate_isin_count": self.duplicate_isin_count,
+            "in_scope_series_count": self.in_scope_series_count,
+            "out_of_scope_series_count": self.out_of_scope_series_count,
         }
 
     @classmethod
@@ -80,6 +85,8 @@ class PriceBandParseSummary:
             unresolved_isin_count=int(d["unresolved_isin_count"]),
             non_target_count=int(d["non_target_count"]),
             duplicate_isin_count=int(d["duplicate_isin_count"]),
+            in_scope_series_count=int(d.get("in_scope_series_count", 0)),
+            out_of_scope_series_count=int(d.get("out_of_scope_series_count", 0)),
         )
 
 
@@ -422,6 +429,7 @@ def parse_price_band_report(
     source_descriptor: Optional[PriceBandSourceDescriptor] = None,
     security_master: Optional[SecurityMaster] = None,
     target_isins: Optional[Sequence[str]] = None,
+    target_series: Optional[Sequence[str]] = ("EQ",),
     max_unresolved_threshold: Optional[int] = None,
 ) -> PriceBandParseResult:
     """
@@ -587,7 +595,10 @@ def parse_price_band_report(
     records: List[PriceBandRecord] = []
     seen_isins: Set[str] = set()
     target_set = {i.upper() for i in target_isins} if target_isins is not None else None
+    in_scope_series_set = {s.upper() for s in target_series} if target_series is not None else None
 
+    in_scope_series_count = 0
+    out_of_scope_series_count = 0
     unresolved_isin_count = 0
     non_target_count = 0
     duplicate_isin_count = 0
@@ -600,7 +611,15 @@ def parse_price_band_report(
         if not series_val:
             series_val = "EQ"
 
-        # Determine ISIN
+        # Note N-19: Partition by series scope first
+        if in_scope_series_set is not None and series_val not in in_scope_series_set:
+            out_of_scope_series_count += 1
+            non_target_count += 1
+            continue
+
+        in_scope_series_count += 1
+
+        # Determine ISIN for in-scope row
         isin_val = ""
         if isin_idx is not None and len(row) > isin_idx and row[isin_idx].strip():
             isin_val = row[isin_idx].strip().upper()
@@ -696,14 +715,23 @@ def parse_price_band_report(
         unresolved_isin_count=unresolved_isin_count,
         non_target_count=non_target_count,
         duplicate_isin_count=duplicate_isin_count,
+        in_scope_series_count=in_scope_series_count,
+        out_of_scope_series_count=out_of_scope_series_count,
     )
 
-    # Note N-14 / Audit §38.4: Fail closed if unresolved drops exceed allowable threshold
+    # Note N-14 / Note N-19: Report counts on every run
+    print(
+        f"[INFO] PriceBand Parse: total_rows={len(rows)} in_scope_{target_series}={in_scope_series_count} "
+        f"out_of_scope={out_of_scope_series_count} extracted={len(records)} "
+        f"unresolved_in_scope={unresolved_isin_count} non_target={non_target_count} duplicates={duplicate_isin_count}"
+    )
+
+    # Note N-14 / Note N-19: Fail closed if unresolved in-scope drops exceed allowable threshold
     if max_unresolved_threshold is not None and target_set is None:
         if unresolved_isin_count > max_unresolved_threshold:
             raise PriceBandIngestError(
-                f"Unresolved ISINs ({unresolved_isin_count}) exceeded allowable threshold {max_unresolved_threshold} "
-                f"from {len(rows)} data rows (Note N-14)."
+                f"Unresolved in-scope ({target_series}) ISINs ({unresolved_isin_count}) exceeded allowable threshold "
+                f"{max_unresolved_threshold} out of {in_scope_series_count} in-scope rows ({len(rows)} total rows) (Note N-14 / Note N-19)."
             )
 
     return PriceBandParseResult(inferred_date, records, summary)
@@ -718,6 +746,7 @@ def ingest_daily_price_bands(
     source_descriptor: Optional[PriceBandSourceDescriptor] = None,
     security_master: Optional[SecurityMaster] = None,
     target_isins: Optional[Sequence[str]] = None,
+    target_series: Optional[Sequence[str]] = ("EQ",),
     silver: Optional[SilverStorage] = None,
     calendar: Optional[TradingCalendar] = None,
     max_unresolved_threshold: Optional[int] = None,
@@ -733,6 +762,7 @@ def ingest_daily_price_bands(
         source_descriptor=source_descriptor,
         security_master=security_master,
         target_isins=target_isins,
+        target_series=target_series,
         max_unresolved_threshold=max_unresolved_threshold,
     )
     resolved_date = parse_res.trade_date

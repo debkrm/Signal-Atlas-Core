@@ -441,6 +441,21 @@ class SecurityMaster:
                         f"Overlapping or unclosed symbol intervals detected for ISIN {isin}: {cur} overlaps {nxt}"
                     )
 
+        # Validate non-overlapping symbol intervals per (symbol, series) (Audit §39 H-50)
+        by_symbol: Dict[Tuple[str, str], List[SymbolInterval]] = {}
+        for s in self._symbol_intervals:
+            by_symbol.setdefault((s.symbol, s.series), []).append(s)
+
+        for (sym, srs), intervals in by_symbol.items():
+            sorted_intervals = sorted(intervals, key=lambda x: x.effective_from)
+            for i in range(len(sorted_intervals) - 1):
+                cur = sorted_intervals[i]
+                nxt = sorted_intervals[i + 1]
+                if cur.effective_to is None or cur.effective_to > nxt.effective_from:
+                    raise SecurityMasterError(
+                        f"Overlapping or unclosed symbol intervals detected for symbol '{sym}' (series {srs}): {cur} overlaps {nxt}"
+                    )
+
         # Validate non-overlapping price band intervals per ISIN (Rule 10.5, Audit §31 H-30)
         bands_by_isin: Dict[str, List[PriceBandInterval]] = {}
         for b in self._price_band_intervals:
@@ -517,12 +532,18 @@ class SecurityMaster:
         _validate_identifier(symbol, "symbol")
         _validate_date(as_of, "as_of")
         candidates = self._intervals_by_symbol.get(symbol, [])
+        matches: List[str] = []
         for interval in candidates:
             if interval.contains(as_of):
                 if series is None or interval.series == series:
                     if self.is_active(interval.isin, as_of):
-                        return interval.isin
-        return None
+                        if interval.isin not in matches:
+                            matches.append(interval.isin)
+        if len(matches) > 1:
+            raise SecurityMasterError(
+                f"Ambiguous active ISINs for symbol '{symbol}' on date {as_of}: {matches}"
+            )
+        return matches[0] if matches else None
 
     def is_delisted(self, isin: str, as_of: datetime.date) -> bool:
         """Returns True if the security was delisted on or prior to date T."""
@@ -747,10 +768,11 @@ class SecurityMaster:
 def load_cash_universe_symbol_intervals(csv_path: Optional[Union[str, Path]] = None) -> Tuple[SymbolInterval, ...]:
     """
     Loads authoritative effective-dated SymbolIntervals for the NSE Cash Equity (EQ) universe
-    from committed reference artifact per AGENTS.md Rule 10.4 and Audit §38.3 (Finding H-44).
+    from committed reference artifact per AGENTS.md Rule 10.4, Audit §38.3 (H-44), and Audit §39 (H-50, H-51).
+    Fails closed naming the artifact and corrupt row on any missing file or schema violation.
     """
     if csv_path is None:
-        p = Path(__file__).resolve().parent.parent.parent.parent / "data" / "reference" / "cash_equity_symbol_intervals_2024.csv"
+        p = Path(__file__).resolve().parent.parent.parent.parent / "data" / "reference" / "cash_equity_symbol_intervals.csv"
     else:
         p = Path(csv_path)
 
@@ -760,18 +782,25 @@ def load_cash_universe_symbol_intervals(csv_path: Optional[Union[str, Path]] = N
     intervals: List[SymbolInterval] = []
     with open(p, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
+        line_no = 1
         for row in reader:
-            ef = datetime.date.fromisoformat(row["effective_from"].strip())
-            et = datetime.date.fromisoformat(row["effective_to"].strip()) if row.get("effective_to") and row["effective_to"].strip() else None
-            intervals.append(
-                SymbolInterval(
-                    isin=row["isin"].strip().upper(),
-                    symbol=row["symbol"].strip().upper(),
-                    series=row["series"].strip().upper(),
-                    effective_from=ef,
-                    effective_to=et,
+            line_no += 1
+            try:
+                ef = datetime.date.fromisoformat(row["effective_from"].strip())
+                et = datetime.date.fromisoformat(row["effective_to"].strip()) if row.get("effective_to") and row["effective_to"].strip() else None
+                intervals.append(
+                    SymbolInterval(
+                        isin=row["isin"].strip().upper(),
+                        symbol=row["symbol"].strip().upper(),
+                        series=row["series"].strip().upper(),
+                        effective_from=ef,
+                        effective_to=et,
+                    )
                 )
-            )
+            except Exception as exc:
+                raise SecurityMasterError(
+                    f"Corrupt row {line_no} in cash universe artifact '{p.name}': {exc}"
+                ) from exc
     return tuple(intervals)
 
 
@@ -830,14 +859,12 @@ def build_production_security_master(include_cash_universe: bool = True) -> Secu
     ]
 
     if include_cash_universe:
-        try:
-            cash_intervals = load_cash_universe_symbol_intervals()
-            core_isins = {s.isin for s in symbol_intervals}
-            for ci in cash_intervals:
-                if ci.isin not in core_isins:
-                    symbol_intervals.append(ci)
-        except (FileNotFoundError, SecurityMasterError):
-            pass
+        cash_intervals = load_cash_universe_symbol_intervals()
+        core_isins = {s.isin for s in symbol_intervals}
+        core_symbols = {(s.symbol, s.series) for s in symbol_intervals}
+        for ci in cash_intervals:
+            if ci.isin not in core_isins and (ci.symbol, ci.series) not in core_symbols:
+                symbol_intervals.append(ci)
 
     corporate_actions = [
         # INFY 1:1 Bonus ex-date 2018-09-12 (1 old share gives 1 additional share, total 2)

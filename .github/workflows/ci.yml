@@ -1,0 +1,41 @@
+name: Continuous Verification Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  verify:
+    name: Repository Foundation & Verification Gate (AGENTS.md §12.3)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest duckdb pyarrow
+
+      - name: Run Full Offline Test Suite
+        env:
+          PYTHONPATH: src
+        run: |
+          python -m pytest -q
+
+      - name: Run Wave 0.5 Continuous Verification Gate
+        env:
+          PYTHONPATH: src
+        run: |
+          python scripts/verify_audit_append_only.py
+

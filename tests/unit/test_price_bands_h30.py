@@ -44,6 +44,7 @@ from signal_core.storage.security_master import (
     SecurityMasterError,
     SymbolInterval,
     build_production_security_master,
+    load_cash_universe_symbol_intervals,
 )
 from signal_core.storage.silver import (
     SilverPartitionImmutableError,
@@ -1068,7 +1069,7 @@ def test_n14_dropped_row_accounting_summary_and_threshold(test_calendar):
     assert res.summary.duplicate_isin_count == 0
 
     # 2. max_unresolved_threshold fails closed
-    with pytest.raises(PriceBandIngestError, match="Unresolved ISINs .* exceeded allowable threshold 1.*Note N-14"):
+    with pytest.raises(PriceBandIngestError, match="Unresolved in-scope .* exceeded allowable threshold 1.*Note N-14 / Note N-19"):
         parse_price_band_report(
             report_data=csv_text,
             trade_date=t_date,
@@ -1252,3 +1253,110 @@ def test_h44_cash_universe_identity_and_verified_fold(test_calendar):
         assert trade.circuit_evidence_present is True
         assert res.circuit_evidence_complete is True
         assert res.verification_status == "VERIFIED"
+
+
+def test_h50_symbol_interval_non_overlapping_and_transition_resolution():
+    """
+    Audit §39 Finding H-50:
+    - SymbolIntervals must reject overlapping intervals per symbol in SecurityMaster.__init__.
+    - Sourced cash equity intervals express exact ISIN transitions (NESTLEIND, MAZDOCK, COCHINSHIP).
+    - Ambiguous active ISINs on the same date raise SecurityMasterError fail-closed.
+    """
+    d1 = datetime.date(2024, 1, 1)
+    d2 = datetime.date(2024, 1, 5)
+    d3 = datetime.date(2024, 1, 10)
+
+    # 1. Overlapping intervals for same symbol/series rejected
+    overlapping_intervals = [
+        SymbolInterval(isin="INE239A01016", symbol="TESTSYM", series="EQ", effective_from=d1, effective_to=d3),
+        SymbolInterval(isin="INE239A01024", symbol="TESTSYM", series="EQ", effective_from=d2, effective_to=None),
+    ]
+    with pytest.raises(SecurityMasterError, match="Overlapping or unclosed symbol intervals detected for symbol 'TESTSYM'"):
+        SecurityMaster(symbol_intervals=overlapping_intervals)
+
+    # 2. Production cash universe intervals loaded and verified
+    intervals = load_cash_universe_symbol_intervals()
+    sm = SecurityMaster(symbol_intervals=intervals)
+
+    # NESTLEIND split on 2024-01-05
+    assert sm.resolve_isin_by_symbol("NESTLEIND", datetime.date(2024, 1, 2)) == "INE239A01016"
+    assert sm.resolve_isin_by_symbol("NESTLEIND", datetime.date(2024, 1, 5)) == "INE239A01024"
+
+    # MAZDOCK split on 2024-12-27
+    assert sm.resolve_isin_by_symbol("MAZDOCK", datetime.date(2024, 12, 26)) == "INE249Z01012"
+    assert sm.resolve_isin_by_symbol("MAZDOCK", datetime.date(2024, 12, 30)) == "INE249Z01020"
+
+    # KRBL active across multi-year window
+    assert sm.resolve_isin_by_symbol("KRBL", datetime.date(2023, 6, 1)) == "INE001B01026"
+    assert sm.resolve_isin_by_symbol("KRBL", datetime.date(2024, 6, 1)) == "INE001B01026"
+
+
+def test_h51_build_production_security_master_fails_closed_on_corrupt_artifact():
+    """
+    Audit §39 Finding H-51:
+    - Missing or corrupt cash universe reference artifact must raise fail-closed.
+    - Zero exception swallowing in build_production_security_master.
+    """
+    with tempfile.TemporaryDirectory(prefix="h51_") as tmpdir:
+        corrupt_csv = Path(tmpdir) / "corrupt_cash_universe.csv"
+        # Write corrupted header / invalid date row
+        corrupt_csv.write_text(
+            "isin,symbol,series,effective_from,effective_to\n"
+            "INE000A01001,BOGUS,EQ,NOT_A_DATE,2024-01-05\n",
+            encoding="utf-8"
+        )
+
+        with pytest.raises(SecurityMasterError, match="Corrupt row 2 in cash universe artifact"):
+            load_cash_universe_symbol_intervals(corrupt_csv)
+
+    # Missing file fails closed
+    with pytest.raises(FileNotFoundError, match="Cash universe symbol intervals artifact not found"):
+        load_cash_universe_symbol_intervals(Path("non_existent_artifact_xyz.csv"))
+
+
+def test_n19_series_partitioning_accounting_and_threshold(test_calendar):
+    """
+    Audit §39 Note N-19:
+    - Partition price band report by series scope first (default: EQ).
+    - Out-of-scope non-EQ rows (BE, SM, etc.) are counted in out_of_scope_series_count.
+    - max_unresolved_threshold applies strictly to the in-scope EQ remainder.
+    """
+    csv_text = (
+        "ISIN,SYMBOL,SERIES,UPPER_LIMIT,LOWER_LIMIT,BAND\n"
+        "INE009A01021,INFY,EQ,1600.00,1400.00,No Band\n"
+        ",NON_EQ_SM,SM,100.00,90.00,10.00\n"  # out-of-scope series: SM
+        ",NON_EQ_BE,BE,50.00,45.00,5.00\n"    # out-of-scope series: BE
+        ",UNKNOWN_EQ,EQ,200.00,180.00,10.00\n" # in-scope series EQ, dropped: no ISIN
+    ).encode("utf-8")
+
+    t_date = datetime.date(2024, 1, 10)
+    res = parse_price_band_report(
+        report_data=csv_text,
+        trade_date=t_date,
+        target_series=("EQ",),
+    )
+    assert res.summary.total_rows == 4
+    assert res.summary.in_scope_series_count == 2
+    assert res.summary.out_of_scope_series_count == 2
+    assert res.summary.extracted_records == 1
+    assert res.summary.unresolved_isin_count == 1  # only the 1 unresolved EQ row!
+    assert res.summary.non_target_count == 2       # 2 out-of-scope non-EQ rows
+
+    # Threshold of 1 allows the 1 unresolved EQ row without firing on the 2 out-of-scope rows
+    res2 = parse_price_band_report(
+        report_data=csv_text,
+        trade_date=t_date,
+        target_series=("EQ",),
+        max_unresolved_threshold=1,
+    )
+    assert res2.summary.unresolved_isin_count == 1
+
+    # Threshold of 0 fires on the 1 unresolved EQ row
+    with pytest.raises(PriceBandIngestError, match="Unresolved in-scope .* exceeded allowable threshold 0 out of 2 in-scope rows"):
+        parse_price_band_report(
+            report_data=csv_text,
+            trade_date=t_date,
+            target_series=("EQ",),
+            max_unresolved_threshold=0,
+        )
+
