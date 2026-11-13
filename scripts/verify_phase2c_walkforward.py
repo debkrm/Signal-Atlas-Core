@@ -27,7 +27,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 # Ensure src/ is on python path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from signal_core.contracts.criteria import load_go_no_go_criteria
+from signal_core.contracts.criteria import compute_criteria_fingerprint, load_go_no_go_criteria
 from signal_core.contracts.exchange_series import (
     APPROVED_EQ_ONLY_POLICY,
     ExchangeSeries,
@@ -306,6 +306,82 @@ def run_phase_2c_verification() -> bool:
         except WalkForwardEngineError:
             to_trial_spoof_rejected = True
 
+        # Audit §33 H-38: criteria_version and execution_config cannot be caller-typed at either boundary
+        h38_criteria_rejected = 0
+        for bogus in ("v1.0", "9.9.9"):
+            try:
+                res_a.to_trial_record(
+                    trial_id=f"TRIAL-H38-CV-{bogus}",
+                    hypothesis="H-38 criteria seal",
+                    rationale="Wave 2 verification",
+                    fold_spec_fingerprint="FOLD-TEST",
+                    criteria_version=bogus,
+                )
+            except WalkForwardEngineError:
+                try:
+                    res_a.register_in_trial_registry(
+                        registry=TrialRegistry(temp_dir / f"h38_cv_{bogus}.jsonl"),
+                        trial_id=f"TRIAL-H38-REG-CV-{bogus}",
+                        hypothesis="H-38 criteria seal",
+                        rationale="Wave 2 verification",
+                        fold_spec_fingerprint="FOLD-TEST",
+                        criteria_version=bogus,
+                    )
+                except WalkForwardEngineError:
+                    h38_criteria_rejected += 1
+        h38_criteria_sealed = (h38_criteria_rejected == 2)
+
+        h38_exec_rejected = 0
+        for override in ({"execution_latency_sessions": 99}, {"full_sessions_only": False}):
+            try:
+                res_a.to_trial_record(
+                    trial_id="TRIAL-H38-EC",
+                    hypothesis="H-38 exec seal",
+                    rationale="Wave 2 verification",
+                    fold_spec_fingerprint="FOLD-TEST",
+                    execution_config=override,
+                )
+            except WalkForwardEngineError:
+                try:
+                    res_a.register_in_trial_registry(
+                        registry=TrialRegistry(temp_dir / "h38_ec.jsonl"),
+                        trial_id="TRIAL-H38-REG-EC",
+                        hypothesis="H-38 exec seal",
+                        rationale="Wave 2 verification",
+                        fold_spec_fingerprint="FOLD-TEST",
+                        execution_config=override,
+                    )
+                except WalkForwardEngineError:
+                    h38_exec_rejected += 1
+        h38_exec_sealed = (h38_exec_rejected == 2)
+
+        # Audit §33 H-39: criteria identified by content. min_total_trades is not consulted by the engine,
+        # so an edited threshold leaves trades and equity identical while changing run identity.
+        criteria_fpr_recorded = (
+            res_a.execution_config.get("criteria_fingerprint", "").startswith("CRIT-FPR-V1-")
+        )
+        engine_edited_criteria = WalkForwardEngine(
+            calendar=cal,
+            gold_engine=gold,
+            criteria=__import__("dataclasses").replace(load_go_no_go_criteria(), min_total_trades=999),
+            eligibility_policy=APPROVED_EQ_ONLY_POLICY,
+            execution_latency_sessions=1,
+        )
+        res_edited_criteria = engine_edited_criteria.run_walk_forward(
+            strategy=strat, folds=[fold], initial_capital=init_cap
+        )
+        h39_criteria_hashed = (
+            criteria_fpr_recorded
+            and res_edited_criteria.execution_config["criteria_fingerprint"]
+            != res_a.execution_config["criteria_fingerprint"]
+            and res_edited_criteria.execution_config["criteria_version"]
+            == res_a.execution_config["criteria_version"]
+            and res_edited_criteria.final_equity == res_a.final_equity
+            and [t.executed_price for t in res_edited_criteria.aggregate_trades]
+            == [t.executed_price for t in res_a.aggregate_trades]
+            and res_edited_criteria.fingerprint != res_a.fingerprint
+        )
+
         # Audit §31 H-34: Criteria version dynamically defaulted from criteria in force (1.1.0)
         criteria_version_correct = (trial_rec.criteria_version == "1.1.0")
 
@@ -350,6 +426,9 @@ def run_phase_2c_verification() -> bool:
             and unknown_rejected
             and spoofed_rejected
             and to_trial_spoof_rejected
+            and h38_criteria_sealed
+            and h38_exec_sealed
+            and h39_criteria_hashed
             and criteria_version_correct
             and exec_config_bound
             and cost_params_serialized
@@ -358,12 +437,15 @@ def run_phase_2c_verification() -> bool:
         )
 
         all_passed = all_passed and g2c_1_passed
-        print(f"[{'PASS' if g2c_1_passed else 'FAIL'}] Gate G2C-1: Bit-for-bit determinism, execution config & dataset binding (H-28, H-33, H-34, H-35, H-37)")
+        print(f"[{'PASS' if g2c_1_passed else 'FAIL'}] Gate G2C-1: Bit-for-bit determinism, execution config & dataset binding (H-28, H-33, H-34, H-35, H-37, H-38, H-39)")
         print(f"       Live trades executed: {len(res_a.aggregate_trades)} (fills: {len(filled_trades)}) | Non-empty: {has_fills}")
         print(f"       Fingerprint: {res_a.fingerprint} == {res_b.fingerprint}")
         print(f"       Final Equity: Rs. {res_a.final_equity} == Rs. {res_b.final_equity} | Sharpe: {res_a.annualized_sharpe}")
         print(f"       Dataset Fingerprint Bound: {res_a.dataset_content_fingerprint} (trial bound: {trial_fpr_bound})")
         print(f"       Spoofed Fingerprint Rejected: engine={spoofed_rejected}, trial_record={to_trial_spoof_rejected}")
+        print(f"       H-38 Provenance Sealed: criteria_version={h38_criteria_sealed}, execution_config={h38_exec_sealed}")
+        print(f"       H-39 Criteria Fingerprint: {res_a.execution_config.get('criteria_fingerprint')}")
+        print(f"       H-39 Threshold Edit Changes Identity Only: {h39_criteria_hashed}")
         print(f"       Criteria Version: {trial_rec.criteria_version} (correct: {criteria_version_correct})")
         print(f"       Execution Config Bound & Models Parameterized (H-37): bound={exec_config_bound}, cost={cost_params_serialized}, slippage={slippage_params_serialized}")
         print(f"       Unconfounded Fingerprint Discrimination (gapless full_sessions_only): {config_hashed_into_fpr}")

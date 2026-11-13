@@ -7,14 +7,17 @@ Implements typed domain representations and parsing for committed quantitative c
 - Effective-dated Indian statutory transaction cost schedule per NSE/SEBI circulars
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 import datetime
 from decimal import Decimal
+import hashlib
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import yaml
 
 DEFAULT_CRITERIA_PATH = Path(__file__).resolve().parent.parent.parent.parent / "configs" / "go_no_go_criteria.yaml"
+CRITERIA_FINGERPRINT_PREFIX = "CRIT-FPR-V1-"
 
 
 class CriteriaValidationError(ValueError):
@@ -215,4 +218,40 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         min_execution_latency_sessions=int(exec_liq["min_execution_latency_sessions"]),
         statutory_costs=costs,
     )
+
+
+def _canonical_criteria_value(value: Any) -> Any:
+    """Recursively converts typed criteria values to canonical JSON-compatible primitives."""
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise CriteriaValidationError(f"Criteria values must be finite Decimals, got {value!r}")
+        return str(value)
+    if isinstance(value, datetime.date):
+        return value.isoformat()
+    if isinstance(value, (bool, int, str)):
+        return value
+    if value is None:
+        return None
+    if isinstance(value, (tuple, list)):
+        return [_canonical_criteria_value(v) for v in value]
+    if is_dataclass(value):
+        return {f.name: _canonical_criteria_value(getattr(value, f.name)) for f in fields(value)}
+    raise CriteriaValidationError(f"Unsupported type in criteria fingerprint: {type(value).__name__}")
+
+
+def compute_criteria_fingerprint(criteria: GoNoGoCriteria) -> str:
+    """
+    Computes a deterministic content fingerprint of the criteria in force (Audit §33 H-39).
+
+    A trial record must identify a run by the thresholds that judged it, not by a hand-maintained
+    version string: editing a threshold without bumping `metadata.version` must change the
+    fingerprint. Every field of GoNoGoCriteria is included, including the statutory cost schedule.
+    """
+    if not isinstance(criteria, GoNoGoCriteria):
+        raise CriteriaValidationError(
+            f"criteria must be GoNoGoCriteria, got {type(criteria).__name__}"
+        )
+    payload = _canonical_criteria_value(criteria)
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return CRITERIA_FINGERPRINT_PREFIX + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

@@ -28,7 +28,11 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
-from signal_core.contracts.criteria import GoNoGoCriteria, load_go_no_go_criteria
+from signal_core.contracts.criteria import (
+    GoNoGoCriteria,
+    compute_criteria_fingerprint,
+    load_go_no_go_criteria,
+)
 from signal_core.contracts.exchange_series import (
     APPROVED_EQ_ONLY_POLICY,
     ExchangeSeries,
@@ -178,10 +182,21 @@ class WalkForwardResult:
                 "Must be a genuine DATA-CTNT-V2 content fingerprint; 'UNKNOWN' prohibited (Gate G-4)."
             )
 
-        resolved_criteria_version = criteria_version or self.criteria_version
+        # Audit §33 H-38: criteria version and execution config are computed from the run, not typed
+        if criteria_version is not None and criteria_version != self.criteria_version:
+            raise WalkForwardEngineError(
+                f"Supplied criteria_version '{criteria_version}' does not match the criteria in force "
+                f"'{self.criteria_version}' that judged this run (Audit §33 H-38)."
+            )
+        resolved_criteria_version = self.criteria_version
         if not resolved_criteria_version:
             raise WalkForwardEngineError("criteria_version cannot be empty. Must be provided or present on WalkForwardResult.")
-        resolved_exec_config = execution_config if execution_config is not None else self.execution_config
+        if execution_config is not None and dict(execution_config) != dict(self.execution_config):
+            raise WalkForwardEngineError(
+                "Supplied execution_config does not match the execution configuration that produced this "
+                "result (Audit §33 H-38)."
+            )
+        resolved_exec_config = self.execution_config
 
         ts = timestamp_utc or datetime.datetime.now(datetime.timezone.utc).isoformat()
         returns_list = list(self.aggregate_daily_returns)
@@ -260,10 +275,21 @@ class WalkForwardResult:
                 "Must be a genuine DATA-CTNT-V2 content fingerprint; 'UNKNOWN' prohibited (Gate G-4)."
             )
 
-        resolved_criteria_version = criteria_version or self.criteria_version
+        # Audit §33 H-38: criteria version and execution config are computed from the run, not typed
+        if criteria_version is not None and criteria_version != self.criteria_version:
+            raise WalkForwardEngineError(
+                f"Supplied criteria_version '{criteria_version}' does not match the criteria in force "
+                f"'{self.criteria_version}' that judged this run (Audit §33 H-38)."
+            )
+        resolved_criteria_version = self.criteria_version
         if not resolved_criteria_version:
             raise WalkForwardEngineError("criteria_version cannot be empty. Must be provided or present on WalkForwardResult.")
-        resolved_exec_config = execution_config if execution_config is not None else self.execution_config
+        if execution_config is not None and dict(execution_config) != dict(self.execution_config):
+            raise WalkForwardEngineError(
+                "Supplied execution_config does not match the execution configuration that produced this "
+                "result (Audit §33 H-38)."
+            )
+        resolved_exec_config = self.execution_config
 
         ts = timestamp_utc or datetime.datetime.now(datetime.timezone.utc).isoformat()
         returns_list = list(self.aggregate_daily_returns)
@@ -924,6 +950,8 @@ class WalkForwardEngine:
             "cost_model": cost_config,
             "slippage_model": slippage_config,
             "criteria_version": self._criteria.version,
+            # Audit §33 H-39: identify the run by the thresholds in force, not by a version string
+            "criteria_fingerprint": compute_criteria_fingerprint(self._criteria),
         }
 
         # Deterministic Result Fingerprint (Gate G2C-1 / H-33)

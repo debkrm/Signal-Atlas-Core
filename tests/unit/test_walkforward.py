@@ -17,7 +17,11 @@ from pathlib import Path
 import tempfile
 import pytest
 
-from signal_core.contracts.criteria import GoNoGoCriteria, load_go_no_go_criteria
+from signal_core.contracts.criteria import (
+    GoNoGoCriteria,
+    compute_criteria_fingerprint,
+    load_go_no_go_criteria,
+)
 from signal_core.contracts.exchange_series import (
     APPROVED_EQ_ONLY_POLICY,
     ExchangeSeries,
@@ -1286,3 +1290,139 @@ def test_wave2_cash_sufficiency_check(wf_environment):
 
 
 
+
+
+def test_audit33_h38_h39_criteria_and_exec_config_sealing(wf_environment):
+    """
+    Audit §33 H-38: criteria_version and execution_config cannot be replaced by the caller at either
+    trial boundary — they are computed from the run that produced the result.
+    Audit §33 H-39: the criteria in force are identified by a content fingerprint, so a threshold
+    edit without a version bump changes the run's identity.
+    """
+    cal, sec_master, silver, gold, tmp_path = wf_environment
+    fold = WalkForwardFold(
+        fold_index=0,
+        train_start=datetime.date(2024, 1, 8),
+        train_end=datetime.date(2024, 1, 11),
+        test_start=datetime.date(2024, 1, 15),
+        test_end=datetime.date(2024, 1, 19),
+        embargo_sessions=1,
+        partition_role=PartitionRole.VALIDATION,
+    )
+    strat = TechnicalCrossStrategy(
+        strategy_id="AUDIT33-SEAL",
+        fast_indicator="open",
+        slow_indicator="low",
+        allocation_weight=Decimal("0.08"),
+    )
+    engine = WalkForwardEngine(calendar=cal, gold_engine=gold, execution_latency_sessions=1)
+    res = engine.run_walk_forward(strategy=strat, folds=[fold])
+
+    # ---- H-39: criteria identified by content, not by version string ----
+    criteria_fpr = res.execution_config["criteria_fingerprint"]
+    assert criteria_fpr.startswith("CRIT-FPR-V1-")
+    assert criteria_fpr == compute_criteria_fingerprint(load_go_no_go_criteria())
+
+    # Deterministic: same content, same fingerprint
+    assert compute_criteria_fingerprint(load_go_no_go_criteria()) == criteria_fpr
+
+    # A threshold edited without a version bump changes the fingerprint, and only the fingerprint:
+    # min_total_trades is not consulted by the engine, so trades and equity are identical.
+    edited = dataclasses.replace(load_go_no_go_criteria(), min_total_trades=999)
+    assert edited.version == load_go_no_go_criteria().version
+    assert compute_criteria_fingerprint(edited) != criteria_fpr
+
+    engine_edited = WalkForwardEngine(
+        calendar=cal,
+        gold_engine=gold,
+        criteria=edited,
+        execution_latency_sessions=1,
+    )
+    res_edited = engine_edited.run_walk_forward(strategy=strat, folds=[fold])
+    assert res_edited.final_equity == res.final_equity
+    assert [t.executed_price for t in res_edited.aggregate_trades] == [
+        t.executed_price for t in res.aggregate_trades
+    ]
+    assert res_edited.execution_config["criteria_version"] == res.execution_config["criteria_version"]
+    assert res_edited.execution_config["criteria_fingerprint"] != criteria_fpr
+    assert res_edited.fingerprint != res.fingerprint
+
+    # ---- H-38: caller-typed criteria_version rejected at both boundaries ----
+    for bogus in ("v1.0", "9.9.9"):
+        with pytest.raises(WalkForwardEngineError, match="does not match the criteria in force"):
+            res.to_trial_record(
+                trial_id=f"TRIAL-H38-CV-{bogus}",
+                hypothesis="Should fail",
+                rationale="Fail test",
+                fold_spec_fingerprint="TEST-FOLD-FPR",
+                criteria_version=bogus,
+            )
+
+    # An explicit copy of the computed value is accepted
+    rec_ok = res.to_trial_record(
+        trial_id="TRIAL-H38-CV-OK",
+        hypothesis="Explicit but correct criteria version",
+        rationale="Accepted",
+        fold_spec_fingerprint="TEST-FOLD-FPR",
+        criteria_version=res.criteria_version,
+    )
+    assert rec_ok.criteria_version == res.criteria_version
+
+    # ---- H-38: caller-typed execution_config rejected at both boundaries ----
+    for override in (
+        {"execution_latency_sessions": 99},
+        {"full_sessions_only": False},
+        dict(res.execution_config, eligibility_policy={"permitted_series": ["EQ", "BE"], "allow_series_transitions": True}),
+    ):
+        with pytest.raises(WalkForwardEngineError, match="does not match the execution configuration"):
+            res.to_trial_record(
+                trial_id="TRIAL-H38-EC",
+                hypothesis="Should fail",
+                rationale="Fail test",
+                fold_spec_fingerprint="TEST-FOLD-FPR",
+                execution_config=override,
+            )
+
+    rec_ec_ok = res.to_trial_record(
+        trial_id="TRIAL-H38-EC-OK",
+        hypothesis="Explicit but correct execution config",
+        rationale="Accepted",
+        fold_spec_fingerprint="TEST-FOLD-FPR",
+        execution_config=dict(res.execution_config),
+    )
+    assert rec_ec_ok.execution_config["criteria_fingerprint"] == criteria_fpr
+
+    # ---- H-38 at the registry boundary, with zero orphaned files on rejection ----
+    registry_path = Path(tempfile.mkdtemp(prefix="wf_h38_")) / "trials.jsonl"
+    registry = TrialRegistry(registry_path)
+    with pytest.raises(WalkForwardEngineError, match="does not match the criteria in force"):
+        res.register_in_trial_registry(
+            registry=registry,
+            trial_id="TRIAL-H38-REG-CV",
+            hypothesis="Should fail",
+            rationale="Fail test",
+            fold_spec_fingerprint="TEST-FOLD-FPR",
+            criteria_version="v1.0",
+        )
+    with pytest.raises(WalkForwardEngineError, match="does not match the execution configuration"):
+        res.register_in_trial_registry(
+            registry=registry,
+            trial_id="TRIAL-H38-REG-EC",
+            hypothesis="Should fail",
+            rationale="Fail test",
+            fold_spec_fingerprint="TEST-FOLD-FPR",
+            execution_config={"execution_latency_sessions": 99},
+        )
+    assert not registry_path.exists()
+    assert not Path(str(registry_path) + ".manifest").exists()
+
+    rec_reg = res.register_in_trial_registry(
+        registry=registry,
+        trial_id="TRIAL-H38-REG-OK",
+        hypothesis="Correct call",
+        rationale="Accepted",
+        fold_spec_fingerprint="TEST-FOLD-FPR",
+    )
+    assert rec_reg.criteria_version == res.criteria_version
+    assert rec_reg.execution_config["criteria_fingerprint"] == criteria_fpr
+    registry.verify_integrity()
