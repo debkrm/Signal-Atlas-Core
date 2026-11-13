@@ -176,6 +176,17 @@ class WalkForwardResult:
                 "Every trade must execute with verified exchange price band evidence before publishing performance."
             )
 
+        # Invariant N-32: Refuse trial record creation if any fold preceded min_binding_evaluation_start_date
+        criteria = load_go_no_go_criteria()
+        min_start = criteria.min_binding_evaluation_start_date
+        for f_res in self.fold_results:
+            earliest = min(f_res.fold.train_start, f_res.fold.test_start)
+            if earliest < min_start:
+                raise WalkForwardEngineError(
+                    f"Cannot create trial record for fold evaluated on {earliest}, which precedes "
+                    f"the minimum binding evaluation start date ({min_start}) declared in criteria (Finding N-32)."
+                )
+
         # Audit §31 H-28 / §32 H-35: Dataset fingerprint cannot be overridden with spoofed or mismatched value
         if dataset_fingerprint is not None and dataset_fingerprint != self.dataset_content_fingerprint:
             raise WalkForwardEngineError(
@@ -475,6 +486,16 @@ class WalkForwardEngine:
             raise HoldoutSealedError(
                 f"Cannot evaluate fold {fold.fold_index} without an authoritative PartitionSpec. "
                 "Evaluating folds without partition boundaries is strictly prohibited per AGENTS.md Rule 8.1 (H-2)."
+            )
+
+        # Gate G-0 / Finding N-32: Binding evaluation start date invariant (Rule 10.8, Audit §41.6)
+        min_start = self._criteria.min_binding_evaluation_start_date
+        earliest_fold_date = min(fold.train_start, fold.test_start)
+        if earliest_fold_date < min_start:
+            raise WalkForwardEngineError(
+                f"Fold {fold.fold_index} starts on {earliest_fold_date}, which precedes the minimum "
+                f"binding evaluation start date ({min_start}) declared in GoNoGoCriteria. "
+                "Evaluating pre-window folds on unsourced/unverified history is prohibited per Rule 10.8 and Finding N-32."
             )
 
         # Check if fold window [train_start, test_end] intersects sealed HOLDOUT partition
@@ -809,6 +830,15 @@ class WalkForwardEngine:
                 raise HoldoutSealedError(
                     f"Cannot evaluate fold {fold.fold_index} without an authoritative PartitionSpec. "
                     "Evaluating folds without partition boundaries is strictly prohibited per AGENTS.md Rule 8.1 (H-2)."
+                )
+
+            # Gate G-0 / Finding N-32: Pre-flight check against minimum binding evaluation start date
+            earliest_fold_date = min(fold.train_start, fold.test_start)
+            if earliest_fold_date < self._criteria.min_binding_evaluation_start_date:
+                raise WalkForwardEngineError(
+                    f"Fold {fold.fold_index} starts on {earliest_fold_date}, which precedes the minimum "
+                    f"binding evaluation start date ({self._criteria.min_binding_evaluation_start_date}) declared in GoNoGoCriteria. "
+                    "Evaluating pre-window folds on unsourced/unverified history is prohibited per Rule 10.8 and Finding N-32."
                 )
 
             intersects = (

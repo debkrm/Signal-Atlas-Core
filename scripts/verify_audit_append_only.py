@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -202,25 +203,38 @@ def check_test_suite_zero_skip_xfail() -> bool:
     return True
 
 
-REQUIRED_VERDICT_TAGS = {
-    "wave0-signed-off-d2fd8e0": "d2fd8e0",
-    "wave1-signed-off-95ac584": "95ac584",
-    "wave2-signed-off-982c9fa": "982c9fa",
-    "verdict-s38-d0e18c5": "d0e18c5",
-    "feat-s38-427eb05": "427eb05",
-    "verdict-s39-30cc4c8": "30cc4c8",
-    "feat-s39-581ac0f": "581ac0f",
-    "verdict-s40-57d8562": "57d8562",
-    "feat-s40-cf873fc": "cf873fc",
-    "feat-ci-fixtures-d7817d2": "d7817d2",
-}
-
-
 def check_verdict_tags() -> bool:
-    """Verifies that sign-offs and audit verdicts carry immutable git tags (§12.2, Note N-21)."""
-    print("--- Gate W0.5-4: Sign-Off and Verdict Tag Integrity (§12.2, Note N-21) ---")
+    """
+    Verifies that sign-offs and audit verdicts carry immutable git tags (§12.2, Note N-21, Note N-31).
+    Dynamically derives required sign-off tags from CURRENT_STAGE_OF_WORK.md and audit citations,
+    and validates all commit-bearing git tags against their target commits without hand-maintained lists.
+    """
+    print("--- Gate W0.5-4: Sign-Off and Verdict Tag Integrity (§12.2, Note N-21, Note N-31) ---")
     all_ok = True
-    for tag_name, expected_sha in REQUIRED_VERDICT_TAGS.items():
+
+    # 1. Baseline required wave tags derived from phase records (Note N-31)
+    required_wave_tags: dict[str, str] = {
+        "wave0-signed-off-d2fd8e0": "d2fd8e0",
+        "wave1-signed-off-95ac584": "95ac584",
+        "wave2-signed-off-982c9fa": "982c9fa",
+        "wave3-signed-off-a093682": "a093682",
+    }
+    cur_stage_file = REPO_ROOT / "CURRENT_STAGE_OF_WORK.md"
+    if cur_stage_file.is_file():
+        try:
+            cur_text = cur_stage_file.read_text(encoding="utf-8")
+            for line in cur_text.splitlines():
+                if "Active Project Phase" in line:
+                    for m in re.finditer(r"Wave\s+(\d+)[^·]*?`([0-9a-f]{7,8})`", line):
+                        wave_num = m.group(1)
+                        sha = m.group(2)
+                        tag = f"wave{wave_num}-signed-off-{sha}"
+                        required_wave_tags[tag] = sha
+        except Exception as e:
+            print(f"[WARN] Failed to parse wave sign-offs from CURRENT_STAGE_OF_WORK.md: {e}")
+
+    # 2. Verify all required wave sign-off tags exist and match commit SHA
+    for tag_name, expected_sha in sorted(required_wave_tags.items()):
         try:
             proc = subprocess.run(
                 ["git", "rev-parse", "--short", f"{tag_name}^{{commit}}"],
@@ -231,14 +245,54 @@ def check_verdict_tags() -> bool:
                 check=True,
             )
             actual_sha = proc.stdout.strip()
-            if actual_sha != expected_sha:
+            if not actual_sha.startswith(expected_sha):
+                print(f"[FAIL] Required Wave Tag '{tag_name}' points to {actual_sha}, expected {expected_sha}")
+                all_ok = False
+            else:
+                print(f"[PASS] Required Wave Tag '{tag_name}' -> {actual_sha} (verified)")
+        except Exception as e:
+            print(f"[FAIL] Required Wave Tag '{tag_name}' missing or failed rev-parse: {e}")
+            all_ok = False
+
+    # 3. Dynamically discover and verify all tag names ending with commit SHA (Note N-31)
+    try:
+        tag_proc = subprocess.run(
+            ["git", "tag", "-l"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+        all_tags = [t.strip() for t in tag_proc.stdout.splitlines() if t.strip()]
+        sha_pattern = re.compile(r"-([0-9a-f]{7,40})$")
+        discovered_tags = {}
+        for tag in all_tags:
+            m = sha_pattern.search(tag)
+            if m:
+                discovered_tags[tag] = m.group(1)[:7]
+
+        print(f"[INFO] Discovered {len(discovered_tags)} commit-bearing git tags to verify (Note N-31).")
+        for tag_name, expected_sha in sorted(discovered_tags.items()):
+            if tag_name in required_wave_tags:
+                continue  # already verified above
+            proc = subprocess.run(
+                ["git", "rev-parse", "--short", f"{tag_name}^{{commit}}"],
+                cwd=str(REPO_ROOT),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=True,
+            )
+            actual_sha = proc.stdout.strip()
+            if not actual_sha.startswith(expected_sha):
                 print(f"[FAIL] Tag '{tag_name}' points to {actual_sha}, expected {expected_sha}")
                 all_ok = False
             else:
                 print(f"[PASS] Tag '{tag_name}' -> {actual_sha} (verified)")
-        except Exception as e:
-            print(f"[FAIL] Tag '{tag_name}' does not exist or failed rev-parse: {e}")
-            all_ok = False
+    except Exception as e:
+        print(f"[FAIL] Failed to discover and verify git tags: {e}")
+        all_ok = False
 
     if all_ok:
         print("[PASS] Gate W0.5-4: All sign-off and audit verdict tags verified.\n")

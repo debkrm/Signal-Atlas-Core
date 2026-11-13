@@ -43,6 +43,10 @@ def test_load_committed_go_no_go_criteria():
     assert criteria.prohibit_buy_at_upper_circuit is True
     assert criteria.prohibit_sell_at_lower_circuit is True
 
+    # Market data and accounting invariants (Finding H-54, Finding N-32)
+    assert criteria.min_binding_evaluation_start_date == datetime.date(2022, 1, 3)
+    assert criteria.min_traded_eq_resolution_pct == Decimal("100.0")
+
     # Statutory taxes
     costs = criteria.statutory_costs
     assert costs.stt_delivery_rate == Decimal("0.0010")

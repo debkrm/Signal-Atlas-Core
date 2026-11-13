@@ -1558,3 +1558,39 @@ def test_audit33_h38_h39_criteria_and_exec_config_sealing(wf_environment):
     assert rec_reg.criteria_version == res.criteria_version
     assert rec_reg.execution_config["criteria_fingerprint"] == criteria_fpr
     registry.verify_integrity()
+
+
+def test_n32_pre_window_fold_refused_fail_closed(wf_environment):
+    """
+    Finding N-32: min_binding_evaluation_start_date (2022-01-03) is load-bearing.
+    A fold, walk-forward run, or trial registration on dates prior to min_binding_evaluation_start_date
+    must refuse fail-closed with WalkForwardEngineError (AGENTS.md Rule 10.8).
+    """
+    cal, sec_master, silver, gold, tmp_path = wf_environment
+    strat = TechnicalCrossStrategy(
+        strategy_id="N32-TEST",
+        fast_indicator="open",
+        slow_indicator="low",
+        allocation_weight=Decimal("0.08"),
+    )
+    engine = WalkForwardEngine(calendar=cal, gold_engine=gold, execution_latency_sessions=1)
+
+    # Pre-2022 fold (2021-12-01 to 2021-12-31)
+    pre_window_fold = WalkForwardFold(
+        fold_index=0,
+        train_start=datetime.date(2021, 12, 1),
+        train_end=datetime.date(2021, 12, 15),
+        test_start=datetime.date(2021, 12, 20),
+        test_end=datetime.date(2021, 12, 31),
+        embargo_sessions=1,
+        partition_role=PartitionRole.VALIDATION,
+    )
+
+    # 1. run_fold must raise WalkForwardEngineError
+    with pytest.raises(WalkForwardEngineError, match="precedes the minimum binding evaluation start date"):
+        engine.run_fold(strategy=strat, fold=pre_window_fold, isins=["INE888C01010"])
+
+    # 2. run_walk_forward must raise WalkForwardEngineError
+    with pytest.raises(WalkForwardEngineError, match="precedes the minimum binding evaluation start date"):
+        engine.run_walk_forward(strategy=strat, folds=[pre_window_fold], isins=["INE888C01010"])
+

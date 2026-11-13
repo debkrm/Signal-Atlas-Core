@@ -558,3 +558,38 @@ def test_h1_physical_holdout_separation_silver_rejection(temp_storage_dirs):
     assert len(read_recs) == 1
     assert read_recs[0].trade_date == holdout_date
 
+
+def test_n30_non_overlapping_sourced_core_interval_appended(monkeypatch):
+    """
+    Finding N-30: build_production_security_master() appends non-overlapping sourced intervals
+    for core symbols rather than silently dropping them.
+    """
+    from signal_core.storage.security_master import (
+        SymbolInterval,
+        build_production_security_master,
+    )
+    import signal_core.storage.security_master as sm_mod
+
+    # Mock load_cash_universe_symbol_intervals to return an earlier non-overlapping interval for INFY
+    # (e.g. 2010-01-01 to 2014-12-31, while core INFY starts at 2015-01-01)
+    non_overlap_infy = SymbolInterval(
+        isin="INE009A01021",
+        symbol="INFY",
+        series="EQ",
+        effective_from=datetime.date(2010, 1, 1),
+        effective_to=datetime.date(2014, 12, 31),
+    )
+
+    monkeypatch.setattr(
+        sm_mod,
+        "load_cash_universe_symbol_intervals",
+        lambda: [non_overlap_infy],
+    )
+
+    sm = build_production_security_master(include_cash_universe=True)
+
+    # Both the earlier sourced interval and the core interval are present and resolve correctly
+    assert sm.resolve_isin_by_symbol("INFY", datetime.date(2012, 6, 1)) == "INE009A01021"
+    assert sm.resolve_isin_by_symbol("INFY", datetime.date(2020, 6, 1)) == "INE009A01021"
+
+

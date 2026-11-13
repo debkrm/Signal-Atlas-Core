@@ -871,14 +871,16 @@ def build_production_security_master(include_cash_universe: bool = True) -> Secu
                 symbol_intervals.append(ci)
                 continue
 
-            # Compare sourced interval with matching core intervals per Note N-29
+            # Compare sourced interval with matching core intervals per Note N-29 and Note N-30
             # Verify no conflicting ISINs for overlapping effective intervals
+            has_overlap = False
             for core in matching_core:
                 overlap = (
                     (ci.effective_to is None or ci.effective_to > core.effective_from)
                     and (core.effective_to is None or core.effective_to > ci.effective_from)
                 )
                 if overlap:
+                    has_overlap = True
                     if ci.isin != core.isin:
                         raise SecurityMasterError(
                             f"Divergence detected between hardcoded core interval for {core.symbol} ({core.series}) "
@@ -886,6 +888,11 @@ def build_production_security_master(include_cash_universe: bool = True) -> Secu
                             f"[ISIN {ci.isin}, {ci.effective_from}..{ci.effective_to}] (Note N-29)."
                         )
                     # Sourced agrees with core on ISIN; core interval (extending earlier history) is preserved.
+
+            # Note N-30: If sourced interval does not overlap any core interval for this (symbol, series),
+            # append it rather than silently dropping it.
+            if not has_overlap:
+                symbol_intervals.append(ci)
 
     corporate_actions = [
         # INFY 1:1 Bonus ex-date 2018-09-12 (1 old share gives 1 additional share, total 2)
