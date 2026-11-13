@@ -3054,3 +3054,107 @@ A missing archive must fail the gate with a named reason, and the archive locati
 What changed this round, precisely: the identity table that §39.3 called worse than an absence is now an artifact that regenerates to the same SHA from 1,195 real archives and resolves real ISIN transitions correctly. That is the hard part of this wave done. What has not changed is how the wave reports on itself: the number that closes the gap is computed over the set that cannot fail, and the gate that would catch it declares success when the evidence is missing. Both are the failure §9.1 and §10.7 exist to prevent, and neither is a data problem — each is one line of policy.
 
 ---
+## 41 — Review of `cf873fc` and `a093682`: the data layer is verified; the threshold that judges it is not
+
+**Context.** `cf873fc` claims H-52, H-53, H-44, N-21, N-24..N-29. It adds three real January 2024 Bhavcopy archives and a `manifest.jsonl` entry for each, makes the coverage gate fail closed and configurable, measures resolution on the band publication instead of the derivation source, drives COV-4 over authentic archives, adds two criteria keys, and registers verdict tags in the Wave 0.5 gate. `a093682` adds one line to the tag registry.
+
+### 41.1 Checks run
+
+- `python -m pytest -q` → **265 passed in 10.18s**.
+- `python scripts/verify_audit_append_only.py` → four gates PASS, **9 tags** verified, exit 0.
+- `python scripts/verify_cash_universe_coverage.py` → COV-1..COV-4 PASS, exit 0.
+- Full diff read (13 files, +400/−137) plus both verifiers and the deriver read in full.
+- **Provenance of the committed archives:** all three match Bronze byte-for-byte — `sha256 91cfbe82…`, `a1b7673c…`, `8b858aca…` — so the fixtures are the real NSE publications, not reconstructions.
+- **Independent full-window resolution probe** (my own, not the gate's): every `EQ` row of all 1,195 archives resolved against the production master:
+
+```
+sessions=1195 traded_EQ_rows=2390165 unresolved=0 wrong_isin=0 ambiguous=0
+resolved=2390165/2390165 = 100.0000%
+sessions with any failure: 0
+```
+
+- Core-interval reconciliation probe (all 5 core intervals vs sourced), coverage-criterion discrimination analysis, and the COV-4 trade reconstructed from the raw archives.
+
+### 41.2 H-53 — CLOSED at `cf873fc`
+
+The fail-open is gone and the hardcoded path is gone:
+
+- `resolve_raw_bhavcopy_archive()` prefers `NSE_RAW_ARCHIVES_DIR`, then `data/reference/`, then `data/raw/`, then the parent tree; the deriver has a sibling resolver and raises `FileNotFoundError` naming the directory and the env var.
+- COV-2 and COV-4 now print `[FAIL] Required raw Bhavcopy archive not found at: … (Finding H-53)` and return `False`. No `return True` on absent evidence remains in the file.
+- The three archives are committed, so the gate runs on a runner with no Bronze at all — and they are verified above as the real publications. Committing real exchange bytes as a labelled fixture is the right call for an offline gate; each carries URL, timestamp, byte count and SHA-256.
+
+### 41.3 H-52 — CLOSED at `cf873fc`
+
+The wave no longer grades itself on the derivation source:
+
+- COV-3 measures the **band publication** the pipeline consumes and asserts the accounting rather than tolerating it: `total_rows == 3624`, `in_scope == 2763`, `out_of_scope == 861`, `unresolved_in_scope == 924`, `extracted == 1839`, `filtered_target == 0`, `duplicates == 0` — each a hard `return False` on divergence, with every counter printed on each run.
+- COV-2 is honestly relabelled: `Note: Measures actively traded scrips on date T; full listing universe coverage evaluated in Gate COV-3`, and its 100% is now a genuine regression property (the identity must reproduce the ISIN of every scrip that traded).
+- **The strongest result is one the gate does not compute, and it deserves recording.** Resolving 2,390,165 `EQ` rows over 1,195 sessions gives 100.0000% with zero failures. The §40.5 worry — that identity derived from a single day is circular — does not survive this: an interval that begins at the first observed trade resolves that scrip on the first session it can trade, and every scrip that traded in the window is covered on every session it traded. Identity for the tradable universe is complete over 2022-01-03..2026-10-31, not merely on 2024-01-16.
+
+### 41.4 H-44 — CLOSED at `cf873fc` (fold), with the window narrowed to 2022-01-03
+
+COV-4 is now authentic end to end, which §40.5 said it was not:
+
+```
+ingest  cm12JAN2024bhav + cm15JAN2024bhav + cm16JAN2024bhav  (real archives, EQ)
+ingest  sec_list_20240116.csv                               (real 3,624-row band publication)
+20MICRONS: 15-Jan close 176.65, band 20%  -> upper 211.98, lower 141.32
+16-Jan open 178.00 -> fill 178.4067042034739166411002643 (open + modelled slippage, inside circuit)
+Circuit Evidence Present: True (complete: True)   Fold: VERIFIED
+```
+
+The fill is the next-session open plus slippage, the band is the real published percentage applied to the real previous close, and `VERIFIED` is therefore earned. The identity invariants still hold: NESTLEIND/MAZDOCK/COCHINSHIP resolve on the correct side of their ex-dates, KRBL is continuous across 2022–2024, and `HDFC` correctly resolves to nothing after its 2023-07-13 merger.
+
+The binding window is now declared as `min_binding_evaluation_start_date: 2022-01-03` in the committed criteria and in the manifest's limitation note. That is the honest shorter window §10.8 and §40.5 asked for: **2018-04-01..2021-12-31 is NOT RUN**, unsourced, and not bridged.
+
+### 41.5 H-54 — OPEN, blocking for research gating: the coverage threshold is calibrated to the number it gates
+
+```yaml
+# Sourced identity covers traded universe (100%) and 66.5% of listed universe on 2024-01-16
+min_session_price_band_coverage_pct: "65.0"
+```
+
+The comment states the measurement; the threshold sits 1.56 points under it, introduced in the same commit. Consequences:
+
+- **It cannot fail.** The only band publication archived is 2024-01-16, whose inputs are committed constants, so `66.56 >= 65.0` is a constant-true statement. Per §9.2 a threshold must not be set after inspecting the value it judges; this one was, and the audit trail is the comment that says so.
+- **It gates the wrong denominator.** The 33.44% "gap" is listed-but-never-traded scrips, which no price-based universe can contain. The invariant that actually protects research is the one I measured in 41.3: **100% of traded scrips, every session**. That is the criterion, it is computable, it holds, and it is currently not what the gate asserts.
+- **The gap is invisible downstream.** COV-4 ingests with `max_unresolved_threshold=1000`, so 924 listed scrips are dropped with a log line and the fold proceeds to `VERIFIED`. The counts are printed, which is right (§9.1), but nothing consumes them.
+
+This is the same class as §40.5, one level up: not a number measured on the set that cannot fail, but a threshold chosen so that a measured number passes. It is recorded as blocking for the Phase 2D verdict engine — a research GO computed through `min_session_price_band_coverage_pct` would be a verdict produced by a calibrated constant — and not blocking for Wave 3's data deliverable, which is verified independently above.
+
+### 41.6 Notes closed and open
+
+- **N-24 — CLOSED.** Every `assert` in the deriver is a `raise ValueError`; COV-3's checks are `if … return False`. `python -O` no longer disables validation.
+- **N-25 — CLOSED, and properly.** Manifest entries carry `is_current`/`status`, and COV-1 fails when no active entry exists, when the SHA differs, or when the byte count differs. The two superseded entries remain as history.
+- **N-26 — CLOSED.** `filtered_target_isin_count` is separate from `out_of_scope_series_count`; the printed line names all three and the test asserts both.
+- **N-28 — CLOSED.** The deriver now reports sessions kept from archives parsed and states why two were rejected (non-calendar trade dates, fail-closed per §6.3).
+- **N-29 — CLOSED for the reachable case.** A sourced ISIN that disagrees with the core interval on overlapping dates raises `SecurityMasterError`, with a test that monkeypatches a divergent `INFY` ISIN. Measured: all five core intervals (INFY, RELIANCE, HDFC, COCHINSHIP old/new) overlap and agree, so no sourced evidence is lost today.
+- **N-21 — half closed.** Nine tags exist and the gate verifies each resolves to its expected SHA. Branch protection is now **asserted in a comment** in `ci.yml` ("Remote GitHub repository settings mandate all CI checks pass … and prohibit force pushes") — unverifiable from the repository and therefore a typed claim under §9.1, not a computed one. It must either be evidenced or written as "not verified from the repository".
+- **N-27 — repeats.** `CURRENT_STAGE_OF_WORK.md` was not touched by `cf873fc`.
+
+New:
+
+- **N-30** — `build_production_security_master` drops a sourced interval for a core `(symbol, series)` when it does not overlap the core interval: it is neither appended nor reconciled (the `for core in matching_core` loop ends without an `else`). Unreachable today because all five overlap, but a core interval ending in 2018 and a sourced interval starting in 2022 would leave 2018-09..2022-01 with no identity, silently, with no error. Append it when no overlap exists.
+- **N-31** — the tag registry is a hand-maintained dict that the implementer edits: `a093682` exists solely to register `feat-s40-cf873fc` in it. A tag pointing at the wrong SHA does fail (that part works), but a tag that never gets registered is simply not gated, so the control is diff discipline rather than discovery.
+- **N-32** — `min_binding_evaluation_start_date` is parsed and defaulted, then consumed by nothing: no fold, report, engine or gate reads it. The window narrowing is therefore declared but not enforced; it is currently enforced only indirectly, because pre-2022 identity does not exist and the fold fails closed.
+
+### 41.7 Verdict
+
+**Closed at `cf873fc`:** H-52, H-53, H-44, N-24, N-25, N-26, N-28, N-29. §36–§40 closures are unaffected. **Open: H-54** (blocking for research gating, not for this wave), N-21 (branch protection), N-30, N-31, N-32.
+
+**Wave 3 — Full Historical Backfill: GO at `a093682`, for the window 2022-01-03..2026-10-31.**
+
+The reason is a measurement, not a reading of the commit message: 4,510 effective-dated intervals derived from 1,195 real archives and reproducible to the same SHA; 2,390,165 traded `EQ` rows over 1,195 sessions resolving to 100.0000% with zero unresolved, zero wrong-ISIN and zero ambiguity; real ISIN transitions on the correct side of each ex-date; a merged/delisted scrip pruned on its exact date; a walk-forward fold that fills at a real next-session open inside a real published circuit; a gate that fails closed with a named reason when its evidence is absent; and a declared window that stops before the data does rather than bridging the gap.
+
+**2018-04-01..2021-12-31: NOT RUN.** No archives exist for those sessions, none were fabricated, and the criteria now say so. The wave that does not exist is not a wave that passed.
+
+Four things to do before Phase 2D produces a research verdict, in this order:
+
+1. **H-54** — replace `min_session_price_band_coverage_pct: 65.0` with the invariant in 41.3: for every session with an archived Bhavcopy, resolution of the traded `EQ` set must be 100%, and report the committed measurement (`2390165/2390165` over 1,195 sessions) as its evidence. Keep listed-universe coverage as an informational line, not a gate, or justify any floor a priori from a source independent of the measurement.
+2. **N-32** — make `min_binding_evaluation_start_date` load-bearing: a fold, report or verdict computed on a session before it must refuse, not merely be impossible by accident.
+3. **N-21 / N-31** — evidence branch protection or write it as unverified, and derive the tag set from the audit report's citations instead of a dict edited per commit.
+4. **N-30** — append a non-overlapping sourced interval for a core symbol instead of dropping it.
+
+One observation worth keeping. Two rounds ago the defect was an identity table nobody could check; last round it was one that checked itself; this round the identity is right and the threshold that grades it is wrong. The data layer is now the most verifiable part of this project — the failure mode has moved entirely into the files that decide what counts as passing.
+
+---
