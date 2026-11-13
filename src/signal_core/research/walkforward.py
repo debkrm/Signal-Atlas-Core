@@ -169,6 +169,13 @@ class WalkForwardResult:
         Defaults criteria_version from criteria in force (Audit §31 H-34).
         Carries execution_config onto TrialRecord (Audit §31 H-33 / §32 H-37).
         """
+        # Audit §31 H-30: Refuse trial record creation if circuit evidence is unverified
+        if self.verification_status == "CIRCUIT_UNVERIFIED":
+            raise WalkForwardEngineError(
+                "Cannot create trial record with verification_status='CIRCUIT_UNVERIFIED' (Finding H-30). "
+                "Every trade must execute with verified exchange price band evidence before publishing performance."
+            )
+
         # Audit §31 H-28 / §32 H-35: Dataset fingerprint cannot be overridden with spoofed or mismatched value
         if dataset_fingerprint is not None and dataset_fingerprint != self.dataset_content_fingerprint:
             raise WalkForwardEngineError(
@@ -262,6 +269,13 @@ class WalkForwardResult:
         Defaults criteria_version from criteria in force (Audit §31 H-34).
         Carries execution_config onto TrialRecord (Audit §31 H-33).
         """
+        # Audit §31 H-30: Refuse trial registration if circuit evidence is unverified
+        if self.verification_status == "CIRCUIT_UNVERIFIED":
+            raise WalkForwardEngineError(
+                "Cannot register trial in trial registry with verification_status='CIRCUIT_UNVERIFIED' (Finding H-30). "
+                "Every trade must execute with verified exchange price band evidence before publishing performance."
+            )
+
         # Audit §31 H-28 / §32 H-35: Dataset fingerprint cannot be overridden with spoofed or mismatched value
         if dataset_fingerprint is not None and dataset_fingerprint != self.dataset_content_fingerprint:
             raise WalkForwardEngineError(
@@ -373,6 +387,7 @@ class WalkForwardEngine:
         unlock_file_path: Optional[Union[str, Path]] = None,
         full_sessions_only: bool = True,
         fail_closed_on_unexplained: bool = True,
+        fail_closed_on_missing_band: bool = True,
     ) -> None:
         self._calendar = calendar
         self._gold_engine = gold_engine
@@ -384,6 +399,7 @@ class WalkForwardEngine:
         self._latency = max(1, execution_latency_sessions)
         self._full_sessions_only = full_sessions_only
         self._fail_closed_on_unexplained = fail_closed_on_unexplained
+        self._fail_closed_on_missing_band = fail_closed_on_missing_band
         if partition_spec is not None:
             self._partition_spec = _validate_partition_spec_widening(partition_spec)
         else:
@@ -576,10 +592,19 @@ class WalkForwardEngine:
                 except ValueError:
                     ex_series = ExchangeSeries.UNKNOWN
 
-                # Resolve price band / circuit limits from Security Master (Audit §25 G-6 / Wave 2)
+                # Resolve price band / circuit limits from Security Master (Audit §25 G-6, §31 H-30)
                 band = self._sec_master.get_price_band(ord_req.instrument_id, t)
-                u_lim = band.upper_circuit_limit if band else None
-                l_lim = band.lower_circuit_limit if band else None
+                if band is None:
+                    if self._fail_closed_on_missing_band:
+                        raise WalkForwardEngineError(
+                            f"Gate G-6 / Finding H-30 Violation: No price band registered for traded instrument "
+                            f"'{ord_req.instrument_id}' on session {t}. Trading without circuit band evidence is strictly prohibited."
+                        )
+                    u_lim = None
+                    l_lim = None
+                else:
+                    u_lim = band.upper_circuit_limit
+                    l_lim = band.lower_circuit_limit
 
                 # Gate G2C-3: Verify against eligibility policy
                 fill_res = simulator.simulate_order(
@@ -588,6 +613,7 @@ class WalkForwardEngine:
                     upper_circuit_limit=u_lim,
                     lower_circuit_limit=l_lim,
                     explicit_series=ex_series,
+                    price_band=band,
                 )
 
                 fold_trades.append(fill_res)
@@ -943,6 +969,7 @@ class WalkForwardEngine:
             "execution_latency_sessions": self._latency,
             "full_sessions_only": self._full_sessions_only,
             "fail_closed_on_unexplained": self._fail_closed_on_unexplained,
+            "fail_closed_on_missing_band": self._fail_closed_on_missing_band,
             "eligibility_policy": {
                 "permitted_series": sorted(s.value for s in self._eligibility_policy.permitted_series),
                 "allow_series_transitions": self._eligibility_policy.allow_series_transitions,

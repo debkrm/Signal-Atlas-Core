@@ -17,7 +17,12 @@ from enum import Enum
 import hashlib
 from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
-from signal_core.contracts.price_band import PriceBandRecord
+from signal_core.contracts.price_band import (
+    PriceBandInterval,
+    PriceBandPublicationSource,
+    PriceBandRecord,
+    PriceBandSourceDescriptor,
+)
 
 FORBIDDEN_CHARACTERS = (",", ";", "\n", "\r", "\t")
 
@@ -331,6 +336,7 @@ def compute_security_master_fingerprint(
     delisting_events: Sequence[DelistingEvent],
     isin_transitions: Sequence[ISINTransitionEvent],
     price_bands: Optional[Sequence[PriceBandRecord]] = None,
+    price_band_intervals: Optional[Sequence[PriceBandInterval]] = None,
 ) -> str:
     """Computes a deterministic SHA-256 fingerprint for security master state."""
     hasher = hashlib.sha256()
@@ -373,6 +379,16 @@ def compute_security_master_fingerprint(
             row = f"{b.isin},{b.trade_date.isoformat()},{b.series},{b.upper_circuit_limit},{b.lower_circuit_limit}\n"
             hasher.update(row.encode("utf-8"))
 
+    # 6. Price Band Intervals (Rule 10.5, Audit §31 H-30)
+    if price_band_intervals:
+        hasher.update(b"PRICE_BAND_INTERVALS:\n")
+        sorted_pbi = sorted(price_band_intervals, key=lambda b: (b.isin, b.effective_from))
+        for b in sorted_pbi:
+            to_str = b.effective_to.isoformat() if b.effective_to else "OPEN"
+            circ_str = b.circular_ref or "NONE"
+            row = f"{b.isin},{b.effective_from.isoformat()},{to_str},{b.band_percentage},{b.is_unconstrained},{circ_str}\n"
+            hasher.update(row.encode("utf-8"))
+
     digest = hasher.hexdigest()[:32]
     return f"SEC-MSTR-V1-{digest}"
 
@@ -389,6 +405,7 @@ class SecurityMaster:
         delisting_events: Optional[Sequence[DelistingEvent]] = None,
         isin_transitions: Optional[Sequence[ISINTransitionEvent]] = None,
         price_bands: Optional[Sequence[PriceBandRecord]] = None,
+        price_band_intervals: Optional[Sequence[PriceBandInterval]] = None,
     ) -> None:
         self._symbol_intervals: Tuple[SymbolInterval, ...] = tuple(symbol_intervals)
         self._surveillance_intervals: Tuple[SurveillanceInterval, ...] = tuple(surveillance_intervals or ())
@@ -399,6 +416,7 @@ class SecurityMaster:
         self._price_bands_by_isin_date: Dict[Tuple[str, datetime.date], PriceBandRecord] = {
             (b.isin, b.trade_date): b for b in self._price_bands
         }
+        self._price_band_intervals: Tuple[PriceBandInterval, ...] = tuple(price_band_intervals or ())
 
         # Validate non-overlapping symbol intervals per ISIN
         by_isin: Dict[str, List[SymbolInterval]] = {}
@@ -415,8 +433,24 @@ class SecurityMaster:
                         f"Overlapping or unclosed symbol intervals detected for ISIN {isin}: {cur} overlaps {nxt}"
                     )
 
+        # Validate non-overlapping price band intervals per ISIN (Rule 10.5, Audit §31 H-30)
+        bands_by_isin: Dict[str, List[PriceBandInterval]] = {}
+        for b in self._price_band_intervals:
+            bands_by_isin.setdefault(b.isin, []).append(b)
+
+        for isin, intervals in bands_by_isin.items():
+            sorted_intervals = sorted(intervals, key=lambda x: x.effective_from)
+            for i in range(len(sorted_intervals) - 1):
+                cur = sorted_intervals[i]
+                nxt = sorted_intervals[i + 1]
+                if cur.effective_to is None or cur.effective_to > nxt.effective_from:
+                    raise SecurityMasterError(
+                        f"Overlapping or unclosed price band intervals detected for ISIN {isin}: {cur} overlaps {nxt}"
+                    )
+
         # Build index for fast lookup
         self._intervals_by_isin = by_isin
+        self._band_intervals_by_isin = bands_by_isin
         self._delistings_by_isin: Dict[str, DelistingEvent] = {}
         for d in self._delisting_events:
             if d.isin in self._delistings_by_isin:
@@ -436,6 +470,7 @@ class SecurityMaster:
             self._delisting_events,
             self._isin_transitions,
             self._price_bands,
+            self._price_band_intervals,
         )
 
     @property
@@ -455,6 +490,23 @@ class SecurityMaster:
         for interval in intervals:
             if interval.contains(as_of):
                 return interval
+        return None
+
+    def resolve_isin_by_symbol(
+        self,
+        symbol: str,
+        as_of: datetime.date,
+        series: Optional[str] = None,
+    ) -> Optional[str]:
+        """Resolves active ISIN for a symbol and optional series as-of date T."""
+        _validate_identifier(symbol, "symbol")
+        _validate_date(as_of, "as_of")
+        for isin, intervals in self._intervals_by_isin.items():
+            for interval in intervals:
+                if interval.symbol == symbol and interval.contains(as_of):
+                    if series is None or interval.series == series:
+                        if self.is_active(isin, as_of):
+                            return isin
         return None
 
     def is_delisted(self, isin: str, as_of: datetime.date) -> bool:
@@ -512,14 +564,55 @@ class SecurityMaster:
         return tuple(sorted(actions, key=lambda ca: ca.ex_date))
 
     def get_price_band(self, isin: str, as_of: datetime.date) -> Optional[PriceBandRecord]:
-        """Returns PriceBandRecord for an ISIN on session date as_of, if registered."""
+        """
+        Returns PriceBandRecord for an ISIN on session date as_of.
+        Performs discrete daily lookup first; falls back to time-varying half-open PriceBandIntervals
+        per AGENTS.md Rule 10.5 and Audit §31 H-30.
+        """
         _validate_identifier(isin, "isin")
         _validate_date(as_of, "as_of")
-        return self._price_bands_by_isin_date.get((isin, as_of))
+
+        # 1. Discrete daily record lookup
+        record = self._price_bands_by_isin_date.get((isin, as_of))
+        if record is not None:
+            return record
+
+        # 2. Time-varying half-open interval lookup [effective_from, effective_to)
+        intervals = self._band_intervals_by_isin.get(isin, [])
+        for interval in intervals:
+            if interval.contains(as_of):
+                sym_interval = self.resolve_symbol(isin, as_of)
+                series = sym_interval.series if sym_interval else "EQ"
+                src_desc = interval.source_descriptor
+                if src_desc is None and interval.circular_ref:
+                    src_desc = PriceBandSourceDescriptor(
+                        source_type=PriceBandPublicationSource.NSE_SURVEILLANCE_CIRCULAR,
+                        publication_name="NSE_SURVEILLANCE_CIRCULAR",
+                        archive_url_template="https://archives.nseindia.com/circulars",
+                        retrieval_frequency="EVENT_DRIVEN",
+                        circular_ref=interval.circular_ref,
+                        description=f"Time-varying price band interval for {isin}",
+                    )
+                return PriceBandRecord(
+                    isin=isin,
+                    trade_date=as_of,
+                    series=series,
+                    upper_circuit_limit=None,
+                    lower_circuit_limit=None,
+                    band_percentage=interval.band_percentage,
+                    is_unconstrained=interval.is_unconstrained,
+                    source_descriptor=src_desc,
+                    source_ref=interval.circular_ref,
+                )
+        return None
 
     @property
     def price_bands(self) -> Tuple[PriceBandRecord, ...]:
         return self._price_bands
+
+    @property
+    def price_band_intervals(self) -> Tuple[PriceBandInterval, ...]:
+        return self._price_band_intervals
 
 
 def build_production_security_master() -> SecurityMaster:
@@ -638,10 +731,107 @@ def build_production_security_master() -> SecurityMaster:
         )
     ]
 
+    # Authoritative Price Band Intervals (Rule 10.5, Audit §27 H-4, §31 H-30)
+    fo_source = PriceBandSourceDescriptor(
+        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+        publication_name="NSE_FO_UNDERLYING_PRICE_BANDS",
+        archive_url_template="https://archives.nseindia.com/content/fo/fo_sec_list.csv",
+        retrieval_frequency="DAILY",
+        circular_ref="NSE/FAOP/60350",
+        description="NSE F&O Underlyings Dynamic Flexing Price Bands",
+    )
+    cash_source = PriceBandSourceDescriptor(
+        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+        publication_name="NSE_PRICE_BANDS",
+        archive_url_template="https://archives.nseindia.com/content/equities/sec_list.csv",
+        retrieval_frequency="DAILY",
+        circular_ref="NSE/SURV/PRICE_BANDS_2024",
+        description="NSE Cash Equity Daily Price Bands 20%",
+    )
+
+    price_band_intervals = [
+        # INFY (F&O stock: dynamic flexing band, base 10%)
+        PriceBandInterval(
+            isin="INE009A01021",
+            band_percentage=Decimal("10.00"),
+            effective_from=datetime.date(2015, 1, 1),
+            effective_to=None,
+            is_unconstrained=True,
+            source_descriptor=fo_source,
+            circular_ref="NSE/FAOP/60350",
+        ),
+        # RELIANCE (F&O stock: dynamic flexing band, base 10%)
+        PriceBandInterval(
+            isin="INE002A01018",
+            band_percentage=Decimal("10.00"),
+            effective_from=datetime.date(2015, 1, 1),
+            effective_to=None,
+            is_unconstrained=True,
+            source_descriptor=fo_source,
+            circular_ref="NSE/FAOP/60350",
+        ),
+        # HDFC (F&O stock until merger on 2023-07-13)
+        PriceBandInterval(
+            isin="INE001A01036",
+            band_percentage=Decimal("10.00"),
+            effective_from=datetime.date(2015, 1, 1),
+            effective_to=datetime.date(2023, 7, 13),
+            is_unconstrained=True,
+            source_descriptor=fo_source,
+            circular_ref="NSE/FAOP/57531",
+        ),
+        # COCHINSHIP Old ISIN (standard 20% price band)
+        PriceBandInterval(
+            isin="INE704P01017",
+            band_percentage=Decimal("20.00"),
+            effective_from=datetime.date(2017, 8, 11),
+            effective_to=datetime.date(2024, 1, 10),
+            is_unconstrained=False,
+            source_descriptor=cash_source,
+            circular_ref="NSE/SURV/PRICE_BANDS_2017",
+        ),
+        # COCHINSHIP New ISIN (standard 20% price band)
+        PriceBandInterval(
+            isin="INE704P01025",
+            band_percentage=Decimal("20.00"),
+            effective_from=datetime.date(2024, 1, 10),
+            effective_to=None,
+            is_unconstrained=False,
+            source_descriptor=cash_source,
+            circular_ref="NSE/SURV/PRICE_BANDS_2024",
+        ),
+    ]
+
+    # Discrete daily price bands (Audit §25 G-6, §26 Wave 1, §31 H-30)
+    # COCHINSHIP 2:1 Stock Split ex-date 2024-01-10: 20% Upper Circuit at Rs. 802.80, Lower Circuit at Rs. 535.20
+    split_circuit_source = PriceBandSourceDescriptor(
+        source_type=PriceBandPublicationSource.NSE_SURVEILLANCE_CIRCULAR,
+        publication_name="NSE_EX_SPLIT_CIRCUIT_ADJUSTMENT",
+        archive_url_template="https://archives.nseindia.com/content/equities/sec_list.csv",
+        retrieval_frequency="EVENT_DRIVEN",
+        circular_ref="NSE/CML/60114",
+        description="Cochin Shipyard 2:1 stock split circuit limit adjustment",
+    )
+    price_bands = [
+        PriceBandRecord(
+            isin="INE704P01025",
+            trade_date=datetime.date(2024, 1, 10),
+            series="EQ",
+            upper_circuit_limit=Decimal("802.80"),
+            lower_circuit_limit=Decimal("535.20"),
+            band_percentage=Decimal("20.00"),
+            is_unconstrained=False,
+            source_descriptor=split_circuit_source,
+            source_ref="NSE/CML/60114",
+        )
+    ]
+
     return SecurityMaster(
         symbol_intervals=symbol_intervals,
         corporate_actions=corporate_actions,
         delisting_events=delisting_events,
         isin_transitions=isin_transitions,
+        price_bands=price_bands,
+        price_band_intervals=price_band_intervals,
     )
 

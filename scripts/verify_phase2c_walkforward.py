@@ -132,6 +132,17 @@ def run_phase_2c_verification() -> bool:
                     band_percentage=Decimal("10.0"),
                 )
             )
+            p_be_curr = base_be + Decimal(str((i + 5) * 5))
+            price_bands.append(
+                PriceBandRecord(
+                    isin=be_isin,
+                    trade_date=d,
+                    series="BE",
+                    upper_circuit_limit=p_be_curr * Decimal("1.05"),
+                    lower_circuit_limit=p_be_curr * Decimal("0.95"),
+                    band_percentage=Decimal("5.0"),
+                )
+            )
 
         sec_master = SecurityMaster(
             symbol_intervals=[

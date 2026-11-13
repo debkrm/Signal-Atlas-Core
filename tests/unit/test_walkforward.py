@@ -27,7 +27,12 @@ from signal_core.contracts.exchange_series import (
     ExchangeSeries,
     SeriesEligibilityPolicy,
 )
-from signal_core.contracts.price_band import PriceBandRecord
+from signal_core.contracts.price_band import (
+    PriceBandInterval,
+    PriceBandPublicationSource,
+    PriceBandRecord,
+    PriceBandSourceDescriptor,
+)
 from signal_core.execution.costs import TransactionCostBreakdown, TransactionCostModel
 from signal_core.execution.types import ExecutionOrder, FillStatus, OrderProduct, OrderSide, OrderType
 from signal_core.execution.simulator import ExecutionFillResult
@@ -130,7 +135,57 @@ def wf_environment(wf_calendar):
                     effective_from=datetime.date(2024, 1, 1),
                     effective_to=datetime.date(2024, 12, 31),
                 ),
-            ]
+            ],
+            price_band_intervals=[
+                PriceBandInterval(
+                    isin="INE009A01021",
+                    band_percentage=Decimal("10.00"),
+                    effective_from=datetime.date(2024, 1, 1),
+                    effective_to=datetime.date(2024, 12, 31),
+                    is_unconstrained=True,
+                    source_descriptor=PriceBandSourceDescriptor(
+                        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+                        publication_name="NSE_FO_UNDERLYING_PRICE_BANDS",
+                        archive_url_template="https://archives.nseindia.com/content/fo/fo_sec_list.csv",
+                        retrieval_frequency="DAILY",
+                        circular_ref="NSE/FAOP/60350",
+                        description="NSE F&O Underlyings Dynamic Price Bands",
+                    ),
+                    circular_ref="NSE/FAOP/60350",
+                ),
+                PriceBandInterval(
+                    isin="INE002A01018",
+                    band_percentage=Decimal("10.00"),
+                    effective_from=datetime.date(2024, 1, 1),
+                    effective_to=datetime.date(2024, 12, 31),
+                    is_unconstrained=True,
+                    source_descriptor=PriceBandSourceDescriptor(
+                        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+                        publication_name="NSE_FO_UNDERLYING_PRICE_BANDS",
+                        archive_url_template="https://archives.nseindia.com/content/fo/fo_sec_list.csv",
+                        retrieval_frequency="DAILY",
+                        circular_ref="NSE/FAOP/60350",
+                        description="NSE F&O Underlyings Dynamic Price Bands",
+                    ),
+                    circular_ref="NSE/FAOP/60350",
+                ),
+                PriceBandInterval(
+                    isin="INE999B01019",
+                    band_percentage=Decimal("5.00"),
+                    effective_from=datetime.date(2024, 1, 1),
+                    effective_to=datetime.date(2024, 12, 31),
+                    is_unconstrained=False,
+                    source_descriptor=PriceBandSourceDescriptor(
+                        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+                        publication_name="NSE_CASH_PRICE_BANDS",
+                        archive_url_template="https://archives.nseindia.com/sec_list.csv",
+                        retrieval_frequency="DAILY",
+                        circular_ref="NSE/SURV/TEST",
+                        description="NSE Trade-to-Trade Price Band 5%",
+                    ),
+                    circular_ref="NSE/SURV/TEST",
+                ),
+            ],
         )
 
         # Seed 10 sessions of data for INFY (INE009A01021), RELIANCE (INE002A01018), and TESTBE (INE999B01019)
@@ -331,7 +386,7 @@ def test_gate_g2c_3_eligibility_enforcement(wf_environment):
 def test_gate_g2c_4_circuit_evidence_audit(wf_environment):
     """
     Gate G2C-4: Results whose fills lack circuit evidence are flagged CIRCUIT_UNVERIFIED
-    and cannot be promoted to VERIFIED.
+    and cannot be promoted to VERIFIED. Sessions without price bands fail closed (H-30).
     """
     cal, sec_master, silver, gold, tmp_path = wf_environment
 
@@ -344,6 +399,20 @@ def test_gate_g2c_4_circuit_evidence_audit(wf_environment):
         embargo_sessions=1,
         partition_role=PartitionRole.VALIDATION,
     )
+
+    # An unbanded security master with NO price bands
+    sec_master_unbanded = SecurityMaster(
+        symbol_intervals=[
+            SymbolInterval(
+                isin="INE009A01021",
+                symbol="INFY",
+                series="EQ",
+                effective_from=datetime.date(2024, 1, 1),
+                effective_to=datetime.date(2024, 12, 31),
+            ),
+        ]
+    )
+    gold_unbanded = GoldEngine(silver, cal, sec_master_unbanded)
 
     # Simple buyer strategy
     class SimpleBuyer(Strategy):
@@ -364,14 +433,36 @@ def test_gate_g2c_4_circuit_evidence_audit(wf_environment):
                 )
             return ()
 
-    engine = WalkForwardEngine(calendar=cal, gold_engine=gold)
-    res = engine.run_walk_forward(strategy=SimpleBuyer(), folds=[fold])
+    # 1. Fail-closed on missing price band (Audit §31 H-30)
+    engine_strict = WalkForwardEngine(calendar=cal, gold_engine=gold_unbanded, fail_closed_on_missing_band=True)
+    with pytest.raises(WalkForwardEngineError, match="Finding H-30 Violation"):
+        engine_strict.run_walk_forward(strategy=SimpleBuyer(), folds=[fold])
 
-    # Because daily bhavcopy partition currently lacks verified upper/lower circuit columns in raw parquet,
-    # circuit_evidence_present is False on the fills.
-    # Gate G2C-4 mandates: circuit_evidence_complete must be False and verification_status must be CIRCUIT_UNVERIFIED!
-    assert res.circuit_evidence_complete is False
-    assert res.verification_status == "CIRCUIT_UNVERIFIED"
+    # 2. When fail_closed_on_missing_band=False, fills lack circuit evidence -> CIRCUIT_UNVERIFIED
+    engine_permissive = WalkForwardEngine(calendar=cal, gold_engine=gold_unbanded, fail_closed_on_missing_band=False)
+    res_unverified = engine_permissive.run_walk_forward(strategy=SimpleBuyer(), folds=[fold])
+
+    assert res_unverified.circuit_evidence_complete is False
+    assert res_unverified.verification_status == "CIRCUIT_UNVERIFIED"
+
+    # 3. Hard block on publishing / registering CIRCUIT_UNVERIFIED trial (Finding H-30)
+    registry_path = tmp_path / "trials_g2c4.jsonl"
+    reg = TrialRegistry(registry_path)
+    with pytest.raises(WalkForwardEngineError, match="Cannot register trial in trial registry with verification_status='CIRCUIT_UNVERIFIED'"):
+        res_unverified.register_in_trial_registry(
+            registry=reg,
+            trial_id="TRIAL-G2C4",
+            hypothesis="Test",
+            rationale="Test",
+            fold_spec_fingerprint="TEST",
+        )
+    with pytest.raises(WalkForwardEngineError, match="Cannot create trial record with verification_status='CIRCUIT_UNVERIFIED'"):
+        res_unverified.to_trial_record(
+            trial_id="TRIAL-G2C4",
+            hypothesis="Test",
+            rationale="Test",
+            fold_spec_fingerprint="TEST",
+        )
 
 
 def test_gate_g2c_5_single_authoritative_engine_and_portfolio_integration(wf_environment):

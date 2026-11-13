@@ -195,11 +195,15 @@ class PriceBandRecord:
     def has_circuit_evidence(self) -> bool:
         """Returns True if authoritative circuit boundaries are documented."""
         if self.is_unconstrained:
-            return self.source_descriptor is not None and (
+            return (self.source_descriptor is not None or self.source_ref is not None) and (
                 (self.upper_circuit_limit is not None and self.lower_circuit_limit is not None)
                 or self.band_percentage is not None
             )
-        return self.upper_circuit_limit is not None and self.lower_circuit_limit is not None
+        if self.upper_circuit_limit is not None and self.lower_circuit_limit is not None:
+            return True
+        if self.band_percentage is not None and (self.source_descriptor is not None or self.source_ref is not None):
+            return True
+        return False
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -242,13 +246,16 @@ class PriceBandRecord:
 @dataclass(frozen=True, slots=True)
 class PriceBandInterval:
     """
-    Time-varying fixed price band interval for an instrument (e.g. under ESM / GSM / Trade-to-trade).
+    Time-varying price band interval for an instrument (e.g. under ESM / GSM / Trade-to-trade,
+    or standard cash equity / F&O dynamic bands).
     Interval semantics: half-open [effective_from, effective_to) per AGENTS.md Rule 10.5.
     """
     isin: str
-    band_percentage: Decimal
-    effective_from: datetime.date
+    band_percentage: Optional[Decimal] = None
+    effective_from: Optional[datetime.date] = None
     effective_to: Optional[datetime.date] = None
+    is_unconstrained: bool = False
+    source_descriptor: Optional[PriceBandSourceDescriptor] = None
     circular_ref: Optional[str] = None
 
     def __post_init__(self) -> None:
@@ -257,16 +264,47 @@ class PriceBandInterval:
             raise PriceBandValidationError(f"ISIN must be 12 characters, got {self.isin!r}")
         object.__setattr__(self, "isin", isin_str.upper())
 
-        _validate_decimal(self.band_percentage, "band_percentage")
+        if self.effective_from is None:
+            raise PriceBandValidationError("effective_from cannot be None")
         _validate_date(self.effective_from, "effective_from")
+
         if self.effective_to is not None:
             _validate_date(self.effective_to, "effective_to")
             if self.effective_from >= self.effective_to:
                 raise PriceBandValidationError(
                     f"effective_from ({self.effective_from}) must precede effective_to ({self.effective_to}) for ISIN {self.isin}"
                 )
+
+        if not isinstance(self.is_unconstrained, bool):
+            raise PriceBandValidationError(f"is_unconstrained must be bool, got {type(self.is_unconstrained).__name__}")
+
+        if self.band_percentage is not None:
+            _validate_decimal(self.band_percentage, "band_percentage")
+
+        if self.source_descriptor is not None and not isinstance(self.source_descriptor, PriceBandSourceDescriptor):
+            raise PriceBandValidationError(
+                f"source_descriptor must be PriceBandSourceDescriptor, got {type(self.source_descriptor).__name__}"
+            )
+
         if self.circular_ref is not None:
             _validate_non_empty_str(self.circular_ref, "circular_ref")
+
+        if self.is_unconstrained:
+            # Audit §27 H-4 & Audit §31 H-30: Unconstrained scrips (e.g. F&O stocks with dynamic flexing bands)
+            # must cite an authoritative publication source descriptor or circular ref; anonymous claims are rejected.
+            if self.source_descriptor is None and self.circular_ref is None:
+                raise PriceBandValidationError(
+                    f"is_unconstrained=True requires an authoritative source_descriptor or circular_ref citation for ISIN {self.isin}."
+                )
+            if self.band_percentage is None:
+                raise PriceBandValidationError(
+                    f"is_unconstrained=True scrips must declare band_percentage (e.g. 10.0 for dynamic base band) for ISIN {self.isin}."
+                )
+        else:
+            if self.band_percentage is None:
+                raise PriceBandValidationError(
+                    f"Fixed price band interval requires band_percentage for ISIN {self.isin}."
+                )
 
     def contains(self, as_of: datetime.date) -> bool:
         """Returns True if as_of falls within half-open [effective_from, effective_to)."""
@@ -276,4 +314,36 @@ class PriceBandInterval:
         if self.effective_to is not None and as_of >= self.effective_to:
             return False
         return True
+
+    def to_dict(self) -> Dict[str, Any]:
+        d: Dict[str, Any] = {
+            "isin": self.isin,
+            "effective_from": self.effective_from.isoformat(),
+            "is_unconstrained": self.is_unconstrained,
+        }
+        if self.effective_to is not None:
+            d["effective_to"] = self.effective_to.isoformat()
+        if self.band_percentage is not None:
+            d["band_percentage"] = str(self.band_percentage)
+        if self.source_descriptor is not None:
+            d["source_descriptor"] = self.source_descriptor.to_dict()
+        if self.circular_ref is not None:
+            d["circular_ref"] = self.circular_ref
+        return d
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "PriceBandInterval":
+        eff_from = datetime.date.fromisoformat(data["effective_from"])
+        eff_to = datetime.date.fromisoformat(data["effective_to"]) if data.get("effective_to") else None
+        band_p = Decimal(str(data["band_percentage"])) if data.get("band_percentage") is not None else None
+        src_desc = PriceBandSourceDescriptor.from_dict(data["source_descriptor"]) if data.get("source_descriptor") else None
+        return cls(
+            isin=str(data["isin"]),
+            band_percentage=band_p,
+            effective_from=eff_from,
+            effective_to=eff_to,
+            is_unconstrained=bool(data.get("is_unconstrained", False)),
+            source_descriptor=src_desc,
+            circular_ref=str(data["circular_ref"]) if data.get("circular_ref") else None,
+        )
 

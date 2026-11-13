@@ -20,8 +20,16 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 import zipfile
 
+from signal_core.contracts.price_band import (
+    PriceBandInterval,
+    PriceBandPublicationSource,
+    PriceBandRecord,
+    PriceBandSourceDescriptor,
+    PriceBandValidationError,
+)
 from signal_core.storage.bronze import BronzeManifestEntry, BronzeStorage, BronzeStorageError
 from signal_core.storage.calendar import TradingCalendar
+from signal_core.storage.security_master import SecurityMaster
 from signal_core.storage.silver import (
     SilverRecord,
     SilverStorage,
@@ -34,6 +42,11 @@ _LEGACY_DATE_FORMAT = "%d-%b-%Y"  # e.g. 01-JAN-2024
 
 class BhavcopyIngestError(Exception):
     """Raised when Bhavcopy parsing or ingestion fails."""
+    pass
+
+
+class PriceBandIngestError(Exception):
+    """Raised when price band report parsing or ingestion fails."""
     pass
 
 
@@ -312,3 +325,228 @@ def ingest_daily_bhavcopy_archive(
     )
 
     return bronze_entry, silver_path, len(records)
+
+
+def parse_price_band_report(
+    report_data: Union[bytes, Path, str],
+    trade_date: Optional[datetime.date] = None,
+    source_descriptor: Optional[PriceBandSourceDescriptor] = None,
+    security_master: Optional[SecurityMaster] = None,
+    target_isins: Optional[Sequence[str]] = None,
+) -> Tuple[datetime.date, List[PriceBandRecord]]:
+    """
+    Parses a daily NSE price band report or PR-archive (CSV or ZIP containing CSV)
+    and extracts typed PriceBandRecord objects per AGENTS.md Rule 5.3 and Rule 10.7 (Finding H-30).
+    
+    Supports:
+    - NSE daily security price band list (sec_list.csv):
+      Columns: Symbol, Series, Security Name, Band, Upper Price Band, Lower Price Band
+    - Daily price bands CSV:
+      Columns: SYMBOL, SERIES, BAND, UPPER_BAND, LOWER_BAND, ISIN
+    - PR archive security statistics (PdDDMMYY.csv from PR archive):
+      Columns: SECURITY, SERIES, ..., UPPER_CIRCUIT_LIMIT, LOWER_CIRCUIT_LIMIT, PRICE_BAND
+    - Resolution of Symbol to ISIN via SecurityMaster when ISIN column is absent.
+    - Handling of unconstrained F&O underlyings with dynamic flexing bands.
+    - Strict Decimal arithmetic for all price limits and percentages.
+    
+    Returns:
+        (resolved_trade_date, list_of_price_band_records)
+    """
+    if isinstance(report_data, (str, Path)):
+        p = Path(report_data)
+        if not p.is_file():
+            raise FileNotFoundError(f"Price band report file not found at: {p}")
+        with open(p, "rb") as f:
+            raw_bytes = f.read()
+    elif isinstance(report_data, bytes):
+        raw_bytes = report_data
+    else:
+        raise PriceBandIngestError(f"report_data must be bytes, Path, or str, got {type(report_data).__name__}")
+
+    # Handle ZIP archive if needed
+    if raw_bytes[:4] == b"PK\x03\x04":
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
+            csv_names = [n for n in zf.namelist() if n.lower().endswith(".csv")]
+            if not csv_names:
+                raise PriceBandIngestError("Price band ZIP archive contains no CSV files.")
+            text = zf.read(csv_names[0]).decode("utf-8", errors="replace")
+        except Exception as exc:
+            raise PriceBandIngestError(f"Failed to decompress price band ZIP archive: {exc}") from exc
+    else:
+        text = raw_bytes.decode("utf-8", errors="replace")
+
+    reader = csv.reader(io.StringIO(text))
+    header: Optional[List[str]] = None
+    for row in reader:
+        if not row or all(c.strip() == "" for c in row):
+            continue
+        header = [c.strip().upper().replace(" ", "_").replace("-", "_") for c in row]
+        break
+
+    if header is None:
+        raise PriceBandIngestError("Empty price band file; no header row detected.")
+
+    col_map = {col: idx for idx, col in enumerate(header)}
+
+    def _find_col(*candidates: str) -> Optional[int]:
+        for c in candidates:
+            if c in col_map:
+                return col_map[c]
+        return None
+
+    isin_idx = _find_col("ISIN", "ISIN_CODE", "SECURITY_ISIN")
+    sym_idx = _find_col("SYMBOL", "SECURITY", "TCKRSYMB", "SECURITY_SYMBOL")
+    series_idx = _find_col("SERIES", "SECURITY_SERIES", "SCTYSRS")
+    band_idx = _find_col("BAND", "PRICE_BAND", "BAND_PERCENTAGE", "CIRCUIT_BAND")
+    upper_idx = _find_col("UPPER_PRICE_BAND", "UPPER_BAND", "UPPER_CIRCUIT_LIMIT", "UPPER_LIMIT")
+    lower_idx = _find_col("LOWER_PRICE_BAND", "LOWER_BAND", "LOWER_CIRCUIT_LIMIT", "LOWER_LIMIT")
+    date_idx = _find_col("TRADE_DATE", "TIMESTAMP", "TRADEDATE", "DATE")
+
+    if isin_idx is None and sym_idx is None:
+        raise PriceBandIngestError(
+            f"Price band report header lacks both ISIN and Symbol columns. Found: {header}"
+        )
+
+    inferred_date = trade_date
+    default_source = source_descriptor or PriceBandSourceDescriptor(
+        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+        publication_name="NSE_DAILY_PRICE_BAND_REPORT",
+        archive_url_template="https://archives.nseindia.com/content/equities/sec_list.csv",
+        retrieval_frequency="DAILY",
+        description="Authoritative NSE Daily Price Band Publication",
+    )
+
+    records: List[PriceBandRecord] = []
+    seen_isins: Set[str] = set()
+    target_set = {i.upper() for i in target_isins} if target_isins is not None else None
+
+    line_no = 1
+    for row in reader:
+        line_no += 1
+        if not row or all(c.strip() == "" for c in row):
+            continue
+
+        if inferred_date is None and date_idx is not None and len(row) > date_idx:
+            date_str = row[date_idx].strip()
+            if date_str:
+                inferred_date = parse_bhavcopy_date(date_str)
+
+        sym_val = row[sym_idx].strip().upper() if sym_idx is not None and len(row) > sym_idx else ""
+        series_val = row[series_idx].strip().upper() if series_idx is not None and len(row) > series_idx else "EQ"
+        if not series_val:
+            series_val = "EQ"
+
+        # Determine ISIN
+        isin_val = ""
+        if isin_idx is not None and len(row) > isin_idx and row[isin_idx].strip():
+            isin_val = row[isin_idx].strip().upper()
+        elif security_master is not None and sym_val:
+            d_lookup = inferred_date or datetime.date.today()
+            resolved = security_master.resolve_isin_by_symbol(sym_val, d_lookup, series=series_val)
+            if resolved:
+                isin_val = resolved
+
+        if not isin_val or len(isin_val) != 12:
+            continue
+
+        if target_set is not None and isin_val not in target_set:
+            continue
+
+        # Parse circuit limits and band percentage
+        u_lim: Optional[Decimal] = None
+        if upper_idx is not None and len(row) > upper_idx and row[upper_idx].strip():
+            u_str = row[upper_idx].strip().replace(",", "")
+            try:
+                u_lim = Decimal(u_str)
+            except (InvalidOperation, ValueError):
+                u_lim = None
+
+        l_lim: Optional[Decimal] = None
+        if lower_idx is not None and len(row) > lower_idx and row[lower_idx].strip():
+            l_str = row[lower_idx].strip().replace(",", "")
+            try:
+                l_lim = Decimal(l_str)
+            except (InvalidOperation, ValueError):
+                l_lim = None
+
+        band_p: Optional[Decimal] = None
+        is_unconstrained = False
+        if band_idx is not None and len(row) > band_idx and row[band_idx].strip():
+            b_str = row[band_idx].strip().replace("%", "")
+            if b_str.upper() in ("NO BAND", "NO_BAND", "NONE", "0", "0.0", "NA", "N/A"):
+                is_unconstrained = True
+                band_p = Decimal("10.00")  # Standard F&O dynamic base flexing band
+            else:
+                try:
+                    band_p = Decimal(b_str)
+                except (InvalidOperation, ValueError):
+                    band_p = None
+        elif u_lim is None and l_lim is None:
+            # Scrips with no limits declared (e.g. F&O)
+            is_unconstrained = True
+            band_p = Decimal("10.00")
+
+        if isin_val in seen_isins:
+            continue
+        seen_isins.add(isin_val)
+
+        d_rec = inferred_date or datetime.date.today()
+        try:
+            rec = PriceBandRecord(
+                isin=isin_val,
+                trade_date=d_rec,
+                series=series_val,
+                upper_circuit_limit=u_lim,
+                lower_circuit_limit=l_lim,
+                band_percentage=band_p,
+                is_unconstrained=is_unconstrained,
+                source_descriptor=default_source,
+                source_ref=default_source.circular_ref,
+            )
+            records.append(rec)
+        except PriceBandValidationError:
+            continue
+
+    if inferred_date is None:
+        raise PriceBandIngestError("trade_date cannot be determined from report data or arguments.")
+
+    return inferred_date, records
+
+
+def ingest_daily_price_bands(
+    bronze: BronzeStorage,
+    report_bytes: bytes,
+    filename: str,
+    source_url: str,
+    trade_date: Optional[datetime.date] = None,
+    source_descriptor: Optional[PriceBandSourceDescriptor] = None,
+    security_master: Optional[SecurityMaster] = None,
+    target_isins: Optional[Sequence[str]] = None,
+) -> Tuple[BronzeManifestEntry, List[PriceBandRecord]]:
+    """
+    Ingests a daily price band report or PR-archive into Bronze storage with SHA-256 provenance manifest,
+    and returns parsed PriceBandRecord objects per AGENTS.md Rule 10.7 and Audit §31 H-30.
+    """
+    resolved_date, records = parse_price_band_report(
+        report_data=report_bytes,
+        trade_date=trade_date,
+        source_descriptor=source_descriptor,
+        security_master=security_master,
+        target_isins=target_isins,
+    )
+    if not records:
+        raise PriceBandIngestError(
+            f"Zero price band records extracted from '{filename}' for date {resolved_date}."
+        )
+
+    rel_path = f"raw/price_bands/{resolved_date.year}/{filename}"
+    archive_format = "ZIP_CSV" if report_bytes[:4] == b"PK\x03\x04" else "CSV"
+    bronze_entry = bronze.store_payload(
+        relative_path=rel_path,
+        data=report_bytes,
+        source_url=source_url,
+        source_archive_format=archive_format,
+    )
+
+    return bronze_entry, records

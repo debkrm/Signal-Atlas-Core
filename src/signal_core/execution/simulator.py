@@ -37,6 +37,7 @@ from signal_core.contracts.exchange_series import (
     ExchangeSessionObservation,
     SeriesEligibilityPolicy,
 )
+from signal_core.contracts.price_band import PriceBandRecord
 from signal_core.contracts.price_bar import PriceBar
 from signal_core.execution.costs import TransactionCostBreakdown, TransactionCostModel
 from signal_core.execution.slippage import SlippageModel, SlippageResult
@@ -152,6 +153,7 @@ class ExecutionFillSimulator:
         average_daily_turnover: Optional[Decimal] = None,
         explicit_series: Optional[ExchangeSeries] = None,
         round_to_paise: bool = False,
+        price_band: Optional[PriceBandRecord] = None,
     ) -> ExecutionFillResult:
         """
         Simulates the execution of an order against an exchange session observation or price bar.
@@ -164,6 +166,7 @@ class ExecutionFillSimulator:
             average_daily_turnover: Optional trailing average daily turnover in INR.
             explicit_series: Optional explicit series when passing bare PriceBar.
             round_to_paise: Whether to quantize transaction costs to paise (0.01 INR).
+            price_band: Optional PriceBandRecord from SecurityMaster or price band report.
             
         Returns:
             ExecutionFillResult capturing fill status, quantity, price, slippage, and statutory costs.
@@ -332,30 +335,42 @@ class ExecutionFillSimulator:
         else:
             raise ExecutionOrderValidationError(f"Unsupported order_type: {order.order_type}")
 
-        # Invariant 8: Circuit Filter Freeze Invariants (Rule 5.3, 7, E-1)
+        # Invariant 8: Circuit Filter Freeze Invariants (Rule 5.3, 7, E-1, Finding H-30)
         # Evaluated on the fill reference price (e.g. Open) to prevent lookahead from end-of-day High/Low
-        effective_upper = upper_circuit_limit if upper_circuit_limit is not None else obs_upper
-        effective_lower = lower_circuit_limit if lower_circuit_limit is not None else obs_lower
+        band_upper = price_band.upper_circuit_limit if price_band else None
+        band_lower = price_band.lower_circuit_limit if price_band else None
+        effective_upper = band_upper if band_upper is not None else (upper_circuit_limit if upper_circuit_limit is not None else obs_upper)
+        effective_lower = band_lower if band_lower is not None else (lower_circuit_limit if lower_circuit_limit is not None else obs_lower)
+
+        if price_band is not None:
+            circuit_evidence = price_band.has_circuit_evidence
+        else:
+            circuit_evidence = (effective_upper is not None or effective_lower is not None)
+
+        is_unconstrained = price_band.is_unconstrained if price_band else False
 
         if order.side == OrderSide.BUY and self._criteria.prohibit_buy_at_upper_circuit:
             # 1. Fill reference price is at or through upper circuit limit
             if effective_upper is not None and ref_price >= effective_upper:
                 return self._create_rejected_result(
                     order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_UPPER_CIRCUIT,
-                    f"Fill reference price ({ref_price}) is at or above Upper Circuit limit ({effective_upper}); zero ask liquidity"
+                    f"Fill reference price ({ref_price}) is at or above Upper Circuit limit ({effective_upper}); zero ask liquidity",
+                    circuit_evidence_present=circuit_evidence,
                 )
             # 2. Whole-day locked upper circuit session (high == low)
             if price_bar.high == price_bar.low:
                 if effective_upper is not None and price_bar.high >= effective_upper:
                     return self._create_rejected_result(
                         order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_UPPER_CIRCUIT,
-                        f"Whole-day locked upper circuit session ({price_bar.high}); buyers rationed"
+                        f"Whole-day locked upper circuit session ({price_bar.high}); buyers rationed",
+                        circuit_evidence_present=circuit_evidence,
                     )
-                elif effective_upper is None:
-                    # Locked 0-range bar without explicit limit evidence
+                elif effective_upper is None and not is_unconstrained:
+                    # Locked 0-range bar without explicit limit evidence (constrained scrip)
                     return self._create_rejected_result(
                         order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_UPPER_CIRCUIT,
-                        f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); buyers rationed"
+                        f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); buyers rationed",
+                        circuit_evidence_present=circuit_evidence,
                     )
 
         if order.side == OrderSide.SELL and self._criteria.prohibit_sell_at_lower_circuit:
@@ -363,19 +378,22 @@ class ExecutionFillSimulator:
             if effective_lower is not None and ref_price <= effective_lower:
                 return self._create_rejected_result(
                     order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_LOWER_CIRCUIT,
-                    f"Fill reference price ({ref_price}) is at or below Lower Circuit limit ({effective_lower}); sellers trapped"
+                    f"Fill reference price ({ref_price}) is at or below Lower Circuit limit ({effective_lower}); sellers trapped",
+                    circuit_evidence_present=circuit_evidence,
                 )
             # 2. Whole-day locked lower circuit session (high == low)
             if price_bar.high == price_bar.low:
                 if effective_lower is not None and price_bar.low <= effective_lower:
                     return self._create_rejected_result(
                         order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_LOWER_CIRCUIT,
-                        f"Whole-day locked lower circuit session ({price_bar.low}); sellers trapped"
+                        f"Whole-day locked lower circuit session ({price_bar.low}); sellers trapped",
+                        circuit_evidence_present=circuit_evidence,
                     )
-                elif effective_lower is None:
+                elif effective_lower is None and not is_unconstrained:
                     return self._create_rejected_result(
                         order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_LOWER_CIRCUIT,
-                        f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); sellers trapped"
+                        f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); sellers trapped",
+                        circuit_evidence_present=circuit_evidence,
                     )
 
         # Invariant 9: Slippage Calculation & Execution Price Realism
@@ -417,8 +435,6 @@ class ExecutionFillSimulator:
             price=executed_price,
             round_to_paise=round_to_paise,
         )
-
-        circuit_evidence = (effective_upper is not None or effective_lower is not None)
         if order.order_id is not None:
             order_key = (order.order_id, price_bar.trade_date)
             count = self._order_fill_counters.get(order_key, 0) + 1
