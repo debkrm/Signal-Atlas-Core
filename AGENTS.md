@@ -64,16 +64,6 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
-<!-- BEGIN:nextjs-agent-rules -->
-
-# This is NOT the Next.js you know
-
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
-
-This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
-
-<!-- END:nextjs-agent-rules -->
-
 ---
 
 # Standing Rules for Indian Quantitative Research, Backtesting & Market Data Integrity
@@ -216,3 +206,49 @@ As senior quantitative researchers building Signal Atlas for production-grade, w
    - A GO/NO-GO verdict may only be computed on sessions in which every required input exists: authoritative calendar, verified security identity, and surveillance state.
    - Sessions before the surveillance frameworks existed (GSM effective 14 Mar 2017, ASM effective 26 Mar 2018) are warm-up only; metrics computed on them are `NOT RUN` for gating.
    - A shorter honest evaluation window is preferred to a longer one resting on fabricated or absent inputs. The binding evaluation window for this project starts **2018-04-01**; moving it earlier requires sourced surveillance history, not prose.
+
+---
+
+## 11. Auditor / Implementer Separation
+
+1. **The audit report is the auditor's, and append-only**:
+   - `reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md` is written by the auditor alone. An implementation agent may read it and must never edit, reword, reformat, delete, or commit a change to it — including staging an audit section that already sits uncommitted in the working tree. If an audit append is pending, leave it pending; commit only your own files.
+2. **Disagreements are new evidence, never edits**:
+   - To contest a finding, commit a separate note that cites the finding ID and provides the measurement contradicting it. A finding is never deleted, softened, or re-scoped by the agent it names.
+3. **A status claim must cite the verdict that grants it**:
+   - `CURRENT_STAGE_OF_WORK.md` may describe work as signed off, verified, closed, or complete only where the cited audit section uses that word for that item, and the sentence must name the audit section (`§N`) and the commit SHA it applies to.
+   - Quote the verdict or cite it; never paraphrase upward. "Implemented" → "implemented & verified" is a false claim under §9.1.
+   - With no citation, write what was measured and what was not: "implemented; gates measured on a synthetic fixture; not audited".
+4. **Shared document mechanics**:
+   - The implementer owns the phase sections it writes. The auditor owns the audit clauses in the phase row and may correct any claim contradicted by a delivered verdict; such a correction is the auditor's edit and must not be reverted by the implementer.
+   - Implementation status notes added to `docs/` follow rule 3 too: name the audit section and SHA the note reflects.
+   - The audit report is a citation target, so committed history is a citation target too (§12.1).
+
+---
+
+## 12. Repository Discipline and Continuous Verification
+
+This project has one branch (`main`), no CI history, and documents that cite commit SHAs. Those facts constrain how work may be delivered.
+
+1. **Committed history is append-only.** Never `--amend`, rebase, squash, or force-push a commit that is already on `main`. Every audit section (§N) and every status claim cites a SHA; rewriting history silently invalidates citations that, being append-only, cannot be corrected. A bad commit is fixed by a commit that follows it, never by erasing it.
+2. **Sign-offs are tagged.** A GO verdict is tagged at the commit it names (`waveN-signed-off-<sha8>`). Tags survive what prose citations do not.
+3. **CI is the computation behind §9.1.** The gate runs, offline, on every push to `main`: the full test suite; every `scripts/verify_*.py` with its exit status preserved and required zero; and the §11.1 check that the audit report gained no removed line. A verdict that cannot be reproduced by the gate is not a verdict.
+4. **A gate is not passed by weakening it.** No `skip`, `xfail`, `pytest.ini` exclusion, or widened tolerance to reach green. No coverage-percentage threshold as a merge gate — it measures lines executed, not invariants upheld (§9.1). If a check must be relaxed, that is a documented decision in the same commit, naming what is now unverified.
+5. **Offline is a test result.** CI has no network. A test that needs the live NSE archive is a fixture-extraction task (cached bytes committed to Bronze), not a test.
+6. **CI never publishes, never projects, never touches holdout.** It computes and fails. Anything that writes outside the working tree is human-invoked.
+
+---
+
+## 13. Strategy Scope: Delivery Swing
+
+Strategy scope is a researched decision, not a default. The current scope is **delivery swing trading on NSE `EQ`**: multi-session holds, no intraday squaring-off, no F&O, no trade-to-trade.
+
+1. **Universe and series.** Entry is permitted in `EQ` only. `BE`/`BZ` bars remain valid price observations for continuity and feature windows (§6.2) but are never entry-eligible (§5.1).
+2. **Holding-period realism.** A position held across sessions must survive what a one-day position can ignore:
+   - Corporate actions and dividends that fall *inside* the holding window are applied to the open position, not only to the historical series. An ex-dividend gap on a held position is a cash inflow, never a loss. A corporate-action table without dividend rows makes every held-position ledger wrong.
+   - Surveillance escalation (ASM/GSM/ESM) during a hold is an exit constraint, not an entry filter (§5.2).
+   - A lower-circuit freeze is an unbounded exit delay, not a one-session cost (§5.3). A strategy whose expectancy depends on exiting into a frozen bid is structurally flawed.
+3. **Attribution is per trade, not per day.** Costs are evaluated per completed round trip against the expected holding-period edge (§7.2). Turnover-based cost minimisation is not an objective.
+4. **Breadth over frequency.** With multi-session holds, independent observations come from cross-sectional breadth (positions per rebalance), not from trade frequency. Prefer ranked baskets over single-name timing; both the multiple-testing budget (§8.2) and the observation count are measured in that unit.
+5. **Swing is configuration, not a second engine.** Holding horizon, universe filter, exit rule, and cost schedule are parameters of the single authoritative engine (§7.4). A `swing_simulator` or a forked fill/cost path is a §7.4 violation regardless of intent.
+6. **Scope changes are recorded.** Moving to intraday, F&O, or `BE` entry requires a committed decision stating the evidence that motivated it. It is never introduced as an experiment inside a strategy file.

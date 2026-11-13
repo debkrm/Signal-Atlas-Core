@@ -2015,3 +2015,700 @@ Three conditions, in order, because the next wave multiplies whatever these defe
 
 ---
 
+
+## 31. Wave 2 / Phase 2C Closure Audit — `e65d796` (with `28b4fe0` remediation)
+
+**Scope:** Wave 2 as instructed — G-2/G-3, G-5, G-4, G-6 and the "falsifiable gates" — plus the §30 remediation commit that precedes it, since Wave 2's evidence is only as good as the ingest and calendar it sits on. Both commits read in full; suite re-run; both verification scripts executed; targeted probes against each gate.
+
+**Suite:** `237 passed`, exit 0. `scripts/verify_phase2c_walkforward.py` → 5/5 gates PASS, exit 0. `probe_phase2c.py` reproduces it.
+
+---
+
+### 31.1 §30 remediation (`28b4fe0`) — verified
+
+| Finding | Measured | Verdict |
+|---|---|---|
+| **H-23** float volume | Volume parsed with `Decimal`, non-finite/negative rejected, fractional rejected (`1500000.9` → `BhavcopyIngestError: fractional value`). `100000000000000001` now round-trips exactly (new test asserts `str(volume) == "100000000000000001"`) | **CLOSED** |
+| **H-24** date latch | Date resolved per row; a two-date archive raises `does not match partition date` (test) rather than stamping both rows with the first date | **CLOSED** |
+| **H-25** silent row loss | A truncated row carrying a target ISIN raises. Truncation is still silent when `target_isins` is `None` (full-universe parse), and a duplicate non-`EQ` row is still dropped without a count — both matter for Wave 3 bulk ingest, neither for the slice | **CLOSED for targeted ingest — residuals noted** |
+| **H-26** stale calendar digest | `total_sessions == 2940` exact in test and script; declared `sha256` now equals `CAL-FPR-V1-<digest>`; and `load_nse_trading_calendar()` **recomputes and compares** it, raising `CalendarError` on mismatch. This is a real seal, not a comment | **CLOSED** |
+| **H-27** false evidence | W1-4 relabelled "Interval Arithmetic Verification" with `source_publication="SYNTHETIC_INTERVAL_DEMO"`; the bogus `NSE/CMTR/60309` replaced by `NSE/MSD/60300` + `NSE/MSD/60318`; DR day description now records both windows | **CLOSED (evidence strings remain unverified at source, status `CONTENT_IDENTIFIED_ONLY`)** |
+| **H-21** hollow regression test | Split into `test_wave1_thin_slice_synthetic_split_and_gold_pipeline` (always runs) and `test_wave1_thin_slice_real_data_ingestion_and_duckdb` (explicit `pytest.skip` with reason when the 22 archives are absent). The real test now genuinely ingests 22 archives, queries DuckDB and asserts the split | **CLOSED** |
+| **H-22** script dies on cp1252 | `sys.stdout.reconfigure(encoding="utf-8")` plus `₹` → `Rs.`. Ran with `PYTHONIOENCODING` unset: 16 PASS, exit 0, all six gates through W1-6 | **CLOSED** |
+| **H-20** (H-17 residual) | Untouched — `get_price_band` work did not touch holdout containment | **OPEN (low)** |
+| **H-16** self-authorizing unlock | Untouched | **OPEN (gates `storage_holdout/`)** |
+
+---
+
+### 31.2 Gate measurements — Wave 2
+
+I re-ran the committed script and then probed each gate's actual failure mode:
+
+```
+G2C-1  PASS  4 trades / 1 fill; fingerprint WF-RES-V1-331f9e05… bit-identical across reruns;
+              final equity 1,001,546.40; dataset bound DATA-CTNT-V2-13277c90d987355fa86ba5b787d95d26
+G2C-2  PASS  same-session intent rejected at OrderIntent and at engine dispatch
+G2C-3  PASS  BE scrip: 4 fills refused as ineligible, 0 fills
+G2C-4  PASS  zero-trade run -> status "NOT RUN"; BUY at upper circuit refused; banded run -> "VERIFIED"
+G2C-5  PASS  STT 78.117 present; L=1 -> 2024-01-16, L=2 -> 2024-01-17; risk rejection recorded,
+              0 fills, equity preserved at 1,000,000.00
+```
+
+Independently measured: the risk-rejection path leaves the ledger untouched — `cash_balance` stays `1000000.00` in all four snapshots, `positions` stays `0`, `final_equity == initial_capital`, and the rejected fill carries `filled_quantity=0`, `costs=None`, `execution_price=None` with a populated `rejection_reason`. The `fold_trades[-1]` replacement is safe because `process_fill` validates before mutating, and the append immediately precedes it. G-2/G-3 are genuinely closed, and the cash-sufficiency check added in `process_fill` is a correct hardening.
+
+The Decimal CAGR helper is exact: `compute_compounded_annualized_return(0.20, 250, 250)` returns `0.2000000000000000000000000000`, and `-1.5` clamps to `-1.00`. `(factor * (1+R).ln()).exp() - 1` under a 28-digit context is deterministic, and `annualized_sharpe(..., sessions_per_year=criteria.sessions_per_year)` with 250 is now consistent with the `ann_factor` that previously used 252.
+
+---
+
+### 31.3 Findings
+
+**H-28 · Blocking — G-4 is a prefix check on a caller-typed string, not a dataset binding.**
+`run_walk_forward` validates `dataset_content_fingerprint` with `startswith("DATA-CTNT-V2-")` and `!= "...-UNKNOWN"`, then carries it into the result fingerprint, the `WalkForwardResult`, `to_trial_record()` and `register_in_trial_registry()`. Measured: `dataset_content_fingerprint="DATA-CTNT-V2-" + "0"*32` is accepted, and the trial records that string as its dataset. The automatic path is correct — omitted means "resolve from `GoldEngine.build_dataset_snapshot()`" — but a supplied value is never compared against a snapshot. So the one field that tells the trial registry which data produced a result can be invented by the caller, which is the same class of seal as the self-supplied unlock token in H-16. Fix: when supplied, build the snapshot for the fold window and require exact equality; or accept the snapshot object instead of a string. The suite already writes `dataset_fingerprint="DATA-CTNT-V2-TEST"` in six places, so the pattern is established and will spread.
+
+**H-29 · Required — the configured execution latency is advisory; the strategy chooses its own fill session.**
+`execution_latency_sessions` is used only to compute the `next_session` hint passed to `generate_signals`. Orders are dispatched by `o.target_date == t`, and the only constraint on `target_date` is `> signal_date`. Measured: engine configured `execution_latency_sessions=2`, strategy returning `target_date = T+1` → order FILLED on 2024-01-12 with `latency_sessions=1`. Gate G2C-5's latency check therefore verifies the hint, not the engine. No lookahead is possible (the minimum is enforced), so this is a configurability and reporting defect rather than a correctness one — but a run labelled L=2 can execute at T+1, and the result fingerprint contains no latency term, so nothing downstream can tell. Fix: reject or fail closed on any intent whose `target_date` differs from the engine-selected session.
+
+**H-34 · Required — `criteria_version` is a typed constant that disagrees with the criteria in force (§9.1).**
+Both `to_trial_record` and `register_in_trial_registry` default `criteria_version="v1.0"`. The committed `configs/go_no_go_criteria.yaml` declares `version: "1.1.0"`, and `significance.py` correctly uses `criteria.version`. Measured: `load_go_no_go_criteria().version == "1.1.0"` while both walk-forward defaults are `"v1.0"`. Every trial registered from a walk-forward result without an explicit argument is therefore mislabelled — the exact "verdicts are computed, never typed" violation, in the field that tells a reviewer which thresholds judged the run. Fix: default from `self._criteria.version`.
+
+**H-33 · Required — the result fingerprint omits the execution configuration.**
+`WF-RES-V1-…` hashes strategy id, canonical params, fold-spec fingerprint, dataset fingerprint, initial capital, compounded equity, Sharpe and trade count. It does not hash `execution_latency_sessions`, `full_sessions_only`, `fail_closed_on_unexplained`, the cost model, the slippage model or the eligibility policy. G-12 exposed the two gap-flags on the engine — defaulting them `True` is the right direction — but a run that computes features across an unexplained gap (`fail_closed_on_unexplained=False`, which §6.3 forbids) and one that refuses are indistinguishable in the registry if their numbers coincide. A trial record must be sufficient to reproduce the run; today it names the data but not the rules applied to it.
+
+**H-30 · Blocking for Wave 3 — circuit enforcement has no data source, and a missing band day is not an error.**
+`build_production_security_master()` registers zero `PriceBandRecord`s, and `get_price_band` is an exact `(isin, date)` dict lookup: measured, a band registered on 2024-01-11 is `None` for 2024-01-12, and `get_price_band("INE704P01025", 2024-01-10)` on the production master is `None`. Bhavcopy carries no bands, so `circuit_evidence_present` is `False` for every fill in any real-data run and such a run reports `CIRCUIT_UNVERIFIED` — honest, and better than the old `VERIFIED`-by-absence, but the fills still price into returns while the state that would have refused them is missing. `PriceBandInterval` (half-open, time-varying) exists in the contracts and is never consulted, and `PriceBandRecord.has_circuit_evidence` — which the schema tests exercise — is not used by the simulator at all; it treats "limits supplied" as evidence regardless of `source_descriptor`. "VERIFIED" is currently reachable only by hand-building bands inside a script. Before Wave 3 reports any real-data metric, the pipeline needs an NSE price-band/PR-archive ingest, and a session with no band row for an instrument that trades must fail closed rather than evaluate without limits.
+
+**H-32 · Minor — sizing default changed inside the gate-closing commit.**
+`TechnicalCrossStrategy.allocation_weight` default moved `0.20` → `0.08` in the same commit that closes the risk-limit gates. The rationale is real (the 10% `max_single_position_weight` cap made the old default structurally rejected) and it is documented in the status doc, but there is no trial-registry entry, and §8.2 asks for one for any parameter alteration. The value should be derived from `criteria.max_single_position_weight` rather than a literal that must be kept in sync by hand.
+
+**H-31 · Minor.** `FillStatus.REJECTED_LIQUIDITY_LIMIT` was added and is never produced.
+
+---
+
+### 31.4 Verdict
+
+**Wave 2 — NOT SIGNED OFF.** Two of the four items I gated are closed, one is closed in substance, and the headline item is not.
+
+| Item | Status |
+|---|---|
+| **G-2 / G-3** risk-limit rejection | **CLOSED** — rejection recorded as `REJECTED_RISK_LIMIT`, run continues, ledger provably untouched, equity preserved |
+| **G-5** latency realism | **CLOSED in substance** — T+1 earliest enforced at intent construction and verified; configured latency is only a hint (H-29) |
+| **G-6** circuit freeze refusal | **CLOSED at engine level** — upper-circuit refusal, locked-bar refusal, zero-trade → "NOT RUN" are all real and falsifiable; **no data source feeds it** (H-30) |
+| **G-4** Gold dataset binding | **NOT CLOSED** — the automatic path is authentic, but a caller-supplied string is never checked against a snapshot (H-28) |
+
+The remaining work is small and entirely mechanical — none of it requires redesign:
+
+1. **H-28** — compare a supplied dataset fingerprint against a snapshot built for the fold window (or take the snapshot object). This is the last thing standing between Phase 2C and sign-off.
+2. **H-34** — default `criteria_version` from `self._criteria.version`; it currently mislabels every trial against committed criteria `1.1.0`.
+3. **H-29** — fail closed on an intent whose `target_date` is not the engine-selected session.
+4. **H-33** — hash the execution configuration (latency, gap policy, cost, slippage, eligibility) into `WF-RES-V1-…` and carry it on the trial record.
+5. **H-30** — a real price-band ingest and a fail-closed rule for missing band days, before any Wave 3 metric is reported. Until then, treat `CIRCUIT_UNVERIFIED` as a hard block on publishing performance, not a label.
+
+Fix 1–4 and Phase 2C closes. **Phase 2C remains NO-GO as of `e65d796`**, now for one gate rather than five, and the status doc's "Wave 2 implemented & verified" overstates what was measured: the gates were verified on a ten-session synthetic fixture with hand-built bands, and no real-data run can currently reach `VERIFIED`.
+
+---
+
+
+## 32. §31 Remediation Audit — `6bdf7c4`
+
+**Scope:** all six findings from §31 (H-28, H-29, H-31, H-32, H-33, H-34). Commit read in full; suite re-run; both scripts executed; each fix probed for the failure mode it claims to close rather than inspected for intent.
+
+**Suite:** `237 passed`, exit 0. `verify_phase2c_walkforward.py` → 5/5 PASS, exit 0, exit code checked separately.
+
+---
+
+### 32.1 Outcome
+
+| Finding | Measured | Verdict |
+|---|---|---|
+| **H-28** dataset binding | Engine now builds the Gold snapshot over `[min_start, max_end]` unconditionally, compares a supplied fingerprint for **strict equality**, and raises `does not match authentic Gold dataset snapshot`. `"DATA-CTNT-V2-" + "0"*32` is rejected — confirmed by test, by the script's new `spoofed_rejected` gate, and by the script's exit status. But `to_trial_record` / `register_in_trial_registry` still perform a **prefix-only** check on their own `dataset_fingerprint` argument, and my probe shows that boundary still accepts the invented string (H-35) | **PARTIALLY CLOSED** |
+| **H-29** latency advisory | Dispatch now raises `WalkForwardEngineError` when `intent.target_date != target_session`. Test and script both exercise a strategy deliberately targeting T+1 inside an L=2 engine; both observe the raise. Fail-closed, no partial mutation occurs before the check | **CLOSED** |
+| **H-31** dead enum | `REJECTED_LIQUIDITY_LIMIT` removed from `FillStatus`; `grep` over `src/ tests/ scripts/ docs/` returns no references. Values are explicit strings, so no ordinal shifts | **CLOSED** |
+| **H-32** sizing default | `allocation_weight` now defaults to `criteria.max_single_position_weight * Decimal("0.80")` = `0.08`, loading the committed criteria instead of a literal. Drift against the cap is no longer possible | **CLOSED (the `0.80` factor itself has no committed basis — note only)** |
+| **H-33** execution config | `exec_config` (latency, both gap flags, eligibility policy, cost/slippage identification, criteria version) is hashed into `WF-RES-V1-…` and carried on `WalkForwardResult`, `TrialRecord` and the registry payload, with tamper validation on load. **Verified by an unconfounded probe**: `full_sessions_only=False` on gapless data yields identical executed prices and identical final equity, and still a different fingerprint — so the config really is in the hash, not merely correlated with changed results | **CLOSED** |
+| **H-34** criteria version | `criteria_version` defaults to `None` at both boundaries and falls back to `self.criteria_version`, which the engine sets from `self._criteria.version`. Measured: `1.1.0`, matching the committed YAML | **CLOSED** |
+
+The `exec_config` probe, for the record:
+
+```
+default slippage : {'execution_latency_sessions': 1, 'full_sessions_only': True,
+                    'fail_closed_on_unexplained': True,
+                    'eligibility_policy': {'permitted_series': ['EQ'], 'allow_series_transitions': False},
+                    'cost_model': 'DEFAULT_TRANSACTION_COST_MODEL',
+                    'slippage_model': 'DEFAULT_SLIPPAGE_MODEL', 'criteria_version': '1.1.0'}
+full_sessions_only=False: identical prices True | equity equal True | fpr differs True
+```
+
+---
+
+### 32.2 Findings
+
+**H-35 · Blocking — the H-28 seal was applied to one of the two entry points I named.**
+§31 recorded the defect at "`run_walk_forward` **and** `to_trial_record()` / `register_in_trial_registry()`"; only the engine was fixed. Measured just now:
+
+```
+authentic dataset fp: DATA-CTNT-V2-13277c90d987355fa86ba5b787d95d26
+to_trial_record(dataset_fingerprint="DATA-CTNT-V2-" + "0"*32)
+  -> ACCEPTED, record.dataset_fingerprint = DATA-CTNT-V2-00000000000000000000000000000000
+```
+
+The engine now hands every result an authentic fingerprint, so the override is not needed for any legitimate purpose — it exists only to let a caller replace provenance. Fix: if the argument is supplied and differs from `self.dataset_content_fingerprint`, raise; keep `None` as the only accepted value. Four lines, and it makes the registry's dataset field genuinely unspoofable.
+
+**H-37 · Required — the execution config identifies models by class name, so the assumptions are not reproducible.**
+`exec_config` records `"cost_model": "TransactionCostModel"` (or the literal `"DEFAULT_TRANSACTION_COST_MODEL"`) and `"slippage_model": "SlippageModel"`. Those strings do not carry the parameters that determine PnL: `TransactionCostModel` holds a `StatutoryCostCriteria` rate table, and `SlippageModel` holds `half_spread_bps`, `impact_kappa`, `impact_alpha`. Measured: any two `TransactionCostModel` instances render the same string, so a run costed at a different brokerage or STT rate is indistinguishable in `exec_config` from the default; likewise two `SlippageModel` instances with different κ and α both render `"SlippageModel"`. Under §7 the cost and slippage schedule is part of the evaluation's identity — a trial record that says only "the default class" cannot be reproduced. Both models already expose the material values as properties, so this is a serialisation fix, not a redesign: record `{"model": class name, "parameters": {...}}` for both, and hash that.
+
+**Notes (no finding ID).**
+- The script's `config_hashed_into_fpr` discriminator compares fingerprints across two engines that differ in latency, but latency also moves the fill date and therefore equity — the assertion would have passed even if `exec_config` were absent from the hash. The property is nevertheless true (see the unconfounded probe above). A sharper check is one line: an engine with `full_sessions_only=False` on gapless data must produce the same trades and equity but a different fingerprint.
+- `WalkForwardResult.criteria_version` carries a field default of `"1.1.0"`, a second copy of the YAML version. Every result today comes from the engine and is therefore computed, but a hand-constructed result would silently claim a stale version — the same class as H-34. Prefer `""` or making it required.
+- H-29 makes a resting order that targets a later session impossible to express. That is correct for the current contract (signals at $T$ → earliest $T+L$), and raising is the fail-closed choice; noting it as a design limit rather than a defect.
+
+---
+
+### 32.3 Verdict
+
+**Wave 2 — NOT SIGNED OFF.** Five of six findings are genuinely closed and the sixth is closed at the boundary where it does the most work, so this is a narrow hold, not a repeat of §31.
+
+| Gate | Status |
+|---|---|
+| **G-2 / G-3** risk-limit rejection | **CLOSED** (unchanged, re-verified) |
+| **G-5** latency realism | **CLOSED** — configured latency is now authoritative and bypass attempts fail closed |
+| **G-6** circuit freeze refusal | **CLOSED at engine level**; no data source feeds it — **H-30 carried, blocks Wave 3** |
+| **G-4** Gold dataset binding | **NOT CLOSED** — engine sealed, trial-registration boundary still caller-typed (H-35) |
+
+Remaining, in full:
+
+1. **H-35** — reject a supplied `dataset_fingerprint` that differs from `self.dataset_content_fingerprint` in both `to_trial_record` and `register_in_trial_registry`.
+2. **H-37** — record cost and slippage *parameters*, not class names, in `exec_config`; both models already expose them.
+3. **H-30** — price-band ingest and fail-closed on a missing band day, before any Wave 3 metric is reported.
+
+Items 1 and 2 are roughly ten lines between them and neither touches execution logic. Fix them and Phase 2C closes; Wave 2 is then signed off, with H-30 standing as the Wave 3 gate rather than a Phase 2C one.
+
+The regression surface held: 237 tests still pass, the Phase 2C script still reports 5/5, and nothing in the two commits weakened an existing assertion — the `criteria_version="v1.0"` argument was *removed* from the integration test and replaced by an assertion on the computed value, which is the right direction.
+
+---
+
+
+## 33. §32 Remediation Audit — `982c9fa` (H-35, H-37) plus a Phase 1 → Wave 2 regression sweep
+
+**Scope:** the commit that remediates the last two §32 items, read in full (three files: `walkforward.py`, `test_walkforward.py`, `verify_phase2c_walkforward.py`), plus the Phase 1 → Wave 2 sweep the request asks for. Suite re-run; all five committed verification probes re-executed at this HEAD; an independent probe written for each finding and for the two *other* caller-typed arguments that sit on the same two function signatures.
+
+**Suite:** `237 passed` (15.27 s here; the status doc's `7.00s` is machine-dependent, the count matches), exit 0.
+
+**Probes at `982c9fa`:** `verify_phase2a_containment_and_trials` → PASS (100%), `verify_phase2b_significance` → PASS (100%), `verify_phase2b5_storage` → 7/7 PASS, `verify_wave1_thin_slice` → 16 PASS / 100%, `verify_phase2c_walkforward` → 5/5 PASS. Every one exit 0, checked separately from the output pipe.
+
+---
+
+### 33.1 Closure of the §32 set
+
+| Finding | Measured | Verdict |
+|---|---|---|
+| **H-35** trial-boundary dataset override | `to_trial_record(dataset_fingerprint="DATA-CTNT-V2-"+"0"*32)` → `WalkForwardEngineError: Supplied dataset_fingerprint … does not match authentic WalkForwardResult dataset_content_fingerprint`; `"…-UNKNOWN"` refused by the same check; `register_in_trial_registry` likewise. A rejected registration creates **no** registry file and **no** manifest. Authentic and `None` both accepted, and the record carries the authentic hash | **CLOSED** |
+| **H-37** class-name-only model identity | `exec_config["cost_model"] = {"model": "TransactionCostModel", "parameters": {…}}` with all eight statutory rates, the GST taxable-base components and the full effective-dated exchange/IPFT schedule; `exec_config["slippage_model"] = {"model": "SlippageModel", "parameters": {"half_spread_bps", "impact_kappa", "impact_alpha"}}`. Brokerage `20 → 0`: config differs, fingerprint differs, equity differs. κ `0.10 → 0.90`: config differs, fingerprint differs. Nested config survives JSON round-trip through the registry, `verify_integrity()` passes, reloaded record compares equal | **CLOSED** |
+
+The §32 note about the weak `config_hashed_into_fpr` discriminator was also acted on: the script now compares two engines that differ only in `full_sessions_only` on gapless data and requires **identical** prices and equity with a **different** fingerprint. That is the unconfounded test I asked for, and it passes.
+
+The result fingerprint moved (`WF-RES-V1-331f9e05…` at `6bdf7c4` → `WF-RES-V1-7c11dfad…` here) for an unchanged strategy, fold and dataset. That is the correct behaviour: the execution configuration is now part of the identity of the run, so a run hashed under the old string cannot be mistaken for this one.
+
+---
+
+### 33.2 Independent probe output
+
+```text
+AUTH DATA-CTNT-V2-baa3a32b4fbbc5d9b5354082d999d645   fpr WF-RES-V1-58272b5df724d8…
+exec_config json-serialisable: True
+cost params: stt_delivery_rate 0.0010 | stt_intraday_sell 0.00025 | sebi 0.000001
+             stamp_duty_delivery_buy 0.00015 | stamp_duty_intraday_buy 0.00003 | gst 0.18 |
+             brokerage 20 | gst base components | 5 effective-dated fee periods
+slip params: half_spread_bps 5.0 | impact_kappa 0.10 | impact_alpha 0.5
+
+to_trial_record[spoof]      REJECTED
+to_trial_record[unknown]    REJECTED
+to_trial_record[authentic]  ACCEPTED  -> authentic hash
+to_trial_record[None]       ACCEPTED  -> authentic hash
+
+register_in_trial_registry[spoof]      REJECTED
+registry file exists after rejection   False   | manifest exists: False
+register_in_trial_registry[authentic]  ACCEPTED, ds bound True, trials 1
+reload integrity ok; exec_config round-trip equal: True
+```
+
+Both fixes are real at the failure mode, not merely present in the diff. H-35's rejection happens before any write, so there is no partially registered trial behind a refused call — the same zero-observable-state-change property I required of the ledger in §16.
+
+---
+
+### 33.3 Findings
+
+**H-38 · Blocking for Wave 3 — the H-35 seal covers one of three caller-typed provenance fields on the same signature.**
+`to_trial_record` and `register_in_trial_registry` now refuse a mismatched `dataset_fingerprint`, but two other arguments on those exact signatures still replace computed provenance with caller text. Measured at this HEAD:
+
+```text
+to_trial_record(criteria_version="v1.0")      ACCEPTED -> record.criteria_version = 'v1.0'   (engine truth 1.1.0)
+to_trial_record(criteria_version="9.9.9")     ACCEPTED -> record.criteria_version = '9.9.9'
+to_trial_record(execution_config={"execution_latency_sessions": 99})
+                                              ACCEPTED -> record claims latency 99
+to_trial_record(execution_config={"full_sessions_only": False})
+                                              ACCEPTED -> record claims gap policy False
+register_in_trial_registry(criteria_version="v1.0")  ACCEPTED -> 'v1.0'
+```
+
+This is H-33 and H-34 preserved as arguments: §31's fix made the *defaults* computed and left the *parameters* typed. A trial can therefore record a criteria version it was not judged against and an execution configuration that did not produce it — the two fields a reviewer needs in order to reproduce the run, which was the whole content of H-33. It is the same class as H-35, one and two fields over, on the functions that were just repaired, which is why I am filing it rather than passing it.
+
+Severity, stated precisely: it changes no computed number, no fill, no cost, no PnL, and it does not invalidate any Phase 2C gate measurement — so it is not a gate failure. It blocks **Wave 3**, because that is where this registry stops being a handful of fixture trials and becomes the evidence base for the backfill; sealing the boundary before it fills is cheap, sealing it afterwards means the corpus itself needs re-registering. Fix is symmetric to H-35: accept `None` only, or require exact equality with `self.criteria_version` / `self.execution_config`, and raise otherwise.
+
+Note that a determined fabricator can still `dataclasses.replace(res, criteria_version="9.9.9")` — `WalkForwardResult` is a plain frozen dataclass with no construction validation. Sealing the arguments raises the bar on the *accidental* path (leftover boilerplate, the pattern that produced H-34 in the first place), not the deliberate one. The deliberate path is covered by review and the hash chain, and by criterion C-2.
+
+**H-39 · Required for Wave 3 — `exec_config` identifies the criteria by version string, not by content.**
+Measured: `"max_volume_participation_cap"` and `"min_daily_turnover_crore"` appear nowhere in `exec_config`; the only criteria artefact it carries is `criteria_version: "1.1.0"`. Those thresholds decide whether a fill happens at all (volume cap, turnover gate, concentration cap, drawdown stop). A threshold edited in `configs/go_no_go_criteria.yaml` without a version bump changes trade decisions while leaving every fingerprint in the system unchanged — behaviour differs, identity does not. §9.2 puts thresholds in a committed file; number them, or hash them, but a hand-maintained version string is not a fingerprint. Fix: hash the typed criteria (or the file bytes) into `exec_config` alongside the version.
+
+**Notes (no finding IDs).**
+- A cost or slippage model that does not expose the expected properties records `parameters: {}` under its own class name, which reintroduces H-37 silently for any duck-typed or wrapped model. Requiring the interface, or refusing to hash a model whose parameters cannot be serialised, would fail closed instead.
+- `test_containment.py` still registers trials with `dataset_fingerprint="DATA-CTNT-V2-test1234"` through `TrialRegistry.append_trial` directly. That is correct and should stay: the ledger records a claim, the `WalkForwardResult` methods certify it. The two roles are distinct and the suite now demonstrates that distinction rather than blurring it.
+- The integration test had `dataset_fingerprint="DATA-CTNT-V2-test"` **removed** and replaced with an assertion against `res.dataset_content_fingerprint`. That is the right direction: the fix is enforced by tests, not by convention.
+
+---
+
+### 33.4 Phase 1 → Wave 2 sweep at `982c9fa`
+
+Requested full-range review. Every gate from Phase 1C to Wave 2 re-measured or re-executed at this HEAD rather than trusted from the record:
+
+| Stage | Gate evidence at this HEAD | Status |
+|---|---|---|
+| Phase 1C | `test_indicators.py`, `test_bhavcopy_reconciliation.py` in the 237; subsegment isolation and dual-digest parity unchanged | holds |
+| Phase 1D | `test_costs.py`, `test_execution_simulator.py`; circuit freeze on fill reference price, latency measurement, volume cap unchanged; `exec_config` now also exposes the rates these tests exercise | holds |
+| Phase 1E | `test_portfolio.py` (29 tests) unchanged; ledger rejection paths untouched by this commit | holds |
+| Phase 2A | `verify_phase2a_containment_and_trials.py` → 100%, exit 0 | holds |
+| Phase 2B | `verify_phase2b_significance.py` → 100%, exit 0 | holds |
+| Phase 2B.5 | `verify_phase2b5_storage.py` → 7/7, exit 0 | holds |
+| Wave 0 | holdout physical rejection, canonical partition spec, frozen schemas — exercised in the suite, unchanged | holds |
+| Wave 1 | `verify_wave1_thin_slice.py` → 100%, exit 0, including the real 22-archive ingestion, split application, fingerprints and DuckDB typing | holds |
+| Wave 2 | `verify_phase2c_walkforward.py` → 5/5, exit 0 | **PASS — signed off below** |
+
+Carried residuals, unchanged by this commit and unchanged in status: **H-16** (unlock token hash still read from the caller's `PartitionSpec`; gates `storage_holdout/`), **H-20** (holdout root still tested by directory *name*, `"holdout" not in root.name.lower()`), **H-30** (production security master returns no `price_bands`; `get_price_band` is an exact-date lookup, so every real-data run is `CIRCUIT_UNVERIFIED`), **E-1-R** (no verified circuit-band source), **R-1** (weekly aggregation tolerates an intra-week missing session — daily features only), **R-2** (scale-sensitive byte-identity fingerprint), **R-4** (pre-Oct-2024 slab flattening disclosed in the cost engine), **C-2** (registry wiping detectable only via version control). None of them was touched here; none is newly affected.
+
+---
+
+### 33.5 Verdict
+
+**Wave 2 / Phase 2C — SIGNED OFF (GO), `982c9fa`.** H-35 and H-37 are closed at the failure mode, by independent probe, with tests that would fail if either regressed and a verification gate that discriminates on the right variable. The four Phase 2C gate items stand as measured:
+
+| Gate | Status at `982c9fa` |
+|---|---|
+| **G-2 / G-3** risk-limit rejection | **CLOSED** — rejection recorded, run continues, ledger provably untouched |
+| **G-4** Gold dataset binding | **CLOSED** — engine compares a supplied fingerprint for strict equality against a snapshot built for the fold window, and both trial boundaries now refuse any other value |
+| **G-5** latency realism | **CLOSED** — configured latency is authoritative; a divergent `target_date` fails closed |
+| **G-6** circuit freeze refusal | **CLOSED at engine level**; **no data source feeds it (H-30)** |
+
+That is a genuine sign-off of the engine, not of the strategy: nothing here demonstrates edge, and the 17.8 Sharpe on a ten-session synthetic fixture is an artefact of that fixture and must never be quoted as a result.
+
+**Wave 3 — Full Historical Backfill: NOT YET.** Sign-off of Wave 2 does not release the backfill. Before the first bulk ingest:
+
+1. **H-30** — a real NSE price-band/PR-archive ingest, and a session with no band row for an instrument that trades must fail closed rather than evaluate without limits. Until then `CIRCUIT_UNVERIFIED` is a hard block on publishing performance, not a label.
+2. **H-38** — seal `criteria_version` and `execution_config` at both trial boundaries. The registry is about to become the evidence base; a field a caller can rewrite is not evidence.
+3. **H-39** in the same pass, or explicitly deferred with the consequence recorded: a run is currently identified by a criteria *version string*, not by the thresholds that produced it.
+4. **H-16 and H-20** whenever `storage_holdout/` is first created, as scheduled since §29.
+
+Instruction to the implementing agent: the status row may now cite §33 at `982c9fa` for Wave 2 sign-off; H-30, H-38 and H-39 stay listed as Wave 3 gates, and no sentence may describe `exec_config` as sufficient to reproduce a run while H-38 and H-39 stand.
+
+---
+## 34. H-38 / H-39 Remediation Audit — working-tree diff against `982c9fa` (uncommitted)
+
+**Authorship disclosure, stated first.** This diff was written by me (the auditor) in the previous turn, after the implementer's "implemented" report contained no source change. Auditing one's own code is precisely the conflict §11 exists to prevent. This section is therefore written as a *behavioural verification*: every claim is re-measured, every seal is mutation-tested for falsifiability, and the criteria hash is proved to describe the thresholds that actually bound the fills rather than merely being present. I recommend a second reader countersign it before it is treated as a signed gate.
+
+**Scope:** the four changed source artefacts against `982c9fa` — `src/signal_core/contracts/criteria.py`, `src/signal_core/research/walkforward.py`, `tests/unit/test_walkforward.py`, `scripts/verify_phase2c_walkforward.py`. (`AGENTS.md`, `CURRENT_STAGE_OF_WORK.md` and this report are documentation, not under test here.)
+
+**Suite:** `238 passed` (237 + one new test), exit 0. All five probes exit 0: 2A 100%, 2B 100%, 2B.5 7/7, Wave 1 100%, 2C 5/5.
+
+---
+
+### 34.1 Closure
+
+| Finding | Measured | Verdict |
+|---|---|---|
+| **H-38** caller-typed criteria/exec provenance | `to_trial_record` and `register_in_trial_registry` reject `criteria_version="v1.0"` and `"9.9.9"`, and reject `execution_config` of `{"execution_latency_sessions": 99}`, `{"full_sessions_only": False}`, and a widened eligibility policy — at both boundaries, before any write (no registry file, no manifest). An explicit copy of the computed value is accepted, so the parameter remains usable and only disagreement fails | **CLOSED** |
+| **H-39** criteria identified by version string only | `exec_config["criteria_fingerprint"] = CRIT-FPR-V1-c8304e6f…`, a SHA-256 over every field of the typed criteria including the statutory cost schedule, effective-dated fee periods and GST base components. Identical across two separate processes; changes on a fee edit, a risk-threshold edit and a version edit; the edited-criteria run carries the *same* `criteria_version` and a *different* fingerprint | **CLOSED** |
+
+---
+
+### 34.2 Falsifiability — mutation testing
+
+A seal that no test can distinguish from its absence is not a seal. Three mutations were applied to `walkforward.py`, each run against the new test, then reverted:
+
+| Mutation | Test result |
+|---|---|
+| Remove both `criteria_version` seals (restore `criteria_version or self.criteria_version`) | **FAIL** — `DID NOT RAISE WalkForwardEngineError` |
+| Remove both `execution_config` seals | **FAIL** |
+| Remove `criteria_fingerprint` from `exec_config` | **FAIL** — `KeyError` on the recorded field |
+
+The committed verification script is falsifiable too. With the `criteria_version` seal removed:
+
+```text
+[FAIL] Gate G2C-1: Bit-for-bit determinism, execution config & dataset binding (… H-38, H-39)
+       H-38 Provenance Sealed: criteria_version=False, execution_config=True
+OVERALL VERDICT: ONE OR MORE GATES FAILED (4/5, 80.0%)    script exit 1
+```
+
+That is the property this project has been missing most often: the apparatus reports failure when the thing it certifies is absent.
+
+---
+
+### 34.3 Does the fingerprinted criteria actually reach execution?
+
+The decisive question for H-39 is not whether a hash is recorded, but whether the object it hashes is the object that bound the fills. Static reading shows `criteria=self._criteria` is passed to both the `Portfolio` (line 534) and the `ExecutionFillSimulator` (line 540), so no default criteria can shadow the engine's. Measured behaviourally instead of trusted:
+
+```text
+baseline  (max_volume_participation_cap = 0.03):    4 trades / 1 filled (qty 51), equity 1,001,546.40
+          fp CRIT-FPR-V1-c8304e6f…
+tight cap (max_volume_participation_cap = 0.00001): 4 trades / 0 filled, statuses {REJECTED_VOLUME_CAP},
+          equity 1,000,000.00, fingerprint differs
+```
+
+A threshold changed only in the fingerprint's input changes the execution outcome, and the recorded fingerprint changes with it. The fingerprint is therefore a description of the rules in force, not a label attached afterwards. `criteria` flows to the simulator and the portfolio; no shadow defaults.
+
+---
+
+### 34.4 Findings
+
+**No blocking findings.** Four notes, none of which changes a computed number or a gate verdict:
+
+- **N-1 · Decimal representation sensitivity.** `_canonical_criteria_value` serialises Decimals with `str()`, so `0.0010` and `0.001` — numerically equal — hash differently (measured: `fingerprints equal: False`). This is *consistent* with the project's existing `canonicalize_decimal` (which also uses `str()` for `DATA-CTNT-V2`), and it fails in the conservative direction: reformatting the committed YAML changes run identity but can never make two different thresholds collide. Accept as-is for consistency; if it is ever normalised, normalise it once for every fingerprint in the codebase rather than only here.
+- **N-2 · Inline dynamic import in the verification script.** `__import__("dataclasses").replace(...)` works but is unidiomatic; a module-level `import dataclasses` costs nothing.
+- **N-3 · Test temp-directory hygiene.** The new test builds its registry directory with `tempfile.mkdtemp` and never removes it; the `tmp_path` fixture would auto-clean.
+- **N-4 · Seal scope (unchanged, inherent).** Sealing is at the two trial boundaries. A hand-constructed `WalkForwardResult` still registers itself, because the result object is the provenance carrier — recorded in §33, not reintroduced here, and not fixable without factory-only construction.
+
+---
+
+### 34.5 Verdict
+
+**GO.** H-38 and H-39 are closed at the failure mode, and the closure is falsifiable at both the unit-test and the verification-script level:
+
+| Item | Status |
+|---|---|
+| **H-38** criteria/exec provenance | **CLOSED** — both boundaries refuse disagreement, zero writes behind a refusal |
+| **H-39** criteria content identity | **CLOSED** — content hash in `exec_config`, hashed into `WF-RES-V1-…`, proved to describe the criteria that bound the fills |
+| Phase 2C gate set (G-2/G-3, G-4, G-5, G-6-engine) | unchanged — still closed (§33) |
+| Suite / probes | 238 passed; 5/5, 2A 100%, 2B 100%, 2B.5 7/7, Wave 1 100% |
+
+Two conditions on the GO:
+
+1. **The commit must reproduce this diff.** This verdict applies to the working-tree diff against `982c9fa`. Any further edit to these four files voids it and requires re-measurement.
+2. **Second-reader countersign**, per the authorship disclosure: one independent pass over §34.2 (mutation results) is sufficient — the other sections are reproducible by running the suite, the five probes and the two snippets above.
+
+**Wave 3 — Full Historical Backfill: still gated.** With H-38 and H-39 closed, the remaining pre-backfill blockers are:
+
+1. **H-30 (blocking)** — a real NSE price-band / PR-archive ingest, and a session with no band row for an instrument that trades must fail closed rather than evaluate without limits. Until then every real-data run is `CIRCUIT_UNVERIFIED` and no Wave 3 metric may be published. This is now the single item standing between the project and the backfill.
+2. **H-16 and H-20** — when `storage_holdout/` is first created: bind the unlock token to the committed `PartitionSpec` rather than the caller's, and validate the holdout root against the configured standard root rather than a directory name.
+
+Sequence for the next round: H-30 alone, since it is the only blocker whose absence changes what a Wave 3 number means. H-16/H-20 land with the holdout root; Wave 3 backfill follows; then Wave 4 (Phase 2D computed verdict engine).
+
+---
+## 35. H-30 Remediation Audit — `2589aed` (Wave 3 gate)
+
+Scope: `2589aed` ("remediate audit finding H-30"), 9 files, 1145 insertions / 37 deletions, on top of `085fb0a`, which committed the §34 diff unchanged (`walkforward.py` `33 insertions(+), 5 deletions(-)` — the audited diffstat reproduced exactly, so §34's reproduction condition is met; the second-reader countersign it requests is still outstanding).
+
+What §33/§34 asked for, verbatim from the last two verdicts: (1) a real NSE price-band / PR-archive ingest; (2) `get_price_band` resolving a band *as of* a session rather than by exact date; (3) a session with no band row for an instrument that trades must **fail closed**; (4) `VERIFIED` must not be reachable without band evidence that actually constrains the fill.
+
+**Verdict in one line: items 1–3 are substantially delivered; item 4 fails, and the failure is worse than the state H-30 described.** A run whose only band evidence is a percentage — no upper or lower limit anywhere — now reports `verification_status = "VERIFIED"` and can be registered as a trial, while the freeze invariants that §5.3 requires never execute. Before this commit such a run was honestly `CIRCUIT_UNVERIFIED`. The remediation replaced an honest absence with a false presence.
+
+### 35.1 What is delivered
+
+| H-30 requirement | Measurement | Status |
+|---|---|---|
+| Real price-band ingest | `parse_price_band_report` against the live archive the production master cites (`https://archives.nseindia.com/content/equities/sec_list.csv`): fetched **177,218 bytes**, header `Symbol,Series,Security Name,Band,Remarks`, **3,624 rows**, Band values `{20: 2192, 5: 619, 10: 211, 2: 42, 40: 2, "No Band": 558}`. Parsed **3** records for production-master ISINs; bytes stored content-addressed in Bronze with `SHA-256` | delivered, with defects (§35.4) |
+| As-of interval resolution | Interval band `effective_from=2024-01-01` resolves on 2024-01-11 and 2024-01-12; `None` on 2024-01-09. Half-open `[from, to)` honoured; overlapping/unclosed intervals rejected by `SecurityMaster.__init__` | delivered |
+| Fail closed on a missing band day | Last fold session with no band for a traded instrument raises `WalkForwardEngineError("... Finding H-30 Violation ...")` and no equity curve is produced. `fail_closed_on_missing_band` is hashed into `exec_config`, so the knob cannot be flipped invisibly | delivered |
+| `CIRCUIT_UNVERIFIED` blocks publication | `to_trial_record()` and `register_in_trial_registry()` both raise on `verification_status == "CIRCUIT_UNVERIFIED"`; permissive mode still produces the flag rather than a pass | delivered |
+| `VERIFIED` requires real evidence | **Fails.** See H-40 | **NOT met** |
+
+Suite and gates at this commit: `245 passed` (238 + 7 new); all six committed verification scripts exit 0 — `verify_historical_snapshot` 100%, 2A 100%, 2B 100%, 2B.5 7/7, 2C **5/5**, Wave 1 100%.
+
+### 35.2 The decisive probe
+
+Interval band only (20%), previous close ₹1,000.00, so the circuit limits the band *means* are ₹1,200.00 / ₹800.00. The session opens exactly at the implied upper circuit and trades a range, so it is not a locked bar:
+
+```
+band = sm.get_price_band("INE704P01025", 2024-01-11)   # 20% interval, no daily record
+band.upper_circuit_limit = None
+band.lower_circuit_limit = None
+band.band_percentage     = 20.00
+band.has_circuit_evidence= True
+
+BUY at open == 1200.0000
+  status                   = FILLED
+  executed_price           = 1201.80000000
+  circuit_evidence_present = True
+```
+
+The same band in a full walk-forward run (`2024-01-15 → 2024-01-19`, one BUY):
+
+```
+trades = 1, filled = 1
+circuit_evidence_complete = True
+verification_status       = VERIFIED
+band used on fill session = upper None, lower None, pct 20.00
+to_trial_record()         = ACCEPTED
+```
+
+A BUY priced through the upper circuit the band implies is filled, stamped as circuit-verified, promoted to `VERIFIED`, and written into the trial record. That is precisely the structural flaw §5.3 rejects. It is not an artefact of a hostile fixture: `build_production_security_master()` now gives **every** instrument a percentage-only interval and no limits, so this is the normal path for real data.
+
+### 35.3 Findings
+
+**H-40 · Blocking — a band percentage never becomes a price limit, yet it is counted as circuit evidence.**
+`PriceBandInterval` carries only `band_percentage`; `get_price_band` synthesizes a record with `upper_circuit_limit=None, lower_circuit_limit=None`; the simulator only enforces `ref_price >= effective_upper` / `<= effective_lower`, so with both `None` no freeze test can fire. `PriceBandRecord.has_circuit_evidence` nonetheless returns `True` whenever a percentage and a source descriptor are present, and that boolean is what `circuit_evidence_present` — and therefore `verification_status` — is built from. Converting a percentage into a limit needs the previous session's close, which is available point-in-time at the fill session's open and is never consulted. Compounding it, the new `elif effective_upper is None and not is_unconstrained` guard now *skips* the locked-bar rejection for unconstrained scrips, so an `O = H = L` freeze on an F&O underlying fills. The consequence for Wave 3 is direct: every real-data metric would carry a `VERIFIED` stamp that asserts a check which never ran — the audit-integrity failure §9.1 exists to prevent.
+
+**H-41 · Blocking — the ingest fabricates a 10.00% band for instruments the exchange publishes as "No Band".**
+Measured against the live file, the three production-master instruments are exactly that case:
+
+```
+COCHINSHIP,EQ,COCHIN SHIPYARD LIMITED,No Band,"-"
+INFY,EQ,INFOSYS LIMITED,No Band,"-"
+RELIANCE,EQ,RELIANCE INDUSTRIES LIMITED,No Band,"-"
+```
+
+The parser maps `"No Band"` (and any row with no limits) to `is_unconstrained=True, band_percentage=Decimal("10.00")` — a number that appears nowhere in the source, with the comment "Standard F&O dynamic base flexing band". It then flows into `PriceBandRecord.band_percentage`, into `SEC-MSTR-V1` (the fingerprint commits to it), into `exec_config`, and into `has_circuit_evidence=True`. AGENTS.md §6.3 forbids fabricating values to fill a missing record; `NULL` with a citation is the honest encoding. `test_parse_price_band_report_csv_and_reverse_lookup` asserts `band_percentage == Decimal("10.00")` for `"No Band"`, and `test_production_security_master_h30_audit_closure` asserts `has_circuit_evidence is True` for bands with no limits — the tests enshrine the defect as expected behaviour, so this cannot be fixed without changing them.
+
+**H-42 · Required — the ingest silently discards rows that fail validation.**
+`parse_price_band_report` wraps record construction in `except PriceBandValidationError: continue`. A row whose limits contradict its percentage (the §27 H-4 cross-check), or whose lower limit exceeds its upper, disappears with no error, no count and no provenance. If that ISIN resolves no other band the engine fails closed later, which is the right end state but the wrong diagnosis; if an interval covers the ISIN, the stale percentage is silently used in place of the day's real limits. Fail-closed ingestion means raising, or returning an explicit rejected-row ledger the caller must handle.
+
+**Notes (non-blocking)**
+- **N-1** — Band days have no Silver partition. `ingest_daily_price_bands` writes Bronze and returns records in memory; there is no append-only per-session band partition, so the derived master is not itself a stored artefact and a band day's parsed form exists only while the caller holds it.
+- **N-2** — PR-archive ZIP handling takes `csv_names[0]`, the first CSV member in archive order. A PR zip contains several CSVs; which one is parsed is incidental. Selection must be by explicit name/date pattern or the member list must be validated.
+- **N-3** — `datetime.date.today()` is reachable inside the historical parse (`d_lookup = inferred_date or datetime.date.today()`), so symbol→ISIN resolution can use the wrong point-in-time master before the first date-bearing row. The end-of-function guard catches a wholly undated file, not this.
+- **N-4** — Interval-synthesized records are stamped `trade_date = as_of` and are indistinguishable from observed daily records downstream, and the interval block of `SEC-MSTR-V1` hashes `circular_ref` but not `source_descriptor`, so two masters citing different publications hash identically. Derived versus validated (§10.3) is currently a convention, not a field.
+- **N-5** — `fail_closed_on_missing_band=False` is a caller-reachable bypass. Acceptable only because it is hashed into `exec_config` and registration of the resulting `CIRCUIT_UNVERIFIED` run is refused; keep both properties if the knob survives.
+- **N-6** — Gate G2C-4 is still measured with hand-built `PriceBandRecord`s. The only script change here adds 5% BE bands so the new guard does not fire. No committed gate exercises `parse → master → fill`, so the numbers in §35.2 exist only in this audit, not in the project's own evidence base.
+
+### 35.4 Verdict
+
+**H-30: NOT CLOSED — partially remediated, one blocking regression opened.** Items (1) ingest, (2) as-of resolution and (3) fail-closed missing band are delivered and measured. Item (4) is not, and the percentage-only path turns `VERIFIED` into a claim the engine does not enforce (H-40), fed by a fabricated 10.00% for every "No Band" scrip (H-41).
+
+**Wave 3 — Full Historical Backfill: NO-GO at `2589aed`.** No real-data metric may be published until the following are true, in this order:
+
+1. **H-40** — a band must yield enforceable limits before it can be evidence. Derive `upper = prev_close × (1 + pct/100)` and `lower = prev_close × (1 − pct/100)` from the previous session's close on the fill date, register those on the returned record, and make `has_circuit_evidence` depend on numeric limits, never on a percentage alone. A synthesised record must never report evidence it does not carry. Restore the locked-bar rejection for unconstrained scrips unless a numeric dynamic limit is present.
+2. **H-41** — `"No Band"` must become `is_unconstrained=True` with `band_percentage=None` and the dynamic-flex citation, not `10.00`. This needs the contract to admit an unconstrained band without a percentage, and it needs the two tests that assert the fabricated value rewritten.
+3. **H-42** — stop swallowing `PriceBandValidationError` during ingest.
+4. **A gate that walks the whole path** — parse the real archive bytes → build the master → run a fold → show a BUY at the derived upper circuit rejected with `REJECTED_UPPER_CIRCUIT` and a clean run reaching `VERIFIED` only because a limit was enforced. G2C-4 must measure this, not a hand-built record (N-6).
+5. **H-16 / H-20** when `storage_holdout/` is first created, as scheduled since §29.
+
+The honest reading of where the project stands: H-38/H-39 are closed and committed (`085fb0a`); H-30 is now the only Wave 3 item with open work, and its remaining work is smaller than what landed — but it must land before a single 2018–2026 number is quoted, because the failure mode it introduces is a false `VERIFIED`, and a verdict engine that consumes it will compute a verdict from a check that never ran.
+
+---
+## 36. H-40 / H-41 / H-42 Remediation Audit — `1e14e8e` (Wave 3 gate, second pass)
+
+Scope: `1e14e8e`, 8 files, 392 insertions / 157 deletions, on top of `2589aed`. Suite `247 passed` (245 + 2). All six committed verification scripts exit 0 (2A 100%, 2B 100%, 2B.5 7/7, 2C 5/5, Wave 1 100%, historical snapshot PASSED).
+
+**Verdict: H-40, H-41 and H-42 are CLOSED — measured, not described.** The false `VERIFIED` of §35 is gone: circuit evidence now requires both numeric limits, a percentage alone no longer counts, and the §5.3 freeze tests fire on limits derived from the previous session's close. What replaces it is an honest `CIRCUIT_UNVERIFIED` plus a refusal to publish, which is the correct end state. **Wave 3 remains NO-GO**, but no longer for a code defect: one hand-authored band percentage (H-43) still asserts a limit the exchange does not publish, and — measured below — no ingested source in the pipeline currently yields numeric limits for any production-master instrument, so every real-data run would be `CIRCUIT_UNVERIFIED` and Wave 3 would publish zero metrics.
+
+### 36.1 Measurements
+
+**H-40 — closed.** Percentage → limits now happens, and evidence follows the limits:
+
+```
+band = SecurityMaster(interval 20%).get_price_band(INFY, 2024-01-11, prev_close=1000.00)
+  upper = 1200.0000   lower = 800.0000   pct = 20.00   has_circuit_evidence = True
+
+same call without prev_close
+  upper = None        lower = None       has_circuit_evidence = False
+```
+
+The §35.2 failure is inverted in a fold: a BUY at `open == 1200.00` on a ₹1,000.00 previous close now returns `REJECTED_UPPER_CIRCUIT`, `filled_quantity = 0`, `circuit_evidence_present = True` (`test_h40_probe_derived_upper_circuit_refusal`, and the same path reached from the 2C gate's INFY interval). An F&O scrip the exchange publishes as `No Band` fills but is stamped honestly:
+
+```
+unconstrained (pct None): FILLED @ 1201.80, circuit_evidence_present = False
+  verification_status = CIRCUIT_UNVERIFIED
+```
+
+`verification_status` can therefore no longer be `VERIFIED` on a run where no limit was enforced: `has_circuit_evidence` is now a single predicate over numeric limits, `FoldExecutionResult` aggregates only executed fills, and both trial boundaries still refuse `CIRCUIT_UNVERIFIED` (`tests/unit/test_walkforward.py`, `test_price_bands_h30.py:380-395`). The locked-bar rejection is restored for every scrip (`elif effective_upper is None` — the `not is_unconstrained` escape is gone).
+
+**H-41 — closed.** Against the live archive the parser now produces exactly what the exchange publishes:
+
+```
+COCHINSHIP,EQ,COCHIN SHIPYARD LIMITED,No Band,"-"
+INFY,EQ,INFOSYS LIMITED,No Band,"-"
+RELIANCE,EQ,RELIANCE INDUSTRIES LIMITED,No Band,"-"
+```
+```
+parse_price_band_report(177218 bytes, trade_date=2024-01-11, master=production) -> 3 records
+  INE704P01025 pct=None upper=None lower=None unc=True evidence=False
+  INE009A01021 pct=None upper=None lower=None unc=True evidence=False
+  INE002A01018 pct=None upper=None lower=None unc=True evidence=False
+```
+
+The `10.00` constant is gone from `ingest.py` and from `build_production_security_master()`; the contract admits an unconstrained band with `band_percentage=None` and a citation; and the two assertions that enshrined the fabricated value were inverted rather than deleted (`test_ingest_schemas.py` now asserts `has_circuit_evidence is False`, then `derive_limits(1500.00) → 1650.00 / 1350.00` and `True`).
+
+**H-42 — closed.** All three corrupt shapes now abort the ingest with the line number:
+
+```
+inconsistent_pct_vs_limits  RAISED PriceBandIngestError: Line 2: ... Inconsistent price band ...
+inverted_limits             RAISED PriceBandIngestError: Line 2: ... lower_circuit_limit (1200...
+negative_pct                RAISED PriceBandIngestError: Line 2: ... band_percentage must be f...
+```
+
+**Notes from §35.** N-3 is fixed and measurable: `parse_price_band_report` on the real file with no `trade_date` raises rather than defaulting to `date.today()`, and the symbol→ISIN lookup now uses the resolved report date. N-2 is improved but still a heuristic (`sec_list|band|pd` substring, else `csv_names[0]`). N-4 is half-fixed: the interval block of `SEC-MSTR-V1` now hashes `source_descriptor.publication_name`, so two masters citing different publications no longer hash alike, but synthesized interval records are still indistinguishable from observed daily records downstream.
+
+Next-session derivation respects corporate actions: the previous close is adjusted by `adjustment_factor` when the fill session is an ex-date, so a split does not move the derived circuit by the split ratio.
+
+### 36.2 H-43 · Blocking — a hand-authored band percentage becomes an enforced, verified limit
+
+The removal of the fabricated `10.00` covered the three F&O underlyings but not the one cash scrip the project actually runs on. `build_production_security_master()` still asserts a blanket 20% for `INE704P01025` (and `INE704P01017` before it) from 2017-08-11 with no `effective_to`, citing `NSE/SURV/PRICE_BANDS_2017` / `NSE/SURV/PRICE_BANDS_2024` — references which no audit has been able to verify, and which the live file contradicts for the present date:
+
+```
+get_price_band("INE704P01025", 2024-01-11, prev_close=1000.00)
+  -> upper 1200.0000, lower 800.0000, pct 20.00, is_unconstrained False, has_circuit_evidence True
+
+live sec_list.csv:  COCHINSHIP,EQ,COCHIN SHIPYARD LIMITED,No Band,"-"
+```
+
+Before this commit that 20% was inert — nothing consumed it. Now it derives limits and counts as evidence, so it is a circuit the exchange does not publish, enforced as fact and stamped `VERIFIED`. For a scrip the file says `No Band` (i.e. an F&O underlying under dynamic flexing, base 10%), the real circuit is roughly half the asserted distance: a BUY through a genuine 10% circuit fills in the backtest and the run still reports circuit-verified. That is §5.3 and §9.1 in one line, and `test_production_security_master_h30_audit_closure` asserts the 20% as correct, so the test must change with it.
+
+**Required:** an interval may not assert a percentage for a date on which an authoritative daily report supersedes it, and no percentage may be hand-authored without a verifying citation. Where the report says `No Band`, the interval must say `band_percentage=None` — the same treatment H-41 gave INFY and RELIANCE.
+
+### 36.3 H-44 · Blocking for the Wave 3 gate — the pipeline has no verified source of numeric limits
+
+Measured consequence of doing H-41 and H-43 correctly: with the only ingested band source being the cash daily file, every production-master instrument resolves to `band_percentage=None`, no limits, and `has_circuit_evidence=False`. The 20% interval in §36.2 is the *only* thing in the master that produces evidence, and it is the one thing that must be removed. After that removal there is no path from real data to `VERIFIED`, so Wave 3 would produce a 2018–2026 book of `CIRCUIT_UNVERIFIED` runs that no gate, trial record or verdict may consume. This is not a claim that the code is wrong — the fail-closed behaviour is exactly right — it is a statement that the evidence supply is missing, and it is the single largest item between this commit and a publishable backfill.
+
+**Required:** ingest a source that publishes numeric limits or a band percentage with a defined flex rule (the F&O band file / PR archives rather than `sec_list.csv` alone), and record which source governs each ISIN-date. `https://archives.nseindia.com/content/fo/fo_sec_list.csv` returned an HTML block page when fetched during this audit, so the F&O file's column set is unverified here and must be confirmed from a real retrieval before it is relied on.
+
+### 36.4 Notes
+
+- **N-7 — derived limits are not tick-rounded.** `prev_close 1234.55 × 1.2 = 1481.4600`, not a ₹0.05 multiple. NSE publishes limits on the tick grid, so the derived upper sits up to one tick above the true limit and a fill at the true circuit can pass unrefused. Round the upper **down** and the lower **up** to the tick so the rejection fires at or before the published limit.
+- **N-8 — derivation is only valid for fixed bands.** For a dynamic-flex percentage (`10%` base on an F&O underlying) `prev_close × 1.10` is a floor, not the published limit; the band may have expanded. Deriving a limit there asserts a narrower circuit than the exchange had, which biases fills (and therefore returns) downward. Gate derivation to fixed-band sources, or cite the flex rule that makes the derived value correct.
+- **N-9 — a one-sided record is overwritten.** A record carrying only an observed `upper_circuit_limit=1100.00` with `pct=20.00` derives to `1200.0000 / 800.0000` — the observed authoritative limit is discarded, and the H-4 consistency check that normally rejects the disagreement does not run when one limit is `None`. Fill the missing side from the observed one, or reject the record.
+- **N-10** — `base_infy` / `base_be` at `scripts/verify_phase2c_walkforward.py:113,115` are now dead assignments (re-defined and used at 199-206).
+- **N-11** — Gate G2C-4's parse step feeds a two-line inline CSV, not archive bytes. Parse→master→fill is now genuinely exercised, but the "real bytes" half of §35.4 item 4 is still measured only in the audit (§36.1), not by the project's own gate.
+
+### 36.5 Verdict
+
+**H-30: CLOSED.** Every item §35.4 required of the code is delivered and measured: percentage-derived numeric limits, evidence that depends only on limits, `No Band` encoded honestly, corrupt rows fail closed, and both trial boundaries still refuse an unverified run. H-40, H-41, H-42 **CLOSED at `1e14e8e`**. The §33 Wave 2 sign-off and its gates are unaffected.
+
+**Wave 3 — Full Historical Backfill: NO-GO at `1e14e8e`**, on two items, in this order:
+
+1. **H-43** — delete the hand-authored 20% for `INE704P01025`/`INE704P01017` and let the daily report govern; change the test that asserts it. Until this lands, the one instrument with a percentage carries a circuit the exchange does not publish, enforced and marked verified.
+2. **H-44** — ingest a source of numeric limits (or a percentage plus a cited flex rule) and record which source governs each ISIN-date. Until this lands, removing H-43 leaves the master with no evidence at all, and Wave 3's output is unpublishable by construction.
+3. Then N-7 (tick rounding) and N-8 (flex validity), which decide whether the derived limits are right at the boundary rather than merely present.
+4. **H-16 / H-20** when `storage_holdout/` is first created, as scheduled since §29.
+
+The project is in a materially better position than at §35: the engine no longer claims a check it did not run, and the remaining blockers are about the quality of the evidence rather than the honesty of the report. That is the difference between a number that can be audited and one that cannot.
+
+---
+## 37. H-43 / H-44 / N-7 / N-8 / N-9 Remediation Audit — `79fe49e` (Wave 3 gate, third pass)
+
+Scope: `79fe49e`, 7 files, 222 insertions / 50 deletions, on top of `1e14e8e`. Suite `250 passed` (247 + 3). All six committed verification scripts exit 0 (2A 100%, 2B 100%, 2B.5 7/7, 2C 5/5 with G2C-4 PASS, Wave 1 100%, historical snapshot PASSED).
+
+**Verdict: N-7, N-8, N-9 and N-10 are CLOSED — each measured below. H-43 is CLOSED in the interval layer and OPEN in the discrete layer, and H-44 is untouched.** Two of the notes the commit set out to close were closed correctly; the change made to the ZIP member heuristic (labelled N-11) introduced a silent wrong-member ingest instead, and the audited parser will still fabricate an unconstrained band from a file that contains no band information at all. **Wave 3 remains NO-GO at `79fe49e`**, now on four blocking items rather than two.
+
+### 37.1 Closed, measured
+
+**N-7 — closed.** Derived limits land on the ₹0.05 grid, upper down and lower up:
+
+```
+ prev 1000.00: 1200.00 / 800.00    grid_ok=True
+ prev 1234.55: 1481.45 / 987.65    grid_ok=True     (raw 1481.46 / 987.64)
+ prev  999.99: 1199.95 / 800.00    grid_ok=True
+ prev  101.37:  121.60 /  81.10    grid_ok=True
+```
+
+Flooring the upper can no longer admit a fill at the published ceiling, and ceiling on the lower cannot reject a legitimate one. `test_n7_tick_rounding_derived_limits` asserts both the values and the modulo.
+
+**N-8 — closed.** Derivation is gated to fixed-band sources; an unconstrained record returns unchanged:
+
+```
+ fno_record (is_unconstrained=True, pct 10, prev 1500.00)
+   -> upper None, lower None, has_circuit_evidence False
+```
+
+This is the right call and it propagates: with the baseline intervals now honest, `get_price_band("INE704P01025", 2024-01-11, prev_close=802.80)` returns `None / None / evidence False` rather than a derived 963.35.
+
+**N-9 — closed.** A one-sided observed limit is preserved, the missing side is derived, and a contradiction aborts:
+
+```
+ observed upper 1200.00: kept 1200.00, lower 800.00
+ observed upper 1185.00: kept 1185.00, lower 800.00
+ observed upper 1170.00: PriceBandValidationError: Observed upper_circuit_limit (1170.00) contradicts derived upper (1200...
+ observed upper 1100.00: PriceBandValidationError: Observed upper_circuit_limit (1100.00) contradicts derived upper (1200...
+```
+
+The tolerance is 10% of the band width (₹20.00 on a ₹200.00 move, floored at ₹1.50) — documented in the test and defensible.
+
+**H-43 — closed in the interval layer.** Both COCHINSHIP intervals now encode what the exchange publishes, and the 20% is gone from the master's interval table:
+
+```
+ 2024-01-10: pct=20.00 unc=False upper=802.80 lower=535.20 evidence=True   <- discrete record
+ 2024-01-11: pct=None  unc=True  upper=None   lower=None   evidence=False
+```
+
+**N-10 — closed.** The three dead `base_*` assignments at `scripts/verify_phase2c_walkforward.py:113-116` are gone (the live pair at 199-206 remains and is used).
+
+### 37.2 H-48 · Blocking — the 20% survives in the discrete record, and the master now contradicts itself
+
+The interval table was corrected; the daily record beside it was not. `build_production_security_master()` still hand-authors, for `INE704P01025` on 2024-01-10, `band_percentage=20.00` with limits `802.80 / 535.20` under `NSE_EX_SPLIT_CIRCUIT_ADJUSTMENT` citing `NSE/CML/60114`. Measured on that date, the master simultaneously holds:
+
+- a discrete 20% fixed band with `has_circuit_evidence=True`, resolved first; and
+- an interval for the same ISIN, effective from the same date, declaring `is_unconstrained=True, band_percentage=None`.
+
+Both cannot describe the same session. One of them is wrong, and after this commit it is the only evidenced record left in the whole master — which makes it load-bearing rather than incidental. Its figures imply a 20% fixed band from a ₹669.00 split-adjusted close (669.00 × 1.2 = 802.80), i.e. precisely the fixed-band treatment the interval now denies. The circular it cites has never been verified in any audit.
+
+**Required:** the split-day record must be derived from a report the exchange actually published — the close, the band in force and the adjusted limits — or dropped in favour of the interval, with the same fail-closed treatment. Until then the master asserts both a 20% circuit and no circuit for 2024-01-10.
+
+### 37.3 H-45 · Blocking, new — the ZIP member heuristic now ranks a price file above the band file
+
+`ingest.py:374` widened the member filter from `("sec_list", "band", "pd")` to `("sec_list", "band", "pd", "bh")`. `"bh"` matches `bhavdata`/`bhavcopy`, so in an archive holding both a daily bhavcopy and the band file, the price file can be selected and the band file silently discarded:
+
+```
+zip members: fo_sec_bhavdata_full_16012024.csv (bhavcopy)
+             sec_list_16012024.csv (ISIN,SYMBOL,SERIES,SECURITY_NAME,BAND,UPPER_PRICE_BAND,LOWER_PRICE_BAND
+                                    INE009A01021,INFY,EQ,Infosys,5%,1800.00,1400.00)
+parse_price_band_report(...) -> ACCEPTED: [('INE009A01021', None, None, True)]
+```
+
+The declared 5% band with its 1800.00/1400.00 limits was dropped and INFY came back unconstrained. At `1e14e8e` the member list would not have matched the bhavcopy name and the band file would have been chosen, so this is a regression introduced by the commit, and it is silent: the ingest returns success and records provenance for the wrong member. This is the same failure family as H-41 (a value the exchange did not publish, derived from a source that never contained it), reached through a different door.
+
+**Required:** select the band member positively (exact filename patterns, or a required-header probe), remove `"bh"`, and raise `PriceBandIngestError` when several members qualify or none does.
+
+### 37.4 H-46 · Blocking, new — a missing band column is read as "No Band"
+
+The parser only requires an ISIN or Symbol column (`ingest.py:413`); the band and limit columns are all optional. A bhavcopy-shaped CSV therefore parses cleanly and is reported as an unconstrained band for every row:
+
+```
+ bhavcopy header (SYMBOL,SERIES,DATE1,PREV_CLOSE,...,ISIN) -> band parser
+   ACCEPTED: [('INE009A01021', None, True, False)]
+```
+
+"No Band" is an assertion about what the exchange published. A file with no band column at all publishes nothing, so every row must fail closed rather than be recorded as unconstrained with a `NSE_DAILY_PRICE_BAND_REPORT` descriptor. This is what turns H-45 from an error into a silent corruption, and it is the mirror image of H-41: previously a value that was absent became `10.00`, now an absence becomes `No Band`.
+
+**Required:** require at least one of `BAND` / `UPPER_*` / `LOWER_*` in the header, and reject the report when none is present.
+
+### 37.5 H-47 · Required — rows without a resolvable ISIN are still dropped in silence
+
+H-42 removed the swallowed `PriceBandValidationError`, but the earlier gate is unchanged: `if not isin_val or len(isin_val) != 12: continue` (`ingest.py:462`). The live cash file has no ISIN column, so with no security master every row is dropped and the parse reports success with nothing:
+
+```
+parse_price_band_report(real sec_list.csv bytes, trade_date=2024-01-11, security_master=None)
+   ACCEPTED with 0 records
+```
+
+A zero-row ingest is not a valid ingest. It must raise, and every drop (unresolvable ISIN, non-target ISIN) must be counted and carried into the run manifest rather than disappearing.
+
+### 37.6 H-44 · Still open, unchanged
+
+No limits-bearing source was added: `ingest.py`'s diff is one line of filename matching, and no new schema, URL or parser exists. With the intervals now honest and the split-day record the only evidence left, every production-master fold resolves to `band_percentage=None` and `has_circuit_evidence=False` — measured at §36.1 as `FILLED @ 1201.80, circuit_evidence_present=False, verification_status=CIRCUIT_UNVERIFIED`, which no trial record or verdict may consume. The requirement stands as written in §36.3: ingest a source that publishes numeric limits or a percentage plus a cited flex rule, and record which source governs each ISIN-date. The commit message claims H-44 among the remediated findings; it is not remediated.
+
+### 37.7 Notes
+
+- **N-12** — `tests/unit/test_walkforward.py` flipped `INE009A01021` and `INE002A01018` from `is_unconstrained=True` to `is_unconstrained=False, pct 10` and re-cited them as `NSE_CASH_PRICE_BANDS`, because N-8 now correctly refuses to derive for unconstrained scrips. The engine test needs a fixed-band instrument, but INFY and RELIANCE are F&O underlyings the exchange publishes as `No Band`: a better fix is a genuine fixed-band scrip in the fixture, so the gate keeps an honest unconstrained case alongside the derived one.
+- **N-13** — `cash_source` (`security_master.py:758`) is now unused; every interval cites `fo_source`. Dead code introduced by this commit.
+- **N-11 (from §36.4) is only partly addressed.** G2C-4 now wraps its CSV in a synthetic ZIP named `sec_list_20240116.csv`, which exercises the member-selection path, but the bytes are still hand-written; the "real archive bytes" half of §35.4 item 4 remains measured only in the audit (§36.1 and §37.3-P5 here), not by the project's own gate. Given H-45, a gate that used real archived bytes would have caught this.
+
+### 37.8 Verdict
+
+**Closed at `79fe49e`:** N-7, N-8, N-9, N-10, and H-43 for the interval layer. §33 Wave 2 sign-off and its gates are unaffected; H-30 stays CLOSED.
+
+**Wave 3 — Full Historical Backfill: NO-GO at `79fe49e`**, on four items:
+
+1. **H-45** — remove `"bh"` from the ZIP member filter and select the band member positively; fail closed on ambiguity. The commit's own change is the reason a price file can now outrank the band file.
+2. **H-46** — reject a report whose header carries no band or limit column, instead of recording every row as unconstrained. Without this, H-45 stays silent.
+3. **H-48** — resolve the 2024-01-10 contradiction: drop or re-derive the hand-authored 20% split-day record, which is currently the master's only evidence and is the last surviving artifact of the H-41/H-43 family.
+4. **H-44** — ingest a limits-bearing source. Nothing in the master can reach `VERIFIED` until then, so Wave 3 still has no publishable metric to compute.
+5. Then **H-47** (zero-row and dropped-row accounting) and N-12/N-13, and **H-16 / H-20** when `storage_holdout/` is first created.
+
+The direction of travel is sound — three of four notes closed, the mock 20% limits gone from the interval table, and the honesty of the fail-closed path intact. What this round shows is that the ingest layer is still the weak seam: every remaining blocker is a case where a file that does not say what the parser wants is read as saying something permissive, rather than refused.
+
+---
