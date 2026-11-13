@@ -386,7 +386,9 @@ def compute_security_master_fingerprint(
         for b in sorted_pbi:
             to_str = b.effective_to.isoformat() if b.effective_to else "OPEN"
             circ_str = b.circular_ref or "NONE"
-            row = f"{b.isin},{b.effective_from.isoformat()},{to_str},{b.band_percentage},{b.is_unconstrained},{circ_str}\n"
+            src_str = b.source_descriptor.publication_name if b.source_descriptor else "NONE"
+            pct_str = str(b.band_percentage) if b.band_percentage is not None else "NONE"
+            row = f"{b.isin},{b.effective_from.isoformat()},{to_str},{pct_str},{b.is_unconstrained},{circ_str},{src_str}\n"
             hasher.update(row.encode("utf-8"))
 
     digest = hasher.hexdigest()[:32]
@@ -563,48 +565,61 @@ class SecurityMaster:
         ]
         return tuple(sorted(actions, key=lambda ca: ca.ex_date))
 
-    def get_price_band(self, isin: str, as_of: datetime.date) -> Optional[PriceBandRecord]:
+    def get_price_band(
+        self,
+        isin: str,
+        as_of: datetime.date,
+        prev_close: Optional[Decimal] = None,
+    ) -> Optional[PriceBandRecord]:
         """
         Returns PriceBandRecord for an ISIN on session date as_of.
         Performs discrete daily lookup first; falls back to time-varying half-open PriceBandIntervals
-        per AGENTS.md Rule 10.5 and Audit §31 H-30.
+        per AGENTS.md Rule 10.5, Audit §31 H-30, and Audit §35 H-40.
+        If prev_close is provided, derives concrete numeric circuit limits from band_percentage.
         """
         _validate_identifier(isin, "isin")
         _validate_date(as_of, "as_of")
 
-        # 1. Discrete daily record lookup
-        record = self._price_bands_by_isin_date.get((isin, as_of))
-        if record is not None:
-            return record
+        record: Optional[PriceBandRecord] = None
 
-        # 2. Time-varying half-open interval lookup [effective_from, effective_to)
-        intervals = self._band_intervals_by_isin.get(isin, [])
-        for interval in intervals:
-            if interval.contains(as_of):
-                sym_interval = self.resolve_symbol(isin, as_of)
-                series = sym_interval.series if sym_interval else "EQ"
-                src_desc = interval.source_descriptor
-                if src_desc is None and interval.circular_ref:
-                    src_desc = PriceBandSourceDescriptor(
-                        source_type=PriceBandPublicationSource.NSE_SURVEILLANCE_CIRCULAR,
-                        publication_name="NSE_SURVEILLANCE_CIRCULAR",
-                        archive_url_template="https://archives.nseindia.com/circulars",
-                        retrieval_frequency="EVENT_DRIVEN",
-                        circular_ref=interval.circular_ref,
-                        description=f"Time-varying price band interval for {isin}",
+        # 1. Discrete daily record lookup
+        discrete_rec = self._price_bands_by_isin_date.get((isin, as_of))
+        if discrete_rec is not None:
+            record = discrete_rec
+        else:
+            # 2. Time-varying half-open interval lookup [effective_from, effective_to)
+            intervals = self._band_intervals_by_isin.get(isin, [])
+            for interval in intervals:
+                if interval.contains(as_of):
+                    sym_interval = self.resolve_symbol(isin, as_of)
+                    series = sym_interval.series if sym_interval else "EQ"
+                    src_desc = interval.source_descriptor
+                    if src_desc is None and interval.circular_ref:
+                        src_desc = PriceBandSourceDescriptor(
+                            source_type=PriceBandPublicationSource.NSE_SURVEILLANCE_CIRCULAR,
+                            publication_name="NSE_SURVEILLANCE_CIRCULAR",
+                            archive_url_template="https://archives.nseindia.com/circulars",
+                            retrieval_frequency="EVENT_DRIVEN",
+                            circular_ref=interval.circular_ref,
+                            description=f"Time-varying price band interval for {isin}",
+                        )
+                    record = PriceBandRecord(
+                        isin=isin,
+                        trade_date=as_of,
+                        series=series,
+                        upper_circuit_limit=None,
+                        lower_circuit_limit=None,
+                        band_percentage=interval.band_percentage,
+                        is_unconstrained=interval.is_unconstrained,
+                        source_descriptor=src_desc,
+                        source_ref=interval.circular_ref,
                     )
-                return PriceBandRecord(
-                    isin=isin,
-                    trade_date=as_of,
-                    series=series,
-                    upper_circuit_limit=None,
-                    lower_circuit_limit=None,
-                    band_percentage=interval.band_percentage,
-                    is_unconstrained=interval.is_unconstrained,
-                    source_descriptor=src_desc,
-                    source_ref=interval.circular_ref,
-                )
-        return None
+                    break
+
+        if record is not None and prev_close is not None:
+            record = record.derive_limits(prev_close)
+
+        return record
 
     @property
     def price_bands(self) -> Tuple[PriceBandRecord, ...]:
@@ -750,30 +765,30 @@ def build_production_security_master() -> SecurityMaster:
     )
 
     price_band_intervals = [
-        # INFY (F&O stock: dynamic flexing band, base 10%)
+        # INFY (F&O stock: dynamic flexing band, exchange publishes "No Band", Audit §35 H-41)
         PriceBandInterval(
             isin="INE009A01021",
-            band_percentage=Decimal("10.00"),
+            band_percentage=None,
             effective_from=datetime.date(2015, 1, 1),
             effective_to=None,
             is_unconstrained=True,
             source_descriptor=fo_source,
             circular_ref="NSE/FAOP/60350",
         ),
-        # RELIANCE (F&O stock: dynamic flexing band, base 10%)
+        # RELIANCE (F&O stock: dynamic flexing band, exchange publishes "No Band", Audit §35 H-41)
         PriceBandInterval(
             isin="INE002A01018",
-            band_percentage=Decimal("10.00"),
+            band_percentage=None,
             effective_from=datetime.date(2015, 1, 1),
             effective_to=None,
             is_unconstrained=True,
             source_descriptor=fo_source,
             circular_ref="NSE/FAOP/60350",
         ),
-        # HDFC (F&O stock until merger on 2023-07-13)
+        # HDFC (F&O stock until merger on 2023-07-13, Audit §35 H-41)
         PriceBandInterval(
             isin="INE001A01036",
-            band_percentage=Decimal("10.00"),
+            band_percentage=None,
             effective_from=datetime.date(2015, 1, 1),
             effective_to=datetime.date(2023, 7, 13),
             is_unconstrained=True,

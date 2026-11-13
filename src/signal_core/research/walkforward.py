@@ -592,8 +592,21 @@ class WalkForwardEngine:
                 except ValueError:
                     ex_series = ExchangeSeries.UNKNOWN
 
-                # Resolve price band / circuit limits from Security Master (Audit §25 G-6, §31 H-30)
-                band = self._sec_master.get_price_band(ord_req.instrument_id, t)
+                # Resolve previous session close for circuit limit derivation (Audit §35 H-40)
+                inst_bars = price_panel.get(ord_req.instrument_id, [])
+                prev_close: Optional[Decimal] = None
+                for b_hist in reversed(inst_bars):
+                    if b_hist.trade_date < t:
+                        prev_close = b_hist.close
+                        # Apply corporate action adjustment if session t is an ex-date
+                        actions = self._sec_master.get_corporate_actions(ord_req.instrument_id, up_to=t)
+                        for ca in actions:
+                            if ca.ex_date == t:
+                                prev_close = prev_close * ca.adjustment_factor
+                        break
+
+                # Resolve price band / circuit limits from Security Master (Audit §25 G-6, §31 H-30, §35 H-40)
+                band = self._sec_master.get_price_band(ord_req.instrument_id, t, prev_close=prev_close)
                 if band is None:
                     if self._fail_closed_on_missing_band:
                         raise WalkForwardEngineError(

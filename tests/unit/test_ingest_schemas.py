@@ -378,7 +378,12 @@ def test_price_band_source_descriptor_and_record():
         source_descriptor=source_desc,
         source_ref="NSE/FO/2024/01",
     )
-    assert fno_record.has_circuit_evidence is True
+    # Audit §35 H-40: numeric limits required for circuit evidence; percentage alone is not evidence
+    assert fno_record.has_circuit_evidence is False
+    fno_derived = fno_record.derive_limits(Decimal("1500.00"))
+    assert fno_derived.upper_circuit_limit == Decimal("1650.00")
+    assert fno_derived.lower_circuit_limit == Decimal("1350.00")
+    assert fno_derived.has_circuit_evidence is True
 
     # Audit §27 H-4: Anonymous unconstrained claim without source descriptor is rejected fail-closed
     with pytest.raises(PriceBandValidationError, match="requires an authoritative source_descriptor"):
@@ -389,15 +394,16 @@ def test_price_band_source_descriptor_and_record():
             is_unconstrained=True,
         )
 
-    # Audit §27 H-4: Unconstrained claim with zero percentage and zero limits is rejected
-    with pytest.raises(PriceBandValidationError, match="must declare either band_percentage"):
-        PriceBandRecord(
-            isin="INE009A01021",
-            trade_date=datetime.date(2024, 1, 15),
-            series="EQ",
-            is_unconstrained=True,
-            source_descriptor=source_desc,
-        )
+    # Audit §35 H-41: Unconstrained scrip with No Band (band_percentage=None and no limits) is valid with citation
+    noband_rec = PriceBandRecord(
+        isin="INE009A01021",
+        trade_date=datetime.date(2024, 1, 15),
+        series="EQ",
+        is_unconstrained=True,
+        source_descriptor=source_desc,
+    )
+    assert noband_rec.band_percentage is None
+    assert noband_rec.has_circuit_evidence is False
 
     # Audit §27 H-4: Inconsistent band_percentage vs declared upper/lower limits is rejected
     # upper=2200, lower=1800 implies 10% band ((2200-1800)/(2200+1800) = 400/4000 = 10%), but 5% declared

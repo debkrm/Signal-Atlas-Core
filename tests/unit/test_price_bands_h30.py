@@ -134,15 +134,16 @@ def test_price_band_interval_validation_invariants():
             circular_ref=None,
         )
 
-    # 5. Unconstrained interval without band_percentage is rejected
-    with pytest.raises(PriceBandValidationError, match="must declare band_percentage"):
-        PriceBandInterval(
-            isin="INE009A01021",
-            effective_from=datetime.date(2024, 1, 1),
-            band_percentage=None,
-            is_unconstrained=True,
-            circular_ref="NSE/FAOP/01",
-        )
+    # 5. Unconstrained interval with band_percentage=None is accepted with citation (Audit §35 H-41)
+    pbi_unconstrained = PriceBandInterval(
+        isin="INE009A01021",
+        effective_from=datetime.date(2024, 1, 1),
+        band_percentage=None,
+        is_unconstrained=True,
+        circular_ref="NSE/FAOP/01",
+    )
+    assert pbi_unconstrained.band_percentage is None
+    assert pbi_unconstrained.is_unconstrained is True
 
     # 6. Inverted dates (effective_from >= effective_to) are rejected
     with pytest.raises(PriceBandValidationError, match="must precede effective_to"):
@@ -218,11 +219,21 @@ def test_security_master_as_of_resolution_and_precedence():
     assert band_jan10.has_circuit_evidence is True
 
     # 2. On Jan 11 (day after): synthesized from interval, NOT None (resolves H-30 exact-date limitation)
+    # Without prev_close: upper/lower limits are None, has_circuit_evidence is False (Audit §35 H-40)
     band_jan11 = sm.get_price_band("INE704P01025", datetime.date(2024, 1, 11))
     assert band_jan11 is not None
     assert band_jan11.band_percentage == Decimal("20.00")
     assert band_jan11.trade_date == datetime.date(2024, 1, 11)
-    assert band_jan11.has_circuit_evidence is True
+    assert band_jan11.upper_circuit_limit is None
+    assert band_jan11.lower_circuit_limit is None
+    assert band_jan11.has_circuit_evidence is False
+
+    # With prev_close=802.80: derived limits 963.36 / 642.24, has_circuit_evidence is True (Audit §35 H-40)
+    band_jan11_derived = sm.get_price_band("INE704P01025", datetime.date(2024, 1, 11), prev_close=Decimal("802.80"))
+    assert band_jan11_derived is not None
+    assert band_jan11_derived.upper_circuit_limit == Decimal("963.36")
+    assert band_jan11_derived.lower_circuit_limit == Decimal("642.24")
+    assert band_jan11_derived.has_circuit_evidence is True
 
     # 3. Before effective_from (Jan 9): outside interval and no discrete band -> returns None
     assert sm.get_price_band("INE704P01025", datetime.date(2024, 1, 9)) is None
@@ -234,10 +245,10 @@ def test_security_master_as_of_resolution_and_precedence():
 
 def test_production_security_master_h30_audit_closure():
     """
-    Verifies that build_production_security_master() closes every measurement in Audit §31.3:
+    Verifies that build_production_security_master() closes every measurement in Audit §31.3 / §35:
     - INE704P01025 on 2024-01-10 returns ex-split upper circuit at 802.80.
-    - INE704P01025 on 2024-01-11 and 2024-01-12 returns valid 20% interval bands.
-    - INFY (INE009A01021) and RELIANCE (INE002A01018) return unconstrained F&O bands with NSE citations.
+    - INE704P01025 on 2024-01-11 and 2024-01-12 returns valid 20% interval bands with derived limits.
+    - INFY (INE009A01021) and RELIANCE (INE002A01018) return unconstrained F&O bands ("No Band") with NSE citations.
     """
     sm = build_production_security_master()
 
@@ -253,27 +264,36 @@ def test_production_security_master_h30_audit_closure():
     band_jan11 = sm.get_price_band("INE704P01025", datetime.date(2024, 1, 11))
     assert band_jan11 is not None
     assert band_jan11.band_percentage == Decimal("20.00")
-    assert band_jan11.has_circuit_evidence is True
+    assert band_jan11.upper_circuit_limit is None
+    assert band_jan11.has_circuit_evidence is False
+
+    band_jan11_derived = sm.get_price_band("INE704P01025", datetime.date(2024, 1, 11), prev_close=Decimal("802.80"))
+    assert band_jan11_derived.upper_circuit_limit == Decimal("963.36")
+    assert band_jan11_derived.lower_circuit_limit == Decimal("642.24")
+    assert band_jan11_derived.has_circuit_evidence is True
 
     band_jan12 = sm.get_price_band("INE704P01025", datetime.date(2024, 1, 12))
     assert band_jan12 is not None
     assert band_jan12.band_percentage == Decimal("20.00")
-    assert band_jan12.has_circuit_evidence is True
+    assert band_jan12.upper_circuit_limit is None
+    assert band_jan12.has_circuit_evidence is False
 
-    # INFY unconstrained F&O stock
+    # INFY unconstrained F&O stock (Audit §35 H-41: exchange publishes "No Band", band_percentage=None)
     band_infy = sm.get_price_band("INE009A01021", datetime.date(2024, 1, 15))
     assert band_infy is not None
     assert band_infy.is_unconstrained is True
+    assert band_infy.band_percentage is None
     assert band_infy.source_descriptor is not None
     assert band_infy.source_descriptor.circular_ref == "NSE/FAOP/60350"
-    assert band_infy.has_circuit_evidence is True
+    assert band_infy.has_circuit_evidence is False
 
-    # RELIANCE unconstrained F&O stock
+    # RELIANCE unconstrained F&O stock (Audit §35 H-41: exchange publishes "No Band", band_percentage=None)
     band_rel = sm.get_price_band("INE002A01018", datetime.date(2024, 1, 15))
     assert band_rel is not None
     assert band_rel.is_unconstrained is True
+    assert band_rel.band_percentage is None
     assert band_rel.source_descriptor.circular_ref == "NSE/FAOP/60350"
-    assert band_rel.has_circuit_evidence is True
+    assert band_rel.has_circuit_evidence is False
 
 
 # ==============================================================================
@@ -406,10 +426,11 @@ def test_parse_price_band_report_csv_and_reverse_lookup():
     assert len(records) == 3
 
     by_isin = {r.isin: r for r in records}
-    # INFY resolved to INE009A01021, unconstrained
+    # INFY resolved to INE009A01021, unconstrained (Audit §35 H-41: No Band -> band_percentage=None)
     assert "INE009A01021" in by_isin
     assert by_isin["INE009A01021"].is_unconstrained is True
-    assert by_isin["INE009A01021"].band_percentage == Decimal("10.00")
+    assert by_isin["INE009A01021"].band_percentage is None
+    assert by_isin["INE009A01021"].has_circuit_evidence is False
 
     # COCHINSHIP resolved to INE704P01025 on Jan 15 2024
     assert "INE704P01025" in by_isin
@@ -457,3 +478,129 @@ def test_ingest_daily_price_bands_bronze_provenance():
         # Verify payload retrievable from Bronze byte-exact
         retrieved = bronze.read_payload(entry.relative_path)
         assert retrieved == csv_content
+
+
+def test_h40_probe_derived_upper_circuit_refusal(test_calendar):
+    """
+    Audit §35.2 Probe:
+    With a 20% interval on a Rs 1,000.00 previous close, implied upper circuit is 1200.00.
+    A BUY at open == 1200.00 MUST be rejected with REJECTED_UPPER_CIRCUIT fail-closed,
+    rather than filled at 1201.80.
+    """
+    with tempfile.TemporaryDirectory(prefix="h40_probe_") as tmpdir:
+        tmp_path = Path(tmpdir)
+        silver_dir = tmp_path / "silver"
+        silver = SilverStorage(silver_dir, calendar=test_calendar)
+
+        target_isin = "INE704P01025"
+        sec_master = SecurityMaster(
+            symbol_intervals=[
+                SymbolInterval(
+                    isin=target_isin,
+                    symbol="COCHINSHIP",
+                    series="EQ",
+                    effective_from=datetime.date(2024, 1, 1),
+                    effective_to=datetime.date(2024, 12, 31),
+                ),
+            ],
+            price_band_intervals=[
+                PriceBandInterval(
+                    isin=target_isin,
+                    band_percentage=Decimal("20.00"),
+                    effective_from=datetime.date(2024, 1, 1),
+                    effective_to=datetime.date(2024, 12, 31),
+                    is_unconstrained=False,
+                    source_descriptor=PriceBandSourceDescriptor(
+                        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+                        publication_name="NSE_CASH_BANDS",
+                        archive_url_template="https://archives.nseindia.com/sec_list.csv",
+                        retrieval_frequency="DAILY",
+                        circular_ref="NSE/SURV/TEST",
+                    ),
+                    circular_ref="NSE/SURV/TEST",
+                ),
+            ],
+        )
+
+        # Session 5 (Jan 15): prev close = 1000.00
+        # Session 6 (Jan 16): open = 1200.00 (exactly at derived upper circuit: 1000 * 1.20 = 1200.00)
+        for i, d in enumerate(test_calendar.sessions):
+            if d == datetime.date(2024, 1, 15):
+                p_open, p_high, p_low, p_close = Decimal("1000.00"), Decimal("1020.00"), Decimal("990.00"), Decimal("1000.00")
+            elif d == datetime.date(2024, 1, 16):
+                p_open, p_high, p_low, p_close = Decimal("1200.00"), Decimal("1200.00"), Decimal("1180.00"), Decimal("1190.00")
+            else:
+                p_open, p_high, p_low, p_close = Decimal("1000.00"), Decimal("1010.00"), Decimal("990.00"), Decimal("1000.00")
+
+            silver.write_daily_partition(
+                d,
+                [
+                    SilverRecord(
+                        isin=target_isin,
+                        symbol="COCHINSHIP",
+                        series="EQ",
+                        trade_date=d,
+                        open=p_open,
+                        high=p_high,
+                        low=p_low,
+                        close=p_close,
+                        volume=100000,
+                        traded_value=p_open * Decimal("100000"),
+                    )
+                ],
+            )
+
+        gold = GoldEngine(silver, test_calendar, sec_master)
+        fold = WalkForwardFold(
+            fold_index=0,
+            train_start=datetime.date(2024, 1, 8),
+            train_end=datetime.date(2024, 1, 12),
+            test_start=datetime.date(2024, 1, 15),
+            test_end=datetime.date(2024, 1, 19),
+            embargo_sessions=1,
+            partition_role=PartitionRole.VALIDATION,
+        )
+
+        class UpperCircuitBuyer(Strategy):
+            @property
+            def strategy_id(self) -> str:
+                return "UPPER-CIRCUIT-BUYER"
+
+            def generate_signals(self, as_of, next_session, universe, features):
+                if as_of == datetime.date(2024, 1, 15):
+                    return (
+                        OrderIntent(
+                            instrument_id=target_isin,
+                            signal_date=as_of,
+                            target_date=next_session,  # Jan 16
+                            side=OrderSide.BUY,
+                            quantity=10,
+                        ),
+                    )
+                return ()
+
+        engine = WalkForwardEngine(calendar=test_calendar, gold_engine=gold)
+        res = engine.run_walk_forward(strategy=UpperCircuitBuyer(), folds=[fold])
+        assert len(res.aggregate_trades) == 1
+        trade = res.aggregate_trades[0]
+        # §35.2 assertion: BUY at open == 1200.00 MUST be REJECTED_UPPER_CIRCUIT
+        assert trade.status == FillStatus.REJECTED_UPPER_CIRCUIT
+        assert trade.filled_quantity == 0
+        assert trade.circuit_evidence_present is True
+
+
+def test_h42_corrupt_band_row_fails_closed():
+    """
+    Audit §35 H-42: parse_price_band_report must fail closed when a row fails PriceBandRecord validation
+    (e.g. lower_limit >= upper_limit), rather than silently deleting the corrupt row.
+    """
+    corrupt_csv = (
+        "ISIN,SYMBOL,SERIES,UPPER_LIMIT,LOWER_LIMIT,BAND_PERCENTAGE\n"
+        "INE704P01025,COCHINSHIP,EQ,500.00,800.00,20.00\n"  # Corrupt: lower > upper!
+    ).encode("utf-8")
+
+    with pytest.raises(PriceBandIngestError, match="PriceBandRecord validation failed.*Finding H-42"):
+        parse_price_band_report(
+            report_data=corrupt_csv,
+            trade_date=datetime.date(2024, 1, 10),
+        )

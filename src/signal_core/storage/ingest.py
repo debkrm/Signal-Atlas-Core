@@ -370,7 +370,10 @@ def parse_price_band_report(
             csv_names = [n for n in zf.namelist() if n.lower().endswith(".csv")]
             if not csv_names:
                 raise PriceBandIngestError("Price band ZIP archive contains no CSV files.")
-            text = zf.read(csv_names[0]).decode("utf-8", errors="replace")
+            # Note N-2: Select explicit price band member if archive contains multiple CSVs
+            target_csvs = [n for n in csv_names if any(k in n.lower() for k in ("sec_list", "band", "pd"))]
+            chosen_csv = target_csvs[0] if target_csvs else csv_names[0]
+            text = zf.read(chosen_csv).decode("utf-8", errors="replace")
         except Exception as exc:
             raise PriceBandIngestError(f"Failed to decompress price band ZIP archive: {exc}") from exc
     else:
@@ -378,11 +381,14 @@ def parse_price_band_report(
 
     reader = csv.reader(io.StringIO(text))
     header: Optional[List[str]] = None
+    rows: List[List[str]] = []
     for row in reader:
         if not row or all(c.strip() == "" for c in row):
             continue
-        header = [c.strip().upper().replace(" ", "_").replace("-", "_") for c in row]
-        break
+        if header is None:
+            header = [c.strip().upper().replace(" ", "_").replace("-", "_") for c in row]
+        else:
+            rows.append(row)
 
     if header is None:
         raise PriceBandIngestError("Empty price band file; no header row detected.")
@@ -408,7 +414,23 @@ def parse_price_band_report(
             f"Price band report header lacks both ISIN and Symbol columns. Found: {header}"
         )
 
+    # Note N-3: Determine inferred_date strictly upfront; datetime.date.today() prohibited in historical pipeline
     inferred_date = trade_date
+    if inferred_date is None and date_idx is not None:
+        for r in rows:
+            if len(r) > date_idx and r[date_idx].strip():
+                try:
+                    inferred_date = parse_bhavcopy_date(r[date_idx].strip())
+                    break
+                except Exception:
+                    pass
+
+    if inferred_date is None:
+        raise PriceBandIngestError(
+            "trade_date cannot be determined from report data or arguments. "
+            "Point-in-time security master resolution requires an explicit date (Note N-3)."
+        )
+
     default_source = source_descriptor or PriceBandSourceDescriptor(
         source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
         publication_name="NSE_DAILY_PRICE_BAND_REPORT",
@@ -422,16 +444,8 @@ def parse_price_band_report(
     target_set = {i.upper() for i in target_isins} if target_isins is not None else None
 
     line_no = 1
-    for row in reader:
+    for row in rows:
         line_no += 1
-        if not row or all(c.strip() == "" for c in row):
-            continue
-
-        if inferred_date is None and date_idx is not None and len(row) > date_idx:
-            date_str = row[date_idx].strip()
-            if date_str:
-                inferred_date = parse_bhavcopy_date(date_str)
-
         sym_val = row[sym_idx].strip().upper() if sym_idx is not None and len(row) > sym_idx else ""
         series_val = row[series_idx].strip().upper() if series_idx is not None and len(row) > series_idx else "EQ"
         if not series_val:
@@ -442,8 +456,7 @@ def parse_price_band_report(
         if isin_idx is not None and len(row) > isin_idx and row[isin_idx].strip():
             isin_val = row[isin_idx].strip().upper()
         elif security_master is not None and sym_val:
-            d_lookup = inferred_date or datetime.date.today()
-            resolved = security_master.resolve_isin_by_symbol(sym_val, d_lookup, series=series_val)
+            resolved = security_master.resolve_isin_by_symbol(sym_val, inferred_date, series=series_val)
             if resolved:
                 isin_val = resolved
 
@@ -474,9 +487,9 @@ def parse_price_band_report(
         is_unconstrained = False
         if band_idx is not None and len(row) > band_idx and row[band_idx].strip():
             b_str = row[band_idx].strip().replace("%", "")
-            if b_str.upper() in ("NO BAND", "NO_BAND", "NONE", "0", "0.0", "NA", "N/A"):
+            if b_str.upper() in ("NO BAND", "NO_BAND", "NONE", "0", "0.0", "NA", "N/A", "-"):
                 is_unconstrained = True
-                band_p = Decimal("10.00")  # Standard F&O dynamic base flexing band
+                band_p = None  # Audit §35 H-41: "No Band" has band_percentage=None, NOT fabricated 10.00
             else:
                 try:
                     band_p = Decimal(b_str)
@@ -485,17 +498,16 @@ def parse_price_band_report(
         elif u_lim is None and l_lim is None:
             # Scrips with no limits declared (e.g. F&O)
             is_unconstrained = True
-            band_p = Decimal("10.00")
+            band_p = None  # Audit §35 H-41: Do not fabricate 10.00
 
         if isin_val in seen_isins:
             continue
         seen_isins.add(isin_val)
 
-        d_rec = inferred_date or datetime.date.today()
         try:
             rec = PriceBandRecord(
                 isin=isin_val,
-                trade_date=d_rec,
+                trade_date=inferred_date,
                 series=series_val,
                 upper_circuit_limit=u_lim,
                 lower_circuit_limit=l_lim,
@@ -505,11 +517,11 @@ def parse_price_band_report(
                 source_ref=default_source.circular_ref,
             )
             records.append(rec)
-        except PriceBandValidationError:
-            continue
-
-    if inferred_date is None:
-        raise PriceBandIngestError("trade_date cannot be determined from report data or arguments.")
+        except PriceBandValidationError as exc:
+            # Audit §35 H-42: Fail closed on corrupt band row; do not silently discard
+            raise PriceBandIngestError(
+                f"Line {line_no}: PriceBandRecord validation failed for ISIN {isin_val}: {exc} (Finding H-42)."
+            ) from exc
 
     return inferred_date, records
 

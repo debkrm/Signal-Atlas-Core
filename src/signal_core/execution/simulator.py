@@ -365,8 +365,8 @@ class ExecutionFillSimulator:
                         f"Whole-day locked upper circuit session ({price_bar.high}); buyers rationed",
                         circuit_evidence_present=circuit_evidence,
                     )
-                elif effective_upper is None and not is_unconstrained:
-                    # Locked 0-range bar without explicit limit evidence (constrained scrip)
+                elif effective_upper is None:
+                    # Locked 0-range bar without explicit limit evidence (Audit §35 H-40 restored)
                     return self._create_rejected_result(
                         order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_UPPER_CIRCUIT,
                         f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); buyers rationed",
@@ -389,7 +389,8 @@ class ExecutionFillSimulator:
                         f"Whole-day locked lower circuit session ({price_bar.low}); sellers trapped",
                         circuit_evidence_present=circuit_evidence,
                     )
-                elif effective_lower is None and not is_unconstrained:
+                elif effective_lower is None:
+                    # Locked 0-range bar without explicit limit evidence (Audit §35 H-40 restored)
                     return self._create_rejected_result(
                         order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_LOWER_CIRCUIT,
                         f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); sellers trapped",

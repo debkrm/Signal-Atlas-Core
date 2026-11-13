@@ -150,18 +150,15 @@ class PriceBandRecord:
             _validate_non_empty_str(self.source_ref, "source_ref")
 
         if self.is_unconstrained:
-            # Audit §27 H-4: Unconstrained scrips (e.g. F&O stocks with dynamic flexing bands)
+            # Audit §27 H-4 & Audit §35 H-41: Unconstrained scrips (e.g. F&O stocks with dynamic flexing bands)
             # must cite an authoritative publication source descriptor; anonymous claims are rejected.
-            if self.source_descriptor is None:
+            # band_percentage can be None when exchange publishes "No Band" under dynamic flexing framework.
+            if self.source_descriptor is None and self.source_ref is None:
                 raise PriceBandValidationError(
                     f"is_unconstrained=True requires an authoritative source_descriptor citation for ISIN {self.isin} on {self.trade_date}."
                 )
-            # Cannot claim parameter-free trading without either dynamic base percentage or limits
-            if self.band_percentage is None and (self.upper_circuit_limit is None or self.lower_circuit_limit is None):
-                raise PriceBandValidationError(
-                    f"is_unconstrained=True scrips (e.g. F&O underlyings with dynamic flexing bands) must declare "
-                    f"either band_percentage (e.g. 10.0 for dynamic base band) or explicit limits for ISIN {self.isin} on {self.trade_date}."
-                )
+            if self.band_percentage is not None:
+                _validate_decimal(self.band_percentage, "band_percentage")
             if self.upper_circuit_limit is not None:
                 _validate_decimal(self.upper_circuit_limit, "upper_circuit_limit")
             if self.lower_circuit_limit is not None:
@@ -193,17 +190,41 @@ class PriceBandRecord:
 
     @property
     def has_circuit_evidence(self) -> bool:
-        """Returns True if authoritative circuit boundaries are documented."""
-        if self.is_unconstrained:
-            return (self.source_descriptor is not None or self.source_ref is not None) and (
-                (self.upper_circuit_limit is not None and self.lower_circuit_limit is not None)
-                or self.band_percentage is not None
-            )
+        """
+        Returns True if authoritative numeric circuit boundaries (upper and lower) are present.
+        Per Audit §35 H-40, circuit evidence requires enforceable numeric limits, never a percentage alone.
+        """
+        return self.upper_circuit_limit is not None and self.lower_circuit_limit is not None
+
+    def derive_limits(self, prev_close: Decimal) -> "PriceBandRecord":
+        """
+        Derives concrete numeric upper and lower circuit limits from prev_close and band_percentage.
+        If numeric limits are already present or band_percentage is None, returns self.
+        Per Audit §35 H-40: upper = prev_close * (1 + pct/100), lower = prev_close * (1 - pct/100).
+        """
         if self.upper_circuit_limit is not None and self.lower_circuit_limit is not None:
-            return True
-        if self.band_percentage is not None and (self.source_descriptor is not None or self.source_ref is not None):
-            return True
-        return False
+            return self
+        if self.band_percentage is None:
+            return self
+        if not isinstance(prev_close, Decimal):
+            raise PriceBandValidationError(f"prev_close must be Decimal, got {type(prev_close).__name__}")
+        if prev_close <= Decimal("0"):
+            raise PriceBandValidationError(f"prev_close must be strictly positive, got {prev_close}")
+
+        pct_factor = self.band_percentage / Decimal("100")
+        derived_upper = prev_close * (Decimal("1") + pct_factor)
+        derived_lower = prev_close * (Decimal("1") - pct_factor)
+        return PriceBandRecord(
+            isin=self.isin,
+            trade_date=self.trade_date,
+            series=self.series,
+            upper_circuit_limit=derived_upper,
+            lower_circuit_limit=derived_lower,
+            band_percentage=self.band_percentage,
+            is_unconstrained=self.is_unconstrained,
+            source_descriptor=self.source_descriptor,
+            source_ref=self.source_ref,
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -290,15 +311,12 @@ class PriceBandInterval:
             _validate_non_empty_str(self.circular_ref, "circular_ref")
 
         if self.is_unconstrained:
-            # Audit §27 H-4 & Audit §31 H-30: Unconstrained scrips (e.g. F&O stocks with dynamic flexing bands)
+            # Audit §27 H-4, §31 H-30, §35 H-41: Unconstrained scrips (e.g. F&O stocks with dynamic flexing bands)
             # must cite an authoritative publication source descriptor or circular ref; anonymous claims are rejected.
+            # band_percentage can be None (e.g. exchange publishes "No Band" with dynamic flex citation).
             if self.source_descriptor is None and self.circular_ref is None:
                 raise PriceBandValidationError(
                     f"is_unconstrained=True requires an authoritative source_descriptor or circular_ref citation for ISIN {self.isin}."
-                )
-            if self.band_percentage is None:
-                raise PriceBandValidationError(
-                    f"is_unconstrained=True scrips must declare band_percentage (e.g. 10.0 for dynamic base band) for ISIN {self.isin}."
                 )
         else:
             if self.band_percentage is None:

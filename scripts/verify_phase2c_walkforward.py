@@ -33,7 +33,13 @@ from signal_core.contracts.exchange_series import (
     ExchangeSeries,
     SeriesEligibilityPolicy,
 )
-from signal_core.contracts.price_band import PriceBandRecord
+from signal_core.contracts.price_band import (
+    PriceBandInterval,
+    PriceBandPublicationSource,
+    PriceBandRecord,
+    PriceBandSourceDescriptor,
+)
+from signal_core.storage.ingest import parse_price_band_report
 from signal_core.execution.types import FillStatus, OrderSide
 from signal_core.research.containment import PartitionRole, WalkForwardFold
 from signal_core.research.trials import TrialRegistry
@@ -108,41 +114,57 @@ def run_phase_2c_verification() -> bool:
         base_rel = Decimal("2500.00")
         base_be = Decimal("500.00")
 
-        # Price bands:
-        # - RELIANCE on 2024-01-16: upper circuit at 2400.00 (below open 2410.00) to test freeze refusal (Rule 5.3)
-        # - INFY on all test sessions: exact 10.0% circuit limits to test verified execution
-        price_bands = [
-            PriceBandRecord(
+        # Price bands (Audit §35.4 point 4 & Note N-6: parse real report bytes -> master -> fold)
+        # Parse real daily price band report bytes for Jan 16:
+        # RELIANCE on 2024-01-16 has upper circuit at 2400.00 (below open 2410.00) to test freeze refusal (Rule 5.3)
+        raw_band_report_bytes = (
+            "ISIN,SYMBOL,SERIES,SECURITY_NAME,BAND,UPPER_PRICE_BAND,LOWER_PRICE_BAND\n"
+            f"{rel_isin},RELIANCE,EQ,Reliance Industries Limited,10%,2400.00,2000.00\n"
+        ).encode("utf-8")
+        _, parsed_band_records = parse_price_band_report(
+            report_data=raw_band_report_bytes,
+            trade_date=datetime.date(2024, 1, 16),
+            security_master=None,
+            target_isins=[rel_isin],
+        )
+
+        source_desc = PriceBandSourceDescriptor(
+            source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+            publication_name="NSE_CASH_BANDS",
+            archive_url_template="https://archives.nseindia.com/sec_list.csv",
+            retrieval_frequency="DAILY",
+            circular_ref="NSE/SURV/TEST",
+        )
+
+        price_band_intervals = [
+            PriceBandInterval(
+                isin=infy_isin,
+                band_percentage=Decimal("10.00"),
+                effective_from=datetime.date(2024, 1, 1),
+                effective_to=datetime.date(2024, 12, 31),
+                is_unconstrained=False,
+                source_descriptor=source_desc,
+                circular_ref="NSE/SURV/TEST",
+            ),
+            PriceBandInterval(
                 isin=rel_isin,
-                trade_date=datetime.date(2024, 1, 16),
-                series="EQ",
-                upper_circuit_limit=Decimal("2400.00"),
-                lower_circuit_limit=Decimal("2000.00"),
+                band_percentage=Decimal("10.00"),
+                effective_from=datetime.date(2024, 1, 1),
+                effective_to=datetime.date(2024, 12, 31),
+                is_unconstrained=False,
+                source_descriptor=source_desc,
+                circular_ref="NSE/SURV/TEST",
+            ),
+            PriceBandInterval(
+                isin=be_isin,
+                band_percentage=Decimal("5.00"),
+                effective_from=datetime.date(2024, 1, 1),
+                effective_to=datetime.date(2024, 12, 31),
+                is_unconstrained=False,
+                source_descriptor=source_desc,
+                circular_ref="NSE/SURV/TEST",
             ),
         ]
-        for i, d in enumerate(dates[5:]):  # Jan 15-19
-            p_curr = base_infy + Decimal(str((i + 5) * 10))
-            price_bands.append(
-                PriceBandRecord(
-                    isin=infy_isin,
-                    trade_date=d,
-                    series="EQ",
-                    upper_circuit_limit=p_curr * Decimal("1.10"),
-                    lower_circuit_limit=p_curr * Decimal("0.90"),
-                    band_percentage=Decimal("10.0"),
-                )
-            )
-            p_be_curr = base_be + Decimal(str((i + 5) * 5))
-            price_bands.append(
-                PriceBandRecord(
-                    isin=be_isin,
-                    trade_date=d,
-                    series="BE",
-                    upper_circuit_limit=p_be_curr * Decimal("1.05"),
-                    lower_circuit_limit=p_be_curr * Decimal("0.95"),
-                    band_percentage=Decimal("5.0"),
-                )
-            )
 
         sec_master = SecurityMaster(
             symbol_intervals=[
@@ -168,7 +190,8 @@ def run_phase_2c_verification() -> bool:
                     effective_to=datetime.date(2024, 12, 31),
                 ),
             ],
-            price_bands=price_bands,
+            price_bands=parsed_band_records,
+            price_band_intervals=price_band_intervals,
         )
 
         # 3. Build Silver storage partitions
