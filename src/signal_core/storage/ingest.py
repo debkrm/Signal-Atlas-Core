@@ -13,12 +13,13 @@ Handles:
 """
 
 import csv
+from dataclasses import dataclass
 import datetime
 from decimal import Decimal, InvalidOperation
 import io
 from pathlib import Path
 import re
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple, Union
 import zipfile
 
 from signal_core.contracts.price_band import (
@@ -49,6 +50,93 @@ class BhavcopyIngestError(Exception):
 class PriceBandIngestError(Exception):
     """Raised when price band report parsing or ingestion fails."""
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class PriceBandParseSummary:
+    """
+    Dropped-row and extraction accounting for a price band report ingest per Note N-14 / Audit §38.4.
+    """
+    total_rows: int
+    extracted_records: int
+    unresolved_isin_count: int
+    non_target_count: int
+    duplicate_isin_count: int
+
+    def to_dict(self) -> Dict[str, int]:
+        return {
+            "total_rows": self.total_rows,
+            "extracted_records": self.extracted_records,
+            "unresolved_isin_count": self.unresolved_isin_count,
+            "non_target_count": self.non_target_count,
+            "duplicate_isin_count": self.duplicate_isin_count,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> "PriceBandParseSummary":
+        return cls(
+            total_rows=int(d["total_rows"]),
+            extracted_records=int(d["extracted_records"]),
+            unresolved_isin_count=int(d["unresolved_isin_count"]),
+            non_target_count=int(d["non_target_count"]),
+            duplicate_isin_count=int(d["duplicate_isin_count"]),
+        )
+
+
+class PriceBandParseResult(tuple):
+    """
+    2-tuple (trade_date, records) with summary attribute per Note N-14.
+    Supports backwards-compatible 2-element tuple unpacking while carrying dropped-row accounting.
+    """
+    def __new__(cls, trade_date: datetime.date, records: Sequence[PriceBandRecord], summary: PriceBandParseSummary):
+        obj = super().__new__(cls, (trade_date, list(records)))
+        obj._trade_date = trade_date
+        obj._records = list(records)
+        obj._summary = summary
+        return obj
+
+    @property
+    def trade_date(self) -> datetime.date:
+        return self._trade_date
+
+    @property
+    def records(self) -> List[PriceBandRecord]:
+        return self._records
+
+    @property
+    def summary(self) -> PriceBandParseSummary:
+        return self._summary
+
+    def as_triple(self) -> Tuple[datetime.date, List[PriceBandRecord], PriceBandParseSummary]:
+        return (self._trade_date, self._records, self._summary)
+
+
+class IngestPriceBandsResult(tuple):
+    """
+    2-tuple (bronze_entry, records) with summary attribute per Note N-14.
+    Supports backwards-compatible 2-element tuple unpacking while carrying dropped-row accounting.
+    """
+    def __new__(cls, bronze_entry: BronzeManifestEntry, records: Sequence[PriceBandRecord], summary: PriceBandParseSummary):
+        obj = super().__new__(cls, (bronze_entry, list(records)))
+        obj._bronze_entry = bronze_entry
+        obj._records = list(records)
+        obj._summary = summary
+        return obj
+
+    @property
+    def bronze_entry(self) -> BronzeManifestEntry:
+        return self._bronze_entry
+
+    @property
+    def records(self) -> List[PriceBandRecord]:
+        return self._records
+
+    @property
+    def summary(self) -> PriceBandParseSummary:
+        return self._summary
+
+    def as_triple(self) -> Tuple[BronzeManifestEntry, List[PriceBandRecord], PriceBandParseSummary]:
+        return (self._bronze_entry, self._records, self._summary)
 
 
 def parse_bhavcopy_date(date_str: str) -> datetime.date:
@@ -334,7 +422,8 @@ def parse_price_band_report(
     source_descriptor: Optional[PriceBandSourceDescriptor] = None,
     security_master: Optional[SecurityMaster] = None,
     target_isins: Optional[Sequence[str]] = None,
-) -> Tuple[datetime.date, List[PriceBandRecord]]:
+    max_unresolved_threshold: Optional[int] = None,
+) -> PriceBandParseResult:
     """
     Parses a daily NSE price band report or PR-archive (CSV or ZIP containing CSV)
     and extracts typed PriceBandRecord objects per AGENTS.md Rule 5.3 and Rule 10.7 (Finding H-30).
@@ -392,12 +481,14 @@ def parse_price_band_report(
                 qualifying_probe = []
                 for n in non_bhav_csvs:
                     try:
-                        sample = zf.read(n)[:2048].decode("utf-8", errors="replace")
-                        first_line = sample.splitlines()[0].upper() if sample.splitlines() else ""
-                        if any(k in first_line for k in ("BAND", "UPPER_PRICE_BAND", "LOWER_PRICE_BAND", "UPPER_BAND", "LOWER_BAND", "CIRCUIT_BAND")):
-                            qualifying_probe.append(n)
-                    except Exception:
-                        pass
+                        sample = zf.read(n)[:2048].decode("utf-8")
+                    except Exception as exc:
+                        raise PriceBandIngestError(
+                            f"Failed to probe header of candidate member {n!r} in ZIP archive: {exc} (Note N-15)."
+                        ) from exc
+                    first_line = sample.splitlines()[0].upper() if sample.splitlines() else ""
+                    if any(k in first_line for k in ("BAND", "UPPER_PRICE_BAND", "LOWER_PRICE_BAND", "UPPER_BAND", "LOWER_BAND", "CIRCUIT_BAND")):
+                        qualifying_probe.append(n)
                 candidate_csvs = qualifying_probe
 
             if len(candidate_csvs) == 0:
@@ -599,7 +690,23 @@ def parse_price_band_report(
             f"Duplicates: {duplicate_isin_count}."
         )
 
-    return inferred_date, records
+    summary = PriceBandParseSummary(
+        total_rows=len(rows),
+        extracted_records=len(records),
+        unresolved_isin_count=unresolved_isin_count,
+        non_target_count=non_target_count,
+        duplicate_isin_count=duplicate_isin_count,
+    )
+
+    # Note N-14 / Audit §38.4: Fail closed if unresolved drops exceed allowable threshold
+    if max_unresolved_threshold is not None and target_set is None:
+        if unresolved_isin_count > max_unresolved_threshold:
+            raise PriceBandIngestError(
+                f"Unresolved ISINs ({unresolved_isin_count}) exceeded allowable threshold {max_unresolved_threshold} "
+                f"from {len(rows)} data rows (Note N-14)."
+            )
+
+    return PriceBandParseResult(inferred_date, records, summary)
 
 
 def ingest_daily_price_bands(
@@ -612,19 +719,26 @@ def ingest_daily_price_bands(
     security_master: Optional[SecurityMaster] = None,
     target_isins: Optional[Sequence[str]] = None,
     silver: Optional[SilverStorage] = None,
-) -> Tuple[BronzeManifestEntry, List[PriceBandRecord]]:
+    calendar: Optional[TradingCalendar] = None,
+    max_unresolved_threshold: Optional[int] = None,
+) -> IngestPriceBandsResult:
     """
-    Ingests a daily price band report or PR-archive into Bronze storage with SHA-256 provenance manifest,
-    and returns parsed PriceBandRecord objects per AGENTS.md Rule 10.7 and Audit §31 H-30.
-    If silver is provided, also atomically writes an immutable Silver daily price band partition (Note N-1, Audit §37 H-44).
+    Ingests a daily price band report or PR-archive into Bronze storage with SHA-256 provenance manifest
+    and dropped-row accounting summary per AGENTS.md Rule 10.7 and Audit §38 (Notes N-14, N-16, Finding H-44).
+    If silver is provided, also atomically writes an immutable Silver daily price band partition with calendar enforcement.
     """
-    resolved_date, records = parse_price_band_report(
+    parse_res = parse_price_band_report(
         report_data=report_bytes,
         trade_date=trade_date,
         source_descriptor=source_descriptor,
         security_master=security_master,
         target_isins=target_isins,
+        max_unresolved_threshold=max_unresolved_threshold,
     )
+    resolved_date = parse_res.trade_date
+    records = parse_res.records
+    summary = parse_res.summary
+
     if not records:
         raise PriceBandIngestError(
             f"Zero price band records extracted from '{filename}' for date {resolved_date}."
@@ -637,9 +751,15 @@ def ingest_daily_price_bands(
         data=report_bytes,
         source_url=source_url,
         source_archive_format=archive_format,
+        summary=summary.to_dict(),
     )
 
     if silver is not None:
-        silver.write_price_band_partition(trade_date=resolved_date, records=records)
+        silver.write_price_band_partition(
+            trade_date=resolved_date,
+            records=records,
+            calendar=calendar,
+            security_master=security_master,
+        )
 
-    return bronze_entry, records
+    return IngestPriceBandsResult(bronze_entry, records, summary)

@@ -45,7 +45,12 @@ from signal_core.storage.security_master import (
     SymbolInterval,
     build_production_security_master,
 )
-from signal_core.storage.silver import SilverPartitionImmutableError, SilverRecord, SilverStorage
+from signal_core.storage.silver import (
+    SilverPartitionImmutableError,
+    SilverRecord,
+    SilverStorage,
+    SilverStorageError,
+)
 from signal_core.strategy.base import OrderIntent, Strategy
 
 
@@ -828,7 +833,7 @@ def test_h44_silver_price_band_partition_round_trip(test_calendar):
         )
         records = [
             PriceBandRecord(
-                isin="INE704P01025",
+                isin="INE888C01010",
                 trade_date=t_date,
                 series="EQ",
                 upper_circuit_limit=Decimal("802.80"),
@@ -864,7 +869,7 @@ def test_h44_silver_price_band_partition_round_trip(test_calendar):
         assert len(loaded) == 2
         by_isin = {r.isin: r for r in loaded}
 
-        rec1 = by_isin["INE704P01025"]
+        rec1 = by_isin["INE888C01010"]
         assert rec1.trade_date == t_date
         assert rec1.series == "EQ"
         assert rec1.upper_circuit_limit == Decimal("802.80")
@@ -886,15 +891,18 @@ def test_h44_silver_price_band_partition_round_trip(test_calendar):
 
 def test_security_master_with_price_bands():
     """
-    Audit §37 H-44: SecurityMaster.with_price_bands attaches discrete price band records,
-    updating the deterministic fingerprint and discrete lookups while keeping the original master immutable.
+    Audit §38 H-49: SecurityMaster.with_price_bands enforces interval consistency fail-closed.
+    1. Attaching a discrete PriceBandRecord that contradicts a covering interval
+       (e.g. 20% on 2024-01-10 for unconstrained COCHINSHIP) MUST fail closed with SecurityMasterError.
+    2. Attaching an agreeable discrete PriceBandRecord updates discrete lookups and fingerprint.
     """
     sm = build_production_security_master()
     t_date = datetime.date(2024, 1, 10)
     # Baseline on 2024-01-10 has no discrete bands
     assert len(sm.price_bands) == 0
 
-    new_band = PriceBandRecord(
+    # 1. Contradicting discrete record fails closed (Finding H-49)
+    contradicting_band = PriceBandRecord(
         isin="INE704P01025",
         trade_date=t_date,
         series="EQ",
@@ -903,15 +911,344 @@ def test_security_master_with_price_bands():
         band_percentage=Decimal("20.00"),
         is_unconstrained=False,
     )
+    with pytest.raises(SecurityMasterError, match="contradicting covering unconstrained interval"):
+        sm.with_price_bands([contradicting_band])
 
-    sm_updated = sm.with_price_bands([new_band])
+    # 2. Agreeable discrete record succeeds and updates fingerprint
+    source_desc = PriceBandSourceDescriptor(
+        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+        publication_name="NSE_TEST_BANDS",
+        archive_url_template="https://archives.nseindia.com/sec_list.csv",
+        retrieval_frequency="DAILY",
+    )
+    agreeable_band = PriceBandRecord(
+        isin="INE009A01021",
+        trade_date=t_date,
+        series="EQ",
+        upper_circuit_limit=None,
+        lower_circuit_limit=None,
+        band_percentage=None,
+        is_unconstrained=True,
+        source_descriptor=source_desc,
+    )
+
+    sm_updated = sm.with_price_bands([agreeable_band])
     # Original remains immutable
     assert len(sm.price_bands) == 0
     assert len(sm_updated.price_bands) == 1
     assert sm_updated.fingerprint != sm.fingerprint
 
     # Lookup resolves discrete band
-    resolved = sm_updated.get_price_band("INE704P01025", t_date)
+    resolved = sm_updated.get_price_band("INE009A01021", t_date)
     assert resolved is not None
-    assert resolved.upper_circuit_limit == Decimal("802.80")
-    assert resolved.has_circuit_evidence is True
+    assert resolved.is_unconstrained is True
+    assert resolved.band_percentage is None
+
+
+def test_h49_discrete_band_validation_vs_interval_branches():
+    """
+    Audit §38 H-49: Validate all contradiction branches between discrete PriceBandRecords and intervals.
+    """
+    t_date = datetime.date(2024, 1, 10)
+    source_desc = PriceBandSourceDescriptor(
+        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+        publication_name="NSE_TEST_BANDS",
+        archive_url_template="https://archives.nseindia.com/sec_list.csv",
+        retrieval_frequency="DAILY",
+    )
+    syms = [
+        SymbolInterval("INE111A01010", "TESTUNCON", "EQ", datetime.date(2024, 1, 1)),
+        SymbolInterval("INE222B01010", "TESTCONST", "EQ", datetime.date(2024, 1, 1)),
+    ]
+    intervals = [
+        PriceBandInterval(
+            isin="INE111A01010",
+            band_percentage=None,
+            is_unconstrained=True,
+            effective_from=datetime.date(2024, 1, 1),
+            source_descriptor=source_desc,
+        ),
+        PriceBandInterval(
+            isin="INE222B01010",
+            band_percentage=Decimal("10.00"),
+            is_unconstrained=False,
+            effective_from=datetime.date(2024, 1, 1),
+            source_descriptor=source_desc,
+        ),
+    ]
+    sm = SecurityMaster(symbol_intervals=syms, price_band_intervals=intervals)
+
+    # Branch 1: Unconstrained interval, discrete record claims is_unconstrained=False
+    rec1 = PriceBandRecord(
+        isin="INE111A01010",
+        trade_date=t_date,
+        series="EQ",
+        is_unconstrained=False,
+        band_percentage=Decimal("10.00"),
+    )
+    with pytest.raises(SecurityMasterError, match="has is_unconstrained=False.*Finding H-49"):
+        sm.with_price_bands([rec1])
+
+    # Branch 2: Constrained interval (10%), discrete record claims is_unconstrained=True
+    rec2 = PriceBandRecord(
+        isin="INE222B01010",
+        trade_date=t_date,
+        series="EQ",
+        is_unconstrained=True,
+        band_percentage=None,
+        source_descriptor=source_desc,
+    )
+    with pytest.raises(SecurityMasterError, match="claims is_unconstrained=True"):
+        sm.with_price_bands([rec2])
+
+    # Branch 3: Constrained interval (10%), discrete record has mismatched percentage (20%)
+    rec3 = PriceBandRecord(
+        isin="INE222B01010",
+        trade_date=t_date,
+        series="EQ",
+        is_unconstrained=False,
+        band_percentage=Decimal("20.00"),
+    )
+    with pytest.raises(SecurityMasterError, match="contradicts covering interval band_percentage"):
+        sm.with_price_bands([rec3])
+
+    # Branch 4: Constrained interval (10%), discrete record has limits implying different percentage (20%)
+    rec4 = PriceBandRecord(
+        isin="INE222B01010",
+        trade_date=t_date,
+        series="EQ",
+        is_unconstrained=False,
+        upper_circuit_limit=Decimal("120.00"),
+        lower_circuit_limit=Decimal("80.00"),
+        # implied = 20%
+    )
+    with pytest.raises(SecurityMasterError, match="limits imply band"):
+        sm.with_price_bands([rec4])
+
+    # Branch 5: Agreeable records succeed
+    rec_agreeable = PriceBandRecord(
+        isin="INE222B01010",
+        trade_date=t_date,
+        series="EQ",
+        is_unconstrained=False,
+        band_percentage=Decimal("10.00"),
+        upper_circuit_limit=Decimal("110.00"),
+        lower_circuit_limit=Decimal("90.00"),
+    )
+    sm_ok = sm.with_price_bands([rec_agreeable])
+    res = sm_ok.get_price_band("INE222B01010", t_date)
+    assert res is not None
+    assert res.band_percentage == Decimal("10.00")
+    assert res.upper_circuit_limit == Decimal("110.00")
+
+
+def test_n14_dropped_row_accounting_summary_and_threshold(test_calendar):
+    """
+    Audit §38.4 Note N-14:
+    - parse_price_band_report returns typed PriceBandParseResult with summary counters.
+    - ingest_daily_price_bands carries summary into BronzeManifestEntry and manifest.jsonl.
+    - max_unresolved_threshold fails closed when drops exceed threshold.
+    """
+    csv_text = (
+        "ISIN,SYMBOL,SERIES,UPPER_LIMIT,LOWER_LIMIT,BAND\n"
+        "INE009A01021,INFY,EQ,1600.00,1400.00,No Band\n"
+        ",UNKNOWN_SYM,EQ,100.00,90.00,10.00\n"  # dropped: no isin
+        ",ANOTHER_UNKNOWN,EQ,200.00,180.00,10.00\n"  # dropped: no isin
+    ).encode("utf-8")
+
+    # 1. parse_price_band_report returns summary
+    t_date = datetime.date(2024, 1, 10)
+    res = parse_price_band_report(report_data=csv_text, trade_date=t_date)
+    assert res.trade_date == t_date
+    assert len(res.records) == 1
+    assert res.summary.total_rows == 3
+    assert res.summary.extracted_records == 1
+    assert res.summary.unresolved_isin_count == 2
+    assert res.summary.non_target_count == 0
+    assert res.summary.duplicate_isin_count == 0
+
+    # 2. max_unresolved_threshold fails closed
+    with pytest.raises(PriceBandIngestError, match="Unresolved ISINs .* exceeded allowable threshold 1.*Note N-14"):
+        parse_price_band_report(
+            report_data=csv_text,
+            trade_date=t_date,
+            max_unresolved_threshold=1,
+        )
+
+    # 3. ingest_daily_price_bands carries summary into Bronze manifest
+    with tempfile.TemporaryDirectory(prefix="bronze_n14_") as tmpdir:
+        tmp_path = Path(tmpdir)
+        bronze = BronzeStorage(tmp_path / "bronze")
+        silver = SilverStorage(tmp_path / "silver", calendar=test_calendar)
+
+        ingest_res = ingest_daily_price_bands(
+            bronze=bronze,
+            report_bytes=csv_text,
+            filename="sec_list_n14.csv",
+            source_url="https://archives.nseindia.com/sec_list_n14.csv",
+            trade_date=t_date,
+            silver=silver,
+            calendar=test_calendar,
+        )
+        assert ingest_res.summary.unresolved_isin_count == 2
+        assert ingest_res.bronze_entry.summary is not None
+        assert ingest_res.bronze_entry.summary["unresolved_isin_count"] == 2
+
+        # Verify persisted in manifest.jsonl
+        entries = bronze.load_manifest()
+        assert len(entries) == 1
+        assert entries[0].summary is not None
+        assert entries[0].summary["unresolved_isin_count"] == 2
+
+
+def test_n15_zip_probe_exception_fails_closed():
+    """
+    Audit §38.5 Note N-15:
+    ZIP header probe must NOT swallow exceptions with 'except Exception: pass'.
+    An unreadable/corrupted member in a ZIP must raise PriceBandIngestError fail-closed.
+    """
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as zf:
+        # Write valid non-bhav candidate
+        zf.writestr("candidate_file.csv", b"\x80\x81\x82\xff\xfe")  # Invalid UTF-8 bytes!
+
+    with pytest.raises(PriceBandIngestError, match="Failed to probe header of candidate member.*Note N-15"):
+        parse_price_band_report(
+            report_data=zip_buf.getvalue(),
+            trade_date=datetime.date(2024, 1, 10),
+        )
+
+
+def test_n16_silver_price_band_calendar_required():
+    """
+    Audit §38.5 Note N-16:
+    SilverStorage.write_price_band_partition MUST require an authoritative TradingCalendar.
+    Writing without any calendar must fail closed with SilverStorageError.
+    """
+    with tempfile.TemporaryDirectory(prefix="silver_n16_") as tmpdir:
+        tmp_path = Path(tmpdir)
+        # Construct storage with calendar=None
+        silver_no_cal = SilverStorage(tmp_path / "silver_no_cal", calendar=None)
+        t_date = datetime.date(2024, 1, 10)
+        rec = PriceBandRecord(
+            isin="INE009A01021",
+            trade_date=t_date,
+            series="EQ",
+            is_unconstrained=False,
+            band_percentage=Decimal("10.00"),
+        )
+
+        # Calling write_price_band_partition without calendar raises SilverStorageError
+        with pytest.raises(SilverStorageError, match="TradingCalendar is required"):
+            silver_no_cal.write_price_band_partition(trade_date=t_date, records=[rec])
+
+
+def test_h44_cash_universe_identity_and_verified_fold(test_calendar):
+    """
+    Audit §38.3 H-44:
+    (a) Effective-dated symbol->ISIN table for the EQ universe keyed by ISIN.
+    (b) Daily cash band report ingested per session to Bronze/Silver.
+    (c) Fixed-band rows deriving limits from previous close.
+    (d) At least one fold reaching verification_status = 'VERIFIED' with all executed fills carrying circuit evidence.
+    """
+    sm = build_production_security_master(include_cash_universe=True)
+    assert len(sm.registered_isins) > 2000
+
+    # Test resolving a cash universe scrip
+    resolved_isin = sm.resolve_isin_by_symbol("20MICRONS", datetime.date(2024, 1, 10), series="EQ")
+    assert resolved_isin == "INE144J01027"
+
+    # Simulate daily cash band report with 20MICRONS having 20% fixed band
+    cash_csv = (
+        "Symbol,Series,Security Name,Band,Remarks\n"
+        "20MICRONS,EQ,20 Microns Limited,20,-\n"
+        "INFY,EQ,Infosys Limited,No Band,-\n"
+    ).encode("utf-8")
+
+    t_date = datetime.date(2024, 1, 10)
+    with tempfile.TemporaryDirectory(prefix="h44_pipeline_") as tmpdir:
+        tmp_path = Path(tmpdir)
+        bronze = BronzeStorage(tmp_path / "bronze")
+        silver = SilverStorage(tmp_path / "silver", calendar=test_calendar)
+
+        for s in test_calendar.sessions:
+            ingest_daily_price_bands(
+                bronze=bronze,
+                report_bytes=cash_csv,
+                filename=f"sec_list_{s.strftime('%Y%m%d')}.csv",
+                source_url=f"https://archives.nseindia.com/sec_list_{s.strftime('%Y%m%d')}.csv",
+                trade_date=s,
+                security_master=sm,
+                silver=silver,
+                calendar=test_calendar,
+            )
+
+        # Load bands into master from silver
+        sm_with_bands = sm.load_from_silver_price_bands(silver, test_calendar.sessions, calendar=test_calendar)
+        band_20m = sm_with_bands.get_price_band("INE144J01027", t_date, prev_close=Decimal("150.00"))
+        assert band_20m is not None
+        assert band_20m.band_percentage == Decimal("20")
+        assert band_20m.upper_circuit_limit == Decimal("180.00")
+        assert band_20m.lower_circuit_limit == Decimal("120.00")
+        assert band_20m.has_circuit_evidence is True
+
+        # Now run a walkforward fold with a trade in 20MICRONS
+        # Write daily bhavcopy partitions for test sessions
+        for s in test_calendar.sessions:
+            silver.write_daily_partition(
+                s,
+                [
+                    SilverRecord(
+                        isin="INE144J01027",
+                        symbol="20MICRONS",
+                        series="EQ",
+                        trade_date=s,
+                        open=Decimal("155.00"),
+                        high=Decimal("160.00"),
+                        low=Decimal("152.00"),
+                        close=Decimal("158.00"),
+                        volume=500000,
+                        traded_value=Decimal("77500000.00"),
+                    )
+                ],
+                calendar=test_calendar,
+            )
+
+        gold = GoldEngine(silver_storage=silver, calendar=test_calendar, security_master=sm_with_bands)
+        fold = WalkForwardFold(
+            fold_index=0,
+            train_start=datetime.date(2024, 1, 8),
+            train_end=datetime.date(2024, 1, 9),
+            test_start=datetime.date(2024, 1, 10),
+            test_end=datetime.date(2024, 1, 12),
+            embargo_sessions=0,
+            partition_role=PartitionRole.VALIDATION,
+        )
+
+        class CashBuyer(Strategy):
+            @property
+            def strategy_id(self) -> str:
+                return "CASH-BUYER"
+
+            def generate_signals(self, as_of, next_session, universe, features):
+                if as_of == datetime.date(2024, 1, 10):
+                    return (
+                        OrderIntent(
+                            instrument_id="INE144J01027",
+                            signal_date=as_of,
+                            target_date=next_session,  # Jan 11
+                            side=OrderSide.BUY,
+                            quantity=100,
+                        ),
+                    )
+                return ()
+
+        engine = WalkForwardEngine(calendar=test_calendar, gold_engine=gold)
+        res = engine.run_walk_forward(strategy=CashBuyer(), folds=[fold], isins=["INE144J01027"])
+
+        assert len(res.aggregate_trades) == 1
+        trade = res.aggregate_trades[0]
+        assert trade.status == FillStatus.FILLED
+        assert trade.circuit_evidence_present is True
+        assert res.circuit_evidence_complete is True
+        assert res.verification_status == "VERIFIED"

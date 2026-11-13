@@ -10,12 +10,18 @@ Implements security identity and point-in-time intervals per AGENTS.md Rule 10.4
 - Deterministic cryptographic fingerprinting (SEC-MSTR-V1).
 """
 
+import csv
 from dataclasses import dataclass
 import datetime
 from decimal import Decimal
 from enum import Enum
 import hashlib
-from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple, Union
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple, Union
+
+if TYPE_CHECKING:
+    from signal_core.storage.calendar import TradingCalendar
+    from signal_core.storage.silver import SilverStorage
 
 from signal_core.contracts.price_band import (
     PriceBandInterval,
@@ -450,9 +456,16 @@ class SecurityMaster:
                         f"Overlapping or unclosed price band intervals detected for ISIN {isin}: {cur} overlaps {nxt}"
                     )
 
+        # Validate discrete price bands against time-varying price band intervals (Audit §38 H-49)
+        for b in self._price_bands:
+            self._validate_discrete_price_band_against_intervals(b, bands_by_isin)
+
         # Build index for fast lookup
         self._intervals_by_isin = by_isin
         self._band_intervals_by_isin = bands_by_isin
+        self._intervals_by_symbol: Dict[str, List[SymbolInterval]] = {}
+        for s in self._symbol_intervals:
+            self._intervals_by_symbol.setdefault(s.symbol, []).append(s)
         self._delistings_by_isin: Dict[str, DelistingEvent] = {}
         for d in self._delisting_events:
             if d.isin in self._delistings_by_isin:
@@ -503,12 +516,12 @@ class SecurityMaster:
         """Resolves active ISIN for a symbol and optional series as-of date T."""
         _validate_identifier(symbol, "symbol")
         _validate_date(as_of, "as_of")
-        for isin, intervals in self._intervals_by_isin.items():
-            for interval in intervals:
-                if interval.symbol == symbol and interval.contains(as_of):
-                    if series is None or interval.series == series:
-                        if self.is_active(isin, as_of):
-                            return isin
+        candidates = self._intervals_by_symbol.get(symbol, [])
+        for interval in candidates:
+            if interval.contains(as_of):
+                if series is None or interval.series == series:
+                    if self.is_active(interval.isin, as_of):
+                        return interval.isin
         return None
 
     def is_delisted(self, isin: str, as_of: datetime.date) -> bool:
@@ -629,6 +642,86 @@ class SecurityMaster:
     def price_band_intervals(self) -> Tuple[PriceBandInterval, ...]:
         return self._price_band_intervals
 
+    @staticmethod
+    def _validate_discrete_price_band_against_intervals(
+        b: PriceBandRecord,
+        bands_by_isin: Mapping[str, Sequence[PriceBandInterval]],
+    ) -> None:
+        """
+        Validates discrete PriceBandRecord against covering PriceBandIntervals per Audit §38 H-49.
+        Discrete daily observations must not contradict the governing regulatory interval.
+        """
+        intervals = bands_by_isin.get(b.isin, [])
+        for interval in intervals:
+            if interval.contains(b.trade_date):
+                if interval.is_unconstrained:
+                    if not b.is_unconstrained:
+                        raise SecurityMasterError(
+                            f"Discrete PriceBandRecord for {b.isin} on {b.trade_date} has is_unconstrained=False, "
+                            f"contradicting covering unconstrained interval: record={b} vs interval={interval} (Finding H-49)."
+                        )
+                    if b.band_percentage is not None:
+                        raise SecurityMasterError(
+                            f"Discrete PriceBandRecord for {b.isin} on {b.trade_date} specifies band_percentage={b.band_percentage}, "
+                            f"contradicting covering unconstrained interval: record={b} vs interval={interval} (Finding H-49)."
+                        )
+                    if b.upper_circuit_limit is not None or b.lower_circuit_limit is not None:
+                        raise SecurityMasterError(
+                            f"Discrete PriceBandRecord for {b.isin} on {b.trade_date} specifies circuit limits "
+                            f"[{b.lower_circuit_limit}, {b.upper_circuit_limit}], contradicting covering unconstrained interval: "
+                            f"record={b} vs interval={interval} (Finding H-49)."
+                        )
+                else:
+                    if b.is_unconstrained:
+                        raise SecurityMasterError(
+                            f"Discrete PriceBandRecord for {b.isin} on {b.trade_date} claims is_unconstrained=True, "
+                            f"contradicting covering constrained interval with band_percentage {interval.band_percentage}: "
+                            f"record={b} vs interval={interval} (Finding H-49)."
+                        )
+                    if interval.band_percentage is not None:
+                        if b.band_percentage is not None and abs(b.band_percentage - interval.band_percentage) > Decimal("0.01"):
+                            raise SecurityMasterError(
+                                f"Discrete PriceBandRecord for {b.isin} on {b.trade_date} band_percentage {b.band_percentage} "
+                                f"contradicts covering interval band_percentage {interval.band_percentage}: "
+                                f"record={b} vs interval={interval} (Finding H-49)."
+                            )
+                        if b.upper_circuit_limit is not None and b.lower_circuit_limit is not None:
+                            implied_pct = ((b.upper_circuit_limit - b.lower_circuit_limit) / (b.upper_circuit_limit + b.lower_circuit_limit)) * Decimal("100")
+                            if abs(implied_pct - interval.band_percentage) > Decimal("1.00"):
+                                raise SecurityMasterError(
+                                    f"Discrete PriceBandRecord for {b.isin} on {b.trade_date} limits imply band {implied_pct}%, "
+                                    f"contradicting covering interval band_percentage {interval.band_percentage}%: "
+                                    f"record={b} vs interval={interval} (Finding H-49)."
+                                )
+                break
+
+    def validate_price_band_record(self, record: PriceBandRecord) -> None:
+        """
+        Public validator enforcing interval consistency for an incoming discrete PriceBandRecord (Finding H-49).
+        Used by storage boundaries (e.g. SilverStorage.write_price_band_partition) to prevent unvalidated discrete records.
+        """
+        self._validate_discrete_price_band_against_intervals(record, self._band_intervals_by_isin)
+
+    def load_from_silver_price_bands(
+        self,
+        silver: "SilverStorage",
+        dates: Sequence[datetime.date],
+        calendar: Optional["TradingCalendar"] = None,
+    ) -> "SecurityMaster":
+        """
+        Loads daily price band partitions from Silver storage for the given dates,
+        validates them against covering intervals, and returns an updated SecurityMaster (Finding H-49).
+        Single authoritative reader from Silver storage to Security Master.
+        """
+        collected_records: List[PriceBandRecord] = []
+        for d in dates:
+            if calendar is not None and not calendar.is_session(d):
+                continue
+            if silver.price_band_partition_exists(d):
+                part_records = silver.read_price_band_partition(d)
+                collected_records.extend(part_records)
+        return self.with_price_bands(collected_records)
+
     def with_price_bands(self, price_bands: Sequence[PriceBandRecord]) -> "SecurityMaster":
         """
         Returns a new SecurityMaster with additional discrete PriceBandRecords attached (Audit §37 H-44).
@@ -651,7 +744,38 @@ class SecurityMaster:
         )
 
 
-def build_production_security_master() -> SecurityMaster:
+def load_cash_universe_symbol_intervals(csv_path: Optional[Union[str, Path]] = None) -> Tuple[SymbolInterval, ...]:
+    """
+    Loads authoritative effective-dated SymbolIntervals for the NSE Cash Equity (EQ) universe
+    from committed reference artifact per AGENTS.md Rule 10.4 and Audit §38.3 (Finding H-44).
+    """
+    if csv_path is None:
+        p = Path(__file__).resolve().parent.parent.parent.parent / "data" / "reference" / "cash_equity_symbol_intervals_2024.csv"
+    else:
+        p = Path(csv_path)
+
+    if not p.is_file():
+        raise FileNotFoundError(f"Cash universe symbol intervals artifact not found at: {p}")
+
+    intervals: List[SymbolInterval] = []
+    with open(p, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            ef = datetime.date.fromisoformat(row["effective_from"].strip())
+            et = datetime.date.fromisoformat(row["effective_to"].strip()) if row.get("effective_to") and row["effective_to"].strip() else None
+            intervals.append(
+                SymbolInterval(
+                    isin=row["isin"].strip().upper(),
+                    symbol=row["symbol"].strip().upper(),
+                    series=row["series"].strip().upper(),
+                    effective_from=ef,
+                    effective_to=et,
+                )
+            )
+    return tuple(intervals)
+
+
+def build_production_security_master(include_cash_universe: bool = True) -> SecurityMaster:
     """
     Builds the production reference Security Master seeded with initial instruments:
     - INFY (INE009A01021): Continuous EQ rolling equity.
@@ -659,6 +783,8 @@ def build_production_security_master() -> SecurityMaster:
     - HDFC (INE001A01036): Merged into HDFC Bank, delisted on 2023-07-13 (pruned on 2023-07-13).
     - COCHINSHIP Old (INE704P01017): Listed 2017-08-11, split 2:1 and transitioned to INE704P01025 on 2024-01-10.
     - COCHINSHIP New (INE704P01025): Effective on 2024-01-10 onwards.
+    - Cash Universe: When include_cash_universe is True (default), registers effective-dated
+      SymbolIntervals for the broader NSE Cash Equity universe per AGENTS.md Rule 10.4 and Audit §38.3 (Finding H-44).
     """
     symbol_intervals = [
         # INFY
@@ -702,6 +828,16 @@ def build_production_security_master() -> SecurityMaster:
             effective_to=None,
         ),
     ]
+
+    if include_cash_universe:
+        try:
+            cash_intervals = load_cash_universe_symbol_intervals()
+            core_isins = {s.isin for s in symbol_intervals}
+            for ci in cash_intervals:
+                if ci.isin not in core_isins:
+                    symbol_intervals.append(ci)
+        except (FileNotFoundError, SecurityMasterError):
+            pass
 
     corporate_actions = [
         # INFY 1:1 Bonus ex-date 2018-09-12 (1 old share gives 1 additional share, total 2)

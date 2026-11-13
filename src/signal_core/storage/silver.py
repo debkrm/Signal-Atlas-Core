@@ -403,10 +403,13 @@ class SilverStorage:
         trade_date: datetime.date,
         records: Sequence[PriceBandRecord],
         calendar: Optional[TradingCalendar] = None,
+        security_master: Optional[SecurityMaster] = None,
     ) -> Path:
         """
         Writes a daily price band partition to Parquet format (Note N-1, Audit §37 H-44).
         Enforces exact Decimal types, calendar validation, immutability, and physical holdout isolation.
+        Validates records against governing intervals if security_master is provided (Finding H-49).
+        Fails closed with SilverStorageError if no TradingCalendar is available (Note N-16).
         """
         _require_pyarrow()
 
@@ -424,12 +427,19 @@ class SilverStorage:
                 )
 
         active_cal = calendar or self._calendar
-        if active_cal is not None:
-            if not active_cal.is_session(trade_date):
-                raise OffCalendarSessionError(
-                    f"Cannot write silver price band partition for off-calendar session {trade_date}. "
-                    f"Not an authoritative session in calendar {active_cal.calendar_id}."
-                )
+        if active_cal is None:
+            raise SilverStorageError(
+                "A TradingCalendar is required to write a Silver price band partition (Rule 6.3 / Note N-16)."
+            )
+        if not active_cal.is_session(trade_date):
+            raise OffCalendarSessionError(
+                f"Cannot write silver price band partition for off-calendar session {trade_date}. "
+                f"Not an authoritative session in calendar {active_cal.calendar_id}."
+            )
+
+        if security_master is not None:
+            for r in records:
+                security_master.validate_price_band_record(r)
 
         partition_path = self.get_price_band_partition_path(trade_date)
         if partition_path.exists():

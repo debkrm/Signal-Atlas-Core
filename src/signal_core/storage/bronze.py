@@ -51,6 +51,7 @@ class BronzeManifestEntry:
     sha256: str
     restatement_ref: Optional[str] = None
     source_archive_format: Optional[str] = None
+    summary: Optional[Mapping[str, int]] = None
 
     def __post_init__(self) -> None:
         if isinstance(self.relative_path, bool) or not isinstance(self.relative_path, str) or not self.relative_path.strip():
@@ -86,8 +87,8 @@ class BronzeManifestEntry:
             if isinstance(self.source_archive_format, bool) or not isinstance(self.source_archive_format, str) or not self.source_archive_format.strip():
                 raise BronzeStorageError(f"source_archive_format must be non-empty string if provided, got {self.source_archive_format!r}")
 
-    def to_json_dict(self) -> Dict[str, Union[str, int, None]]:
-        d: Dict[str, Union[str, int, None]] = {
+    def to_json_dict(self) -> Dict[str, Union[str, int, Dict[str, int], None]]:
+        d: Dict[str, Union[str, int, Dict[str, int], None]] = {
             "relative_path": self.relative_path,
             "source_url": self.source_url,
             "retrieved_at": self.retrieved_at,
@@ -98,10 +99,14 @@ class BronzeManifestEntry:
             d["restatement_ref"] = self.restatement_ref
         if self.source_archive_format is not None:
             d["source_archive_format"] = self.source_archive_format
+        if self.summary is not None:
+            d["summary"] = dict(self.summary)
         return d
 
     @classmethod
     def from_json_dict(cls, data: Mapping[str, Any]) -> "BronzeManifestEntry":
+        sum_data = data.get("summary")
+        summary_map = {str(k): int(v) for k, v in sum_data.items()} if isinstance(sum_data, dict) else None
         return cls(
             relative_path=str(data["relative_path"]),
             source_url=str(data["source_url"]),
@@ -110,6 +115,7 @@ class BronzeManifestEntry:
             sha256=str(data["sha256"]),
             restatement_ref=str(data["restatement_ref"]) if data.get("restatement_ref") else None,
             source_archive_format=str(data["source_archive_format"]) if data.get("source_archive_format") else None,
+            summary=summary_map,
         )
 
 
@@ -202,6 +208,7 @@ class BronzeStorage:
         retrieved_at: Optional[datetime.datetime] = None,
         restatement_ref: Optional[str] = None,
         source_archive_format: Optional[str] = None,
+        summary: Optional[Mapping[str, int]] = None,
         lock_timeout_seconds: float = 10.0,
     ) -> BronzeManifestEntry:
         """
@@ -258,6 +265,7 @@ class BronzeStorage:
                 sha256=sha256_digest,
                 restatement_ref=restatement_ref,
                 source_archive_format=source_archive_format,
+                summary=summary,
             )
 
             # Append to manifest.jsonl
