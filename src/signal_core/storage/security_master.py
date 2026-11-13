@@ -871,28 +871,54 @@ def build_production_security_master(include_cash_universe: bool = True) -> Secu
                 symbol_intervals.append(ci)
                 continue
 
-            # Compare sourced interval with matching core intervals per Note N-29 and Note N-30
-            # Verify no conflicting ISINs for overlapping effective intervals
-            has_overlap = False
+            # Findings N-29, N-30, N-33:
+            # Segment complement arithmetic for sourced intervals vs core intervals:
+            # For overlapping segments, assert ISIN consistency.
+            # Non-overlapping segments (complements) are appended so pre-core or post-core
+            # documented tails are preserved rather than dropped whole (Finding N-33).
+            segments: List[Tuple[datetime.date, Optional[datetime.date]]] = [(ci.effective_from, ci.effective_to)]
+
             for core in matching_core:
-                overlap = (
-                    (ci.effective_to is None or ci.effective_to > core.effective_from)
-                    and (core.effective_to is None or core.effective_to > ci.effective_from)
-                )
-                if overlap:
-                    has_overlap = True
+                new_segments: List[Tuple[datetime.date, Optional[datetime.date]]] = []
+                for s_from, s_to in segments:
+                    overlap = (
+                        (s_to is None or s_to > core.effective_from)
+                        and (core.effective_to is None or core.effective_to > s_from)
+                    )
+                    if not overlap:
+                        new_segments.append((s_from, s_to))
+                        continue
+
+                    # Overlapping portion: verify ISIN consistency
                     if ci.isin != core.isin:
                         raise SecurityMasterError(
                             f"Divergence detected between hardcoded core interval for {core.symbol} ({core.series}) "
                             f"[ISIN {core.isin}, {core.effective_from}..{core.effective_to}] and sourced interval "
                             f"[ISIN {ci.isin}, {ci.effective_from}..{ci.effective_to}] (Note N-29)."
                         )
-                    # Sourced agrees with core on ISIN; core interval (extending earlier history) is preserved.
 
-            # Note N-30: If sourced interval does not overlap any core interval for this (symbol, series),
-            # append it rather than silently dropping it.
-            if not has_overlap:
-                symbol_intervals.append(ci)
+                    # Complement subtraction: [s_from, s_to) \ [core.effective_from, core.effective_to)
+                    # Left remainder (pre-core segment):
+                    if core.effective_from > s_from:
+                        new_segments.append((s_from, core.effective_from))
+
+                    # Right remainder (post-core segment):
+                    if core.effective_to is not None and (s_to is None or core.effective_to < s_to):
+                        new_segments.append((core.effective_to, s_to))
+
+                segments = new_segments
+
+            for sf, st in segments:
+                if st is None or sf < st:
+                    symbol_intervals.append(
+                        SymbolInterval(
+                            isin=ci.isin,
+                            symbol=ci.symbol,
+                            series=ci.series,
+                            effective_from=sf,
+                            effective_to=st,
+                        )
+                    )
 
     corporate_actions = [
         # INFY 1:1 Bonus ex-date 2018-09-12 (1 old share gives 1 additional share, total 2)

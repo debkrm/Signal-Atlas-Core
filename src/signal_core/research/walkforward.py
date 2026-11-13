@@ -176,15 +176,26 @@ class WalkForwardResult:
                 "Every trade must execute with verified exchange price band evidence before publishing performance."
             )
 
-        # Invariant N-32: Refuse trial record creation if any fold preceded min_binding_evaluation_start_date
-        criteria = load_go_no_go_criteria()
-        min_start = criteria.min_binding_evaluation_start_date
+        # Invariant N-32 / N-35: Refuse trial record creation if any fold preceded min_binding_evaluation_start_date
+        # Judge by execution_config carried on the result or criteria in force during the run (Finding N-35).
+        min_start_str = self.execution_config.get("min_binding_evaluation_start_date")
+        if min_start_str:
+            min_start = datetime.date.fromisoformat(str(min_start_str))
+        else:
+            criteria = load_go_no_go_criteria()
+            if self.criteria_version and criteria.version != self.criteria_version:
+                raise WalkForwardEngineError(
+                    f"Cannot create trial record: current criteria version '{criteria.version}' "
+                    f"differs from criteria version '{self.criteria_version}' in force during the run (Finding N-35)."
+                )
+            min_start = criteria.min_binding_evaluation_start_date
+
         for f_res in self.fold_results:
             earliest = min(f_res.fold.train_start, f_res.fold.test_start)
             if earliest < min_start:
                 raise WalkForwardEngineError(
                     f"Cannot create trial record for fold evaluated on {earliest}, which precedes "
-                    f"the minimum binding evaluation start date ({min_start}) declared in criteria (Finding N-32)."
+                    f"the minimum binding evaluation start date ({min_start}) declared in criteria (Finding N-32, N-35)."
                 )
 
         # Audit §31 H-28 / §32 H-35: Dataset fingerprint cannot be overridden with spoofed or mismatched value
@@ -1020,6 +1031,7 @@ class WalkForwardEngine:
             "cost_model": cost_config,
             "slippage_model": slippage_config,
             "criteria_version": self._criteria.version,
+            "min_binding_evaluation_start_date": self._criteria.min_binding_evaluation_start_date.isoformat(),
             # Audit §33 H-39: identify the run by the thresholds in force, not by a version string
             "criteria_fingerprint": compute_criteria_fingerprint(self._criteria),
         }

@@ -54,6 +54,43 @@ SEC_LIST_CSV = REPO_ROOT / "data" / "reference" / "sec_list_20240116.csv"
 MANIFEST_FILE = REPO_ROOT / "data" / "reference" / "manifest.jsonl"
 
 
+def resolve_all_bhavcopy_archives() -> List[Path]:
+    """
+    Discovers all available raw Bhavcopy archives for per-session identity verification (Finding N-34).
+    Checks:
+    1. NSE_RAW_ARCHIVES_DIR environment variable
+    2. REPO_ROOT / "data" / "raw"
+    3. REPO_ROOT.parent / "Signal-Atlas" / "data" / "raw"
+    4. Committed repo fixture: REPO_ROOT / "data" / "reference" / "bhavcopy_2024"
+    """
+    env_dir = os.environ.get("NSE_RAW_ARCHIVES_DIR")
+    search_dirs = []
+    if env_dir:
+        search_dirs.append(Path(env_dir))
+    search_dirs.append(REPO_ROOT / "data" / "raw")
+    search_dirs.append(REPO_ROOT.parent / "Signal-Atlas" / "data" / "raw")
+
+    for base_dir in search_dirs:
+        if base_dir.is_dir():
+            zips = []
+            for sub in sorted(base_dir.iterdir()):
+                if sub.is_dir() and sub.name.isdigit():
+                    zips.extend(sorted(sub.glob("*.zip")))
+            if zips:
+                return zips
+            flat_zips = sorted(base_dir.glob("*.zip"))
+            if flat_zips:
+                return flat_zips
+
+    ref_dir = REPO_ROOT / "data" / "reference" / "bhavcopy_2024"
+    if ref_dir.is_dir():
+        zips = sorted(ref_dir.glob("*.zip"))
+        if zips:
+            return zips
+
+    return []
+
+
 def resolve_raw_bhavcopy_archive(filename: str = "cm16JAN2024bhav.csv.zip") -> Path:
     """Configurable Bhavcopy archive lookup per Audit §40 Note H-53, §12.5."""
     env_dir = os.environ.get("NSE_RAW_ARCHIVES_DIR")
@@ -173,53 +210,110 @@ def verify_gate_cov1_artifact_integrity() -> bool:
 
 
 def verify_gate_cov2_bhavcopy_resolution() -> bool:
-    """Verifies symbol->ISIN resolution on traded exchange Bhavcopy scrips (Audit §40 Findings H-52, H-53)."""
-    print("--- Gate COV-2: Traded EQ Bhavcopy Scrips Point-in-Time Resolution (Finding H-52, H-53) ---")
-    raw_bhav = resolve_raw_bhavcopy_archive("cm16JAN2024bhav.csv.zip")
-    if not raw_bhav.is_file():
-        # Audit §40 H-53: Fails closed with named reason; zero silent skips!
-        print(f"[FAIL] Required raw Bhavcopy archive not found at: {raw_bhav} (Finding H-53)")
-        print("Archive is required for Gate COV-2. Place in data/reference/ or set NSE_RAW_ARCHIVES_DIR.")
+    """Verifies per-session symbol->ISIN resolution across all archived Bhavcopy sessions (Findings H-52, H-54, N-34, N-37)."""
+    print("--- Gate COV-2: Traded EQ Bhavcopy Scrips Point-in-Time Resolution (Findings H-54, N-34) ---")
+    archives = resolve_all_bhavcopy_archives()
+    if not archives:
+        print("[FAIL] No raw Bhavcopy archives found for Gate COV-2 per-session sweep (Finding H-53, N-34).")
         return False
 
     sm = build_production_security_master()
-
-    bhav_eq = []
-    with zipfile.ZipFile(raw_bhav) as zf:
-        for name in zf.namelist():
-            if name.endswith(".csv"):
-                with zf.open(name) as f:
-                    r = csv.reader(io.TextIOWrapper(f, encoding="utf-8"))
-                    header = next(r)
-                    h_map = {c.strip().upper(): i for i, c in enumerate(header)}
-                    sym_col = h_map["SYMBOL"]
-                    srs_col = h_map["SERIES"]
-                    isin_col = h_map["ISIN"]
-
-                    for row in r:
-                        if row and row[srs_col].strip() == "EQ":
-                            bhav_eq.append((row[sym_col].strip().upper(), row[isin_col].strip().upper()))
-
-    target_date = datetime.date(2024, 1, 16)
-    resolved_count = 0
-    for sym, expected_isin in bhav_eq:
-        actual_isin = sm.resolve_isin_by_symbol(sym, target_date)
-        if actual_isin == expected_isin:
-            resolved_count += 1
-
-    total_eq = len(bhav_eq)
-    pct = (resolved_count / total_eq) * 100.0 if total_eq else 0.0
-    print(f"[INFO] 16-Jan-2024 Bhavcopy Active Traded EQ Scrips: {total_eq}")
-    print(f"[INFO] Successfully Resolved to Exact ISIN: {resolved_count} / {total_eq} ({pct:.2f}% of traded scrips on date T)")
-    print(f"[INFO] Note: Measures actively traded scrips on date T; full listing universe coverage evaluated in Gate COV-3.")
-
     criteria = load_go_no_go_criteria()
-    required_pct = float(criteria.min_traded_eq_resolution_pct)
-    if pct < required_pct or resolved_count != total_eq:
-        print(f"[FAIL] Resolution was below criteria invariant {required_pct:.2f}%: {resolved_count} != {total_eq} ({pct:.2f}%)")
+
+    print(f"[INFO] Discovered {len(archives)} raw Bhavcopy archives for per-session traded EQ resolution sweep.")
+
+    total_sessions = 0
+    total_eq_rows = 0
+    resolved_eq_rows = 0
+
+    for z_path in archives:
+        with zipfile.ZipFile(z_path) as zf:
+            for name in zf.namelist():
+                if not name.lower().endswith(".csv") or "bhav" not in name.lower():
+                    continue
+                with zf.open(name) as f:
+                    reader = csv.reader(io.TextIOWrapper(f, encoding="utf-8", errors="replace"))
+                    try:
+                        header = next(reader)
+                    except StopIteration:
+                        continue
+                    h_map = {c.strip().upper(): i for i, c in enumerate(header)}
+
+                    def _find_col(*cands: str) -> Optional[int]:
+                        for c in cands:
+                            if c in h_map:
+                                return h_map[c]
+                        return None
+
+                    sym_col = _find_col("TCKRSYMB", "SYMBOL")
+                    isin_col = _find_col("ISIN", "ISIN_CODE")
+                    srs_col = _find_col("SCTYSRS", "SERIES")
+                    dt_col = _find_col("TRADDT", "TIMESTAMP", "TRADEDATE")
+
+                    if None in (sym_col, isin_col, srs_col, dt_col):
+                        continue
+
+                    max_idx = max(sym_col, isin_col, srs_col, dt_col)
+                    session_date = None
+                    session_rows = 0
+                    session_resolved = 0
+
+                    for row in reader:
+                        if len(row) <= max_idx:
+                            continue
+                        if row[srs_col].strip().upper() != "EQ":
+                            continue
+                        sym = row[sym_col].strip().upper()
+                        isin = row[isin_col].strip().upper()
+                        if not sym or not isin or len(isin) != 12:
+                            continue
+
+                        if session_date is None:
+                            d_str = row[dt_col].strip()
+                            if "-" in d_str:
+                                parts = d_str.split("-")
+                                if len(parts[0]) == 4:
+                                    session_date = datetime.date(int(parts[0]), int(parts[1]), int(parts[2]))
+                                else:
+                                    session_date = datetime.datetime.strptime(d_str, "%d-%b-%Y").date()
+                            elif "/" in d_str:
+                                parts = d_str.split("/")
+                                session_date = datetime.date(int(parts[2]), int(parts[1]), int(parts[0]))
+
+                        actual_isin = sm.resolve_isin_by_symbol(sym, session_date)
+                        if actual_isin != isin:
+                            print(
+                                f"[FAIL] Resolution failed on {session_date} for symbol '{sym}': "
+                                f"expected ISIN={isin}, resolved ISIN={actual_isin} (Finding N-34)"
+                            )
+                            return False
+
+                        session_rows += 1
+                        session_resolved += 1
+
+                    if session_rows > 0:
+                        total_sessions += 1
+                        total_eq_rows += session_rows
+                        resolved_eq_rows += session_resolved
+
+    if total_eq_rows == 0:
+        print("[FAIL] Zero traded EQ rows found across discovered archives.")
         return False
 
-    print(f"[PASS] Gate COV-2: Traded Bhavcopy scrip point-in-time resolution verified (1,794 / 1,794, {pct:.2f}% >= {required_pct:.2f}%).\n")
+    pct = (Decimal(str(resolved_eq_rows)) / Decimal(str(total_eq_rows))) * Decimal("100")
+    print(f"[INFO] Per-Session Sweep Complete: {resolved_eq_rows:,} / {total_eq_rows:,} traded EQ rows resolved across {total_sessions:,} sessions ({pct:.4f}%).")
+
+    if pct < criteria.min_traded_eq_resolution_pct or resolved_eq_rows != total_eq_rows:
+        print(
+            f"[FAIL] Traded EQ resolution {pct:.4f}% below required criteria invariant "
+            f"{criteria.min_traded_eq_resolution_pct}% (resolved {resolved_eq_rows} of {total_eq_rows})"
+        )
+        return False
+
+    print(
+        f"[PASS] Gate COV-2: Traded EQ point-in-time resolution verified "
+        f"({resolved_eq_rows:,} / {total_eq_rows:,} across {total_sessions:,} sessions, {pct:.4f}% >= {criteria.min_traded_eq_resolution_pct}%).\n"
+    )
     return True
 
 
@@ -412,8 +506,8 @@ def main() -> int:
     if all(gates):
         print("OVERALL VERDICT: ALL CASH UNIVERSE COVERAGE GATES PASSED")
         print("               - Gate COV-1: Reference Artifact Integrity & Invariants (PASS)")
-        print("               - Gate COV-2: Traded Scrip Resolution (1,794 / 1,794, 100.00% PASS)")
-        print("               - Gate COV-3: Listed Pipeline Coverage (1,839 / 2,763, 66.56% PASS; 924 untraded)")
+        print("               - Gate COV-2: Traded EQ Resolution Across All Archived Sessions (100.0000% PASS)")
+        print("               - Gate COV-3: Published Price Band Pipeline Coverage & Accounting (PASS)")
         print("               - Gate COV-4: Authentic Fold Execution with Real Bands (VERIFIED PASS)")
         print("=" * 80)
         return 0

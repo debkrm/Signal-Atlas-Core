@@ -1594,3 +1594,47 @@ def test_n32_pre_window_fold_refused_fail_closed(wf_environment):
     with pytest.raises(WalkForwardEngineError, match="precedes the minimum binding evaluation start date"):
         engine.run_walk_forward(strategy=strat, folds=[pre_window_fold], isins=["INE888C01010"])
 
+    # 3. to_trial_record must raise WalkForwardEngineError on pre-window fold results (Findings N-32, N-35)
+    valid_fold = WalkForwardFold(
+        fold_index=0,
+        train_start=datetime.date(2024, 1, 8),
+        train_end=datetime.date(2024, 1, 11),
+        test_start=datetime.date(2024, 1, 15),
+        test_end=datetime.date(2024, 1, 19),
+        embargo_sessions=1,
+        partition_role=PartitionRole.VALIDATION,
+    )
+    valid_res = engine.run_walk_forward(strategy=strat, folds=[valid_fold])
+    assert valid_res.execution_config.get("min_binding_evaluation_start_date") == "2022-01-03"
+
+    # Create a result carrying a pre-window fold result
+    pre_window_f_res = dataclasses.replace(valid_res.fold_results[0], fold=pre_window_fold)
+    tampered_pre_window_res = dataclasses.replace(
+        valid_res,
+        fold_results=(pre_window_f_res,),
+        verification_status="VERIFIED",
+    )
+
+    with pytest.raises(WalkForwardEngineError, match="precedes the minimum binding evaluation start date"):
+        tampered_pre_window_res.to_trial_record(
+            trial_id="N35-PRE-WINDOW",
+            hypothesis="Pre-window trial registration",
+            rationale="Test",
+            fold_spec_fingerprint="TEST",
+        )
+
+    # 4. Criteria version divergence fails closed when execution_config lacks min_binding_evaluation_start_date (Finding N-35)
+    res_no_cfg = dataclasses.replace(
+        valid_res,
+        execution_config={},
+        criteria_version="v0.0.1-legacy",
+        verification_status="VERIFIED",
+    )
+    with pytest.raises(WalkForwardEngineError, match="differs from criteria version"):
+        res_no_cfg.to_trial_record(
+            trial_id="N35-CRITERIA-DIVERGENCE",
+            hypothesis="Criteria version divergence",
+            rationale="Test",
+            fold_spec_fingerprint="TEST",
+        )
+

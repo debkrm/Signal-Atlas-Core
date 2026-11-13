@@ -205,33 +205,52 @@ def check_test_suite_zero_skip_xfail() -> bool:
 
 def check_verdict_tags() -> bool:
     """
-    Verifies that sign-offs and audit verdicts carry immutable git tags (§12.2, Note N-21, Note N-31).
-    Dynamically derives required sign-off tags from CURRENT_STAGE_OF_WORK.md and audit citations,
-    and validates all commit-bearing git tags against their target commits without hand-maintained lists.
+    Verifies that sign-offs and audit verdicts carry immutable git tags (§12.2, Note N-21, Note N-31, Finding N-36).
+    Dynamically derives required wave sign-off tags directly from AUDIT_FILE citations (the §N at `sha`
+    headings and verdicts written by the auditor), failing closed if the document is missing, empty, or unparsable.
+    Validates all commit-bearing git tags against their target commits without hand-maintained lists.
     """
-    print("--- Gate W0.5-4: Sign-Off and Verdict Tag Integrity (§12.2, Note N-21, Note N-31) ---")
+    print("--- Gate W0.5-4: Sign-Off and Verdict Tag Integrity (§12.2, Note N-21, Note N-31, Finding N-36) ---")
     all_ok = True
 
-    # 1. Baseline required wave tags derived from phase records (Note N-31)
-    required_wave_tags: dict[str, str] = {
-        "wave0-signed-off-d2fd8e0": "d2fd8e0",
-        "wave1-signed-off-95ac584": "95ac584",
-        "wave2-signed-off-982c9fa": "982c9fa",
-        "wave3-signed-off-a093682": "a093682",
-    }
-    cur_stage_file = REPO_ROOT / "CURRENT_STAGE_OF_WORK.md"
-    if cur_stage_file.is_file():
-        try:
-            cur_text = cur_stage_file.read_text(encoding="utf-8")
-            for line in cur_text.splitlines():
-                if "Active Project Phase" in line:
-                    for m in re.finditer(r"Wave\s+(\d+)[^·]*?`([0-9a-f]{7,8})`", line):
-                        wave_num = m.group(1)
-                        sha = m.group(2)
-                        tag = f"wave{wave_num}-signed-off-{sha}"
-                        required_wave_tags[tag] = sha
-        except Exception as e:
-            print(f"[WARN] Failed to parse wave sign-offs from CURRENT_STAGE_OF_WORK.md: {e}")
+    # 1. Derive required wave tags directly from audit report citations (Finding N-36)
+    if not AUDIT_FILE.is_file():
+        print(f"[FAIL] Audit file missing at: {AUDIT_FILE} (Finding N-36)")
+        return False
+
+    audit_text = AUDIT_FILE.read_text(encoding="utf-8")
+    if not audit_text.strip():
+        print(f"[FAIL] Audit file is empty at: {AUDIT_FILE} (Finding N-36)")
+        return False
+
+    required_wave_tags: dict[str, str] = {}
+
+    m0 = re.search(r"##\s+29\..*?`([0-9a-f]{7,8})`", audit_text)
+    if m0:
+        required_wave_tags[f"wave0-signed-off-{m0.group(1)}"] = m0.group(1)
+
+    m1 = re.search(r"##\s+30\..*?`([0-9a-f]{7,8})`", audit_text)
+    if m1:
+        required_wave_tags[f"wave1-signed-off-{m1.group(1)}"] = m1.group(1)
+
+    m2 = re.search(r"##\s+33\..*?`([0-9a-f]{7,8})`", audit_text)
+    if m2:
+        required_wave_tags[f"wave2-signed-off-{m2.group(1)}"] = m2.group(1)
+
+    m3 = re.search(r"Wave\s+3.*?:\s+GO\s+at\s+`([0-9a-f]{7,8})`", audit_text)
+    if m3:
+        required_wave_tags[f"wave3-signed-off-{m3.group(1)}"] = m3.group(1)
+
+    if len(required_wave_tags) < 4:
+        print(
+            f"[FAIL] Failed to derive all 4 required wave sign-off tags from audit report (Finding N-36). "
+            f"Found {len(required_wave_tags)}/4 tags: {sorted(required_wave_tags.keys())}"
+        )
+        return False
+
+    print(f"[INFO] Derived {len(required_wave_tags)} required wave sign-off tags from audit citations (Finding N-36):")
+    for tag, sha in sorted(required_wave_tags.items()):
+        print(f"       - {tag} (target commit: {sha})")
 
     # 2. Verify all required wave sign-off tags exist and match commit SHA
     for tag_name, expected_sha in sorted(required_wave_tags.items()):
@@ -298,6 +317,7 @@ def check_verdict_tags() -> bool:
         print("[PASS] Gate W0.5-4: All sign-off and audit verdict tags verified.\n")
     else:
         print("[FAIL] Gate W0.5-4: One or more required verdict tags missing.\n")
+    return all_ok
     return all_ok
 
 

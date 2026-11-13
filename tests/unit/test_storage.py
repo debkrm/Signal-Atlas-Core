@@ -593,3 +593,40 @@ def test_n30_non_overlapping_sourced_core_interval_appended(monkeypatch):
     assert sm.resolve_isin_by_symbol("INFY", datetime.date(2020, 6, 1)) == "INE009A01021"
 
 
+def test_n33_partial_overlap_complement_appended(monkeypatch):
+    """
+    Finding N-33: build_production_security_master() performs segment complement subtraction
+    for partially overlapping sourced intervals so pre-core tails are preserved rather than dropped whole.
+    """
+    from signal_core.storage.security_master import (
+        SymbolInterval,
+        build_production_security_master,
+    )
+    import signal_core.storage.security_master as sm_mod
+
+    # Case B from Audit §42.7:
+    # Sourced interval covers 2010-01-01..2020-12-31, while core INFY starts at 2015-01-01
+    overlapping_infy = SymbolInterval(
+        isin="INE009A01021",
+        symbol="INFY",
+        series="EQ",
+        effective_from=datetime.date(2010, 1, 1),
+        effective_to=datetime.date(2020, 12, 31),
+    )
+
+    monkeypatch.setattr(
+        sm_mod,
+        "load_cash_universe_symbol_intervals",
+        lambda: [overlapping_infy],
+    )
+
+    sm = build_production_security_master(include_cash_universe=True)
+
+    # Pre-core tail (2010-01-01..2015-01-01) is preserved via segment complement
+    assert sm.resolve_isin_by_symbol("INFY", datetime.date(2012, 6, 1)) == "INE009A01021"
+    # Core interval (2015-01-01 onwards) resolves correctly
+    assert sm.resolve_isin_by_symbol("INFY", datetime.date(2016, 6, 1)) == "INE009A01021"
+    assert sm.resolve_isin_by_symbol("INFY", datetime.date(2023, 1, 1)) == "INE009A01021"
+
+
+
