@@ -32,7 +32,11 @@ from signal_core.execution.types import FillStatus, OrderSide
 from signal_core.research.containment import PartitionRole, WalkForwardFold
 from signal_core.research.walkforward import WalkForwardEngine
 from signal_core.storage.bronze import BronzeStorage
-from signal_core.storage.calendar import load_nse_trading_calendar
+from signal_core.storage.calendar import (
+    CalendarError,
+    load_anchored_nse_trading_calendar,
+    load_nse_trading_calendar,
+)
 from signal_core.storage.circulars import load_all_bronze_circulars
 from signal_core.storage.gold import GoldEngine
 from signal_core.storage.ingest import (
@@ -350,18 +354,12 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
     # Load authoritative Bronze circular registry (§6.3, Finding H-57)
     circular_registry = load_all_bronze_circulars()
 
-    cal = load_nse_trading_calendar()
     criteria = load_go_no_go_criteria()
-
-    # Finding H-64: Calendar identity anchor — compare loaded fingerprint against human-pinned criteria value.
-    # Counting (H-61) is necessary but not sufficient; this checks every date, session_type and open/close time.
-    if cal.fingerprint != criteria.expected_calendar_fingerprint:
-        print(
-            f"[FAIL] Calendar content fingerprint mismatch (Finding H-64):\n"
-            f"  loaded   = {cal.fingerprint}\n"
-            f"  criteria = {criteria.expected_calendar_fingerprint}\n"
-            f"  Any date swap, session_type change, or time change invalidates this pin."
-        )
+    # Finding H-64, Residual R-6: Route calendar loading through load_anchored_nse_trading_calendar
+    try:
+        cal = load_anchored_nse_trading_calendar(criteria=criteria)
+    except CalendarError as e:
+        print(f"[FAIL] Calendar content fingerprint mismatch (Finding H-64):\n  {e}")
         return False
     print(f"[PASS] Calendar identity fingerprint verified: {cal.fingerprint}")
     window_start = criteria.min_binding_evaluation_start_date
@@ -407,11 +405,11 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
                     f"is not substantiated by any parsed Bronze circular payload (§6.3, Finding H-57)"
                 )
                 return False
-        elif classification == "OFFICIAL_TRADING_SESSION":
-            if not any(circular_registry.verify_trading_day_claim(dt, c_id) for c_id in circulars):
+        elif classification in ("OFFICIAL_TRADING_SESSION", "INFERRED_TRADING_SESSION"):
+            if not any(circular_registry.verify_trading_day_inference(dt, c_id) for c_id in circulars):
                 print(
-                    f"[FAIL] Session {dt} claimed as OFFICIAL_TRADING_SESSION under {circulars} "
-                    f"is not substantiated by any parsed Bronze circular payload (§6.3, Finding H-57)"
+                    f"[FAIL] Session {dt} claimed as {classification} under {circulars} "
+                    f"is not substantiated by any parsed Bronze circular payload (§6.3, Finding H-57, Finding N-53)"
                 )
                 return False
         else:

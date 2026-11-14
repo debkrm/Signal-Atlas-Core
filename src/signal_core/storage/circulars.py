@@ -53,30 +53,34 @@ class CircularSpecialSession:
 
 
 @dataclass(frozen=True, slots=True)
-class CircularTradingDayClarification:
-    """Trading day clarification substantiated by an authentic Bronze circular payload."""
+class CircularTradingDayInference:
+    """Trading day inference derived from authentic Bronze holiday schedule (§50.6, N-53)."""
     date: datetime.date
     circular_id: str
     description: str
     circular_ids: Tuple[str, ...] = ()
 
 
+# Backward compatibility alias
+CircularTradingDayClarification = CircularTradingDayInference
+
+
 class BronzeCircularRegistry:
     """
     Immutable in-memory registry of parsed Bronze circular documents.
-    Provides fail-closed verification of exchange holiday and special session claims (Findings H-57, H-60).
+    Provides fail-closed verification of exchange holiday and special session claims (Findings H-57, H-60, N-53).
     """
 
     def __init__(
         self,
         holidays: Dict[datetime.date, CircularHoliday],
         special_sessions: Dict[datetime.date, CircularSpecialSession],
-        verified_trading_days: Dict[datetime.date, CircularTradingDayClarification],
+        inferred_trading_days: Dict[datetime.date, CircularTradingDayInference],
         circular_digests: Dict[str, str],
     ) -> None:
         self._holidays = dict(holidays)
         self._special_sessions = dict(special_sessions)
-        self._verified_trading_days = dict(verified_trading_days)
+        self._inferred_trading_days = dict(inferred_trading_days)
         self._circular_digests = dict(circular_digests)
 
     @property
@@ -92,8 +96,13 @@ class BronzeCircularRegistry:
         return dict(self._special_sessions)
 
     @property
-    def verified_trading_days(self) -> Dict[datetime.date, CircularTradingDayClarification]:
-        return dict(self._verified_trading_days)
+    def inferred_trading_days(self) -> Dict[datetime.date, CircularTradingDayInference]:
+        return dict(self._inferred_trading_days)
+
+    @property
+    def verified_trading_days(self) -> Dict[datetime.date, CircularTradingDayInference]:
+        """Backward-compatibility alias."""
+        return self.inferred_trading_days
 
     def verify_holiday_claim(self, query_date: datetime.date, circular_id: str) -> bool:
         """
@@ -115,15 +124,19 @@ class BronzeCircularRegistry:
             return False
         return circular_id == rec.circular_id or circular_id in rec.circular_ids
 
-    def verify_trading_day_claim(self, query_date: datetime.date, circular_id: str) -> bool:
+    def verify_trading_day_inference(self, query_date: datetime.date, circular_id: str) -> bool:
         """
-        Returns True if and only if query_date is explicitly substantiated as a trading day
-        in the authentic Bronze circular payload matching circular_id (§6.3, Finding H-57).
+        Returns True if and only if query_date is substantiated as a non-holiday regular trading session
+        in the authentic Bronze circular payload matching circular_id (§6.3, Finding H-57, Finding N-53).
         """
-        rec = self._verified_trading_days.get(query_date)
+        rec = self._inferred_trading_days.get(query_date)
         if rec is None:
             return False
         return circular_id == rec.circular_id or circular_id in rec.circular_ids
+
+    def verify_trading_day_claim(self, query_date: datetime.date, circular_id: str) -> bool:
+        """Backward-compatibility alias for verify_trading_day_inference."""
+        return self.verify_trading_day_inference(query_date, circular_id)
 
 
 def load_all_bronze_circulars(
@@ -156,7 +169,7 @@ def load_all_bronze_circulars(
 
     holidays: Dict[datetime.date, CircularHoliday] = {}
     special_sessions: Dict[datetime.date, CircularSpecialSession] = {}
-    verified_trading_days: Dict[datetime.date, CircularTradingDayClarification] = {}
+    inferred_trading_days: Dict[datetime.date, CircularTradingDayInference] = {}
     circular_digests: Dict[str, str] = {}
 
     for c_path in circular_files:
@@ -275,11 +288,12 @@ def load_all_bronze_circulars(
                 circular_ids=id_tuple,
             )
 
-        # Parse verified trading days
-        for t in payload.get("verified_regular_trading_sessions", []):
+        # Parse inferred trading days (§50.6, Finding N-53)
+        trading_day_records = payload.get("inferred_trading_sessions") or payload.get("verified_regular_trading_sessions", [])
+        for t in trading_day_records:
             dt = datetime.date.fromisoformat(t["date"])
-            desc = t.get("description", "Regular Trading Session")
-            verified_trading_days[dt] = CircularTradingDayClarification(
+            desc = t.get("description", "Inferred Regular Trading Session")
+            inferred_trading_days[dt] = CircularTradingDayInference(
                 date=dt,
                 circular_id=c_id,
                 description=desc,
@@ -289,6 +303,6 @@ def load_all_bronze_circulars(
     return BronzeCircularRegistry(
         holidays=holidays,
         special_sessions=special_sessions,
-        verified_trading_days=verified_trading_days,
+        inferred_trading_days=inferred_trading_days,
         circular_digests=circular_digests,
     )

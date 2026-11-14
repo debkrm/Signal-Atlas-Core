@@ -11,12 +11,12 @@
   "retrieved_at": "2026-01-13T09:00:00+05:30",
   "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
   "amends_circular_id": "NSE/CMTR/71775",
-  "amendment_note": "Partial modification to NSE/CMTR/71775 (Ref 172/2025). Confirms 2026-01-15 as trading holiday on account of Municipal Corporation Election - Maharashtra, originally listed in 71775.",
+  "amendment_note": "Partial modification to NSE/CMTR/71775 (Ref 172/2025). Declares 2026-01-15 as an additional trading holiday on account of Municipal Corporation Election - Maharashtra (not listed in 71775 base schedule).",
   "trading_holidays": [
     {
       "date": "2026-01-15",
       "day": "Thursday",
-      "description": "Municipal Corporation Election - Maharashtra (confirmed per partial modification to NSE/CMTR/71775)",
+      "description": "Municipal Corporation Election - Maharashtra (additional holiday declared per partial modification to NSE/CMTR/71775)",
       "amends": "NSE/CMTR/71775"
     }
   ]

@@ -77,9 +77,9 @@ def test_calendar_reconciliation_bronze_circular_substantiation():
         elif classification == "SPECIAL_SESSION_NO_BHAVCOPY_ARCHIVE":
             substantiated = any(registry.verify_special_session_claim(dt, c_id) for c_id in circulars)
             assert substantiated, f"Special session claim for {dt} under {circulars} failed Bronze circular substantiation"
-        elif classification == "OFFICIAL_TRADING_SESSION":
-            substantiated = any(registry.verify_trading_day_claim(dt, c_id) for c_id in circulars)
-            assert substantiated, f"Trading day claim for {dt} under {circulars} failed Bronze circular substantiation"
+        elif classification in ("OFFICIAL_TRADING_SESSION", "INFERRED_TRADING_SESSION"):
+            substantiated = any(registry.verify_trading_day_inference(dt, c_id) for c_id in circulars)
+            assert substantiated, f"Trading day inference for {dt} under {circulars} failed Bronze circular substantiation"
         else:
             pytest.fail(f"Unexpected classification {classification} for {dt}")
 
@@ -207,7 +207,7 @@ def test_calendar_reconciliation_summary_block_matches_computed_counts():
 
     excluded_holidays = [e for e in entries if e["classification"] == "OFFICIAL_EXCHANGE_HOLIDAY"]
     excluded_special = [e for e in entries if e["classification"] == "SPECIAL_SESSION_NO_BHAVCOPY_ARCHIVE"]
-    included_trading = [e for e in entries if e["classification"] == "OFFICIAL_TRADING_SESSION"]
+    included_trading = [e for e in entries if e["classification"] in ("OFFICIAL_TRADING_SESSION", "INFERRED_TRADING_SESSION")]
 
     cal = load_nse_trading_calendar()
     criteria = load_go_no_go_criteria()
@@ -425,3 +425,25 @@ def test_h64_calendar_fingerprint_detects_date_swap():
     assert tampered_fingerprint != criteria.expected_calendar_fingerprint, (
         "Date swap must produce a different fingerprint than the criteria-pinned anchor (Finding H-64)"
     )
+
+
+def test_r6_load_anchored_nse_trading_calendar():
+    """Residual R-6: load_anchored_nse_trading_calendar enforces criteria pin comparison at load time."""
+    from signal_core.storage.calendar import load_anchored_nse_trading_calendar, CalendarError
+    import dataclasses
+
+    # Clean calendar loads cleanly
+    cal = load_anchored_nse_trading_calendar()
+    assert cal is not None
+    assert cal.total_sessions == 2935
+
+    # Tampered criteria fingerprint fails closed
+    criteria = load_go_no_go_criteria()
+    bad_criteria = dataclasses.replace(criteria, expected_calendar_fingerprint="CAL-FPR-V1-deadbeef")
+    with pytest.raises(CalendarError, match="Calendar content fingerprint mismatch"):
+        load_anchored_nse_trading_calendar(criteria=bad_criteria)
+
+    # Tampered criteria session count fails closed
+    bad_count = dataclasses.replace(criteria, expected_total_calendar_sessions=9999)
+    with pytest.raises(CalendarError, match="Calendar total session count mismatch"):
+        load_anchored_nse_trading_calendar(criteria=bad_count)

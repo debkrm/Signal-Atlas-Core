@@ -110,16 +110,16 @@
       "session_type": "MUHURAT"
     }
   ],
-  "verified_regular_trading_sessions": [
+  "inferred_trading_sessions": [
     {
       "date": "2026-03-20",
       "day": "Friday",
-      "description": "Regular Trading Session; Id-Ul-Fitr holiday falls on Saturday 2026-03-21"
+      "description": "Inferred Regular Trading Session: Id-Ul-Fitr holiday falls on Saturday 2026-03-21, so Friday is a regular session"
     },
     {
       "date": "2026-05-27",
       "day": "Wednesday",
-      "description": "Regular Trading Session; Bakri Id holiday observed on Thursday 2026-05-28"
+      "description": "Inferred Regular Trading Session: Bakri Id holiday observed on Thursday 2026-05-28, so Wednesday is a regular session"
     }
   ]
 }

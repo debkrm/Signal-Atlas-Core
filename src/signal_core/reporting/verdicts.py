@@ -1,0 +1,894 @@
+"""
+Automated Verdict Engine and Go/No-Go Decision Evaluator.
+Implements fail-closed quantitative reporting, criteria verification, and reproducible audit reports
+per AGENTS.md §6.5, §7.1, §8.1, §8.2, §9.1, §9.2, §9.3, and Phase 2D specifications.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import datetime
+from decimal import Decimal
+from enum import Enum
+import hashlib
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+
+from signal_core.contracts.criteria import (
+    CriteriaValidationError,
+    GoNoGoCriteria,
+    compute_criteria_fingerprint,
+    load_go_no_go_criteria,
+)
+from signal_core.storage.calendar import (
+    CalendarError,
+    TradingCalendar,
+    load_anchored_nse_trading_calendar,
+)
+
+
+class ReportingError(ValueError):
+    """Base error for reporting and verdict engine failures."""
+    pass
+
+
+class HoldoutBreachError(ReportingError):
+    """Raised when holdout partition records are accessed or evaluated without authorization."""
+    pass
+
+
+class VerdictStatus(str, Enum):
+    """Evaluation status for an individual criterion."""
+    PASS = "PASS"
+    FAIL = "FAIL"
+    NOT_RUN = "NOT RUN"
+
+
+class OverallVerdict(str, Enum):
+    """Overall research evaluation decision."""
+    GO = "GO"
+    NO_GO = "NO-GO"
+
+
+@dataclass(frozen=True, slots=True)
+class CriterionEvaluation:
+    """
+    Computed evaluation record for a single Go/No-Go criterion.
+    Rule 9.1: Verdicts are computed, never typed.
+    Rule 9.3: PASS may only be attached to a computed value; absent metrics evaluate to NOT RUN.
+    """
+    criterion_id: str
+    category: str
+    metric_name: str
+    computed_value: Optional[str]
+    threshold_value: str
+    comparator: str
+    status: VerdictStatus
+    evidence: str
+    is_binding: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class VerdictReport:
+    """
+    Immutable, reproducible verdict report representing an evaluation run.
+    Contains computed criterion results, criteria fingerprint, calendar fingerprint, and overall verdict.
+    """
+    criteria_version: str
+    criteria_fingerprint: str
+    calendar_fingerprint: str
+    timestamp_utc: str
+    overall_verdict: OverallVerdict
+    evaluations: Tuple[CriterionEvaluation, ...]
+    summary_counts: Mapping[str, int]
+    metadata: Mapping[str, Any]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serializes verdict report to JSON-compatible dictionary."""
+        return {
+            "criteria_version": self.criteria_version,
+            "criteria_fingerprint": self.criteria_fingerprint,
+            "calendar_fingerprint": self.calendar_fingerprint,
+            "timestamp_utc": self.timestamp_utc,
+            "overall_verdict": self.overall_verdict.value,
+            "summary_counts": dict(self.summary_counts),
+            "evaluations": [
+                {
+                    "criterion_id": e.criterion_id,
+                    "category": e.category,
+                    "metric_name": e.metric_name,
+                    "computed_value": e.computed_value,
+                    "threshold_value": e.threshold_value,
+                    "comparator": e.comparator,
+                    "status": e.status.value,
+                    "evidence": e.evidence,
+                    "is_binding": e.is_binding,
+                }
+                for e in self.evaluations
+            ],
+            "metadata": dict(self.metadata),
+        }
+
+    def to_markdown(self) -> str:
+        """Renders GitHub-flavored markdown report table per AGENTS.md §9.1 and §9.3."""
+        lines = [
+            "# Signal Atlas — Automated Go/No-Go Research Verdict Report",
+            "",
+            f"- **Overall Decision:** `{self.overall_verdict.value}`",
+            f"- **Evaluated At (UTC):** `{self.timestamp_utc}`",
+            f"- **Criteria Version:** `{self.criteria_version}`",
+            f"- **Criteria Fingerprint:** `{self.criteria_fingerprint}`",
+            f"- **Calendar Fingerprint:** `{self.calendar_fingerprint}`",
+            f"- **Summary Counts:** `PASS={self.summary_counts.get('PASS', 0)}`, "
+            f"`FAIL={self.summary_counts.get('FAIL', 0)}`, "
+            f"`NOT RUN={self.summary_counts.get('NOT_RUN', 0)}` "
+            f"(Total={len(self.evaluations)})",
+            "",
+            "## Detailed Criteria Evaluation Matrix",
+            "",
+            "| ID | Category | Metric | Threshold | Computed | Status | Binding | Evidence |",
+            "|---|---|---|---|---|---|---|---|",
+        ]
+        for e in self.evaluations:
+            comp_display = e.computed_value if e.computed_value is not None else "—"
+            binding_str = "YES" if e.is_binding else "NO"
+            lines.append(
+                f"| {e.criterion_id} | {e.category} | {e.metric_name} | "
+                f"`{e.threshold_value}` | `{comp_display}` | **{e.status.value}** | "
+                f"{binding_str} | {e.evidence} |"
+            )
+        lines.append("")
+        return "\n".join(lines)
+
+
+def _to_decimal(val: Any) -> Optional[Decimal]:
+    """Safely converts numeric or string value to Decimal without float conversion."""
+    if val is None:
+        return None
+    if isinstance(val, Decimal):
+        return val
+    if isinstance(val, (int, str)):
+        try:
+            return Decimal(str(val))
+        except Exception:
+            return None
+    if isinstance(val, float):
+        raise ReportingError(
+            f"Binary floating-point value ({val}) prohibited in exact financial accounting per AGENTS.md Rule 6.4."
+        )
+    return None
+
+
+def evaluate_verdicts(
+    results_bundle: Mapping[str, Any],
+    criteria: Optional[GoNoGoCriteria] = None,
+    criteria_path: Optional[Union[str, Path]] = None,
+    calendar: Optional[TradingCalendar] = None,
+    calendar_path: Optional[Union[str, Path]] = None,
+    now_utc: Optional[str] = None,
+) -> VerdictReport:
+    """
+    Evaluates execution, statistical, cost, accounting, and anti-overfitting results against
+    committed GoNoGoCriteria per AGENTS.md §6.5, §7.1, §8.1, §8.2, §9.1, §9.2, §9.3, and Phase 2D.
+
+    Invariants:
+    1. Zero hardcoded adjectives: all verdicts and labels are computed from exact arithmetic.
+    2. Fail-closed: missing bundle keys evaluate to NOT RUN; any FAIL or binding NOT RUN causes NO-GO.
+    3. Holdout containment: any attempt to evaluate holdout partitions without human authorization raises HoldoutBreachError.
+    4. Anti-overfitting: trial count N <= 1 for DSR evaluates to NOT RUN / fail-closed.
+    5. Execution realism: latency < 1 session fails closed (Zero Lookahead §7.1).
+    6. Calendar anchoring: calendar is verified against criteria expected_calendar_fingerprint (Residual R-6).
+    7. Data provenance: unverified provenance evaluates to NOT RUN per Rule 6.5 and Residual R-3.
+    """
+    # 1. Load and fingerprint-verify criteria
+    active_criteria = criteria or load_go_no_go_criteria(path=criteria_path)
+    criteria_fpr = compute_criteria_fingerprint(active_criteria)
+
+    # 2. Load and anchor trading calendar per Residual R-6
+    active_cal = calendar or load_anchored_nse_trading_calendar(path=calendar_path, criteria=active_criteria)
+
+    # 3. Holdout Containment Check (§8.1)
+    if results_bundle.get("contains_holdout_records") is True or "holdout" in str(results_bundle.get("partition_role", "")).lower():
+        if not results_bundle.get("holdout_unlock_authorized"):
+            raise HoldoutBreachError(
+                "Holdout partition records detected in results bundle without human HOLDOUT_UNLOCK authorization. "
+                "Agents must NEVER access holdout partitions per AGENTS.md Rule 8.1."
+            )
+
+    evaluations: List[CriterionEvaluation] = []
+    ts = now_utc or datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    # -------------------------------------------------------------------------
+    # Section A: Statistical & Risk Limits (§9.2)
+    # -------------------------------------------------------------------------
+    # A1: Total Trades (min_total_trades)
+    val_trades = results_bundle.get("total_trades")
+    if val_trades is not None and isinstance(val_trades, int):
+        status = VerdictStatus.PASS if val_trades >= active_criteria.min_total_trades else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-STAT-01",
+            category="Risk & Performance",
+            metric_name="Total Completed Trades",
+            computed_value=str(val_trades),
+            threshold_value=f">= {active_criteria.min_total_trades}",
+            comparator=">=",
+            status=status,
+            evidence=f"Recorded {val_trades} executed round-trip trades in evaluation window.",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-STAT-01",
+            category="Risk & Performance",
+            metric_name="Total Completed Trades",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_total_trades}",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Metric 'total_trades' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # A2: Profit Factor (min_profit_factor)
+    val_pf = _to_decimal(results_bundle.get("profit_factor"))
+    if val_pf is not None:
+        status = VerdictStatus.PASS if val_pf >= active_criteria.min_profit_factor else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-STAT-02",
+            category="Risk & Performance",
+            metric_name="Profit Factor",
+            computed_value=f"{val_pf:.4f}",
+            threshold_value=f">= {active_criteria.min_profit_factor}",
+            comparator=">=",
+            status=status,
+            evidence=f"Computed gross profit / gross loss ratio: {val_pf:.4f}.",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-STAT-02",
+            category="Risk & Performance",
+            metric_name="Profit Factor",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_profit_factor}",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Metric 'profit_factor' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # A3: Single Position Weight Cap (max_single_position_weight)
+    val_weight = _to_decimal(results_bundle.get("max_single_position_weight"))
+    if val_weight is not None:
+        status = VerdictStatus.PASS if val_weight <= active_criteria.max_single_position_weight else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-STAT-03",
+            category="Risk & Performance",
+            metric_name="Max Single Position Weight",
+            computed_value=f"{val_weight:.4f}",
+            threshold_value=f"<= {active_criteria.max_single_position_weight}",
+            comparator="<=",
+            status=status,
+            evidence=f"Maximum single position capital allocation observed: {val_weight:.4f}.",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-STAT-03",
+            category="Risk & Performance",
+            metric_name="Max Single Position Weight",
+            computed_value=None,
+            threshold_value=f"<= {active_criteria.max_single_position_weight}",
+            comparator="<=",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Metric 'max_single_position_weight' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # A4: Maximum Portfolio Drawdown (max_portfolio_drawdown)
+    val_dd = _to_decimal(results_bundle.get("max_portfolio_drawdown"))
+    if val_dd is not None:
+        status = VerdictStatus.PASS if val_dd <= active_criteria.max_portfolio_drawdown else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-STAT-04",
+            category="Risk & Performance",
+            metric_name="Max Portfolio Drawdown",
+            computed_value=f"{val_dd:.4f}",
+            threshold_value=f"<= {active_criteria.max_portfolio_drawdown}",
+            comparator="<=",
+            status=status,
+            evidence=f"Maximum closed + open position drawdown observed: {val_dd:.2%}.",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-STAT-04",
+            category="Risk & Performance",
+            metric_name="Max Portfolio Drawdown",
+            computed_value=None,
+            threshold_value=f"<= {active_criteria.max_portfolio_drawdown}",
+            comparator="<=",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Metric 'max_portfolio_drawdown' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # A5: Maximum Annual Portfolio Turnover (max_annual_turnover)
+    val_turnover = _to_decimal(results_bundle.get("annual_turnover"))
+    if val_turnover is not None:
+        status = VerdictStatus.PASS if val_turnover <= active_criteria.max_annual_turnover else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-STAT-05",
+            category="Risk & Performance",
+            metric_name="Annual Portfolio Turnover",
+            computed_value=f"{val_turnover:.2f}",
+            threshold_value=f"<= {active_criteria.max_annual_turnover}",
+            comparator="<=",
+            status=status,
+            evidence=f"Computed annual portfolio turnover: {val_turnover:.2f}x.",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-STAT-05",
+            category="Risk & Performance",
+            metric_name="Annual Portfolio Turnover",
+            computed_value=None,
+            threshold_value=f"<= {active_criteria.max_annual_turnover}",
+            comparator="<=",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Metric 'annual_turnover' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # -------------------------------------------------------------------------
+    # Section B: Execution & Liquidity Realism (§7.1, §7.3)
+    # -------------------------------------------------------------------------
+    # B1: Volume Participation Cap (max_volume_participation_cap)
+    val_vol = _to_decimal(results_bundle.get("max_volume_participation"))
+    if val_vol is not None:
+        status = VerdictStatus.PASS if val_vol <= active_criteria.max_volume_participation_cap else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-EXEC-01",
+            category="Execution Realism",
+            metric_name="Volume Participation Cap",
+            computed_value=f"{val_vol:.4f}",
+            threshold_value=f"<= {active_criteria.max_volume_participation_cap}",
+            comparator="<=",
+            status=status,
+            evidence=f"Peak session volume participation observed: {val_vol:.4f}.",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-EXEC-01",
+            category="Execution Realism",
+            metric_name="Volume Participation Cap",
+            computed_value=None,
+            threshold_value=f"<= {active_criteria.max_volume_participation_cap}",
+            comparator="<=",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Metric 'max_volume_participation' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # B2: Daily Turnover Floor (min_daily_turnover_crore)
+    val_to = _to_decimal(results_bundle.get("min_daily_turnover_crore"))
+    if val_to is not None:
+        status = VerdictStatus.PASS if val_to >= active_criteria.min_daily_turnover_crore else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-EXEC-02",
+            category="Execution Realism",
+            metric_name="Min Traded Value (Cr)",
+            computed_value=f"{val_to:.2f}",
+            threshold_value=f">= {active_criteria.min_daily_turnover_crore}",
+            comparator=">=",
+            status=status,
+            evidence=f"Minimum average daily traded turnover observed: ₹{val_to:.2f} Cr.",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-EXEC-02",
+            category="Execution Realism",
+            metric_name="Min Traded Value (Cr)",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_daily_turnover_crore}",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Metric 'min_daily_turnover_crore' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # B3: Circuit Filter BUY Prohibition (prohibit_buy_at_upper_circuit)
+    val_buy_uc = results_bundle.get("prohibit_buy_at_upper_circuit")
+    if val_buy_uc is not None:
+        status = VerdictStatus.PASS if val_buy_uc is True else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-EXEC-03",
+            category="Execution Realism",
+            metric_name="Upper Circuit BUY Prohibition",
+            computed_value=str(val_buy_uc),
+            threshold_value=str(active_criteria.prohibit_buy_at_upper_circuit),
+            comparator="==",
+            status=status,
+            evidence="Simulator strictly enforces zero BUY fills when price equals Upper Circuit band (§5.3).",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-EXEC-03",
+            category="Execution Realism",
+            metric_name="Upper Circuit BUY Prohibition",
+            computed_value=None,
+            threshold_value=str(active_criteria.prohibit_buy_at_upper_circuit),
+            comparator="==",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Flag 'prohibit_buy_at_upper_circuit' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # B4: Circuit Filter SELL Prohibition (prohibit_sell_at_lower_circuit)
+    val_sell_lc = results_bundle.get("prohibit_sell_at_lower_circuit")
+    if val_sell_lc is not None:
+        status = VerdictStatus.PASS if val_sell_lc is True else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-EXEC-04",
+            category="Execution Realism",
+            metric_name="Lower Circuit SELL Prohibition",
+            computed_value=str(val_sell_lc),
+            threshold_value=str(active_criteria.prohibit_sell_at_lower_circuit),
+            comparator="==",
+            status=status,
+            evidence="Simulator strictly enforces zero SELL / Stop-Loss fills when price equals Lower Circuit band (§5.3).",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-EXEC-04",
+            category="Execution Realism",
+            metric_name="Lower Circuit SELL Prohibition",
+            computed_value=None,
+            threshold_value=str(active_criteria.prohibit_sell_at_lower_circuit),
+            comparator="==",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Flag 'prohibit_sell_at_lower_circuit' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # B5: Execution Latency (min_execution_latency_sessions >= 1, Zero Lookahead §7.1)
+    val_lat = results_bundle.get("execution_latency_sessions")
+    if val_lat is not None and isinstance(val_lat, int):
+        status = VerdictStatus.PASS if val_lat >= active_criteria.min_execution_latency_sessions else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-EXEC-05",
+            category="Execution Realism",
+            metric_name="Execution Latency (Sessions)",
+            computed_value=str(val_lat),
+            threshold_value=f">= {active_criteria.min_execution_latency_sessions}",
+            comparator=">=",
+            status=status,
+            evidence=f"Orders execute at session T+{val_lat} following signal calculation at session T close.",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-EXEC-05",
+            category="Execution Realism",
+            metric_name="Execution Latency (Sessions)",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_execution_latency_sessions}",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Metric 'execution_latency_sessions' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # -------------------------------------------------------------------------
+    # Section C: Statutory Indian Cost Schedule (§7.2)
+    # -------------------------------------------------------------------------
+    val_costs = results_bundle.get("statutory_costs_enforced")
+    if val_costs is not None:
+        status = VerdictStatus.PASS if val_costs is True else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-COST-01",
+            category="Cost Realism",
+            metric_name="Statutory Cost Model Enforced",
+            computed_value=str(val_costs),
+            threshold_value="True",
+            comparator="==",
+            status=status,
+            evidence="Full statutory Indian schedule (STT, NSE turnover, SEBI charges, Stamp Duty, GST with IPFT, brokerage) computed.",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-COST-01",
+            category="Cost Realism",
+            metric_name="Statutory Cost Model Enforced",
+            computed_value=None,
+            threshold_value="True",
+            comparator="==",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Flag 'statutory_costs_enforced' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # -------------------------------------------------------------------------
+    # Section D: Market Data and Accounting Invariants (§6.4, §6.3, Findings H-54, H-64)
+    # -------------------------------------------------------------------------
+    # D1: Strict Decimal Accounting
+    val_dec = results_bundle.get("strict_decimal_accounting")
+    if val_dec is not None:
+        status = VerdictStatus.PASS if val_dec is True else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-DATA-01",
+            category="Accounting Integrity",
+            metric_name="Strict Decimal Accounting",
+            computed_value=str(val_dec),
+            threshold_value="True",
+            comparator="==",
+            status=status,
+            evidence="Zero binary floating-point representation in cash ledger, order fills, fees, or PnL (§6.4).",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-DATA-01",
+            category="Accounting Integrity",
+            metric_name="Strict Decimal Accounting",
+            computed_value=None,
+            threshold_value="True",
+            comparator="==",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Flag 'strict_decimal_accounting' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # D2: Fail Closed on Unexplained Gaps
+    val_gaps = results_bundle.get("fail_closed_on_unexplained_gaps")
+    if val_gaps is not None:
+        status = VerdictStatus.PASS if val_gaps is True else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-DATA-02",
+            category="Data Integrity",
+            metric_name="Fail Closed on Unexplained Gaps",
+            computed_value=str(val_gaps),
+            threshold_value="True",
+            comparator="==",
+            status=status,
+            evidence="Price series partitioned into continuous segments on UNEXPLAINED_MISSING_RECORD (§6.3).",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-DATA-02",
+            category="Data Integrity",
+            metric_name="Fail Closed on Unexplained Gaps",
+            computed_value=None,
+            threshold_value="True",
+            comparator="==",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Flag 'fail_closed_on_unexplained_gaps' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # D3: Point-in-Time Universe Selection
+    val_pit = results_bundle.get("point_in_time_universe")
+    if val_pit is not None:
+        status = VerdictStatus.PASS if val_pit is True else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-DATA-03",
+            category="Data Integrity",
+            metric_name="Point-in-Time Universe Selection",
+            computed_value=str(val_pit),
+            threshold_value="True",
+            comparator="==",
+            status=status,
+            evidence="Tradable constituents determined strictly prior to market open on session T (§6.1).",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-DATA-03",
+            category="Data Integrity",
+            metric_name="Point-in-Time Universe Selection",
+            computed_value=None,
+            threshold_value="True",
+            comparator="==",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Flag 'point_in_time_universe' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # D4: Zero Data Fabrication
+    val_fab = results_bundle.get("zero_data_fabrication")
+    if val_fab is not None:
+        status = VerdictStatus.PASS if val_fab is True else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-DATA-04",
+            category="Data Integrity",
+            metric_name="Zero Data Fabrication",
+            computed_value=str(val_fab),
+            threshold_value="True",
+            comparator="==",
+            status=status,
+            evidence="Zero forward-filling, linear interpolation, zero-price imputation, or NaN masking (§6.3).",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-DATA-04",
+            category="Data Integrity",
+            metric_name="Zero Data Fabrication",
+            computed_value=None,
+            threshold_value="True",
+            comparator="==",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Flag 'zero_data_fabrication' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # D5: Traded EQ Bhavcopy Resolution Pct (min_traded_eq_resolution_pct)
+    val_res = _to_decimal(results_bundle.get("traded_eq_resolution_pct"))
+    if val_res is not None:
+        status = VerdictStatus.PASS if val_res >= active_criteria.min_traded_eq_resolution_pct else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-DATA-05",
+            category="Universe Integrity",
+            metric_name="Traded EQ Resolution Pct",
+            computed_value=f"{val_res:.4f}%",
+            threshold_value=f">= {active_criteria.min_traded_eq_resolution_pct}%",
+            comparator=">=",
+            status=status,
+            evidence=f"Active traded EQ scrips resolved to authoritative ISINs: {val_res:.4f}% (§41.3, Finding H-54).",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-DATA-05",
+            category="Universe Integrity",
+            metric_name="Traded EQ Resolution Pct",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_traded_eq_resolution_pct}%",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Metric 'traded_eq_resolution_pct' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # D6: Calendar Identity Fingerprint Anchor (Residual R-6, Finding H-64)
+    cal_status = VerdictStatus.PASS if active_cal.fingerprint == active_criteria.expected_calendar_fingerprint else VerdictStatus.FAIL
+    evaluations.append(CriterionEvaluation(
+        criterion_id="CRIT-DATA-06",
+        category="Calendar Integrity",
+        metric_name="Calendar Fingerprint Anchor",
+        computed_value=active_cal.fingerprint,
+        threshold_value=active_criteria.expected_calendar_fingerprint,
+        comparator="==",
+        status=cal_status,
+        evidence=f"Loaded calendar anchored and verified against criteria pin ({active_cal.fingerprint}).",
+        is_binding=True,
+    ))
+
+    # -------------------------------------------------------------------------
+    # Section E: Data Provenance Honesty (Rule 6.5, Audit §50.8 Residual R-3)
+    # -------------------------------------------------------------------------
+    # A claim resting on non-VERIFIED data (CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED)
+    # MUST print NOT RUN rather than PASS per AGENTS.md Rule 6.5 and Residual R-3.
+    prov_status_val = results_bundle.get("data_provenance_status")
+    if prov_status_val is not None:
+        if str(prov_status_val).strip() == "VERIFIED / EXCHANGE_ATTESTED":
+            evaluations.append(CriterionEvaluation(
+                criterion_id="CRIT-PROV-01",
+                category="Data Provenance",
+                metric_name="Data Provenance Verification",
+                computed_value="VERIFIED / EXCHANGE_ATTESTED",
+                threshold_value="VERIFIED / EXCHANGE_ATTESTED",
+                comparator="==",
+                status=VerdictStatus.PASS,
+                evidence="Primary market data attested by authentic exchange archive signatures (§6.5).",
+                is_binding=True,
+            ))
+        else:
+            evaluations.append(CriterionEvaluation(
+                criterion_id="CRIT-PROV-01",
+                category="Data Provenance",
+                metric_name="Data Provenance Verification",
+                computed_value=str(prov_status_val),
+                threshold_value="VERIFIED / EXCHANGE_ATTESTED",
+                comparator="==",
+                status=VerdictStatus.NOT_RUN,
+                evidence=(
+                    f"Dataset provenance is '{prov_status_val}'; per AGENTS.md Rule 6.5 and Audit §50.8 (Residual R-3), "
+                    "claims resting on unverified sources are NOT RUN for gating until verified archive proofs exist."
+                ),
+                is_binding=True,
+            ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-PROV-01",
+            category="Data Provenance",
+            metric_name="Data Provenance Verification",
+            computed_value=None,
+            threshold_value="VERIFIED / EXCHANGE_ATTESTED",
+            comparator="==",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Metric 'data_provenance_status' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # -------------------------------------------------------------------------
+    # Section F: Anti-Overfitting and Multi-Hypothesis Accountability (§8.2)
+    # -------------------------------------------------------------------------
+    # F1: Trial Count Accountability (N >= 2 required for DSR evaluation)
+    val_n = results_bundle.get("trial_count_n")
+    if val_n is not None and isinstance(val_n, int):
+        if val_n <= 1:
+            evaluations.append(CriterionEvaluation(
+                criterion_id="CRIT-OVERFIT-01",
+                category="Anti-Overfitting",
+                metric_name="Trial Registry Accountability",
+                computed_value=f"N = {val_n}",
+                threshold_value="N >= 2",
+                comparator=">=",
+                status=VerdictStatus.NOT_RUN,
+                evidence="Multi-hypothesis testing requires N >= 2 trials for Deflated Sharpe Ratio evaluation (AGENTS.md §8.2).",
+                is_binding=True,
+            ))
+        else:
+            evaluations.append(CriterionEvaluation(
+                criterion_id="CRIT-OVERFIT-01",
+                category="Anti-Overfitting",
+                metric_name="Trial Registry Accountability",
+                computed_value=f"N = {val_n}",
+                threshold_value="N >= 2",
+                comparator=">=",
+                status=VerdictStatus.PASS,
+                evidence=f"Trial registry records {val_n} parameter sweeps/trials with full parameter accountability.",
+                is_binding=True,
+            ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-OVERFIT-01",
+            category="Anti-Overfitting",
+            metric_name="Trial Registry Accountability",
+            computed_value=None,
+            threshold_value="N >= 2",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Metric 'trial_count_n' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # F2: Deflated Sharpe Ratio (DSR >= min_deflated_sharpe_ratio)
+    val_dsr = _to_decimal(results_bundle.get("deflated_sharpe_ratio"))
+    if val_dsr is not None:
+        # If N <= 1 was used, DSR cannot pass
+        if val_n is not None and val_n <= 1:
+            evaluations.append(CriterionEvaluation(
+                criterion_id="CRIT-OVERFIT-02",
+                category="Anti-Overfitting",
+                metric_name="Deflated Sharpe Ratio (DSR)",
+                computed_value=f"{val_dsr:.4f}",
+                threshold_value=f">= {active_criteria.min_deflated_sharpe_ratio}",
+                comparator=">=",
+                status=VerdictStatus.NOT_RUN,
+                evidence="DSR computed with N <= 1 invalidates multiple-testing penalty; marked NOT RUN.",
+                is_binding=True,
+            ))
+        else:
+            status = VerdictStatus.PASS if val_dsr >= active_criteria.min_deflated_sharpe_ratio else VerdictStatus.FAIL
+            evaluations.append(CriterionEvaluation(
+                criterion_id="CRIT-OVERFIT-02",
+                category="Anti-Overfitting",
+                metric_name="Deflated Sharpe Ratio (DSR)",
+                computed_value=f"{val_dsr:.4f}",
+                threshold_value=f">= {active_criteria.min_deflated_sharpe_ratio}",
+                comparator=">=",
+                status=status,
+                evidence=f"Deflated Sharpe Ratio {val_dsr:.4f} adjusts for trial count, variance, skewness, and kurtosis (§8.2).",
+                is_binding=True,
+            ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-OVERFIT-02",
+            category="Anti-Overfitting",
+            metric_name="Deflated Sharpe Ratio (DSR)",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_deflated_sharpe_ratio}",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Metric 'deflated_sharpe_ratio' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # F3: Walk-Forward Stability Ratio (positive folds >= min_positive_walk_forward_fold_ratio)
+    val_wf = _to_decimal(results_bundle.get("walk_forward_positive_fold_ratio"))
+    if val_wf is not None:
+        status = VerdictStatus.PASS if val_wf >= active_criteria.min_positive_walk_forward_fold_ratio else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-OVERFIT-03",
+            category="Walk-Forward Stability",
+            metric_name="Positive Out-of-Sample Folds Ratio",
+            computed_value=f"{val_wf:.4f}",
+            threshold_value=f">= {active_criteria.min_positive_walk_forward_fold_ratio}",
+            comparator=">=",
+            status=status,
+            evidence=f"Walk-forward evaluation shows {val_wf:.2%} of out-of-sample folds delivered positive edge (§8.3).",
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-OVERFIT-03",
+            category="Walk-Forward Stability",
+            metric_name="Positive Out-of-Sample Folds Ratio",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_positive_walk_forward_fold_ratio}",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Metric 'walk_forward_positive_fold_ratio' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # -------------------------------------------------------------------------
+    # Section G: Informational Metrics (Circuit-verified PnL, Phase 2 DoD)
+    # -------------------------------------------------------------------------
+    val_cpnl = results_bundle.get("circuit_verified_pnl")
+    if val_cpnl is not None:
+        status = VerdictStatus.PASS if val_cpnl is True else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-INFO-01",
+            category="Execution Accounting",
+            metric_name="Circuit-Verified PnL Accounting",
+            computed_value=str(val_cpnl),
+            threshold_value="True",
+            comparator="==",
+            status=status,
+            evidence="PnL verified with authentic exchange price band limits on every trade fill.",
+            is_binding=False,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-INFO-01",
+            category="Execution Accounting",
+            metric_name="Circuit-Verified PnL Accounting",
+            computed_value=None,
+            threshold_value="True",
+            comparator="==",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Informational metric 'circuit_verified_pnl' not available in synthetic fixture.",
+            is_binding=False,
+        ))
+
+    # -------------------------------------------------------------------------
+    # Overall Verdict Computation (Rule 9.1, 9.3)
+    # GO if and only if all binding criteria evaluate to PASS.
+    # Any FAIL or binding NOT RUN results in NO-GO.
+    # -------------------------------------------------------------------------
+    pass_count = sum(1 for e in evaluations if e.status == VerdictStatus.PASS)
+    fail_count = sum(1 for e in evaluations if e.status == VerdictStatus.FAIL)
+    not_run_count = sum(1 for e in evaluations if e.status == VerdictStatus.NOT_RUN)
+
+    binding_failures = [e for e in evaluations if e.is_binding and e.status in (VerdictStatus.FAIL, VerdictStatus.NOT_RUN)]
+    overall_verdict = OverallVerdict.GO if not binding_failures else OverallVerdict.NO_GO
+
+    return VerdictReport(
+        criteria_version=active_criteria.version,
+        criteria_fingerprint=criteria_fpr,
+        calendar_fingerprint=active_cal.fingerprint,
+        timestamp_utc=ts,
+        overall_verdict=overall_verdict,
+        evaluations=tuple(evaluations),
+        summary_counts={
+            "PASS": pass_count,
+            "FAIL": fail_count,
+            "NOT_RUN": not_run_count,
+        },
+        metadata={
+            "binding_criteria_count": sum(1 for e in evaluations if e.is_binding),
+            "binding_failed_count": len(binding_failures),
+            "unverified_provenance_gating_applied": prov_status_val != "VERIFIED / EXCHANGE_ATTESTED",
+        },
+    )

@@ -331,3 +331,52 @@ def load_nse_trading_calendar(path: Optional[Union[str, Path]] = None) -> Tradin
     )
 
     return calendar
+
+
+def load_anchored_nse_trading_calendar(
+    path: Optional[Union[str, Path]] = None,
+    criteria: Optional[Any] = None,
+    criteria_path: Optional[Union[str, Path]] = None,
+) -> TradingCalendar:
+    """
+    Loads and validates the committed NSE trading calendar, explicitly anchoring it against
+    the human-pinned criteria values (expected_calendar_fingerprint, expected_authoritative_calendar_sessions,
+    expected_total_calendar_sessions) per AGENTS.md §6.3, §9.2, Finding H-64, and Residual R-6 (§50.8).
+
+    Fails closed if the calendar content fingerprint does not match the pinned criteria string.
+    """
+    cal = load_nse_trading_calendar(path=path)
+
+    if criteria is None:
+        from signal_core.contracts.criteria import load_go_no_go_criteria
+        criteria = load_go_no_go_criteria(path=criteria_path)
+
+    # 1. Identity anchor (Finding H-64, Residual R-6)
+    if cal.fingerprint != criteria.expected_calendar_fingerprint:
+        raise CalendarError(
+            f"Calendar content fingerprint mismatch (Finding H-64, Residual R-6):\n"
+            f"  loaded   = {cal.fingerprint}\n"
+            f"  criteria = {criteria.expected_calendar_fingerprint}\n"
+            f"  Any date swap, session_type change, or time change invalidates this pin."
+        )
+
+    # 2. Total session count anchor
+    if cal.total_sessions != criteria.expected_total_calendar_sessions:
+        raise CalendarError(
+            f"Calendar total session count mismatch: "
+            f"loaded={cal.total_sessions} != criteria={criteria.expected_total_calendar_sessions}"
+        )
+
+    # 3. Evaluation window session count anchor
+    eval_start = criteria.min_binding_evaluation_start_date
+    if isinstance(eval_start, str):
+        eval_start = datetime.date.fromisoformat(eval_start)
+    eval_end = datetime.date(2026, 10, 31)
+    eval_sessions = cal.session_count_between(eval_start, eval_end)
+    if eval_sessions != criteria.expected_authoritative_calendar_sessions:
+        raise CalendarError(
+            f"Calendar evaluation window session count mismatch: "
+            f"loaded={eval_sessions} != criteria={criteria.expected_authoritative_calendar_sessions}"
+        )
+
+    return cal

@@ -22,6 +22,7 @@ from signal_core.storage.calendar import (
     TradingCalendar,
     TradingSessionRecord,
     compute_calendar_fingerprint,
+    load_anchored_nse_trading_calendar,
     load_nse_trading_calendar,
 )
 from signal_core.storage.security_master import (

@@ -57,11 +57,11 @@
       "session_name": "Regular Trading Session",
       "discrepancy_type": "ARCHIVE_PRESENT_NOT_IN_CALENDAR",
       "action": "INCLUDE_IN_EXPECTED_ARCHIVES",
-      "classification": "OFFICIAL_TRADING_SESSION",
+      "classification": "INFERRED_TRADING_SESSION",
       "circular_references": [
         "NSE/CMTR/71775"
       ],
-      "reason": "Regular trading day per official 2026 holiday circular NSE/CMTR/71775 (which designated Saturday, March 21, 2026 as the Id-Ul-Fitr holiday). Market open and traded normally with 2,432 EQ instruments (cm20MAR2026bhav.csv.zip). Erroneously omitted from baseline calendar due to preliminary assumption of Friday holiday."
+      "reason": "Regular trading day inferred per official 2026 holiday circular NSE/CMTR/71775 (which designated Saturday, March 21, 2026 as the Id-Ul-Fitr holiday). Market open and traded normally with 2,432 EQ instruments (cm20MAR2026bhav.csv.zip). Erroneously omitted from baseline calendar due to preliminary assumption of Friday holiday."
     },
     {
       "session_date": "2026-03-26",
@@ -93,11 +93,11 @@
       "session_name": "Regular Trading Session",
       "discrepancy_type": "ARCHIVE_PRESENT_NOT_IN_CALENDAR",
       "action": "INCLUDE_IN_EXPECTED_ARCHIVES",
-      "classification": "OFFICIAL_TRADING_SESSION",
+      "classification": "INFERRED_TRADING_SESSION",
       "circular_references": [
         "NSE/CMTR/71775"
       ],
-      "reason": "Regular trading day per official circular NSE/CMTR/71775. Bakri Id holiday was observed on Thursday, May 28, 2026 following moon sighting. Market open and traded normally with 2,463 EQ instruments (cm27MAY2026bhav.csv.zip). Erroneously omitted from baseline calendar."
+      "reason": "Regular trading day inferred per official circular NSE/CMTR/71775. Bakri Id holiday was observed on Thursday, May 28, 2026 following moon sighting. Market open and traded normally with 2,463 EQ instruments (cm27MAY2026bhav.csv.zip). Erroneously omitted from baseline calendar."
     },
     {
       "session_date": "2026-05-28",

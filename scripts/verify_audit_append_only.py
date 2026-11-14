@@ -27,6 +27,7 @@ VERIFICATION_SCRIPTS = [
     "scripts/verify_phase2b_significance.py",
     "scripts/verify_phase2b5_storage.py",
     "scripts/verify_phase2c_walkforward.py",
+    "scripts/verify_phase2d_verdicts.py",
     "scripts/verify_wave1_thin_slice.py",
     "scripts/verify_historical_snapshot.py",
 ]
