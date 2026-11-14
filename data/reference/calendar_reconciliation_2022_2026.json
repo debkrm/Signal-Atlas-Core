@@ -47,9 +47,9 @@
       "action": "EXCLUDE_FROM_EXPECTED_ARCHIVES",
       "classification": "OFFICIAL_EXCHANGE_HOLIDAY",
       "circular_references": [
-        "NSE/CMTR/71775"
+        "NSE/CMTR/72260"
       ],
-      "reason": "Official trading holiday for Municipal Corporation Election in Maharashtra per Circular Ref 172/2025 (Download Ref NSE/CMTR/71775). Exchange closed; zero trading took place. Erroneously listed as a regular session in baseline calendar."
+      "reason": "Official trading holiday for Municipal Corporation Election in Maharashtra per Circular Ref 07/2026 (Download Ref NSE/CMTR/72260, issued 2026-01-12, in partial modification to NSE/CMTR/71775). Exchange closed; zero trading took place. Erroneously listed as a regular session in baseline calendar."
     },
     {
       "session_date": "2026-03-20",

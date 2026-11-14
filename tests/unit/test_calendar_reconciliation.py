@@ -101,6 +101,14 @@ def test_adversarial_unsubstantiated_holiday_claim_rejected():
     # A trading day claim on a fake date must also fail
     assert not registry.verify_trading_day_claim(datetime.date(2026, 3, 21), "NSE/CMTR/71775")
 
+    # Finding H-57: Base circular 71775 did not declare 2026-01-15; only amendment 72260 did
+    assert not registry.verify_holiday_claim(datetime.date(2026, 1, 15), "NSE/CMTR/71775"), (
+        "2026-01-15 must not be claimed under base circular NSE/CMTR/71775 (Finding H-57)"
+    )
+    assert registry.verify_holiday_claim(datetime.date(2026, 1, 15), "NSE/CMTR/72260"), (
+        "2026-01-15 must be substantiated by partial modification NSE/CMTR/72260 (Finding H-57)"
+    )
+
 
 def test_adversarial_unregistered_circular_payload_rejected_fail_closed(tmp_path: Path):
     """Adversarial probe per Auditor §46.2 (Finding H-57): an unregistered circular payload must be refused."""
@@ -361,7 +369,7 @@ def test_calendar_annual_session_counts_reconciliation_failure():
 
 
 def test_criteria_calendar_invariants_and_unauthorized_special_rejection():
-    """Verify criteria pins calendar session counts and authorized special session sets (Findings H-61, H-62)."""
+    """Verify criteria pins calendar session counts and authorized special session sets (Findings H-61, H-62, H-64)."""
     criteria = load_go_no_go_criteria()
     assert criteria.expected_total_calendar_sessions == 2935
     assert criteria.expected_authoritative_calendar_sessions == 1196
@@ -369,3 +377,51 @@ def test_criteria_calendar_invariants_and_unauthorized_special_rejection():
     assert criteria.authorized_unarchived_special_sessions == ("2025-02-01",)
     assert len(criteria.authorized_calendar_holiday_exclusions) == 7
     assert len(criteria.authorized_calendar_trading_inclusions) == 2
+    # H-64: fingerprint pin is present and is a valid CAL-FPR-V1 string
+    assert criteria.expected_calendar_fingerprint.startswith("CAL-FPR-V1-"), (
+        "expected_calendar_fingerprint must carry CAL-FPR-V1- prefix (Finding H-64)"
+    )
+
+
+def test_h64_calendar_fingerprint_identity_anchor():
+    """H-64: The criteria-pinned fingerprint must equal the fingerprint computed from the loaded session_records."""
+    from signal_core.storage.calendar import load_nse_trading_calendar
+    cal = load_nse_trading_calendar()
+    criteria = load_go_no_go_criteria()
+    assert cal.fingerprint == criteria.expected_calendar_fingerprint, (
+        f"Calendar fingerprint identity mismatch (Finding H-64):\n"
+        f"  computed = {cal.fingerprint}\n"
+        f"  criteria = {criteria.expected_calendar_fingerprint}"
+    )
+
+
+def test_h64_calendar_fingerprint_detects_date_swap():
+    """H-64: A tampered calendar with a date swap fails fingerprint check even if session count is unchanged."""
+    import datetime
+    from signal_core.storage.calendar import (
+        CalendarError, TradingCalendar, TradingSessionRecord, SessionType,
+        compute_calendar_fingerprint
+    )
+    cal = load_nse_trading_calendar()
+    criteria = load_go_no_go_criteria()
+
+    # Swap 2023-03-22 (Wednesday) for 2023-03-25 (Saturday) — same count, wrong identity
+    tampered = []
+    for r in cal.session_records:
+        if r.date == datetime.date(2023, 3, 22):
+            tampered.append(TradingSessionRecord(
+                date=datetime.date(2023, 3, 25),
+                session_type=r.session_type,
+                open_time=r.open_time,
+                close_time=r.close_time,
+                description=r.description,
+            ))
+        else:
+            tampered.append(r)
+
+    tampered_fingerprint = compute_calendar_fingerprint(tuple(tampered))
+    # Count is unchanged but fingerprint must differ from pinned criteria value
+    assert len(tampered) == cal.total_sessions, "Count unchanged after date swap"
+    assert tampered_fingerprint != criteria.expected_calendar_fingerprint, (
+        "Date swap must produce a different fingerprint than the criteria-pinned anchor (Finding H-64)"
+    )

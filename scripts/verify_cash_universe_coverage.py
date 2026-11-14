@@ -352,6 +352,18 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
 
     cal = load_nse_trading_calendar()
     criteria = load_go_no_go_criteria()
+
+    # Finding H-64: Calendar identity anchor — compare loaded fingerprint against human-pinned criteria value.
+    # Counting (H-61) is necessary but not sufficient; this checks every date, session_type and open/close time.
+    if cal.fingerprint != criteria.expected_calendar_fingerprint:
+        print(
+            f"[FAIL] Calendar content fingerprint mismatch (Finding H-64):\n"
+            f"  loaded   = {cal.fingerprint}\n"
+            f"  criteria = {criteria.expected_calendar_fingerprint}\n"
+            f"  Any date swap, session_type change, or time change invalidates this pin."
+        )
+        return False
+    print(f"[PASS] Calendar identity fingerprint verified: {cal.fingerprint}")
     window_start = criteria.min_binding_evaluation_start_date
     window_end = datetime.date(2026, 10, 31)
 

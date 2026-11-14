@@ -16,7 +16,8 @@
       "NSE/MSD/66381",
       "NSE/CMTR/71775",
       "NSE/MSD/60300",
-      "NSE/MSD/60318"
+      "NSE/MSD/60318",
+      "NSE/CMTR/72260"
     ],
     "retrieved_at": "2026-11-12T06:00:00Z",
     "sha256": "af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad",

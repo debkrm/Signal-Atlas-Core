@@ -122,7 +122,11 @@ market_data_and_accounting_invariants:
   # Zero forward-filling or linear interpolation of missing OHLC records
   zero_data_fabrication_required: true
 
-  # Authoritative Calendar and Session Reconciliation Invariants (AGENTS.md §6.3, §9.2, Findings H-56, H-61, H-62)
+  # Authoritative Calendar and Session Reconciliation Invariants (AGENTS.md §6.3, §9.2, Findings H-56, H-61, H-62, H-64)
+  # H-64: Calendar identity anchor — computed from session_records (dates, session_types, open/close times) at load time
+  # and compared against this human-authored string. A date swap that preserves counting passes H-61 but fails H-64.
+  # This string is the ONLY copy that is not derived from the calendar file itself.
+  expected_calendar_fingerprint: "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad"
   # Pinned uncurated baseline schedule sessions in evaluation window 2022-01-03..2026-10-31
   expected_baseline_calendar_sessions: 1201
   # Pinned authoritative exchange trading sessions held in evaluation window 2022-01-03..2026-10-31
@@ -146,3 +150,12 @@ market_data_and_accounting_invariants:
   authorized_calendar_trading_inclusions:
     - "2026-03-20"
     - "2026-05-27"
+
+  # N-52: Calendar sessions 2018-04-01..2021-12-31 (warm-up window) are present as FULL session records
+  # but are not individually substantiated by per-session circular documents.
+  # NSE annual holiday circulars for 2018–2021 are not in local Bronze storage.
+  # Sessions in this range pass date-arithmetic checks but their individual holiday/trading-day
+  # classifications carry no document proof beyond the annual aggregate counts.
+  # Per AGENTS.md §10.8, the binding evaluation window starts 2022-01-03; warm-up sessions are
+  # used only for feature warm-up and are explicitly NOT RUN for gating purposes.
+  pre_binding_calendar_provenance_note: "N-52: 930 binding-range warm-up sessions (2018-04-01..2021-12-31) cite no per-session NSE circular document. Sessions in this range are warm-up only; metrics computed on them are NOT RUN for gating per AGENTS.md §10.8."

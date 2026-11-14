@@ -1,4 +1,0 @@
-# Canonical identity mapping. The co-author trailer used on the audit-report
-# commits (noreply@codebuff.com) folds into the maintainer identity so that
-# git tooling and GitHub's contributor list report one contributor.
-Debajyoti Karmakar <debkarma97@gmail.com> Codebuff <noreply@codebuff.com>

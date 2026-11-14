@@ -118,9 +118,13 @@ class GoNoGoCriteria:
     # Statutory cost schedule
     statutory_costs: StatutoryCostCriteria
 
-    # Market data and accounting invariants (§10.8, Audit §40.5, Finding H-54, H-61, H-62)
+    # Market data and accounting invariants (§10.8, Audit §40.5, Finding H-54, H-61, H-62, H-64)
     min_binding_evaluation_start_date: datetime.date = datetime.date(2022, 1, 3)
     min_traded_eq_resolution_pct: Decimal = Decimal("100.0")
+    # H-64: calendar fingerprint pinned as human anchor independent of the calendar file (Finding H-64)
+    # CAL-FPR-V1 covers dates, session_types, open/close times of all 2,935 sessions — recomputed from
+    # session_records at load time and compared against this pin; a date swap passes counting but not identity.
+    expected_calendar_fingerprint: str = ""
     expected_baseline_calendar_sessions: int = 1201
     expected_authoritative_calendar_sessions: int = 1196
     expected_total_calendar_sessions: int = 2935
@@ -213,6 +217,25 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
             f"Must be 'EVALUATED_TRIALS_MINUS_ONE'."
         )
 
+    # N-51: All pinned calendar identity invariants are MANDATORY — missing key fails closed, no silent fallback.
+    mda = data.get("market_data_and_accounting_invariants", {})
+
+    def _require_mda(key: str) -> Any:
+        if key not in mda:
+            raise CriteriaValidationError(
+                f"Mandatory pinned invariant '{key}' is absent from "
+                f"market_data_and_accounting_invariants in {file_path}. "
+                f"All calendar identity pins are required; there is no silent default (Note N-51)."
+            )
+        return mda[key]
+
+    # expected_calendar_fingerprint must be present and non-empty (Finding H-64)
+    raw_fingerprint = _require_mda("expected_calendar_fingerprint")
+    if not isinstance(raw_fingerprint, str) or not raw_fingerprint.startswith("CAL-FPR-V1-"):
+        raise CriteriaValidationError(
+            f"expected_calendar_fingerprint must be a CAL-FPR-V1-... string, got {raw_fingerprint!r} (Finding H-64)"
+        )
+
     return GoNoGoCriteria(
         version=str(meta.get("version", "1.0.0")),
         effective_date=datetime.date.fromisoformat(str(meta.get("effective_date", "2026-11-11"))),
@@ -239,36 +262,21 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         min_execution_latency_sessions=int(exec_liq["min_execution_latency_sessions"]),
         statutory_costs=costs,
         min_binding_evaluation_start_date=datetime.date.fromisoformat(
-            str(data.get("market_data_and_accounting_invariants", {}).get("min_binding_evaluation_start_date", "2022-01-03"))
+            str(mda.get("min_binding_evaluation_start_date", "2022-01-03"))
         ),
         min_traded_eq_resolution_pct=_to_decimal(
-            data.get("market_data_and_accounting_invariants", {}).get("min_traded_eq_resolution_pct", "100.0"),
+            mda.get("min_traded_eq_resolution_pct", "100.0"),
             "min_traded_eq_resolution_pct",
         ),
-        expected_baseline_calendar_sessions=int(
-            data.get("market_data_and_accounting_invariants", {}).get("expected_baseline_calendar_sessions", 1201)
-        ),
-        expected_authoritative_calendar_sessions=int(
-            data.get("market_data_and_accounting_invariants", {}).get("expected_authoritative_calendar_sessions", 1196)
-        ),
-        expected_total_calendar_sessions=int(
-            data.get("market_data_and_accounting_invariants", {}).get("expected_total_calendar_sessions", 2935)
-        ),
-        authorized_unarchived_special_sessions=tuple(
-            data.get("market_data_and_accounting_invariants", {}).get("authorized_unarchived_special_sessions", ["2025-02-01"])
-        ),
-        authorized_calendar_holiday_exclusions=tuple(
-            data.get("market_data_and_accounting_invariants", {}).get("authorized_calendar_holiday_exclusions", [
-                "2025-10-22", "2026-01-15", "2026-03-26", "2026-03-31", "2026-05-28", "2026-06-26", "2026-09-14"
-            ])
-        ),
-        authorized_calendar_trading_inclusions=tuple(
-            data.get("market_data_and_accounting_invariants", {}).get("authorized_calendar_trading_inclusions", [
-                "2026-03-20", "2026-05-27"
-            ])
-        ),
+        # H-64 / N-51: mandatory human-authored identity anchors — no defaults
+        expected_calendar_fingerprint=raw_fingerprint,
+        expected_baseline_calendar_sessions=int(_require_mda("expected_baseline_calendar_sessions")),
+        expected_authoritative_calendar_sessions=int(_require_mda("expected_authoritative_calendar_sessions")),
+        expected_total_calendar_sessions=int(_require_mda("expected_total_calendar_sessions")),
+        authorized_unarchived_special_sessions=tuple(_require_mda("authorized_unarchived_special_sessions")),
+        authorized_calendar_holiday_exclusions=tuple(_require_mda("authorized_calendar_holiday_exclusions")),
+        authorized_calendar_trading_inclusions=tuple(_require_mda("authorized_calendar_trading_inclusions")),
     )
-
 
 def _canonical_criteria_value(value: Any) -> Any:
     """Recursively converts typed criteria values to canonical JSON-compatible primitives."""

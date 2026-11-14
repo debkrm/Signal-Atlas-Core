@@ -143,3 +143,63 @@ def test_criteria_loader_rejections(tmp_path: Path):
     with pytest.raises(CriteriaValidationError, match="dsr_sharpe_variance_divisor"):
         load_go_no_go_criteria(bad_file4)
 
+
+
+def test_criteria_calendar_fingerprint_pin_present(tmp_path: Path):
+    """H-64: expected_calendar_fingerprint must be present and must be a CAL-FPR-V1-... string (Finding H-64)."""
+    criteria = load_go_no_go_criteria()
+    assert criteria.expected_calendar_fingerprint.startswith("CAL-FPR-V1-"), (
+        "expected_calendar_fingerprint must carry the CAL-FPR-V1- prefix (Finding H-64)"
+    )
+    assert len(criteria.expected_calendar_fingerprint) == len("CAL-FPR-V1-") + 64, (
+        "expected_calendar_fingerprint must carry a full SHA-256 hex digest (Finding H-64)"
+    )
+
+    valid_yaml = Path("configs/go_no_go_criteria.yaml").read_text(encoding="utf-8")
+
+    # Removing the fingerprint pin must fail closed (N-51)
+    bad_yaml = valid_yaml.replace(
+        "expected_calendar_fingerprint:",
+        "# expected_calendar_fingerprint:",
+    )
+    bad_file = tmp_path / "no_fingerprint.yaml"
+    bad_file.write_text(bad_yaml, encoding="utf-8")
+    with pytest.raises(CriteriaValidationError, match="expected_calendar_fingerprint"):
+        load_go_no_go_criteria(bad_file)
+
+    # An invalid prefix must also fail closed
+    bad_yaml2 = valid_yaml.replace(
+        'expected_calendar_fingerprint: "CAL-FPR-V1-',
+        'expected_calendar_fingerprint: "WRONG-PREFIX-',
+    )
+    bad_file2 = tmp_path / "bad_prefix.yaml"
+    bad_file2.write_text(bad_yaml2, encoding="utf-8")
+    with pytest.raises(CriteriaValidationError, match="CAL-FPR-V1"):
+        load_go_no_go_criteria(bad_file2)
+
+
+def test_criteria_n51_missing_count_pins_fail_closed(tmp_path: Path):
+    """N-51: Removing any mandatory calendar count pin from criteria.yaml must fail closed (Note N-51)."""
+    import yaml
+
+    valid_yaml = Path("configs/go_no_go_criteria.yaml").read_text(encoding="utf-8")
+    base = yaml.safe_load(valid_yaml)
+
+    mandatory_keys = (
+        "expected_baseline_calendar_sessions",
+        "expected_authoritative_calendar_sessions",
+        "expected_total_calendar_sessions",
+        "authorized_unarchived_special_sessions",
+        "authorized_calendar_holiday_exclusions",
+        "authorized_calendar_trading_inclusions",
+        "expected_calendar_fingerprint",
+    )
+
+    for mandatory_key in mandatory_keys:
+        import copy
+        mutated = copy.deepcopy(base)
+        del mutated["market_data_and_accounting_invariants"][mandatory_key]
+        bad_file = tmp_path / f"missing_{mandatory_key}.yaml"
+        bad_file.write_text(yaml.dump(mutated), encoding="utf-8")
+        with pytest.raises(CriteriaValidationError, match=mandatory_key):
+            load_go_no_go_criteria(bad_file)
