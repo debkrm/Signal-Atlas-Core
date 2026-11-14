@@ -373,9 +373,28 @@ def verify_gate_2d5_tier_a_report_generation() -> bool:
         print(f"[FAIL] Tier-A report generator missing at {gen_script}")
         return False
 
-    # Structural AST check: zero boolean or numeric literals assigned to bundle keys (Findings H-73, N-63)
+    # Structural AST check: zero boolean, numeric, or Decimal/float/int constant literals
+    # assigned to bundle keys (Findings H-73, N-63, §56.3, §56.6 Item 1)
     gen_source = gen_script.read_text(encoding="utf-8")
     tree = ast.parse(gen_source, filename=str(gen_script))
+
+    # 1. Discover module-level constant literals
+    module_constants: set[str] = set()
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign):
+            for t in stmt.targets:
+                if isinstance(t, ast.Name):
+                    val = stmt.value
+                    if isinstance(val, ast.Constant) and isinstance(val.value, (bool, int, float)):
+                        module_constants.add(t.id)
+                    elif isinstance(val, ast.UnaryOp) and isinstance(val.operand, ast.Constant):
+                        if isinstance(val.operand.value, (int, float)):
+                            module_constants.add(t.id)
+                    elif isinstance(val, ast.Call):
+                        fname = getattr(val.func, "id", getattr(val.func, "attr", None))
+                        if fname in ("Decimal", "float", "int"):
+                            module_constants.add(t.id)
+
     bundle_func = next(
         (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "build_tier_a_results_bundle"),
         None,
@@ -384,13 +403,31 @@ def verify_gate_2d5_tier_a_report_generation() -> bool:
         print(f"[FAIL] Function build_tier_a_results_bundle not found in {gen_script.name}!")
         return False
 
+    def is_literal_node(node: ast.AST) -> tuple[bool, str]:
+        if isinstance(node, ast.Constant) and isinstance(node.value, (bool, int, float)):
+            return True, f"constant literal {node.value!r} ({type(node.value).__name__})"
+        if isinstance(node, ast.UnaryOp) and isinstance(node.operand, ast.Constant):
+            if isinstance(node.operand.value, (int, float)):
+                return True, f"unary constant {ast.unparse(node)!r}"
+        if isinstance(node, ast.Name) and node.id in module_constants:
+            return True, f"module-level constant {node.id!r}"
+        if isinstance(node, ast.Call):
+            fname = getattr(node.func, "id", getattr(node.func, "attr", None))
+            if fname in ("Decimal", "float", "int"):
+                if node.args and isinstance(node.args[0], ast.Constant):
+                    return True, f"call {fname}({node.args[0].value!r})"
+                if node.args and isinstance(node.args[0], ast.Name) and node.args[0].id in module_constants:
+                    return True, f"call {fname}({node.args[0].id!r})"
+        return False, ""
+
     for node in ast.walk(bundle_func):
         if isinstance(node, ast.Dict):
             for key, val in zip(node.keys, node.values):
                 key_name = getattr(key, "value", getattr(key, "id", str(key)))
-                if isinstance(val, ast.Constant) and isinstance(val.value, (bool, int, float)):
+                bad, reason = is_literal_node(val)
+                if bad:
                     print(
-                        f"[FAIL] Hardcoded constant literal {val.value!r} ({type(val.value).__name__}) assigned to key {key_name!r} "
+                        f"[FAIL] Forbidden literal expression ({reason}) assigned to dict key {key_name!r} "
                         f"in build_tier_a_results_bundle (Findings H-73, N-63)!"
                     )
                     return False
@@ -398,15 +435,44 @@ def verify_gate_2d5_tier_a_report_generation() -> bool:
             for target in node.targets:
                 if isinstance(target, ast.Subscript):
                     sub_key = getattr(target.slice, "value", str(target.slice))
-                    val = node.value
-                    if isinstance(val, ast.Constant) and isinstance(val.value, (bool, int, float)):
+                    bad, reason = is_literal_node(node.value)
+                    if bad:
                         print(
-                            f"[FAIL] Hardcoded constant literal {val.value!r} ({type(val.value).__name__}) assigned to subscript {sub_key!r} "
+                            f"[FAIL] Forbidden literal expression ({reason}) assigned to subscript {sub_key!r} "
+                            f"in build_tier_a_results_bundle (Findings H-73, N-63)!"
+                        )
+                        return False
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute) and node.func.attr in ("update", "setdefault"):
+                for arg in node.args:
+                    if isinstance(arg, ast.Dict):
+                        for k, v in zip(arg.keys, arg.values):
+                            k_name = getattr(k, "value", getattr(k, "id", str(k)))
+                            bad, reason = is_literal_node(v)
+                            if bad:
+                                print(
+                                    f"[FAIL] Forbidden literal expression ({reason}) passed in {node.func.attr}() dict for key {k_name!r} "
+                                    f"in build_tier_a_results_bundle (Findings H-73, N-63)!"
+                                )
+                                return False
+                    else:
+                        bad, reason = is_literal_node(arg)
+                        if bad:
+                            print(
+                                f"[FAIL] Forbidden literal expression ({reason}) passed to {node.func.attr}() "
+                                f"in build_tier_a_results_bundle (Findings H-73, N-63)!"
+                            )
+                            return False
+                for kw in node.keywords:
+                    bad, reason = is_literal_node(kw.value)
+                    if bad:
+                        print(
+                            f"[FAIL] Forbidden literal expression ({reason}) passed as keyword {kw.arg!r} to {node.func.attr}() "
                             f"in build_tier_a_results_bundle (Findings H-73, N-63)!"
                         )
                         return False
 
-    print("[PASS] Verified zero boolean or numeric literals assigned in build_tier_a_results_bundle AST (Findings H-73, N-63).")
+    print("[PASS] Verified zero boolean, numeric, Decimal, or module-level constant literals assigned in build_tier_a_results_bundle AST (Findings H-73, N-63).")
 
     json_path = REPO_ROOT / "reports" / "verdicts" / "phase2d_tier_a_2022_2026_verdict.json"
     md_path = REPO_ROOT / "reports" / "verdicts" / "phase2d_tier_a_2022_2026_verdict.md"

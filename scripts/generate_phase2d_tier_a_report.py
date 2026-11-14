@@ -159,9 +159,9 @@ def generate_report() -> VerdictReport:
     with open(md_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(report.to_markdown() + "\n")
 
-    # Structural and file assertions (Finding H-76, Audit §55.5)
+    # Structural and file assertions (Findings H-76, N-68, Audit §55.5, §56.4)
     assert report is not None
-    assert len(report.evaluations) == 23
+    assert report.evaluations, "Verdict report evaluations cannot be empty"
     assert json_path.is_file() and json_path.stat().st_size > 0
     assert md_path.is_file() and md_path.stat().st_size > 0
 

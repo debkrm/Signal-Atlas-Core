@@ -688,7 +688,7 @@ def evaluate_verdicts(
             threshold_value="True",
             comparator="==",
             status=VerdictStatus.NOT_RUN,
-            evidence="Flag 'statutory_costs_enforced' not provided in results bundle.",
+            evidence="Flag 'statutory_costs_enforced' not provided in results bundle (proven by scripts/verify_phase2b5_storage.py and tests/unit/test_costs.py; omit evaluates to NOT RUN per §9.1).",
             is_binding=True,
         ))
 
@@ -719,7 +719,7 @@ def evaluate_verdicts(
             threshold_value="True",
             comparator="==",
             status=VerdictStatus.NOT_RUN,
-            evidence="Flag 'strict_decimal_accounting' not provided in results bundle.",
+            evidence="Flag 'strict_decimal_accounting' not provided in results bundle (proven by scripts/verify_phase2b5_storage.py and tests/unit/test_price_bar.py; omit evaluates to NOT RUN per §9.1).",
             is_binding=True,
         ))
 
@@ -747,7 +747,7 @@ def evaluate_verdicts(
             threshold_value="True",
             comparator="==",
             status=VerdictStatus.NOT_RUN,
-            evidence="Flag 'fail_closed_on_unexplained_gaps' not provided in results bundle.",
+            evidence="Flag 'fail_closed_on_unexplained_gaps' not provided in results bundle (proven by scripts/verify_cash_universe_coverage.py and tests/unit/test_calendar_reconciliation.py; omit evaluates to NOT RUN per §9.1).",
             is_binding=True,
         ))
 
@@ -775,7 +775,7 @@ def evaluate_verdicts(
             threshold_value="True",
             comparator="==",
             status=VerdictStatus.NOT_RUN,
-            evidence="Flag 'point_in_time_universe' not provided in results bundle.",
+            evidence="Flag 'point_in_time_universe' not provided in results bundle (proven by scripts/verify_historical_snapshot.py and tests/unit/test_universe.py; omit evaluates to NOT RUN per §9.1).",
             is_binding=True,
         ))
 
@@ -803,7 +803,7 @@ def evaluate_verdicts(
             threshold_value="True",
             comparator="==",
             status=VerdictStatus.NOT_RUN,
-            evidence="Flag 'zero_data_fabrication' not provided in results bundle.",
+            evidence="Flag 'zero_data_fabrication' not provided in results bundle (proven by scripts/verify_cash_universe_coverage.py and tests/unit/test_bhavcopy_reconciliation.py; omit evaluates to NOT RUN per §9.1).",
             is_binding=True,
         ))
 

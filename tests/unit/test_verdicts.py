@@ -635,26 +635,65 @@ def test_total_trades_decimal_parsing_and_plausibility_bound():
 
 def test_tier_a_report_omitted_engine_output_falsifier():
     """
-    Findings H-73, H-75, H-76, N-63: Verifies that Tier-A report evaluates omitted engine outputs
-    and unobserved execution/accounting flags honestly to NOT RUN, with zero fallback literals
-    and zero hardcoded boolean or numeric constants.
+    Findings H-73, H-75, H-76, N-63, N-66: Verifies that Tier-A report evaluates omitted engine outputs
+    and unobserved execution/accounting flags honestly to NOT RUN, with zero fallback literals,
+    zero hardcoded boolean or numeric constants, and derivation assertions rather than literal count pins.
     """
     import ast
     from scripts.generate_phase2d_tier_a_report import build_tier_a_results_bundle, REPO_ROOT
     bundle = build_tier_a_results_bundle()
 
-    # 1. Structural AST check on generator script (Findings H-73, N-63)
+    # 1. Structural AST check on generator script (Findings H-73, N-63, §56.3, §56.6 Item 1)
     gen_script = REPO_ROOT / "scripts" / "generate_phase2d_tier_a_report.py"
     tree = ast.parse(gen_script.read_text(encoding="utf-8"))
+
+    module_constants: set[str] = set()
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign):
+            for t in stmt.targets:
+                if isinstance(t, ast.Name):
+                    val = stmt.value
+                    if isinstance(val, ast.Constant) and isinstance(val.value, (bool, int, float)):
+                        module_constants.add(t.id)
+                    elif isinstance(val, ast.UnaryOp) and isinstance(val.operand, ast.Constant):
+                        if isinstance(val.operand.value, (int, float)):
+                            module_constants.add(t.id)
+                    elif isinstance(val, ast.Call):
+                        fname = getattr(val.func, "id", getattr(val.func, "attr", None))
+                        if fname in ("Decimal", "float", "int"):
+                            module_constants.add(t.id)
+
     bundle_func = next(
         n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "build_tier_a_results_bundle"
     )
+
+    def is_literal_node(node: ast.AST) -> tuple[bool, str]:
+        if isinstance(node, ast.Constant) and isinstance(node.value, (bool, int, float)):
+            return True, f"constant literal {node.value!r} ({type(node.value).__name__})"
+        if isinstance(node, ast.UnaryOp) and isinstance(node.operand, ast.Constant):
+            if isinstance(node.operand.value, (int, float)):
+                return True, f"unary constant {ast.unparse(node)!r}"
+        if isinstance(node, ast.Name) and node.id in module_constants:
+            return True, f"module-level constant {node.id!r}"
+        if isinstance(node, ast.Call):
+            fname = getattr(node.func, "id", getattr(node.func, "attr", None))
+            if fname in ("Decimal", "float", "int"):
+                if node.args and isinstance(node.args[0], ast.Constant):
+                    return True, f"call {fname}({node.args[0].value!r})"
+                if node.args and isinstance(node.args[0], ast.Name) and node.args[0].id in module_constants:
+                    return True, f"call {fname}({node.args[0].id!r})"
+        return False, ""
+
     for node in ast.walk(bundle_func):
         if isinstance(node, ast.Dict):
             for val in node.values:
-                assert not (isinstance(val, ast.Constant) and isinstance(val.value, (bool, int, float))), (
-                    f"Forbidden constant literal {val.value!r} found in build_tier_a_results_bundle AST"
-                )
+                bad, reason = is_literal_node(val)
+                assert not bad, f"Forbidden literal expression ({reason}) found in build_tier_a_results_bundle AST"
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Subscript):
+                    bad, reason = is_literal_node(node.value)
+                    assert not bad, f"Forbidden literal expression ({reason}) assigned to subscript"
 
     # 2. Backtest, walk-forward, invariant flags, and execution observation flags must be omitted
     for uncomputed_key in (
@@ -679,13 +718,33 @@ def test_tier_a_report_omitted_engine_output_falsifier():
     ):
         assert uncomputed_key not in bundle, f"{uncomputed_key} should be omitted until computed by engine"
 
-    # 3. Evaluated report must have 3 PASS, 0 FAIL, 20 NOT RUN, overall NO-GO
+    # 3. Evaluated report derivation assertions (Finding N-66, §56.4, §56.6 Item 2)
     rep = evaluate_verdicts(bundle)
-    assert rep.overall_verdict == OverallVerdict.NO_GO
-    assert rep.summary_counts == {"PASS": 3, "FAIL": 0, "NOT_RUN": 20}
+    print(f"Tier-A report measured summary counts: {rep.summary_counts}")
 
-    passed_ids = {e.criterion_id for e in rep.evaluations if e.status == VerdictStatus.PASS}
-    assert passed_ids == {"CRIT-WINDOW-01", "CRIT-DATA-05", "CRIT-DATA-06"}
+    assert rep.overall_verdict == OverallVerdict.NO_GO, (
+        f"Expected NO-GO overall verdict on unverified provenance, got: {rep.overall_verdict}"
+    )
+    assert rep.summary_counts.get("FAIL", 0) == 0, "Expected zero criteria failures"
+    assert rep.summary_counts.get("PASS", 0) > 0, "Expected at least one passed criterion"
+
+    # Verify that every PASS evaluation traces to a computed repository output
+    for ev in rep.evaluations:
+        if ev.status == VerdictStatus.PASS:
+            assert ev.computed_value is not None and str(ev.computed_value).strip() != "", (
+                f"PASS criterion {ev.criterion_id} has empty computed_value"
+            )
+            assert ev.evidence and len(ev.evidence) > 0
+            assert "not provided in results bundle" not in ev.evidence, (
+                f"PASS criterion {ev.criterion_id} cannot rest on omitted bundle key"
+            )
+        elif ev.status == VerdictStatus.NOT_RUN:
+            assert ev.evidence and len(ev.evidence) > 0, f"NOT_RUN criterion {ev.criterion_id} missing evidence"
+            assert (
+                "not provided in results bundle" in ev.evidence
+                or "CONTENT_IDENTIFIED_ONLY" in ev.evidence
+                or "unverified" in ev.evidence.lower()
+            ), f"NOT_RUN criterion {ev.criterion_id} has unexpected evidence: {ev.evidence}"
 
     eval_stat1 = next(e for e in rep.evaluations if e.criterion_id == "CRIT-STAT-01")
     assert eval_stat1.status == VerdictStatus.NOT_RUN
@@ -718,5 +777,20 @@ def test_tier_a_report_omitted_engine_output_falsifier():
     eval_cov = next(e for e in rep_no_cov.evaluations if e.criterion_id == "CRIT-DATA-05")
     assert eval_cov.status == VerdictStatus.NOT_RUN
     assert "not provided in results bundle" in eval_cov.evidence
-    assert rep_no_cov.summary_counts == {"PASS": 2, "FAIL": 0, "NOT_RUN": 21}
+    assert rep_no_cov.summary_counts.get("PASS", 0) < rep.summary_counts.get("PASS", 0), (
+        "Removing traded_eq_resolution_pct must reduce the number of PASS criteria"
+    )
+
+    # 6. N-66 acceptance probe: adding a fourth valid PASS does not break derivation assertions
+    bundle_fourth_pass = dict(bundle)
+    bundle_fourth_pass["total_trades"] = 150
+    rep_fourth = evaluate_verdicts(bundle_fourth_pass)
+    assert rep_fourth.summary_counts.get("PASS", 0) == rep.summary_counts.get("PASS", 0) + 1
+    eval_trades = next(e for e in rep_fourth.evaluations if e.criterion_id == "CRIT-STAT-01")
+    assert eval_trades.status == VerdictStatus.PASS
+    assert eval_trades.computed_value == "150"
+    for ev in rep_fourth.evaluations:
+        if ev.status == VerdictStatus.PASS:
+            assert ev.computed_value is not None and str(ev.computed_value).strip() != ""
+            assert "not provided in results bundle" not in ev.evidence
 
