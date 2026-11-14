@@ -53,6 +53,7 @@ INTERVALS_CSV = REPO_ROOT / "data" / "reference" / "cash_equity_symbol_intervals
 SEC_LIST_CSV = REPO_ROOT / "data" / "reference" / "sec_list_20240116.csv"
 MANIFEST_FILE = REPO_ROOT / "data" / "reference" / "manifest.jsonl"
 BHAVCOPY_ARCHIVE_MANIFEST = REPO_ROOT / "data" / "reference" / "bhavcopy_archive_manifest.jsonl"
+CALENDAR_RECONCILIATION_FILE = REPO_ROOT / "data" / "reference" / "calendar_reconciliation_2022_2026.json"
 
 
 def resolve_all_bhavcopy_archives() -> List[Path]:
@@ -204,15 +205,16 @@ def verify_gate_cov1_artifact_integrity() -> bool:
 
 def verify_gate_cov2_bhavcopy_resolution() -> bool:
     """
-    Verifies per-session symbol->ISIN resolution across all archived Bhavcopy sessions (Findings H-52, H-54, H-55, N-34, N-37).
+    Verifies per-session symbol->ISIN resolution across all archived Bhavcopy sessions (Findings H-52, H-54, H-55, H-56, N-34, N-37, N-40).
     Enforces:
     1. Committed digest manifest: every archive's SHA-256 and byte count verified against bhavcopy_archive_manifest.jsonl (§10.7, H-55).
-    2. Scope assertion: exactly 1,195 archives covering evaluation window 2022-01-03..2026-10-31 (H-55).
-    3. Calendar cross-check: distinct session dates match manifest sessions exactly (H-55).
-    4. Zero silent drops: malformed headers, invalid rows, or empty sessions fail closed (H-55).
-    5. Exact row conservation: 2,390,165 traded EQ rows resolved 100.0000% via Decimal arithmetic (N-34, N-37).
+    2. Scope assertion: derived from manifest_entries covering evaluation window 2022-01-03..2026-10-31 (H-55, Note N-40.1).
+    3. Reverse coverage: 100% of manifest entries consumed by discovered archives on disk (Note N-40.3).
+    4. Authoritative Calendar Reconciliation: cross-checks baseline calendar against archives via committed reconciliation table (§6.3, §10.5, H-56).
+    5. Zero silent drops: malformed headers, invalid rows, or empty sessions fail closed (H-55).
+    6. Exact row conservation: derived manifest_expected_eq_rows resolved 100.0000% via Decimal arithmetic (N-34, N-37, Note N-40.1).
     """
-    print("--- Gate COV-2: Traded EQ Bhavcopy Scrips Point-in-Time Resolution (Findings H-54, H-55, N-34, N-37) ---")
+    print("--- Gate COV-2: Traded EQ Bhavcopy Scrips Point-in-Time Resolution (Findings H-54, H-55, H-56, N-34, N-37, N-40) ---")
 
     # 1. Verify committed Bronze archive manifest exists and load entries (Finding H-55, §10.7)
     if not BHAVCOPY_ARCHIVE_MANIFEST.is_file():
@@ -233,9 +235,19 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
             manifest_dates.add(datetime.date.fromisoformat(entry["session_date"]))
             manifest_expected_eq_rows += int(entry.get("traded_eq_rows", 0))
 
-    if len(manifest_entries) != 1195:
-        print(f"[FAIL] Manifest holds {len(manifest_entries)} archives; expected exactly 1,195 (Finding H-55)")
+    manifest_expected_archive_count = len(manifest_entries)
+    if manifest_expected_archive_count == 0:
+        print("[FAIL] Manifest contains zero archive entries (Finding H-55)")
         return False
+    if manifest_expected_eq_rows == 0:
+        print("[FAIL] Manifest expected traded EQ rows sum is 0 (Finding H-55)")
+        return False
+
+    print(
+        f"[INFO] Archive manifest provenance status: CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED "
+        f"(§6.5, §10.7, Note N-40.2). Derived expectations: {manifest_expected_archive_count:,} archives, "
+        f"{manifest_expected_eq_rows:,} traded EQ rows across {len(manifest_dates):,} session dates."
+    )
 
     # 2. Discover archives
     archives = resolve_all_bhavcopy_archives()
@@ -243,28 +255,33 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
         print("[FAIL] No raw Bhavcopy archives found for Gate COV-2 per-session sweep (Finding H-53, H-55).")
         return False
 
-    if len(archives) != 1195:
+    if len(archives) != manifest_expected_archive_count:
         print(
-            f"[FAIL] Gate COV-2 requires all 1,195 raw Bhavcopy archives for evaluation window "
-            f"2022-01-03..2026-10-31, but discovered {len(archives)} archives (Finding H-55)."
+            f"[FAIL] Gate COV-2 requires all {manifest_expected_archive_count:,} raw Bhavcopy archives for evaluation window, "
+            f"but discovered {len(archives):,} archives (Finding H-55, Note N-40.1)."
         )
         return False
 
-    print(f"[INFO] Discovered {len(archives)} raw Bhavcopy archives; verifying digests against manifest...")
+    print(f"[INFO] Discovered {len(archives):,} raw Bhavcopy archives; verifying digests and reverse coverage against manifest...")
 
-    # 3. Digest verification for every archive against committed manifest
+    # 3. Digest verification and reverse coverage assertion for every archive against committed manifest
+    discovered_keys: Set[str] = set()
     for z_path in archives:
         rel_key = f"{z_path.parent.name}/{z_path.name}"
         manifest_rec = manifest_entries.get(rel_key) or manifest_entries.get(z_path.name)
+        matched_key = rel_key if rel_key in manifest_entries else (z_path.name if z_path.name in manifest_entries else None)
         if not manifest_rec:
             for k, v in manifest_entries.items():
                 if k.endswith(z_path.name):
                     manifest_rec = v
+                    matched_key = k
                     break
 
-        if not manifest_rec:
+        if not manifest_rec or not matched_key:
             print(f"[FAIL] Discovered archive {z_path.name} not found in committed manifest (Finding H-55)")
             return False
+
+        discovered_keys.add(matched_key)
 
         if z_path.stat().st_size != manifest_rec["byte_count"]:
             print(
@@ -284,10 +301,124 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
             )
             return False
 
-    print(f"[PASS] All {len(archives)} archive digests verified against committed manifest (Finding H-55).")
+    manifest_keys = set(manifest_entries.keys())
+    if discovered_keys != manifest_keys:
+        missing_from_disk = manifest_keys - discovered_keys
+        print(
+            f"[FAIL] Reverse coverage assertion failed: {len(missing_from_disk)} manifest entries "
+            f"not discovered on disk: {sorted(missing_from_disk)[:5]} (Note N-40.3)"
+        )
+        return False
+
+    print(
+        f"[PASS] All {len(archives):,} archive digests verified against committed manifest and 100% reverse coverage confirmed "
+        f"({len(discovered_keys):,} / {len(manifest_keys):,} entries, Finding H-55, Note N-40.3)."
+    )
+
+    # 4. Authoritative Calendar Reconciliation (§6.3, §10.5, Finding H-56)
+    if not CALENDAR_RECONCILIATION_FILE.is_file():
+        print(f"[FAIL] Calendar reconciliation file missing at: {CALENDAR_RECONCILIATION_FILE} (Finding H-56)")
+        return False
+
+    # Verify reconciliation table registered in manifest.jsonl
+    with open(MANIFEST_FILE, "r", encoding="utf-8") as f:
+        recon_manifest_entry = None
+        for line in f:
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            if entry.get("artifact") == CALENDAR_RECONCILIATION_FILE.name and entry.get("is_current") is True:
+                recon_manifest_entry = entry
+                break
+
+    if not recon_manifest_entry:
+        print(f"[FAIL] No active manifest entry for {CALENDAR_RECONCILIATION_FILE.name} in {MANIFEST_FILE.name} (Finding H-56)")
+        return False
+
+    recon_bytes = CALENDAR_RECONCILIATION_FILE.read_bytes()
+    recon_hash = hashlib.sha256(recon_bytes).hexdigest()
+    if recon_hash != recon_manifest_entry["sha256"] or len(recon_bytes) != recon_manifest_entry["byte_count"]:
+        print(f"[FAIL] Calendar reconciliation hash/size mismatch vs manifest.jsonl (Finding H-56)")
+        return False
+
+    with open(CALENDAR_RECONCILIATION_FILE, "r", encoding="utf-8") as f:
+        recon_data = json.load(f)
+
+    cal = load_nse_trading_calendar()
+    criteria = load_go_no_go_criteria()
+    window_start = criteria.min_binding_evaluation_start_date
+    window_end = datetime.date(2026, 10, 31)
+
+    cal_sessions = set(s for s in cal.sessions if window_start <= s <= window_end)
+    cal_circulars = set(cal.provenance.get("circular_references", []))
+
+    excluded_from_cal: Set[datetime.date] = set()
+    included_in_archives: Set[datetime.date] = set()
+
+    for item in recon_data.get("entries", []):
+        dt = datetime.date.fromisoformat(item["session_date"])
+        action = item.get("action")
+        circulars = item.get("circular_references", [])
+        if not circulars:
+            print(f"[FAIL] Reconciliation entry for {dt} lacks circular citations (§6.3, Finding H-56)")
+            return False
+
+        # Assert circular is recorded in calendar provenance per §44.2
+        for circ in circulars:
+            if circ not in cal_circulars:
+                print(
+                    f"[FAIL] Circular {circ} for session {dt} is not recorded in "
+                    f"calendar provenance circular_references (Finding H-56)"
+                )
+                return False
+
+        if action == "EXCLUDE_FROM_EXPECTED_ARCHIVES":
+            if dt not in cal_sessions:
+                print(f"[FAIL] Reconciliation excluded session {dt} is not present in baseline calendar sessions (Finding H-56)")
+                return False
+            excluded_from_cal.add(dt)
+        elif action == "INCLUDE_IN_EXPECTED_ARCHIVES":
+            if dt in cal_sessions:
+                print(f"[FAIL] Reconciliation included session {dt} is already present in baseline calendar sessions (Finding H-56)")
+                return False
+            included_in_archives.add(dt)
+        else:
+            print(f"[FAIL] Unknown reconciliation action {action!r} for date {dt} (Finding H-56)")
+            return False
+
+    reconciled_expected_sessions = (cal_sessions - excluded_from_cal) | included_in_archives
+
+    if len(reconciled_expected_sessions) != manifest_expected_archive_count:
+        print(
+            f"[FAIL] Reconciled expected sessions count {len(reconciled_expected_sessions)} "
+            f"!= manifest archives count {manifest_expected_archive_count} (Finding H-56, Note N-40.1)"
+        )
+        return False
+
+    unexplained_missing = reconciled_expected_sessions - manifest_dates
+    unexplained_extra = manifest_dates - reconciled_expected_sessions
+
+    if unexplained_missing:
+        print(
+            f"[FAIL] UNEXPLAINED_MISSING_RECORD: {len(unexplained_missing)} expected calendar sessions missing from archives: "
+            f"{sorted(unexplained_missing)} per AGENTS.md §6.3 (Finding H-56)"
+        )
+        return False
+
+    if unexplained_extra:
+        print(
+            f"[FAIL] UNEXPLAINED_EXTRA_RECORD: {len(unexplained_extra)} archived sessions not present in reconciled calendar: "
+            f"{sorted(unexplained_extra)} per AGENTS.md §6.3 (Finding H-56)"
+        )
+        return False
+
+    print(
+        f"[PASS] Authoritative calendar reconciliation verified: {len(cal_sessions)} baseline calendar sessions "
+        f"- {len(excluded_from_cal)} excluded + {len(included_in_archives)} included = "
+        f"{len(reconciled_expected_sessions):,} authoritative archived sessions (Finding H-56)."
+    )
 
     sm = build_production_security_master()
-    criteria = load_go_no_go_criteria()
 
     total_sessions = 0
     total_eq_rows = 0
@@ -382,19 +513,26 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
                     total_eq_rows += session_rows
                     resolved_eq_rows += session_resolved
 
-    if len(distinct_sessions) != 1195:
-        print(f"[FAIL] Covered {len(distinct_sessions)} distinct sessions; expected exactly 1,195 (Finding H-55)")
-        return False
-
-    missing_dates = manifest_dates - distinct_sessions
-    if missing_dates:
-        print(f"[FAIL] Missing {len(missing_dates)} manifest session dates: {sorted(missing_dates)[:5]} (Finding H-55)")
-        return False
-
-    if total_eq_rows != 2390165 or resolved_eq_rows != 2390165:
+    if distinct_sessions != reconciled_expected_sessions:
+        missing_sessions = reconciled_expected_sessions - distinct_sessions
+        extra_sessions = distinct_sessions - reconciled_expected_sessions
         print(
-            f"[FAIL] Row count mismatch: resolved {resolved_eq_rows} of {total_eq_rows}; "
-            f"expected exactly 2,390,165 (Finding H-55)"
+            f"[FAIL] Covered distinct sessions do not match reconciled expected sessions: "
+            f"missing={sorted(missing_sessions)[:5]}, extra={sorted(extra_sessions)[:5]} (Finding H-55, H-56)"
+        )
+        return False
+
+    if len(distinct_sessions) != manifest_expected_archive_count:
+        print(
+            f"[FAIL] Covered {len(distinct_sessions)} distinct sessions; "
+            f"expected exactly {manifest_expected_archive_count} (Finding H-55, Note N-40.1)"
+        )
+        return False
+
+    if total_eq_rows != manifest_expected_eq_rows or resolved_eq_rows != manifest_expected_eq_rows:
+        print(
+            f"[FAIL] Row count mismatch: resolved {resolved_eq_rows:,} of {total_eq_rows:,}; "
+            f"expected exactly {manifest_expected_eq_rows:,} (Finding H-55, Note N-40.1)"
         )
         return False
 

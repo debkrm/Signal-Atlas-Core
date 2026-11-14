@@ -1,0 +1,139 @@
+{
+  "reconciliation_id": "CAL-RECON-2022-2026-V1",
+  "market": "NSE_CASH_EQUITY",
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "evaluation_window": {
+    "start_date": "2022-01-03",
+    "end_date": "2026-10-31"
+  },
+  "summary": {
+    "baseline_calendar_sessions": 1201,
+    "calendar_sessions_excluded_from_trading": 7,
+    "calendar_sessions_unarchived_special": 1,
+    "archived_sessions_not_in_baseline_calendar": 2,
+    "expected_reconciled_archived_sessions": 1195
+  },
+  "entries": [
+    {
+      "session_date": "2025-02-01",
+      "day_of_week": "Saturday",
+      "session_name": "Union Budget Special Live Trading Session",
+      "discrepancy_type": "CALENDAR_SESSION_NO_ARCHIVE",
+      "action": "EXCLUDE_FROM_EXPECTED_ARCHIVES",
+      "classification": "SPECIAL_SESSION_NO_BHAVCOPY_ARCHIVE",
+      "circular_references": [
+        "NSE/CMTR/65729",
+        "NSE/MSD/66381"
+      ],
+      "reason": "Saturday live trading session conducted for Union Budget. Designated as a settlement holiday with no standard T+0 settlement and restricted BTST squaring. Standard daily Bhavcopy archive unarchived/not published in daily CM bhavcopy distribution feed."
+    },
+    {
+      "session_date": "2025-10-22",
+      "day_of_week": "Wednesday",
+      "session_name": "Diwali-Balipratipada",
+      "discrepancy_type": "CALENDAR_SESSION_NO_ARCHIVE",
+      "action": "EXCLUDE_FROM_EXPECTED_ARCHIVES",
+      "classification": "OFFICIAL_EXCHANGE_HOLIDAY",
+      "circular_references": [
+        "NSE/CMTR/65587"
+      ],
+      "reason": "Official trading holiday for Diwali-Balipratipada per Circular Ref 170/2024 (Download Ref NSE/CMTR/65587). Exchange closed; zero trading took place. Erroneously listed as a regular session in baseline calendar."
+    },
+    {
+      "session_date": "2026-01-15",
+      "day_of_week": "Thursday",
+      "session_name": "Municipal Corporation Election - Maharashtra",
+      "discrepancy_type": "CALENDAR_SESSION_NO_ARCHIVE",
+      "action": "EXCLUDE_FROM_EXPECTED_ARCHIVES",
+      "classification": "OFFICIAL_EXCHANGE_HOLIDAY",
+      "circular_references": [
+        "NSE/CMTR/71775"
+      ],
+      "reason": "Official trading holiday for Municipal Corporation Election in Maharashtra per Circular Ref 172/2025 (Download Ref NSE/CMTR/71775). Exchange closed; zero trading took place. Erroneously listed as a regular session in baseline calendar."
+    },
+    {
+      "session_date": "2026-03-20",
+      "day_of_week": "Friday",
+      "session_name": "Regular Trading Session",
+      "discrepancy_type": "ARCHIVE_PRESENT_NOT_IN_CALENDAR",
+      "action": "INCLUDE_IN_EXPECTED_ARCHIVES",
+      "classification": "OFFICIAL_TRADING_SESSION",
+      "circular_references": [
+        "NSE/CMTR/71775"
+      ],
+      "reason": "Regular trading day per official 2026 holiday circular NSE/CMTR/71775 (which designated Saturday, March 21, 2026 as the Id-Ul-Fitr holiday). Market open and traded normally with 2,432 EQ instruments (cm20MAR2026bhav.csv.zip). Erroneously omitted from baseline calendar due to preliminary assumption of Friday holiday."
+    },
+    {
+      "session_date": "2026-03-26",
+      "day_of_week": "Thursday",
+      "session_name": "Shri Ram Navami",
+      "discrepancy_type": "CALENDAR_SESSION_NO_ARCHIVE",
+      "action": "EXCLUDE_FROM_EXPECTED_ARCHIVES",
+      "classification": "OFFICIAL_EXCHANGE_HOLIDAY",
+      "circular_references": [
+        "NSE/CMTR/71775"
+      ],
+      "reason": "Official trading holiday for Shri Ram Navami per Circular Ref 172/2025 (Download Ref NSE/CMTR/71775). Exchange closed; zero trading took place. Erroneously listed as a regular session in baseline calendar."
+    },
+    {
+      "session_date": "2026-03-31",
+      "day_of_week": "Tuesday",
+      "session_name": "Shri Mahavir Jayanti",
+      "discrepancy_type": "CALENDAR_SESSION_NO_ARCHIVE",
+      "action": "EXCLUDE_FROM_EXPECTED_ARCHIVES",
+      "classification": "OFFICIAL_EXCHANGE_HOLIDAY",
+      "circular_references": [
+        "NSE/CMTR/71775"
+      ],
+      "reason": "Official trading holiday for Shri Mahavir Jayanti per Circular Ref 172/2025 (Download Ref NSE/CMTR/71775). Exchange closed; zero trading took place. Erroneously listed as a regular session in baseline calendar."
+    },
+    {
+      "session_date": "2026-05-27",
+      "day_of_week": "Wednesday",
+      "session_name": "Regular Trading Session",
+      "discrepancy_type": "ARCHIVE_PRESENT_NOT_IN_CALENDAR",
+      "action": "INCLUDE_IN_EXPECTED_ARCHIVES",
+      "classification": "OFFICIAL_TRADING_SESSION",
+      "circular_references": [
+        "NSE/CMTR/71775"
+      ],
+      "reason": "Regular trading day per official circular NSE/CMTR/71775. Bakri Id holiday was observed on Thursday, May 28, 2026 following moon sighting. Market open and traded normally with 2,463 EQ instruments (cm27MAY2026bhav.csv.zip). Erroneously omitted from baseline calendar."
+    },
+    {
+      "session_date": "2026-05-28",
+      "day_of_week": "Thursday",
+      "session_name": "Bakri Id",
+      "discrepancy_type": "CALENDAR_SESSION_NO_ARCHIVE",
+      "action": "EXCLUDE_FROM_EXPECTED_ARCHIVES",
+      "classification": "OFFICIAL_EXCHANGE_HOLIDAY",
+      "circular_references": [
+        "NSE/CMTR/71775"
+      ],
+      "reason": "Official trading holiday for Bakri Id per Circular Ref 172/2025 (Download Ref NSE/CMTR/71775). Exchange closed; zero trading took place. Erroneously listed as a regular session in baseline calendar."
+    },
+    {
+      "session_date": "2026-06-26",
+      "day_of_week": "Friday",
+      "session_name": "Muharram",
+      "discrepancy_type": "CALENDAR_SESSION_NO_ARCHIVE",
+      "action": "EXCLUDE_FROM_EXPECTED_ARCHIVES",
+      "classification": "OFFICIAL_EXCHANGE_HOLIDAY",
+      "circular_references": [
+        "NSE/CMTR/71775"
+      ],
+      "reason": "Official trading holiday for Muharram per Circular Ref 172/2025 (Download Ref NSE/CMTR/71775). Exchange closed; zero trading took place. Erroneously listed as a regular session in baseline calendar."
+    },
+    {
+      "session_date": "2026-09-14",
+      "day_of_week": "Monday",
+      "session_name": "Ganesh Chaturthi",
+      "discrepancy_type": "CALENDAR_SESSION_NO_ARCHIVE",
+      "action": "EXCLUDE_FROM_EXPECTED_ARCHIVES",
+      "classification": "OFFICIAL_EXCHANGE_HOLIDAY",
+      "circular_references": [
+        "NSE/CMTR/71775"
+      ],
+      "reason": "Official trading holiday for Ganesh Chaturthi per Circular Ref 172/2025 (Download Ref NSE/CMTR/71775). Exchange closed; zero trading took place. Erroneously listed as a regular session in baseline calendar."
+    }
+  ]
+}

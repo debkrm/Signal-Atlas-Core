@@ -18,7 +18,11 @@
       "NSE/CMTR/2025_HOLIDAYS",
       "NSE/CMTR/2026_HOLIDAYS",
       "NSE/MSD/60300",
-      "NSE/MSD/60318"
+      "NSE/MSD/60318",
+      "NSE/CMTR/65587",
+      "NSE/CMTR/65729",
+      "NSE/MSD/66381",
+      "NSE/CMTR/71775"
     ],
     "retrieved_at": "2026-11-12T06:00:00Z",
     "sha256": "f9da922ed2c233cd43b0a6b701440fc25af769a169022f538a74e49de884a311",
