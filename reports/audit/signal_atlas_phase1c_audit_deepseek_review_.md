@@ -4693,3 +4693,115 @@ What would falsify this verdict: every `PASS` in the regenerated report tracing 
 5. **N-64 / N-65.** Rewrite the status sentences to state what was measured at `b163940` and cite §55; drop "verified" and narrow "zero hardcoded metric literals" to "zero hardcoded metric values; five invariant flags remain typed pending H-73".
 
 After item 1–3 the report is either computed or honestly `NOT RUN` in every line, and Phase 2D can close on its evidence rather than on its intent. The wave that follows is still the one §53.7 names: attested provenance (`source_url` and retrieval timestamps for all 1,195 archives), because no amount of reporting work moves `CRIT-PROV-01` off `NOT RUN`.
+### 56.1 Baseline at `0be0da3` (tag `feat-s55-0be0da3`)
+
+Independently measured on this checkout:
+
+- `python -m pytest -q` → `310 passed in 13.23s`, exit 0.
+- All nine `scripts/verify_*.py` exit 0, including `verify_phase2d_verdicts.py` with Gates 2D-1..2D-5.
+- `configs/go_no_go_criteria.yaml` is untouched by this commit (last changed at `b163940`), and `compute_criteria_fingerprint` still yields `CRIT-FPR-V1-22520357204d0645f0df9bd057bd4386f837a3708528376e68f2b66218a98799` from the committed bytes — so no threshold moved and no pin drifted. The calendar pin is unchanged: `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad`.
+- The generator exits 0 and the committed JSON/Markdown are byte-identical to a fresh run.
+- `CURRENT_STAGE_OF_WORK.md` arrives stat-dirty but content-identical (EOL normalisation only); I left it exactly as found and did not stage it (§11.1).
+
+### 56.2 Closed
+
+**H-73 (remainder) — CLOSED.** The bundle is now:
+
+```
+'evaluation_start_date': str = '2022-01-03'
+'evaluation_end_date':   str = '2026-10-30'
+'evaluated_at_utc':      str = '2026-11-14T16:45:00+00:00'
+'dataset_fingerprint':   str = 'DATA-CTNT-V2-7ea5f97b…'
+'data_provenance_status': str = 'CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED'
+'provenance_attestation_reference': str = '<repo>/data/reference/bhavcopy_archive_manifest.jsonl'
+'traded_eq_resolution_pct': Decimal = Decimal('100')
+type counts: {'str': 6, 'Decimal': 1}
+```
+
+Zero booleans, zero ints, zero floats. The falsifier I named in §55.3 now fires in both directions:
+
+```
+two-sided check: numerator = sum(traded_eq_rows) over 1,195 archive records = 2,390,165
+                 denominator = manifest.jsonl total_traded_eq_rows        = 2,390,165  -> 100.0000%
+truncate the archive manifest by its last 30 records (temp ROOT, repo untouched)
+                 -> evaluation_end_date = 2026-09-16  (== max remaining session_date)
+                 -> traded_eq_resolution_pct = 96.63299395648417577865963228
+```
+
+The window end is derived, not typed: removing archive sessions moves it to the last session that still exists, and removing archive rows moves the resolution percentage off 100. The five invariant flags and the three execution flags are gone from the bundle, so `CRIT-DATA-01..04` and `CRIT-COST-01` evaluate `NOT RUN` with the honest reason — the committed report is now **3 PASS / 0 FAIL / 20 NOT RUN**, and the three survivors are each a two-sided computation (`CRIT-WINDOW-01` from criteria + calendar sessions, `CRIT-DATA-05` from the numerator/denominator above, `CRIT-DATA-06` from the calendar fingerprints).
+
+**H-75 — CLOSED.** All eight criteria-echo keys are omitted. Independent acceptance probe — inverting the requirement flags in a copy of the criteria:
+
+```
+dataclasses.replace(criteria, prohibit_buy_at_upper_circuit=False,
+                              prohibit_sell_at_lower_circuit=False,
+                              min_execution_latency_sessions=3)
+-> changed evaluations: NONE
+-> counts: {'PASS': 3, 'FAIL': 0, 'NOT_RUN': 20} -> identical
+```
+
+No report status can now be set by the requirement that is supposed to be verified.
+
+**H-76 — CLOSED.** The three verdict-shaped assertions are gone. Measured on the FAIL path — the same truncated archive that moves the percentage:
+
+```
+overall: NO_GO   counts: {'PASS': 2, 'FAIL': 1, 'NOT_RUN': 20}
+FAIL CRIT-DATA-05 | Active traded EQ scrips resolved to authoritative ISINs: 96.6330% (§41.3, Finding H-54).
+markdown serialised, JSON serialised, no exception
+```
+
+A genuine `FAIL` is now reported as a `FAIL` instead of aborting the generator. The remaining assertions constrain document shape and file existence only, so a legitimately attested `GO` will also publish. (One shape assertion is brittle — N-68 below.)
+
+**N-64 / N-65 — CLOSED.** The status sentences now read "Tier-A report generator implemented; H-70/H-72/H-71/H-74 verified at `b163940` (§55.2); … report content not yet audited per Rule 11.3", with the held sign-off cited to §55 at `dfb524f`. That is precisely the form §11.3 requires: the word "verified" is scoped to the four findings §55 actually closed, and the report itself is declared unaudited.
+
+### 56.3 N-63 — partially closed: the replacement gate is weaker than the blacklist it replaced
+
+The byte-identity half is real and good: Gate 2D-5 now reads the committed artifacts before regenerating and fails if the fresh output differs, so a stale committed report cannot pass. N-63's second half — the literal check — does not measure the invariant it was rewritten for. I ran the gate's own AST loop (copied verbatim) against six variants of `build_tier_a_results_bundle`:
+
+```
+direct dict literal        -> CAUGHT dict literal True
+literal via update()       -> CAUGHT dict literal True
+literal via subscript      -> CAUGHT subscript literal True
+module-level constant      -> MISSED
+helper call with literal   -> MISSED      (bundle.setdefault("strict_decimal_accounting", True))
+numeric metric literal     -> MISSED      ({"profit_factor": Decimal("1.6850")})
+```
+
+The last line is the important one: §54's literals were `Decimal("1.6850")`-shaped — a `Call`, not an `ast.Constant` — so the seven-string blacklist caught them and the AST check cannot. On the dimension that matters for metric values the gate is now weaker than what it replaced, which is the one thing §12.4 forbids. The eight known flags are not at risk (the committed test asserts each key absent by name, independently of literal form); the exposure is the next new key someone types.
+
+I am not holding the phase on this, and the reason is materiality rather than convenience: the artifact is clean on measurement, the eight flags are pinned absent by a second mechanism, and N-63 concerns what a *future* commit could slip past a guard. It is ordered to be fixed in the commit that opens Phase 3.
+
+### 56.4 Minor
+
+- **N-66** — `tests/unit/test_verdicts.py` now asserts `summary_counts == {"PASS": 3, "FAIL": 0, "NOT_RUN": 20}` and `passed_ids == {"CRIT-WINDOW-01", "CRIT-DATA-05", "CRIT-DATA-06"}`. That pins today's answer into the suite, so the wave that legitimately attests provenance (a fourth `PASS`) fails the tests, and the obvious repair is to edit the expectation — the exact §12.4 weakening this round was spent avoiding, now relocated from the generator into the test. Assert the derivation instead: every `PASS` has a non-empty `computed_value` traceable to a package output, and every `NOT RUN` cites the missing input.
+- **N-67** — §55.8 said the omitted key should leave "evidence naming the gate that does prove it". The evidence reads `Flag 'statutory_costs_enforced' not provided in results bundle.` — correct status, no pointer. The property is guarded by `verify_phase2b5_storage.py`; the report should name it so a reader can check the claim rather than take the `NOT RUN` on trust. Cosmetic, but it is a clause I wrote.
+- **N-68** — `assert len(report.evaluations) == 23` hardcodes the criteria count, so adding a criterion to `go_no_go_criteria.yaml` now crashes the generator. Same failure mode as H-76 one level up: the script must not fail because the contract grew. `assert report.evaluations` is sufficient.
+
+### 56.5 Verdict
+
+**Wave 3 — GO stands, unchanged.** No execution, portfolio, cost or calendar file is touched.
+
+**Phase 2D engine — GO stands.** Unchanged from §53.6/§54.9/§55.7.
+
+**Phase 2D phase — GO to sign off.** I stated the falsifier in §55.7 as: *every `PASS` in the regenerated report tracing to a value that code read from the repository — with no `True` assigned to a bundle key in the generator and no criteria flag reported as an observation — while the window and the session count stay as they are.* Measured at `0be0da3`: bundle contains no boolean or numeric value at all, the three `PASS` entries are each recomputed above from committed data, inverting the requirement flags changes nothing, the window follows the archive, and 1,196 sessions are preserved. The `NOT RUN` count rose from 12 to 20 precisely because eight unmeasured flags stopped claiming `PASS`. The falsifier is not met; the phase closes on its evidence.
+
+Therefore `CURRENT_STAGE_OF_WORK.md` may now record Phase 2D phase sign-off citing §56 at `0be0da3` and may open Phase 3. It must still not describe the Tier-A report as audited beyond this section, and N-63 remainder / N-66 / N-67 / N-68 must be closed in the same commit.
+
+Two preconditions bound what Phase 3 can honestly claim, and neither is satisfied today:
+
+1. **Provenance.** `CRIT-PROV-01` is `NOT RUN` because all 63 manifest records remain `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` with `source_url: None`. Every Phase 3 strategy evaluation inherits this and therefore cannot produce `GO`, however good the strategy. The attested-retrieval wave (source URL, retrieval timestamp and byte count for all 1,195 archives) is the only thing that moves it, and it is a human-invoked retrieval, not a research task.
+2. **Nifty 500 membership has no data in this repository.** `data/reference/` contains no index-membership artefact and there is no universe module (`src/signal_core/universe` does not exist; no file matched `index|member|universe|nifty`). A "Nifty 500 EQ swing" universe chosen without a committed point-in-time interval table is a survivorship-biased selection under §6.1 and violates §10.5's interval-table rule. Phase 3 may build the sizing and order-generation layers, and may run on the traded `EQ` set as a universe proxy clearly labelled as such, but it may not report a Nifty 500 strategy result until the membership history is sourced, committed as `[effective_from, effective_to)` intervals keyed by ISIN, and joined as-of date `T`.
+
+What would falsify this verdict: a regenerated report containing a `PASS` whose `computed_value` cannot be recomputed from committed data by an independent script; or `CURRENT_STAGE_OF_WORK.md` gaining a Phase 3 section that cites §56 for anything §56 does not grant — in particular a strategy `GO`, which this section does not give and cannot until provenance is attested.
+
+### 56.6 Work order
+
+1. **N-63 remainder.** Replace the `ast.Constant`-only test with one that also rejects a literal reaching a bundle key through any expression: reject `ast.Call` whose target is `Decimal`/`float`/`str` of a numeric literal, reject module-level `Constant` names referenced in the function, and reject `dict.update`/`setdefault` with literal values. *Accept:* the six probe cases in §56.3 all report `CAUGHT`, and a deliberately injected `Decimal("1.6850")` fails Gate 2D-5.
+2. **N-66.** Replace the pinned counts with a derivation assertion; the exact `summary_counts` may appear only as a printed measurement, never as an `assert`. *Accept:* adding a fourth `PASS` to a copy of the bundle keeps the test green without editing the test.
+3. **N-67 / N-68.** Name the proving gate in each omitted-key evidence string; soften the evaluation-count assert. *Accept:* `CRIT-COST-01` evidence names `verify_phase2b5_storage.py`; adding a criterion leaves the generator exiting 0.
+4. **Open Phase 3 in `CURRENT_STAGE_OF_WORK.md`** citing §56 at `0be0da3`, with the two preconditions above stated as blockers rather than as context.
+5. **Phase 3 build order, all as configuration of the single engine (§13.5), no second fill or cost path:**
+   - `atr_based_r_multiple_sizing` — risk per trade as a fraction of equity divided by `k × ATR(n)`, stop at the ATR multiple, position size = risk / stop distance, capped by `max_single_position_weight` and by the 2.5–5.0% participation bound (§7.3). *Accept:* a unit test proving a higher-ATR name gets a smaller quantity for equal risk, and that the cap binds before the risk budget in the expected cases.
+   - **Universe layer** — the point-in-time membership interval table described above; until it exists, the universe is the traded `EQ` set and every artefact says so. *Accept:* as-of `T` selection returns the members effective `[from, to)` at `T`, and a security added in 2025 is absent from a 2023 cross-section.
+   - **Daily T+1 order generation** — signals at `T` close, orders filled at `T+1` open through the existing simulator, one authoritative cost schedule (§7.2). *Accept:* the same no-lookahead falsifier already used at Wave 3 — a `T`-close fill attempt raises, and a `T+1` open fill on a band-limited session is rejected at the upper circuit.
+6. **Do not compute a strategy `GO` this wave.** With `CRIT-PROV-01` `NOT RUN`, the verdict engine will hold `NO-GO`, which is the correct answer, and it is the answer Phase 3 must be built to display rather than to avoid.
