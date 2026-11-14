@@ -476,15 +476,16 @@ def test_h68_attestation_must_be_manifest_registered_and_digest_matched():
     assert "does not match evaluated dataset fingerprint" in eval_prov2.evidence
     assert rep_mismatch.overall_verdict == OverallVerdict.NO_GO
 
-    # 3. Probe 3: Registered artifact with matching digest -> PASS naming digest
+    # 3. Probe 3 (§54.3, §54.10 Finding H-70): Real manifest record bhavcopy_archive_manifest.jsonl
+    # declares CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED -> evaluates to NOT RUN / NO-GO (Finding H-70)
     bundle_match = dict(bundle_agents)
     bundle_match["provenance_attestation_reference"] = "data/reference/bhavcopy_archive_manifest.jsonl"
     bundle_match["dataset_fingerprint"] = "DATA-CTNT-V2-7ea5f97bb5affae6d688b013bd802c64a3366410377c2e3f8e31912450444c91"
     rep_match = evaluate_verdicts(bundle_match)
     eval_prov3 = next(e for e in rep_match.evaluations if e.criterion_id == "CRIT-PROV-01")
-    assert eval_prov3.status == VerdictStatus.PASS
-    assert "7ea5f97bb5affae6d688b013bd802c64a3366410377c2e3f8e31912450444c91" in eval_prov3.evidence
-    assert rep_match.overall_verdict == OverallVerdict.GO
+    assert eval_prov3.status == VerdictStatus.NOT_RUN
+    assert "declares unverified provenance" in eval_prov3.evidence
+    assert rep_match.overall_verdict == OverallVerdict.NO_GO
 
 
 def test_h69_evaluation_window_calendar_bounding_and_session_plausibility():
@@ -540,7 +541,8 @@ def test_h69_evaluation_window_calendar_bounding_and_session_plausibility():
     r3 = evaluate_verdicts(b3)
     e3 = next(e for e in r3.evaluations if e.criterion_id == "CRIT-WINDOW-01")
     assert e3.status == VerdictStatus.FAIL
-    assert "implausible for 210 completed multi-session round-trip trades" in e3.evidence
+    assert "implausible" in e3.evidence
+    assert "210 trades" in e3.evidence
     assert r3.overall_verdict == OverallVerdict.NO_GO
 
     # Case 4: 2022-01-03 .. 2026-10-31 -> PASS
@@ -551,3 +553,124 @@ def test_h69_evaluation_window_calendar_bounding_and_session_plausibility():
     e4 = next(e for e in r4.evaluations if e.criterion_id == "CRIT-WINDOW-01")
     assert e4.status == VerdictStatus.PASS
     assert "conforms to authoritative binding evaluation schedule" in e4.evidence
+
+
+def test_manifest_fingerprint_pin_enforcement():
+    """
+    Finding H-72: Authoritative reference manifest fingerprint pinned in criteria.
+    Refuses forged or tampered manifests fail-closed with ReportingError naming pin mismatch.
+    """
+    import dataclasses
+    crit = load_go_no_go_criteria()
+    assert crit.expected_manifest_fingerprint.startswith("MAN-FPR-V1-")
+
+    tampered_crit = dataclasses.replace(
+        crit, expected_manifest_fingerprint="MAN-FPR-V1-forgeddeadbeef0000000000000000000000000000"
+    )
+    with pytest.raises(ReportingError) as exc_info:
+        evaluate_verdicts({}, criteria=tampered_crit)
+    assert "Manifest fingerprint mismatch" in str(exc_info.value)
+    assert "Finding H-72" in str(exc_info.value)
+
+
+def test_provenance_record_honesty_validation(tmp_path):
+    """
+    Finding H-70: CRIT-PROV-01 inspects matched manifest record's own honesty fields.
+    Refuses claims citing records that declare CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED
+    or lack source_url / retrieval timestamp.
+    """
+    # 1. Real committed manifest record bhavcopy_archive_manifest.jsonl declares CONTENT_IDENTIFIED_ONLY
+    bundle_h70 = {
+        "data_provenance_status": "VERIFIED / EXCHANGE_ATTESTED",
+        "provenance_attestation_reference": "data/reference/bhavcopy_archive_manifest.jsonl",
+        "dataset_fingerprint": "DATA-CTNT-V2-7ea5f97bb5affae6d688b013bd802c64a3366410377c2e3f8e31912450444c91",
+    }
+    rep = evaluate_verdicts(bundle_h70)
+    eval_prov = next(e for e in rep.evaluations if e.criterion_id == "CRIT-PROV-01")
+    assert eval_prov.status == VerdictStatus.NOT_RUN
+    assert rep.overall_verdict == OverallVerdict.NO_GO
+    assert "declares unverified provenance" in eval_prov.evidence
+    assert "Finding H-70" in eval_prov.evidence
+
+
+def test_total_trades_decimal_parsing_and_plausibility_bound():
+    """
+    Finding H-71: total_trades parsed via exact Decimal arithmetic and bounded by sessions * max_positions.
+    Rejects '500', Decimal('500'), and 500.0 over 2 sessions, rejects 500 trades over 3 sessions,
+    and rejects booleans / non-integral trade counts.
+    """
+    # 1. Two sessions: 500 in various types all fail
+    for bad_trade_val in ("500", Decimal("500"), 500.0, 500):
+        rep = evaluate_verdicts({
+            "evaluation_start_date": "2022-01-03",
+            "evaluation_end_date": "2022-01-04",
+            "total_trades": bad_trade_val,
+        })
+        eval_win = next(e for e in rep.evaluations if e.criterion_id == "CRIT-WINDOW-01")
+        assert eval_win.status == VerdictStatus.FAIL
+        assert "implausible" in eval_win.evidence
+        assert rep.overall_verdict == OverallVerdict.NO_GO
+
+    # 2. Three sessions carrying 500 round trips -> FAIL
+    rep_3s = evaluate_verdicts({
+        "evaluation_start_date": "2022-01-05",
+        "evaluation_end_date": "2022-01-07",
+        "total_trades": 500,
+    })
+    eval_win_3s = next(e for e in rep_3s.evaluations if e.criterion_id == "CRIT-WINDOW-01")
+    assert eval_win_3s.status == VerdictStatus.FAIL
+    assert "implausible" in eval_win_3s.evidence
+    assert rep_3s.overall_verdict == OverallVerdict.NO_GO
+
+    # 3. Invalid boolean trade count -> FAIL
+    rep_bool = evaluate_verdicts({
+        "evaluation_start_date": "2022-01-03",
+        "evaluation_end_date": "2022-01-04",
+        "total_trades": True,
+    })
+    eval_win_bool = next(e for e in rep_bool.evaluations if e.criterion_id == "CRIT-WINDOW-01")
+    assert eval_win_bool.status == VerdictStatus.FAIL
+    assert "boolean is not a valid trade count" in eval_win_bool.evidence
+
+
+def test_tier_a_report_omitted_engine_output_falsifier():
+    """
+    Finding H-73: Verifies that Tier-A report evaluates omitted engine outputs honestly to NOT RUN,
+    with zero fallback literals.
+    """
+    from scripts.generate_phase2d_tier_a_report import build_tier_a_results_bundle
+    bundle = build_tier_a_results_bundle()
+
+    # Backtest and walk-forward metrics must not be present in bundle
+    for uncomputed_key in (
+        "total_trades",
+        "profit_factor",
+        "max_single_position_weight",
+        "max_portfolio_drawdown",
+        "annual_turnover",
+        "max_volume_participation",
+        "min_daily_turnover_crore",
+        "trial_count_n",
+        "deflated_sharpe_ratio",
+        "walk_forward_positive_fold_ratio",
+    ):
+        assert uncomputed_key not in bundle, f"{uncomputed_key} should be omitted until computed by engine"
+
+    # Evaluated report must have these as NOT RUN
+    rep = evaluate_verdicts(bundle)
+    eval_stat1 = next(e for e in rep.evaluations if e.criterion_id == "CRIT-STAT-01")
+    assert eval_stat1.status == VerdictStatus.NOT_RUN
+    assert "not provided in results bundle" in eval_stat1.evidence
+
+    eval_dsr = next(e for e in rep.evaluations if e.criterion_id == "CRIT-OVERFIT-02")
+    assert eval_dsr.status == VerdictStatus.NOT_RUN
+    assert "not provided in results bundle" in eval_dsr.evidence
+
+    # Falsifier check: removing traded_eq_resolution_pct turns CRIT-DATA-05 to NOT RUN
+    bundle_no_cov = dict(bundle)
+    bundle_no_cov.pop("traded_eq_resolution_pct", None)
+    rep_no_cov = evaluate_verdicts(bundle_no_cov)
+    eval_cov = next(e for e in rep_no_cov.evaluations if e.criterion_id == "CRIT-DATA-05")
+    assert eval_cov.status == VerdictStatus.NOT_RUN
+    assert "not provided in results bundle" in eval_cov.evidence
+

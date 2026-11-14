@@ -18,6 +18,16 @@ import yaml
 
 DEFAULT_CRITERIA_PATH = Path(__file__).resolve().parent.parent.parent.parent / "configs" / "go_no_go_criteria.yaml"
 CRITERIA_FINGERPRINT_PREFIX = "CRIT-FPR-V1-"
+MANIFEST_FINGERPRINT_PREFIX = "MAN-FPR-V1-"
+
+
+def compute_manifest_fingerprint(manifest_path: Union[str, Path]) -> str:
+    """Computes SHA-256 fingerprint of the authoritative reference manifest (Finding H-72)."""
+    p = Path(manifest_path)
+    if not p.is_file():
+        raise FileNotFoundError(f"Manifest file not found: {p}")
+    content = p.read_bytes().replace(b"\r\n", b"\n")
+    return MANIFEST_FINGERPRINT_PREFIX + hashlib.sha256(content).hexdigest()
 
 
 class CriteriaValidationError(ValueError):
@@ -118,9 +128,11 @@ class GoNoGoCriteria:
     # Statutory cost schedule
     statutory_costs: StatutoryCostCriteria
 
-    # Market data and accounting invariants (§10.8, Audit §40.5, Finding H-54, H-61, H-62, H-64)
+    # Market data and accounting invariants (§10.8, Audit §40.5, Finding H-54, H-61, H-62, H-64, H-72)
     min_binding_evaluation_start_date: datetime.date = datetime.date(2022, 1, 3)
     min_traded_eq_resolution_pct: Decimal = Decimal("100.0")
+    # H-72: Authoritative reference manifest fingerprint pinned as human criteria anchor
+    expected_manifest_fingerprint: str = ""
     # H-64: calendar fingerprint pinned as human anchor independent of the calendar file (Finding H-64)
     # CAL-FPR-V1 covers dates, session_types, open/close times of all 2,935 sessions — recomputed from
     # session_records at load time and compared against this pin; a date swap passes counting but not identity.
@@ -245,6 +257,13 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
             f"expected_sourced_window_calendar_fingerprint must be a CAL-FPR-V1-... string, got {raw_sourced_fingerprint!r} (Residual R-4)"
         )
 
+    # expected_manifest_fingerprint must be present and non-empty (Finding H-72)
+    raw_manifest_fingerprint = _require_mda("expected_manifest_fingerprint")
+    if not isinstance(raw_manifest_fingerprint, str) or not raw_manifest_fingerprint.startswith("MAN-FPR-V1-"):
+        raise CriteriaValidationError(
+            f"expected_manifest_fingerprint must be a MAN-FPR-V1-... string, got {raw_manifest_fingerprint!r} (Finding H-72)"
+        )
+
     return GoNoGoCriteria(
         version=str(meta.get("version", "1.0.0")),
         effective_date=datetime.date.fromisoformat(str(meta.get("effective_date", "2026-11-11"))),
@@ -277,6 +296,8 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
             mda.get("min_traded_eq_resolution_pct", "100.0"),
             "min_traded_eq_resolution_pct",
         ),
+        # H-72: pinned manifest fingerprint
+        expected_manifest_fingerprint=raw_manifest_fingerprint,
         # H-64 / N-51: mandatory human-authored identity anchors — no defaults
         expected_calendar_fingerprint=raw_fingerprint,
         expected_sourced_window_calendar_fingerprint=raw_sourced_fingerprint,

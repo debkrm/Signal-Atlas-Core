@@ -122,6 +122,10 @@ market_data_and_accounting_invariants:
   # Zero forward-filling or linear interpolation of missing OHLC records
   zero_data_fabrication_required: true
 
+  # Finding H-72: Authoritative reference manifest fingerprint pinned as criteria anchor (Audit §54.5, §54.10)
+  # MAN-FPR-V1 covers data/reference/manifest.jsonl content (34,464 bytes, SHA-256 ee2cef6933bd6fccc335e0512ff8f2bd21e84cb7ca983bff53a063678c3d15df)
+  expected_manifest_fingerprint: "MAN-FPR-V1-ee2cef6933bd6fccc335e0512ff8f2bd21e84cb7ca983bff53a063678c3d15df"
+
   # Authoritative Calendar and Session Reconciliation Invariants (AGENTS.md §6.3, §9.2, Findings H-56, H-61, H-62, H-64)
   # H-64: Calendar identity anchor — computed from session_records (dates, session_types, open/close times) at load time
   # and compared against this human-authored string. A date swap that preserves counting passes H-61 but fails H-64.

@@ -5,7 +5,8 @@ Enforces AGENTS.md §6.5, §7.1, §8.1, §8.2, §9.1, §9.2, §9.3, and Phase 2D
   - Gate 2D-1: Reproducible verdict report from results bundle alone.
   - Gate 2D-2: Zero hardcoded adjectives; all labels traceable to exact computations.
   - Gate 2D-3: End-to-end synthetic dataset regression on small_synthetic_dataset.json.
-  - Gate 2D-4: Adversarial failure tests fail closed (holdout breach, lookahead, N<=1, unanchored calendar).
+  - Gate 2D-4: Adversarial failure tests fail closed (holdout breach, lookahead, N<=1, unanchored calendar, unverified provenance, tampered manifest, trade plausibility).
+  - Gate 2D-5: Phase 2D Tier-A report generator execution, zero hardcoded metric literals, and byte-reproducibility.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from decimal import Decimal
 import json
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -27,6 +29,7 @@ from signal_core.contracts.criteria import (
 from signal_core.reporting.verdicts import (
     HoldoutBreachError,
     OverallVerdict,
+    ReportingError,
     VerdictReport,
     VerdictStatus,
     evaluate_verdicts,
@@ -309,7 +312,115 @@ def verify_gate_2d4_adversarial_fail_closed() -> bool:
         return False
     print("[PASS] Calendar bounds and session count plausibility rejected fail-closed (Finding H-69).")
 
+    # 9. H-70: Matched manifest record declaring unverified provenance rejected fail-closed (Audit §54.3, §54.10)
+    rep_unverified_record = evaluate_verdicts({
+        "data_provenance_status": "VERIFIED / EXCHANGE_ATTESTED",
+        "provenance_attestation_reference": "data/reference/bhavcopy_archive_manifest.jsonl",
+        "dataset_fingerprint": "DATA-CTNT-V2-7ea5f97bb5affae6d688b013bd802c64a3366410377c2e3f8e31912450444c91",
+    })
+    eval_prov_unv = next(e for e in rep_unverified_record.evaluations if e.criterion_id == "CRIT-PROV-01")
+    if eval_prov_unv.status != VerdictStatus.NOT_RUN or rep_unverified_record.overall_verdict != OverallVerdict.NO_GO:
+        print(f"[FAIL] Manifest record with unverified provenance status was not rejected with NOT RUN / NO-GO! Got: {eval_prov_unv.status}")
+        return False
+    print("[PASS] Unverified manifest record rejected fail-closed to NOT RUN / NO-GO (Finding H-70).")
+
+    # 10. H-72: Pinned manifest fingerprint enforcement rejects forged/tampered manifest (Audit §54.5, §54.10)
+    manifest_tampered = False
+    tampered_crit = dataclasses.replace(crit, expected_manifest_fingerprint="MAN-FPR-V1-tampered0000000000000000000000000000")
+    try:
+        evaluate_verdicts({}, criteria=tampered_crit)
+    except ReportingError as exc:
+        if "Manifest fingerprint mismatch" in str(exc) and "Finding H-72" in str(exc):
+            manifest_tampered = True
+    if not manifest_tampered:
+        print("[FAIL] Tampered/forged manifest was not rejected fail-closed with ReportingError (Finding H-72)!")
+        return False
+    print("[PASS] Authoritative manifest fingerprint pin enforced fail-closed (Finding H-72).")
+
+    # 11. H-71: Decimal total_trades parsing and session-plausibility bounds (Audit §54.4, §54.10)
+    for bad_trade_val in ("500", Decimal("500"), 500.0, 500):
+        rep_bad_trade = evaluate_verdicts({
+            "evaluation_start_date": "2022-01-03",
+            "evaluation_end_date": "2022-01-04",
+            "total_trades": bad_trade_val,
+        })
+        eval_w_bad = next(e for e in rep_bad_trade.evaluations if e.criterion_id == "CRIT-WINDOW-01")
+        if eval_w_bad.status != VerdictStatus.FAIL or rep_bad_trade.overall_verdict != OverallVerdict.NO_GO:
+            print(f"[FAIL] Two-session window carrying total_trades={bad_trade_val!r} did not FAIL! Got: {eval_w_bad.status}")
+            return False
+
+    rep_3sess_500 = evaluate_verdicts({
+        "evaluation_start_date": "2022-01-05",
+        "evaluation_end_date": "2022-01-07",
+        "total_trades": 500,
+    })
+    eval_w_3s = next(e for e in rep_3sess_500.evaluations if e.criterion_id == "CRIT-WINDOW-01")
+    if eval_w_3s.status != VerdictStatus.FAIL or rep_3sess_500.overall_verdict != OverallVerdict.NO_GO:
+        print(f"[FAIL] Three-session window carrying 500 trades did not FAIL! Got: {eval_w_3s.status}")
+        return False
+    print("[PASS] total_trades Decimal parsing and session plausibility bounds verified fail-closed (Finding H-71).")
+
     print("[PASS] Gate 2D-4: All adversarial fail-closed invariants verified.")
+    return True
+
+
+def verify_gate_2d5_tier_a_report_generation() -> bool:
+    """Gate 2D-5: Phase 2D Tier-A Report Generator Execution & Reproducibility (Finding H-73, H-74)."""
+    print("\n--- Gate 2D-5: Phase 2D Tier-A Report Generator Execution & Reproducibility ---")
+    gen_script = REPO_ROOT / "scripts" / "generate_phase2d_tier_a_report.py"
+    if not gen_script.exists():
+        print(f"[FAIL] Tier-A report generator missing at {gen_script}")
+        return False
+
+    # Check zero hardcoded metric literals in generator script (Finding H-73)
+    gen_source = gen_script.read_text(encoding="utf-8")
+    for lit in ["342", "1.6850", "0.9720", "0.8500", "0.0245", "12.50", "100.0000"]:
+        if lit in gen_source:
+            print(f"[FAIL] Hardcoded metric literal {lit!r} found in {gen_script.name} (Finding H-73)!")
+            return False
+    print("[PASS] Verified zero hardcoded metric literals in Tier-A report generator (Finding H-73).")
+
+    # Run generator subprocess (Finding H-74)
+    proc1 = subprocess.run(
+        [sys.executable, str(gen_script)],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if proc1.returncode != 0:
+        print(f"[FAIL] Tier-A report generator failed with exit code {proc1.returncode} (Finding H-74)!")
+        print(f"       stderr: {proc1.stderr}")
+        return False
+    print("[PASS] Tier-A report generator executed with exit code 0 on platform (Finding H-74).")
+
+    json_path = REPO_ROOT / "reports" / "verdicts" / "phase2d_tier_a_2022_2026_verdict.json"
+    md_path = REPO_ROOT / "reports" / "verdicts" / "phase2d_tier_a_2022_2026_verdict.md"
+    if not json_path.exists() or not md_path.exists():
+        print("[FAIL] Generated Tier-A verdict reports missing from reports/verdicts/!")
+        return False
+
+    json_run1 = json_path.read_bytes()
+    md_run1 = md_path.read_bytes()
+
+    # Second run to test exact byte-reproducibility
+    proc2 = subprocess.run(
+        [sys.executable, str(gen_script)],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if proc2.returncode != 0:
+        print(f"[FAIL] Tier-A report generator failed on second run: exit code {proc2.returncode}")
+        return False
+
+    if json_path.read_bytes() != json_run1 or md_path.read_bytes() != md_run1:
+        print("[FAIL] Tier-A report generator outputs are not byte-identical across runs!")
+        return False
+    print("[PASS] Byte-identical reproducibility verified across repeated generator executions.")
+
+    print("[PASS] Gate 2D-5: Phase 2D Tier-A Report Generator Execution & Reproducibility verified.")
     return True
 
 
@@ -324,6 +435,7 @@ def main() -> int:
         verify_gate_2d2_zero_hardcoded_adjectives(),
         verify_gate_2d3_synthetic_fixture_end_to_end(),
         verify_gate_2d4_adversarial_fail_closed(),
+        verify_gate_2d5_tier_a_report_generation(),
     ]
 
     if all(checks):

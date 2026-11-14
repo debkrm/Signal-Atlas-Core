@@ -19,6 +19,7 @@ from signal_core.contracts.criteria import (
     CriteriaValidationError,
     GoNoGoCriteria,
     compute_criteria_fingerprint,
+    compute_manifest_fingerprint,
     load_go_no_go_criteria,
 )
 from signal_core.contracts.provenance import ProvenanceStatus
@@ -208,6 +209,17 @@ def evaluate_verdicts(
     # 2. Load and anchor trading calendar per Residual R-6
     active_cal = calendar or load_anchored_nse_trading_calendar(path=calendar_path, criteria=active_criteria)
 
+    # 2b. Authoritative reference manifest verification against criteria pin (Finding H-72)
+    m_path = Path(manifest_path) if manifest_path else (Path(__file__).resolve().parent.parent.parent.parent / "data" / "reference" / "manifest.jsonl")
+    if not m_path.is_file():
+        raise ReportingError(f"Authoritative manifest file not found at {m_path} (Finding H-72)")
+    computed_manifest_fp = compute_manifest_fingerprint(m_path)
+    if computed_manifest_fp != active_criteria.expected_manifest_fingerprint:
+        raise ReportingError(
+            f"Manifest fingerprint mismatch: computed {computed_manifest_fp} != expected "
+            f"{active_criteria.expected_manifest_fingerprint} (Finding H-72)"
+        )
+
     # 3. Holdout Containment Check (§8.1)
     if results_bundle.get("contains_holdout_records") is True or "holdout" in str(results_bundle.get("partition_role", "")).lower():
         if not results_bundle.get("holdout_unlock_authorized"):
@@ -226,6 +238,26 @@ def evaluate_verdicts(
     start_d: Optional[datetime.date] = None
     end_d: Optional[datetime.date] = None
 
+    # H-71: Parse total_trades via exact Decimal arithmetic, rejecting booleans, floats/non-integral values, negative counts
+    val_trades_raw = results_bundle.get("total_trades")
+    parsed_total_trades: Optional[int] = None
+    trades_parse_error: Optional[str] = None
+
+    if val_trades_raw is not None:
+        if isinstance(val_trades_raw, bool):
+            trades_parse_error = f"Invalid 'total_trades' value ({val_trades_raw!r}): boolean is not a valid trade count per AGENTS.md §6.4 and Finding H-71."
+        else:
+            try:
+                d_trades = Decimal(str(val_trades_raw))
+                if not d_trades.is_finite() or d_trades < 0:
+                    trades_parse_error = f"Invalid 'total_trades' value ({val_trades_raw!r}): must be a finite non-negative integer per AGENTS.md §6.4 and Finding H-71."
+                elif d_trades != d_trades.to_integral_value():
+                    trades_parse_error = f"Invalid 'total_trades' value ({val_trades_raw!r}): fractional trade count is not a valid integer per AGENTS.md §6.4 and Finding H-71."
+                else:
+                    parsed_total_trades = int(d_trades)
+            except Exception:
+                trades_parse_error = f"Invalid 'total_trades' value ({val_trades_raw!r}): unparseable trade count per AGENTS.md §6.4 and Finding H-71."
+
     if eval_start_raw:
         try:
             start_d = datetime.date.fromisoformat(str(eval_start_raw))
@@ -240,7 +272,8 @@ def evaluate_verdicts(
     if start_d is not None and end_d is not None:
         min_start = active_criteria.min_binding_evaluation_start_date
         cal_sessions = active_cal.session_count_between(start_d, end_d)
-        val_trades = results_bundle.get("total_trades")
+        max_concurrent_positions = int(Decimal("1") / active_criteria.max_single_position_weight)
+        max_plausible_trades = cal_sessions * max_concurrent_positions * 10 if cal_sessions >= 2 else 0
 
         is_valid_end_session = active_cal.is_session(end_d) or (
             end_d == datetime.date(2026, 10, 31) and active_cal.is_session(datetime.date(2026, 10, 30))
@@ -290,14 +323,16 @@ def evaluate_verdicts(
             window_evidence = (
                 f"Evaluation window {start_d.isoformat()} .. {end_d.isoformat()} contains 0 trading sessions (Finding H-69)."
             )
-        elif isinstance(val_trades, int) and (
-            (cal_sessions < 2 and val_trades > 0)
-            or (cal_sessions < 3 and val_trades >= 20)
-        ):
+        elif trades_parse_error is not None:
+            window_status = VerdictStatus.FAIL
+            window_evidence = trades_parse_error
+        elif parsed_total_trades is not None and parsed_total_trades > max_plausible_trades:
             window_status = VerdictStatus.FAIL
             window_evidence = (
-                f"Evaluation window spans only {cal_sessions} trading sessions, which is implausible "
-                f"for {val_trades} completed multi-session round-trip trades per AGENTS.md §13 (Finding H-69)."
+                f"Evaluation window spans only {cal_sessions} trading sessions with maximum {max_concurrent_positions} "
+                f"concurrent positions (derived from criteria max_single_position_weight={active_criteria.max_single_position_weight}), "
+                f"capping plausible completed multi-session round trips at {max_plausible_trades}; "
+                f"{parsed_total_trades} trades is implausible per AGENTS.md §13 (Findings H-69, H-71)."
             )
         else:
             window_status = VerdictStatus.PASS
@@ -333,19 +368,30 @@ def evaluate_verdicts(
     # -------------------------------------------------------------------------
     # Section A: Statistical & Risk Limits (§9.2)
     # -------------------------------------------------------------------------
-    # A1: Total Trades (min_total_trades)
-    val_trades = results_bundle.get("total_trades")
-    if val_trades is not None and isinstance(val_trades, int):
-        status = VerdictStatus.PASS if val_trades >= active_criteria.min_total_trades else VerdictStatus.FAIL
+    # A1: Total Trades (min_total_trades, Finding H-71)
+    if trades_parse_error is not None:
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-STAT-01",
             category="Risk & Performance",
             metric_name="Total Completed Trades",
-            computed_value=str(val_trades),
+            computed_value=str(val_trades_raw),
+            threshold_value=f">= {active_criteria.min_total_trades}",
+            comparator=">=",
+            status=VerdictStatus.FAIL,
+            evidence=trades_parse_error,
+            is_binding=True,
+        ))
+    elif parsed_total_trades is not None:
+        status = VerdictStatus.PASS if parsed_total_trades >= active_criteria.min_total_trades else VerdictStatus.FAIL
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-STAT-01",
+            category="Risk & Performance",
+            metric_name="Total Completed Trades",
+            computed_value=str(parsed_total_trades),
             threshold_value=f">= {active_criteria.min_total_trades}",
             comparator=">=",
             status=status,
-            evidence=f"Recorded {val_trades} executed round-trip trades in evaluation window.",
+            evidence=f"Recorded {parsed_total_trades} executed round-trip trades in evaluation window.",
             is_binding=True,
         ))
     else:
@@ -905,10 +951,28 @@ def evaluate_verdicts(
                 )
             )
 
+            # H-70: Inspect matched manifest record's own provenance honesty fields
+            entry_prov_status = str(found_entry.get("provenance_status", "")).strip().upper()
+            entry_source_url = found_entry.get("source_url")
+            entry_timestamp = found_entry.get("timestamp_utc") or found_entry.get("retrieval_timestamp") or found_entry.get("retrieved_at")
+
             if not digest_matched:
                 attestation_failure_reason = (
                     f"registered attestation digest '{entry_sha}' does not match "
                     f"evaluated dataset fingerprint '{dataset_fp_val}'"
+                )
+            elif entry_prov_status not in ("VERIFIED", "VERIFIED / EXCHANGE_ATTESTED", ProvenanceStatus.VERIFIED.value):
+                attestation_failure_reason = (
+                    f"matched manifest record '{found_entry.get('artifact')}' declares unverified provenance "
+                    f"'{found_entry.get('provenance_status')}' per AGENTS.md §6.5 (Finding H-70)"
+                )
+            elif not entry_source_url or not str(entry_source_url).strip():
+                attestation_failure_reason = (
+                    f"matched manifest record '{found_entry.get('artifact')}' carries no source_url per AGENTS.md §6.5 (Finding H-70)"
+                )
+            elif not entry_timestamp or not str(entry_timestamp).strip():
+                attestation_failure_reason = (
+                    f"matched manifest record '{found_entry.get('artifact')}' carries no retrieval timestamp per AGENTS.md §6.5 (Finding H-70)"
                 )
             elif not att_path.is_file():
                 attestation_failure_reason = f"registered attestation file '{att_str}' does not exist on disk"
@@ -933,7 +997,7 @@ def evaluate_verdicts(
                     status=VerdictStatus.PASS,
                     evidence=(
                         f"Primary market data attested by authentic exchange archive signatures "
-                        f"({resolved_attestation_str}) with verified digest {matched_digest} (§6.5, Finding H-68)."
+                        f"({resolved_attestation_str}) with verified digest {matched_digest} (§6.5, Findings H-68, H-70)."
                     ),
                     is_binding=True,
                 ))
@@ -948,7 +1012,7 @@ def evaluate_verdicts(
                     status=VerdictStatus.NOT_RUN,
                     evidence=(
                         f"Refused {prov_str} provenance claim: {attestation_failure_reason} "
-                        f"per AGENTS.md §6.5 (Findings H-67, H-68)."
+                        f"per AGENTS.md §6.5 (Findings H-67, H-68, H-70)."
                     ),
                     is_binding=True,
                 ))
@@ -1119,7 +1183,7 @@ def evaluate_verdicts(
             threshold_value="True",
             comparator="==",
             status=VerdictStatus.NOT_RUN,
-            evidence="Informational metric 'circuit_verified_pnl' not available in synthetic fixture.",
+            evidence="Informational metric 'circuit_verified_pnl' not provided in results bundle (pending historical circuit band verification across all fills).",
             is_binding=False,
         ))
 
