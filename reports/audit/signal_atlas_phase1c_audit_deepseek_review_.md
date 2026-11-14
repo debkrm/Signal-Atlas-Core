@@ -3284,3 +3284,122 @@ The counts in the pass line are literal; the computed values appear only in the 
 The pattern in this round is worth naming plainly. Every finding I have raised for three rounds has been about a claim outrunning its computation: a gate that skipped itself, a threshold under its own measurement, a tag list that had to be edited by hand to stay true. `c7d3e88` fixes the instance of each one I named and, in each case, leaves the same shape alive one step out — the threshold is now honest but measured on one session, the date is now load-bearing but read from a file at record time, the tags are now discovered but the requirement is deletable. That is progress, measured correctly; it is not yet a gate that can fail for a reason nobody chose in advance. The per-session loop in N-34 is the last place where the honest number is still a comment.
 
 ---
+
+## 43 — Review of `5c0272a`: the sweep is real; its denominator is chosen by the machine it runs on
+
+`5c0272a` — *feat(remediation): close N-33, N-34, N-35, N-36, N-37 and complete Phase 2D prerequisites* — 6 files, +315/−82.
+
+### 43.1 Checks run
+
+- `python scripts/verify_audit_append_only.py` → all four gates PASS, exit 0; 0 deleted lines in the working tree and in commits since `a3a40f1`; all 7 verification scripts exit 0; `268 passed in 11.93s`, 0 skipped, 0 xfailed; 17 commit-bearing tags verified, including the newly discovered `feat-s42-5c0272a -> 5c0272a`.
+- `scripts/verify_cash_universe_coverage.py` run standalone and read, not merely its exit code: `Discovered 1195 raw Bhavcopy archives`, `2,390,165 / 2,390,165 traded EQ rows resolved across 1,195 sessions (100.0000%)`.
+- Same script re-run with `NSE_RAW_ARCHIVES_DIR=data/reference/bhavcopy_2024`: `Discovered 22 raw Bhavcopy archives`, `39,639 / 39,639 ... across 22 sessions (100.0000%)`, **gate PASS**.
+- Probe of `WalkForwardResult.to_trial_record` outside the suite, using the `wf_environment` fixture: a result carrying a 2021-12 fold, a mismatched `criteria_version`, and `execution_config["min_binding_evaluation_start_date"] = "1990-01-01"` → **ACCEPTED** into the trial registry.
+- Full diff of all 6 files read; the probe was removed from the test tree before this verdict (`git status` clean).
+
+### 43.2 N-34 — CLOSED at `5c0272a`; the criterion now computes its own evidence
+
+The sweep is the thing that computes the number: 1,195 discovered archives are opened, every traded `EQ` row is resolved as of its own session date, and the first mismatch prints the session date, the symbol, the expected ISIN and the resolved ISIN, then returns False. Run here it reproduces §41.3 exactly — `2,390,165 / 2,390,165 across 1,195 sessions` — which is now a gate output rather than a YAML comment, and the two independent counts agreeing is the strongest evidence in this commit.
+
+Two properties of the aggregate are worth stating so nobody quotes it as a measurement. `session_resolved` is incremented in the same block as `session_rows` (`session_rows += 1; session_resolved += 1`) and a mismatch returns before either is touched, so `pct` is `n/n` by construction and the printed `100.0000%` can never be anything else. That is not a defect — the protection is the early return, which is fail-closed per row — but the percentage is decoration and the row count is the finding. Solidity would come from counting an expectation the resolver did *not* produce, e.g. rows whose ISIN resolved to `None` or to a different ISIN, and printing that count as the numerator's complement.
+
+### 43.3 H-55 — new, hard: the denominator is the environment, so the sweep certifies whatever sample it finds
+
+Same script, same code path, different `NSE_RAW_ARCHIVES_DIR`:
+
+```
+1,195 archives -> 2,390,165 / 2,390,165 (100.0000%) -> [PASS] Gate COV-2 ... verified
+   22 archives ->    39,639 /    39,639 (100.0000%) -> [PASS] Gate COV-2 ... verified
+```
+
+A sample 98.3% smaller produces byte-identical verdict text. Nothing in the gate asserts that the sessions it resolved are the sessions the evaluation window contains: there is no cross-check against the authoritative NSE calendar, no committed manifest of the 1,195 archive digests (§10.7 requires one for a dataset, and this is a dataset), and no minimum session count. The 22-session case is not hypothetical — `data/reference/bhavcopy_2024/` holds 22 fixture archives and is the last fallback in `resolve_all_bhavcopy_archives()`, so a CI runner with no raw archives passes COV-2 on the fixture and reports the same PASS as the machine that swept the window.
+
+The discovery order also re-introduces what `d7817d2` removed:
+
+```python
+search_dirs.append(REPO_ROOT.parent / "Signal-Atlas" / "data" / "raw")
+```
+
+Sourcing research data from a sibling checkout is exactly the external-repo path dependency that commit eliminated; here it is load-bearing for the only run that actually sweeps 1,195 sessions. The archives that produced the number above live at that sibling path, so the gate as committed cannot reproduce its own headline result from this repository alone.
+
+Three further silent-skip paths make the count unfalsifiable from inside the gate:
+
+- `if None in (sym_col, isin_col, srs_col, dt_col): continue` — a file whose header this code does not recognise is skipped without a count, so an archive the resolver cannot parse contributes zero rows and no failure.
+- `if not sym or not isin or len(isin) != 12: continue` — malformed rows are dropped before they are counted, so the denominator is "rows that looked well-formed", not "traded EQ rows".
+- `if session_rows > 0: total_sessions += 1` — a session that yielded no usable rows is not a session.
+
+Remedy, and it is one more loop of the same kind: pin the sweep to the evaluation window — require that the number of distinct session dates equals the authoritative calendar's session count for 2022-01-03..2026-10-31, fail naming the missing date otherwise, verify each discovered archive against a committed digest manifest, and drop the sibling-repo fallback. Until then a COV-2 PASS is a statement about the machine, not about the window, and **no Phase 2D research verdict may be computed through it**.
+
+### 43.4 N-33 — CLOSED at `5c0272a`: complement subtraction, and the arithmetic is right
+
+The fix replaces the per-interval `has_overlap` boolean with segment subtraction: each core interval splits the carried segment list into a left remainder `[s_from, core.effective_from)` and a right remainder `[core.effective_to, s_to)`, asserting ISIN agreement wherever the segments overlap and appending only what remains. For the §42.7 case B (sourced 2010-01-01..2020-12-31, core from 2015-01-01, open-ended) the left remainder `[2010-01-01, 2015-01-01)` survives and the test asserts `2012-06-01 -> INE009A01021`, which is the value that used to be `None`.
+
+Checked the shapes that the test does not: a sourced interval strictly inside the core contributes nothing (both remainders empty, no duplicate interval); a core interval with a finite `effective_to` and a sourced interval running past it yields the post-core remainder rather than dropping it; and successive core intervals are subtracted in sequence because `segments` is reassigned each pass. The open-ended-source case (`effective_to is None`) is handled by the `s_to is None` disjuncts on both comparisons. No path appends an interval that overlaps a core interval still in the master. Closed.
+
+### 43.5 N-35 — NOT closed, and the fix opened the door it was meant to shut. N-39 — new
+
+The intent was right: judge a sealed result by the criteria in force when it ran, not by the file on disk now. The implementation reads the date out of `execution_config`:
+
+```python
+min_start_str = self.execution_config.get("min_binding_evaluation_start_date")
+if min_start_str:
+    min_start = datetime.date.fromisoformat(str(min_start_str))
+else:
+    criteria = load_go_no_go_criteria()
+    if self.criteria_version and criteria.version != self.criteria_version:
+        raise WalkForwardEngineError("Cannot create trial record: current criteria version ...")
+    min_start = criteria.min_binding_evaluation_start_date
+```
+
+The version comparison lives only in the `else`. Any result whose `execution_config` carries the key skips the check entirely, and `execution_config` is a mutable dict on the result. Measured with the fixture:
+
+```
+result: fold 2021-12-01..2021-12-31, verification_status VERIFIED,
+        execution_config["min_binding_evaluation_start_date"] = "1990-01-01",
+        criteria_version = "v0.0.1-legacy"
+to_trial_record -> ACCEPTED (no exception)
+```
+
+So the invariant N-32 established — no trial record for a pre-window fold — is defeated by editing one string in a dictionary that the result itself exposes, and the guard that would have caught the version divergence is unreachable on exactly that path. The dataset and criteria fingerprint checks did not interfere: they compare the values carried on the result to each other, so a consistently-edited result passes them.
+
+The disposition matters more than the code: this is the same failure as N-35 itself, one level in. A check was moved from a trusted source (the criteria file) to an untrusted one (a field of the object being checked) to make it *stronger* — and it became weaker, because the trusted source was the thing that made tampering detectable. The correct shape is to keep one authoritative source and derive the other: carry the criteria object (or its full fingerprint) on the result, recompute the fingerprint from it, require equality with `self.criteria_version`'s criteria, and compare the carried date against that. Then editing either field is a detectable contradiction rather than a bypass. Until then: **N-35 stays open as N-39**, and no trial record may be treated as sealed on the strength of `to_trial_record` alone.
+
+### 43.6 N-36 — CLOSED at `5c0272a`, with two residues
+
+The tag requirement is now derived from the audit report, not from `CURRENT_STAGE_OF_WORK.md`:
+
+```python
+if not AUDIT_FILE.is_file(): -> [FAIL] return False
+if not audit_text.strip():   -> [FAIL] return False
+... 4 regexes -> if len(required_wave_tags) < 4: [FAIL] return False
+```
+
+Deleting the file no longer removes the requirement; an unparsable one no longer shrinks it to a hand-written baseline; the four requirements are re-derived every run and printed. That is the property N-36 asked for and it holds. Note the direction it does not fix: the regexes read auditor prose, so an auditor sentence of the form `Wave 3 — GO at \`sha\`` *creates* a tag requirement at the next gate run. That is correct for a new sign-off and is the intended coupling — my §43.9 is written so the first `Wave 3` citation in this report still resolves to `a093682`.
+
+Two residues: `return all_ok` appears twice at the end of the function, the second unreachable, left over from the edit; and the wave 0/1/2 regexes (`##\s+29\..*?\`sha\``) match `### 29.x` sub-headings as well as the section heading, so they depend on a SHA appearing on the same line as some numbered heading in the audit text. Both are cosmetic; neither weakens the fail-closed behaviour.
+
+### 43.7 N-37 — CLOSED at `5c0272a`
+
+The PASS line now interpolates the computed counts and the criterion is interpolated as the `Decimal` it is; the comparison `pct < criteria.min_traded_eq_resolution_pct` is `Decimal` against `Decimal` with no `float()` in the path, and `resolved_eq_rows != total_eq_rows` remains as the integer backstop. Two literal counts (`1,794 / 1,794`) are gone from every PASS string in the script. Closed.
+
+### 43.8 N-31 — CLOSED at `5c0272a`
+
+Both halves are now dynamic: tags are discovered with `git tag -l`, filtered to names ending in a hex SHA, and each name's suffix is compared with the tag's target (17 verified this run), while the *requirements* are derived from the audit report rather than a dictionary someone edits per commit. The residual — that the party being signed off mints the tag — is inherent to tags and is neutralised by the requirement now being read from the auditor's own citations: a `signed-off` tag nobody signed off on no longer satisfies anything, because the gate requires the SHA the audit text names. Closed.
+
+### 43.9 Verdict
+
+**Closed at `5c0272a`:** N-34 (the sweep computes 2,390,165/2,390,165 over 1,195 sessions in-gate, and fails per row with date, symbol and both ISINs), N-33 (complement subtraction preserves pre-core tails), N-36 (tag requirements derived from the audit text and fail-closed), N-37 (computed counts, exact `Decimal`), N-31 (dynamic discovery and dynamic requirements).
+
+**Not closed:** N-35 became N-39 — the date invariant now reads a mutable field of the object it is checking, and the version guard sits in the branch that field bypasses; measured accepted for a 2021-12 fold. **New, hard: H-55** — the sweep's session scope is not asserted, so the identical PASS is produced for 1,195 archives and for 22 fixture archives, the fallback chain sources data from a sibling checkout that `d7817d2` removed, and three silent-skip paths drop unparsable headers, malformed ISINs and empty sessions without counting them.
+
+**Wave 3 — GO stands at `a093682`; extends to `5c0272a` for 2022-01-03..2026-10-31.** Nothing in this commit moves the derived identity table (`sha256 b1746c9e…`), the archives, the fill path or the cost schedule; §43.4's change touches only the sourced-interval complement, which is unreachable from 2022+ archives as of today. The data deliverable verified in §41 remains as verified.
+
+**Phase 2D — still conditional, and the condition changed shape rather than shrinking.** The remediation closed five of the six notes I named, and the two that remain are the same two modes this project has been fighting: N-39 is a trusted source replaced by an untrusted one, H-55 is a verdict whose scope is chosen by its environment. Both are small — H-55 is a calendar-count assertion plus a digest manifest and one deleted line; N-39 is deriving the date from the fingerprint the result already carries — and neither requires new data. Order:
+
+1. **H-55** — assert the swept session count against the calendar for the evaluation window, verify archive digests against a committed manifest, delete the sibling-repo fallback.
+2. **N-39** — one authoritative source for `min_binding_evaluation_start_date`, with the version cross-check on every path.
+3. Then Phase 2D.
+
+The pattern held for a fourth round, and it is worth naming precisely because it is now predictable: each remediation fixes the named instance and leaves the same shape a level in — the sweep now computes its number but not its denominator, the seal now judges the run's criteria but reads them from the run, the tags are now discovered but the requirement was still deletable until this commit. The countervailing fact is that the fixes are converging: 1,195 sessions and 2,390,165 rows now agree with an independent auditor count to the row, and five of six notes closed rather than moved. What is left is not a measurement problem. Both remaining items are about *provenance* — where a number came from, and whether the object claiming it can prove it. That is the right problem to have left, and it is the one Phase 2D will not forgive if it is skipped.
+
+---
