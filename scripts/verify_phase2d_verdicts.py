@@ -267,6 +267,48 @@ def verify_gate_2d4_adversarial_fail_closed() -> bool:
         return False
     print("[PASS] Unattested VERIFIED provenance claim rejected to NOT RUN and NO-GO fail-closed (Finding H-67).")
 
+    # 7. H-68: Unregistered or digest-mismatched attestation reference rejected fail-closed (§53.3, §53.7)
+    rep_agents = evaluate_verdicts({
+        "data_provenance_status": "VERIFIED / EXCHANGE_ATTESTED",
+        "provenance_attestation_reference": "AGENTS.md",
+    })
+    eval_prov_ag = next(e for e in rep_agents.evaluations if e.criterion_id == "CRIT-PROV-01")
+    if eval_prov_ag.status != VerdictStatus.NOT_RUN or rep_agents.overall_verdict != OverallVerdict.NO_GO:
+        print(f"[FAIL] AGENTS.md attestation reference was not rejected with NOT RUN / NO-GO! Got: {eval_prov_ag.status}")
+        return False
+
+    rep_mismatch = evaluate_verdicts({
+        "data_provenance_status": "VERIFIED / EXCHANGE_ATTESTED",
+        "provenance_attestation_reference": "data/reference/bhavcopy_archive_manifest.jsonl",
+        "dataset_fingerprint": "DATA-CTNT-V2-deadbeef00000000000000000000000000000000000000000000000000000000",
+    })
+    eval_prov_mis = next(e for e in rep_mismatch.evaluations if e.criterion_id == "CRIT-PROV-01")
+    if eval_prov_mis.status != VerdictStatus.NOT_RUN or rep_mismatch.overall_verdict != OverallVerdict.NO_GO:
+        print(f"[FAIL] Mismatched digest attestation was not rejected with NOT RUN / NO-GO! Got: {eval_prov_mis.status}")
+        return False
+    print("[PASS] Manifest-unregistered and digest-mismatched attestation rejected fail-closed (Finding H-68).")
+
+    # 8. H-69: Window beyond calendar bounds and implausible session/trade count rejected (§53.4, §53.7)
+    rep_future = evaluate_verdicts({
+        "evaluation_start_date": "2031-01-01",
+        "evaluation_end_date": "2031-06-30",
+    })
+    eval_win_fut = next(e for e in rep_future.evaluations if e.criterion_id == "CRIT-WINDOW-01")
+    if eval_win_fut.status != VerdictStatus.FAIL or rep_future.overall_verdict != OverallVerdict.NO_GO:
+        print(f"[FAIL] Future window beyond calendar coverage was not rejected with FAIL / NO-GO! Got: {eval_win_fut.status}")
+        return False
+
+    rep_2sess = evaluate_verdicts({
+        "evaluation_start_date": "2022-01-03",
+        "evaluation_end_date": "2022-01-04",
+        "total_trades": 210,
+    })
+    eval_win_2s = next(e for e in rep_2sess.evaluations if e.criterion_id == "CRIT-WINDOW-01")
+    if eval_win_2s.status != VerdictStatus.FAIL or rep_2sess.overall_verdict != OverallVerdict.NO_GO:
+        print(f"[FAIL] Two-session window carrying 210 trades was not rejected with FAIL / NO-GO! Got: {eval_win_2s.status}")
+        return False
+    print("[PASS] Calendar bounds and session count plausibility rejected fail-closed (Finding H-69).")
+
     print("[PASS] Gate 2D-4: All adversarial fail-closed invariants verified.")
     return True
 

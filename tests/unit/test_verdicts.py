@@ -429,3 +429,125 @@ def test_r4_sourced_window_calendar_fingerprint_pin():
     computed_fp = compute_calendar_fingerprint(recs)
     assert computed_fp == "CAL-FPR-V1-2d5ac7ac32455327cd636d64a4e15a1f689f25eb42a815e151ea31c3cf61cda1"
     assert criteria.expected_sourced_window_calendar_fingerprint == computed_fp
+
+
+def test_h68_attestation_must_be_manifest_registered_and_digest_matched():
+    """H-68: Attestation reference must be an active registered manifest artifact with matching digest (§53.3, §53.7)."""
+    # 1. Probe 1: AGENTS.md reference -> NOT RUN, overall NO-GO
+    bundle_agents = {
+        "evaluation_start_date": "2022-01-03",
+        "evaluation_end_date": "2026-10-31",
+        "evaluated_at_utc": "2026-11-14T12:00:00+00:00",
+        "total_trades": 250,
+        "profit_factor": Decimal("1.75"),
+        "max_single_position_weight": Decimal("0.08"),
+        "max_portfolio_drawdown": Decimal("0.18"),
+        "annual_turnover": Decimal("5.0"),
+        "max_volume_participation": Decimal("0.02"),
+        "min_daily_turnover_crore": Decimal("10.0"),
+        "prohibit_buy_at_upper_circuit": True,
+        "prohibit_sell_at_lower_circuit": True,
+        "execution_latency_sessions": 1,
+        "statutory_costs_enforced": True,
+        "strict_decimal_accounting": True,
+        "fail_closed_on_unexplained_gaps": True,
+        "point_in_time_universe": True,
+        "zero_data_fabrication": True,
+        "traded_eq_resolution_pct": Decimal("100.0"),
+        "trial_count_n": 10,
+        "deflated_sharpe_ratio": Decimal("0.98"),
+        "walk_forward_positive_fold_ratio": Decimal("0.85"),
+        "data_provenance_status": "VERIFIED / EXCHANGE_ATTESTED",
+        "provenance_attestation_reference": "AGENTS.md",
+    }
+    rep_agents = evaluate_verdicts(bundle_agents)
+    eval_prov1 = next(e for e in rep_agents.evaluations if e.criterion_id == "CRIT-PROV-01")
+    assert eval_prov1.status == VerdictStatus.NOT_RUN
+    assert "not an active registered artifact in manifest" in eval_prov1.evidence
+    assert rep_agents.overall_verdict == OverallVerdict.NO_GO
+
+    # 2. Probe 2: Registered artifact with mismatched digest -> NOT RUN, overall NO-GO
+    bundle_mismatch = dict(bundle_agents)
+    bundle_mismatch["provenance_attestation_reference"] = "data/reference/bhavcopy_archive_manifest.jsonl"
+    bundle_mismatch["dataset_fingerprint"] = "DATA-CTNT-V2-deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    rep_mismatch = evaluate_verdicts(bundle_mismatch)
+    eval_prov2 = next(e for e in rep_mismatch.evaluations if e.criterion_id == "CRIT-PROV-01")
+    assert eval_prov2.status == VerdictStatus.NOT_RUN
+    assert "does not match evaluated dataset fingerprint" in eval_prov2.evidence
+    assert rep_mismatch.overall_verdict == OverallVerdict.NO_GO
+
+    # 3. Probe 3: Registered artifact with matching digest -> PASS naming digest
+    bundle_match = dict(bundle_agents)
+    bundle_match["provenance_attestation_reference"] = "data/reference/bhavcopy_archive_manifest.jsonl"
+    bundle_match["dataset_fingerprint"] = "DATA-CTNT-V2-7ea5f97bb5affae6d688b013bd802c64a3366410377c2e3f8e31912450444c91"
+    rep_match = evaluate_verdicts(bundle_match)
+    eval_prov3 = next(e for e in rep_match.evaluations if e.criterion_id == "CRIT-PROV-01")
+    assert eval_prov3.status == VerdictStatus.PASS
+    assert "7ea5f97bb5affae6d688b013bd802c64a3366410377c2e3f8e31912450444c91" in eval_prov3.evidence
+    assert rep_match.overall_verdict == OverallVerdict.GO
+
+
+def test_h69_evaluation_window_calendar_bounding_and_session_plausibility():
+    """H-69: Evaluation window endpoints must be valid sessions within calendar bounds and plausible (§53.4, §53.7)."""
+    base_bundle = {
+        "evaluated_at_utc": "2026-11-14T12:00:00+00:00",
+        "total_trades": 210,
+        "profit_factor": Decimal("1.75"),
+        "max_single_position_weight": Decimal("0.08"),
+        "max_portfolio_drawdown": Decimal("0.18"),
+        "annual_turnover": Decimal("5.0"),
+        "max_volume_participation": Decimal("0.02"),
+        "min_daily_turnover_crore": Decimal("10.0"),
+        "prohibit_buy_at_upper_circuit": True,
+        "prohibit_sell_at_lower_circuit": True,
+        "execution_latency_sessions": 1,
+        "statutory_costs_enforced": True,
+        "strict_decimal_accounting": True,
+        "fail_closed_on_unexplained_gaps": True,
+        "point_in_time_universe": True,
+        "zero_data_fabrication": True,
+        "traded_eq_resolution_pct": Decimal("100.0"),
+        "trial_count_n": 10,
+        "deflated_sharpe_ratio": Decimal("0.98"),
+        "walk_forward_positive_fold_ratio": Decimal("0.85"),
+    }
+
+    # Case 1 (§53.4): window 2031-01-01 .. 2031-06-30 -> FAIL
+    b1 = dict(base_bundle)
+    b1["evaluation_start_date"] = "2031-01-01"
+    b1["evaluation_end_date"] = "2031-06-30"
+    r1 = evaluate_verdicts(b1)
+    e1 = next(e for e in r1.evaluations if e.criterion_id == "CRIT-WINDOW-01")
+    assert e1.status == VerdictStatus.FAIL
+    assert "exceeds latest calendar session" in e1.evidence
+    assert r1.overall_verdict == OverallVerdict.NO_GO
+
+    # Case 2 (§53.4): window 2022-01-03 .. 2030-12-31 -> FAIL
+    b2 = dict(base_bundle)
+    b2["evaluation_start_date"] = "2022-01-03"
+    b2["evaluation_end_date"] = "2030-12-31"
+    r2 = evaluate_verdicts(b2)
+    e2 = next(e for e in r2.evaluations if e.criterion_id == "CRIT-WINDOW-01")
+    assert e2.status == VerdictStatus.FAIL
+    assert "exceeds latest calendar session" in e2.evidence
+    assert r2.overall_verdict == OverallVerdict.NO_GO
+
+    # Case 3 (§53.4): window 2022-01-03 .. 2022-01-04 (two sessions carrying 210 round trips) -> FAIL
+    b3 = dict(base_bundle)
+    b3["evaluation_start_date"] = "2022-01-03"
+    b3["evaluation_end_date"] = "2022-01-04"
+    b3["total_trades"] = 210
+    r3 = evaluate_verdicts(b3)
+    e3 = next(e for e in r3.evaluations if e.criterion_id == "CRIT-WINDOW-01")
+    assert e3.status == VerdictStatus.FAIL
+    assert "implausible for 210 completed multi-session round-trip trades" in e3.evidence
+    assert r3.overall_verdict == OverallVerdict.NO_GO
+
+    # Case 4: 2022-01-03 .. 2026-10-31 -> PASS
+    b4 = dict(base_bundle)
+    b4["evaluation_start_date"] = "2022-01-03"
+    b4["evaluation_end_date"] = "2026-10-31"
+    r4 = evaluate_verdicts(b4)
+    e4 = next(e for e in r4.evaluations if e.criterion_id == "CRIT-WINDOW-01")
+    assert e4.status == VerdictStatus.PASS
+    assert "conforms to authoritative binding evaluation schedule" in e4.evidence

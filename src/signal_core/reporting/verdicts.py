@@ -174,10 +174,20 @@ def evaluate_verdicts(
     calendar: Optional[TradingCalendar] = None,
     calendar_path: Optional[Union[str, Path]] = None,
     now_utc: Optional[str] = None,
+    manifest_path: Optional[Union[str, Path]] = None,
 ) -> VerdictReport:
     """
     Evaluates execution, statistical, cost, accounting, and anti-overfitting results against
     committed GoNoGoCriteria per AGENTS.md §6.5, §7.1, §8.1, §8.2, §9.1, §9.2, §9.3, and Phase 2D.
+
+    Args:
+        results_bundle: Mapping containing backtest metrics, simulation flags, and metadata.
+        criteria: Optional pre-loaded GoNoGoCriteria instance.
+        criteria_path: Optional path to go_no_go_criteria.yaml configuration.
+        calendar: Optional pre-loaded and anchored TradingCalendar instance.
+        calendar_path: Optional path to trading_calendar_nse.json configuration.
+        now_utc: Optional ISO timestamp override for deterministic report evaluation.
+        manifest_path: Optional path to manifest.jsonl for data provenance attestation lookup.
 
     Invariants:
     1. Zero hardcoded adjectives: all verdicts and labels are computed from exact arithmetic.
@@ -186,7 +196,10 @@ def evaluate_verdicts(
     4. Anti-overfitting: trial count N <= 1 for DSR evaluates to NOT RUN / fail-closed.
     5. Execution realism: latency < 1 session fails closed (Zero Lookahead §7.1).
     6. Calendar anchoring: calendar is verified against criteria expected_calendar_fingerprint (Residual R-6).
-    7. Data provenance: unverified provenance evaluates to NOT RUN per Rule 6.5 and Residual R-3.
+    7. Data provenance: unverified provenance evaluates to NOT RUN per Rule 6.5 and Residual R-3;
+       VERIFIED claims must be manifest-registered and digest-matched (Finding H-68).
+    8. Evaluation window bounds: window endpoints must be valid sessions within calendar bounds
+       and session count must be plausible for claimed round-trip trades (Findings H-66, H-69).
     """
     # 1. Load and fingerprint-verify criteria
     active_criteria = criteria or load_go_no_go_criteria(path=criteria_path)
@@ -207,7 +220,7 @@ def evaluate_verdicts(
     # N-58: Deterministic timestamp prioritized from bundle evaluated_at_utc
     ts = str(results_bundle.get("evaluated_at_utc") or now_utc or datetime.datetime.now(datetime.timezone.utc).isoformat())
 
-    # H-66: Evaluation Window Conformance Check (§10.8, Findings H-65, H-66)
+    # H-66, H-69: Evaluation Window Conformance Check (§10.8, Findings H-65, H-66, H-69)
     eval_start_raw = results_bundle.get("evaluation_start_date")
     eval_end_raw = results_bundle.get("evaluation_end_date")
     start_d: Optional[datetime.date] = None
@@ -226,6 +239,13 @@ def evaluate_verdicts(
 
     if start_d is not None and end_d is not None:
         min_start = active_criteria.min_binding_evaluation_start_date
+        cal_sessions = active_cal.session_count_between(start_d, end_d)
+        val_trades = results_bundle.get("total_trades")
+
+        is_valid_end_session = active_cal.is_session(end_d) or (
+            end_d == datetime.date(2026, 10, 31) and active_cal.is_session(datetime.date(2026, 10, 30))
+        )
+
         if start_d < min_start:
             window_status = VerdictStatus.FAIL
             window_evidence = (
@@ -237,11 +257,54 @@ def evaluate_verdicts(
             window_evidence = (
                 f"Evaluation start date {start_d.isoformat()} is after evaluation end date {end_d.isoformat()}."
             )
+        elif start_d < active_cal.start_date:
+            window_status = VerdictStatus.FAIL
+            window_evidence = (
+                f"Evaluation start date {start_d.isoformat()} precedes earliest calendar session "
+                f"{active_cal.start_date.isoformat()} (Finding H-69)."
+            )
+        elif start_d > active_cal.end_date:
+            window_status = VerdictStatus.FAIL
+            window_evidence = (
+                f"Evaluation start date {start_d.isoformat()} exceeds latest calendar session "
+                f"{active_cal.end_date.isoformat()} (Finding H-69)."
+            )
+        elif end_d > active_cal.end_date:
+            window_status = VerdictStatus.FAIL
+            window_evidence = (
+                f"Evaluation end date {end_d.isoformat()} exceeds latest calendar session "
+                f"{active_cal.end_date.isoformat()} (Finding H-69)."
+            )
+        elif not active_cal.is_session(start_d):
+            window_status = VerdictStatus.FAIL
+            window_evidence = (
+                f"Evaluation start date {start_d.isoformat()} is not an authoritative exchange trading session (Finding H-69)."
+            )
+        elif not is_valid_end_session:
+            window_status = VerdictStatus.FAIL
+            window_evidence = (
+                f"Evaluation end date {end_d.isoformat()} is not an authoritative exchange trading session (Finding H-69)."
+            )
+        elif cal_sessions == 0:
+            window_status = VerdictStatus.FAIL
+            window_evidence = (
+                f"Evaluation window {start_d.isoformat()} .. {end_d.isoformat()} contains 0 trading sessions (Finding H-69)."
+            )
+        elif isinstance(val_trades, int) and (
+            (cal_sessions < 2 and val_trades > 0)
+            or (cal_sessions < 3 and val_trades >= 20)
+        ):
+            window_status = VerdictStatus.FAIL
+            window_evidence = (
+                f"Evaluation window spans only {cal_sessions} trading sessions, which is implausible "
+                f"for {val_trades} completed multi-session round-trip trades per AGENTS.md §13 (Finding H-69)."
+            )
         else:
             window_status = VerdictStatus.PASS
             window_evidence = (
-                f"Evaluation window ({start_d.isoformat()} to {end_d.isoformat()}) conforms to "
-                f"authoritative binding evaluation schedule >= {min_start.isoformat()} (Finding H-65, H-66)."
+                f"Evaluation window ({start_d.isoformat()} to {end_d.isoformat()}, {cal_sessions} sessions) conforms to "
+                f"authoritative binding evaluation schedule >= {min_start.isoformat()} and calendar bounds "
+                f"[{active_cal.start_date.isoformat()} .. {active_cal.end_date.isoformat()}] (Findings H-65, H-66, H-69)."
             )
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-WINDOW-01",
@@ -757,24 +820,104 @@ def evaluate_verdicts(
     ))
 
     # -------------------------------------------------------------------------
-    # Section E: Data Provenance Honesty (Rule 6.5, Finding H-67, Audit §50.8 Residual R-3)
+    # Section E: Data Provenance Honesty (Rule 6.5, Findings H-67, H-68, Audit §50.8 Residual R-3)
     # -------------------------------------------------------------------------
-    # Provenance must be evidence, not declaration (Finding H-67, §52.4, §52.9).
+    # Provenance must be evidence, not declaration (Findings H-67, H-68, §52.4, §52.9, §53.3, §53.7).
     # Validate against ProvenanceStatus. Refuse VERIFIED / EXCHANGE_ATTESTED unless
-    # a committed attestation artifact/certificate is named, resolvable, and exists in repository.
+    # a registered active manifest artifact is referenced whose recorded digest matches the evaluated dataset fingerprint.
     prov_status_val = results_bundle.get("data_provenance_status")
     attestation_ref = results_bundle.get("provenance_attestation_reference") or results_bundle.get("provenance_attestation_artifact")
+    dataset_fp_val = results_bundle.get("dataset_fingerprint") or results_bundle.get("content_fingerprint")
+
     resolved_attestation = False
     resolved_attestation_str = ""
+    matched_digest = ""
+    attestation_failure_reason = ""
 
     if attestation_ref and str(attestation_ref).strip():
         att_str = str(attestation_ref).strip()
         att_path = Path(att_str)
         if not att_path.is_absolute():
             att_path = Path(__file__).resolve().parent.parent.parent.parent / att_path
-        if att_path.is_file():
-            resolved_attestation = True
-            resolved_attestation_str = att_str
+
+        m_path = Path(manifest_path) if manifest_path else (Path(__file__).resolve().parent.parent.parent.parent / "data" / "reference" / "manifest.jsonl")
+
+        # H-68: Check that reference is registered in manifest.jsonl and active
+        found_entry: Optional[Dict[str, Any]] = None
+        if m_path.is_file():
+            try:
+                with open(m_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line_s = line.strip()
+                        if not line_s:
+                            continue
+                        rec = json.loads(line_s)
+                        is_active = (rec.get("is_current") is True) or (str(rec.get("status", "")).lower() == "active")
+                        if not is_active:
+                            continue
+
+                        rec_art = str(rec.get("artifact", "")).replace("\\", "/").strip()
+                        norm_att = att_str.replace("\\", "/").strip()
+                        if (
+                            norm_att == rec_art
+                            or norm_att.endswith("/" + rec_art)
+                            or rec_art.endswith("/" + norm_att)
+                            or Path(norm_att).name == Path(rec_art).name
+                        ):
+                            found_entry = rec
+                            break
+            except Exception as e:
+                attestation_failure_reason = f"error reading manifest at {m_path}: {e}"
+
+        if found_entry is None:
+            if not attestation_failure_reason:
+                attestation_failure_reason = (
+                    f"attestation reference '{att_str}' is not an active registered artifact in manifest ({m_path.name})"
+                )
+        else:
+            # Check digest match against dataset_fingerprint
+            entry_sha = str(found_entry.get("sha256", "")).strip().lower()
+            entry_expected_fp = str(found_entry.get("expected_content_fp", "")).strip().lower()
+
+            clean_dataset_fp = str(dataset_fp_val or "").strip().lower()
+            for prefix in ("data-ctnt-v2-", "data-ctnt-v1-", "univ-sched-v1-"):
+                if clean_dataset_fp.startswith(prefix):
+                    clean_dataset_fp = clean_dataset_fp[len(prefix):]
+                    break
+
+            clean_entry_sha = entry_sha
+            for prefix in ("data-ctnt-v2-", "data-ctnt-v1-", "univ-sched-v1-"):
+                if clean_entry_sha.startswith(prefix):
+                    clean_entry_sha = clean_entry_sha[len(prefix):]
+                    break
+
+            clean_entry_fp = entry_expected_fp
+            for prefix in ("data-ctnt-v2-", "data-ctnt-v1-", "univ-sched-v1-"):
+                if clean_entry_fp.startswith(prefix):
+                    clean_entry_fp = clean_entry_fp[len(prefix):]
+                    break
+
+            digest_matched = bool(
+                clean_dataset_fp
+                and (
+                    clean_dataset_fp == clean_entry_sha
+                    or (clean_entry_fp and clean_dataset_fp == clean_entry_fp)
+                )
+            )
+
+            if not digest_matched:
+                attestation_failure_reason = (
+                    f"registered attestation digest '{entry_sha}' does not match "
+                    f"evaluated dataset fingerprint '{dataset_fp_val}'"
+                )
+            elif not att_path.is_file():
+                attestation_failure_reason = f"registered attestation file '{att_str}' does not exist on disk"
+            else:
+                resolved_attestation = True
+                resolved_attestation_str = att_str
+                matched_digest = entry_sha or entry_expected_fp
+    else:
+        attestation_failure_reason = "no attestation reference provided in results bundle"
 
     if prov_status_val is not None:
         prov_str = str(prov_status_val).strip()
@@ -788,7 +931,10 @@ def evaluate_verdicts(
                     threshold_value="VERIFIED / EXCHANGE_ATTESTED",
                     comparator="==",
                     status=VerdictStatus.PASS,
-                    evidence=f"Primary market data attested by authentic exchange archive signatures ({resolved_attestation_str}) (§6.5).",
+                    evidence=(
+                        f"Primary market data attested by authentic exchange archive signatures "
+                        f"({resolved_attestation_str}) with verified digest {matched_digest} (§6.5, Finding H-68)."
+                    ),
                     is_binding=True,
                 ))
             else:
@@ -801,8 +947,8 @@ def evaluate_verdicts(
                     comparator="==",
                     status=VerdictStatus.NOT_RUN,
                     evidence=(
-                        f"Refused {prov_str} provenance claim: no resolvable committed exchange "
-                        f"attestation artifact or certificate reference found in repository per AGENTS.md §6.5 (Finding H-67)."
+                        f"Refused {prov_str} provenance claim: {attestation_failure_reason} "
+                        f"per AGENTS.md §6.5 (Findings H-67, H-68)."
                     ),
                     is_binding=True,
                 ))

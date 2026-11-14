@@ -1,0 +1,274 @@
+{
+  "criteria_version": "1.1.0",
+  "criteria_fingerprint": "CRIT-FPR-V1-68775989598c6401c37b10c96f9402d2cfc70a8307b99c10764398cafe3f104e",
+  "calendar_fingerprint": "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad",
+  "timestamp_utc": "2026-11-14T16:45:00+00:00",
+  "evaluation_start_date": "2022-01-03",
+  "evaluation_end_date": "2026-10-31",
+  "overall_verdict": "NO-GO",
+  "summary_counts": {
+    "PASS": 21,
+    "FAIL": 0,
+    "NOT_RUN": 2
+  },
+  "evaluations": [
+    {
+      "criterion_id": "CRIT-WINDOW-01",
+      "category": "Evaluation Window Integrity",
+      "metric_name": "Binding Evaluation Window Conformance",
+      "computed_value": "2022-01-03 .. 2026-10-31",
+      "threshold_value": ">= 2022-01-03",
+      "comparator": ">=",
+      "status": "PASS",
+      "evidence": "Evaluation window (2022-01-03 to 2026-10-31, 1196 sessions) conforms to authoritative binding evaluation schedule >= 2022-01-03 and calendar bounds [2015-01-01 .. 2026-11-11] (Findings H-65, H-66, H-69).",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-STAT-01",
+      "category": "Risk & Performance",
+      "metric_name": "Total Completed Trades",
+      "computed_value": "342",
+      "threshold_value": ">= 100",
+      "comparator": ">=",
+      "status": "PASS",
+      "evidence": "Recorded 342 executed round-trip trades in evaluation window.",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-STAT-02",
+      "category": "Risk & Performance",
+      "metric_name": "Profit Factor",
+      "computed_value": "1.6850",
+      "threshold_value": ">= 1.50",
+      "comparator": ">=",
+      "status": "PASS",
+      "evidence": "Computed gross profit / gross loss ratio: 1.6850.",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-STAT-03",
+      "category": "Risk & Performance",
+      "metric_name": "Max Single Position Weight",
+      "computed_value": "0.0800",
+      "threshold_value": "<= 0.10",
+      "comparator": "<=",
+      "status": "PASS",
+      "evidence": "Maximum single position capital allocation observed: 0.0800.",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-STAT-04",
+      "category": "Risk & Performance",
+      "metric_name": "Max Portfolio Drawdown",
+      "computed_value": "0.1650",
+      "threshold_value": "<= 0.25",
+      "comparator": "<=",
+      "status": "PASS",
+      "evidence": "Maximum closed + open position drawdown observed: 16.50%.",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-STAT-05",
+      "category": "Risk & Performance",
+      "metric_name": "Annual Portfolio Turnover",
+      "computed_value": "4.80",
+      "threshold_value": "<= 12.0",
+      "comparator": "<=",
+      "status": "PASS",
+      "evidence": "Computed annual portfolio turnover: 4.80x.",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-EXEC-01",
+      "category": "Execution Realism",
+      "metric_name": "Volume Participation Cap",
+      "computed_value": "0.0245",
+      "threshold_value": "<= 0.03",
+      "comparator": "<=",
+      "status": "PASS",
+      "evidence": "Peak session volume participation observed: 0.0245.",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-EXEC-02",
+      "category": "Execution Realism",
+      "metric_name": "Min Traded Value (Cr)",
+      "computed_value": "12.50",
+      "threshold_value": ">= 5.0",
+      "comparator": ">=",
+      "status": "PASS",
+      "evidence": "Minimum average daily traded turnover observed: \u20b912.50 Cr.",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-EXEC-03",
+      "category": "Execution Realism",
+      "metric_name": "Upper Circuit BUY Prohibition",
+      "computed_value": "True",
+      "threshold_value": "True",
+      "comparator": "==",
+      "status": "PASS",
+      "evidence": "Simulator strictly enforces zero BUY fills when price equals Upper Circuit band (\u00a75.3).",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-EXEC-04",
+      "category": "Execution Realism",
+      "metric_name": "Lower Circuit SELL Prohibition",
+      "computed_value": "True",
+      "threshold_value": "True",
+      "comparator": "==",
+      "status": "PASS",
+      "evidence": "Simulator strictly enforces zero SELL / Stop-Loss fills when price equals Lower Circuit band (\u00a75.3).",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-EXEC-05",
+      "category": "Execution Realism",
+      "metric_name": "Execution Latency (Sessions)",
+      "computed_value": "1",
+      "threshold_value": ">= 1",
+      "comparator": ">=",
+      "status": "PASS",
+      "evidence": "Orders execute at session T+1 following signal calculation at session T close.",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-COST-01",
+      "category": "Cost Realism",
+      "metric_name": "Statutory Cost Model Enforced",
+      "computed_value": "True",
+      "threshold_value": "True",
+      "comparator": "==",
+      "status": "PASS",
+      "evidence": "Full statutory Indian schedule (STT, NSE turnover, SEBI charges, Stamp Duty, GST with IPFT, brokerage) computed.",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-DATA-01",
+      "category": "Accounting Integrity",
+      "metric_name": "Strict Decimal Accounting",
+      "computed_value": "True",
+      "threshold_value": "True",
+      "comparator": "==",
+      "status": "PASS",
+      "evidence": "Zero binary floating-point representation in cash ledger, order fills, fees, or PnL (\u00a76.4).",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-DATA-02",
+      "category": "Data Integrity",
+      "metric_name": "Fail Closed on Unexplained Gaps",
+      "computed_value": "True",
+      "threshold_value": "True",
+      "comparator": "==",
+      "status": "PASS",
+      "evidence": "Price series partitioned into continuous segments on UNEXPLAINED_MISSING_RECORD (\u00a76.3).",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-DATA-03",
+      "category": "Data Integrity",
+      "metric_name": "Point-in-Time Universe Selection",
+      "computed_value": "True",
+      "threshold_value": "True",
+      "comparator": "==",
+      "status": "PASS",
+      "evidence": "Tradable constituents determined strictly prior to market open on session T (\u00a76.1).",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-DATA-04",
+      "category": "Data Integrity",
+      "metric_name": "Zero Data Fabrication",
+      "computed_value": "True",
+      "threshold_value": "True",
+      "comparator": "==",
+      "status": "PASS",
+      "evidence": "Zero forward-filling, linear interpolation, zero-price imputation, or NaN masking (\u00a76.3).",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-DATA-05",
+      "category": "Universe Integrity",
+      "metric_name": "Traded EQ Resolution Pct",
+      "computed_value": "100.0000%",
+      "threshold_value": ">= 100.0%",
+      "comparator": ">=",
+      "status": "PASS",
+      "evidence": "Active traded EQ scrips resolved to authoritative ISINs: 100.0000% (\u00a741.3, Finding H-54).",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-DATA-06",
+      "category": "Calendar Integrity",
+      "metric_name": "Calendar Fingerprint Anchor",
+      "computed_value": "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad",
+      "threshold_value": "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad",
+      "comparator": "==",
+      "status": "PASS",
+      "evidence": "Loaded calendar anchored and verified against criteria pins: full=CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad, sourced_1196=CAL-FPR-V1-2d5ac7ac32455327cd636d64a4e15a1f689f25eb42a815e151ea31c3cf61cda1.",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-PROV-01",
+      "category": "Data Provenance",
+      "metric_name": "Data Provenance Verification",
+      "computed_value": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+      "threshold_value": "VERIFIED / EXCHANGE_ATTESTED",
+      "comparator": "==",
+      "status": "NOT RUN",
+      "evidence": "Dataset provenance is 'CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED'; per AGENTS.md Rule 6.5 and Audit \u00a750.8 (Residual R-3), claims resting on unverified sources are NOT RUN for gating until verified archive proofs exist.",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-OVERFIT-01",
+      "category": "Anti-Overfitting",
+      "metric_name": "Trial Registry Accountability",
+      "computed_value": "N = 10",
+      "threshold_value": "N >= 2",
+      "comparator": ">=",
+      "status": "PASS",
+      "evidence": "Trial registry records 10 parameter sweeps/trials with full parameter accountability.",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-OVERFIT-02",
+      "category": "Anti-Overfitting",
+      "metric_name": "Deflated Sharpe Ratio (DSR)",
+      "computed_value": "0.9720",
+      "threshold_value": ">= 0.95",
+      "comparator": ">=",
+      "status": "PASS",
+      "evidence": "Deflated Sharpe Ratio 0.9720 adjusts for trial count, variance, skewness, and kurtosis (\u00a78.2).",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-OVERFIT-03",
+      "category": "Walk-Forward Stability",
+      "metric_name": "Positive Out-of-Sample Folds Ratio",
+      "computed_value": "0.8500",
+      "threshold_value": ">= 0.80",
+      "comparator": ">=",
+      "status": "PASS",
+      "evidence": "Walk-forward evaluation shows 85.00% of out-of-sample folds delivered positive edge (\u00a78.3).",
+      "is_binding": true
+    },
+    {
+      "criterion_id": "CRIT-INFO-01",
+      "category": "Execution Accounting",
+      "metric_name": "Circuit-Verified PnL Accounting",
+      "computed_value": null,
+      "threshold_value": "True",
+      "comparator": "==",
+      "status": "NOT RUN",
+      "evidence": "Informational metric 'circuit_verified_pnl' not available in synthetic fixture.",
+      "is_binding": false
+    }
+  ],
+  "metadata": {
+    "binding_criteria_count": 22,
+    "binding_failed_count": 1,
+    "unverified_provenance_gating_applied": true
+  }
+}
