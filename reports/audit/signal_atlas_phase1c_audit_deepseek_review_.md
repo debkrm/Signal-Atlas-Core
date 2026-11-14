@@ -4548,3 +4548,148 @@ What would falsify this verdict: a bundle built by *removing* an engine output �
 6. **N-61 / N-62 —** correct the two status lines; cite `§53.6` at `2a28c19` for the engine and state plainly that the first Tier-A report is generated-but-not-audited.
 
 Then the report, honestly: it will still be `NO-GO`, and after item 1 it will be `NO-GO` for measured reasons — provenance unverified and circuit-verified PnL absent. Phase 2D then ends where §53.7 said it would: on the attested-provenance wave (`source_url` and retrieval timestamps on all 1,195 archives), not on another reporting change. Phase 3 is not to be opened until Phase 2D's own deliverable is a measurement.
+### 55.1 Baseline at `b163940` (tag `feat-s54-b163940`)
+
+Tree clean at the tagged commit. Independently measured:
+
+- `python -m pytest -q` → `310 passed in 13.36s`, exit 0 (306 at `8c348aa`; four additions).
+- All nine `scripts/verify_*.py` exit 0, including `verify_phase2d_verdicts.py`, which now runs Gates 2D-1..2D-5.
+- `git show --stat` touches no file under `src/signal_core/execution/`, `portfolio/`, or the cost engine, and no existing threshold moves. `configs/go_no_go_criteria.yaml` gains exactly four lines: the H-72 manifest pin, with zero edits to any pre-existing key. The criteria fingerprint therefore changes by addition only.
+- `python scripts/generate_phase2d_tier_a_report.py` → exit **0**, and `git status` is clean afterwards: the committed JSON and Markdown are byte-identical to a fresh run.
+
+### 55.2 Closed
+
+**H-70 — CLOSED.** The engine now reads the matched record's own honesty fields. Measured with the real default manifest:
+
+```
+dataset_fingerprint = DATA-CTNT-V2-7ea5f97…  (the bhavcopy_archive_manifest.jsonl record)
+data_provenance_status = VERIFIED / EXCHANGE_ATTESTED
+-> CRIT-PROV-01 NOT RUN
+   "Refused VERIFIED / EXCHANGE_ATTESTED provenance claim: matched manifest record
+    'bhavcopy_archive_manifest.jsonl' declares unverified provenance
+    'CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED' per AGENTS.md §6.5 (Finding H-70)"
+```
+
+The §54.3 attack no longer returns `PASS`/`GO`. Measured prerequisite: **0 of the 63 manifest records declare a verified status**, so with the real corpus there is currently no reachable `PASS` path at all — which is the correct state, not a defect.
+
+**H-72 — CLOSED.** The manifest is now pinned in criteria and compared at the top of `evaluate_verdicts`:
+
+```
+forged .probe/fm.jsonl via manifest_path
+  -> RAISED ReportingError: Manifest fingerprint mismatch: computed MAN-FPR-V1-2077e5e2… 
+byte-copy of the real manifest
+  -> accepted (pin matches), then CRIT-PROV-01 NOT RUN on H-70
+real manifest + one appended {"provenance_status": "VERIFIED", "source_url": …}
+  -> RAISED ReportingError: Manifest fingerprint mismatch: computed MAN-FPR-V1-2da3ccff…
+```
+
+The §54.5 attack is dead: the trust root is no longer caller-chosen, because a caller-chosen file cannot reproduce a human-authored pin. Failing by exception rather than by `NOT RUN` is stricter than I asked for, and correct for a tampered trust root.
+
+**H-71 — CLOSED.** Parsing is exact and the plausibility bound is derived:
+
+```
+2 sessions, total_trades = 500        FAIL   "capping plausible completed multi-session round trips at 200; 500 is implausible"
+2 sessions, total_trades = "500"      FAIL
+2 sessions, total_trades = Decimal("500")  FAIL
+2 sessions, total_trades = 500.0      FAIL
+total_trades = True                   FAIL   "boolean is not a valid trade count"
+total_trades = -5                     FAIL   "must be a finite non-negative integer"
+total_trades = Decimal("500.5")       FAIL   "fractional trade count"
+total_trades = "abc"                  FAIL   "unparseable trade count"
+```
+
+The cap is `sessions × int(1/max_single_position_weight) × 10`; at the committed weight `0.10` that is 10 concurrent positions and 200 trades over two sessions, and the boundary is enforced (`240` fails at 2 sessions; `143,520` fails at 1,196 sessions against a 119,600 cap). The three Session-typed values that bypassed §54.4 no longer bypass anything.
+
+**H-74 — CLOSED.** The generator exits 0 here, and Gate 2D-5 now runs it twice and asserts byte-identical output, so a platform regression is caught rather than assumed.
+
+**N-61 — CLOSED.** Line 9 reads `310 passed in 16.94s` and "nine of nine scripts exit 0"; both match measurement.
+
+**N-62 — CLOSED for the missing citation.** Line 583 now names `§53.6 at 2a28c19` and `§54 at 9052d68`. A new overstatement in the same sentence is filed as N-64 below.
+
+### 55.3 H-73 — OPEN, narrowed to what §54.10 item 1 actually asked for
+
+The substance of the finding is fixed, and I want to be precise about that before naming what is not.
+
+`build_tier_a_results_bundle()` no longer contains a single metric value. It reads the dataset fingerprint and provenance status from `manifest.jsonl`, computes `traded_eq_resolution_pct` from the archive manifest's own rows, and takes the window start from criteria and the end from the calendar. Every metric it cannot compute is omitted, and the criteria evaluate `NOT RUN`: the committed report is now **11 PASS / 0 FAIL / 12 NOT RUN**, not 21 PASS. The two content assertions that fixed the answer (`PASS == 21`, `NOT_RUN == {…}`) are gone, and the false docstring sentence is corrected.
+
+The falsifier I named in §54.9 fires correctly. Removing one engine output —
+
+```
+os.rename("data/reference/bhavcopy_archive_manifest.jsonl", "…/bam.hidden")
+CRIT-DATA-05: PASS -> NOT RUN
+traded_eq_resolution_pct present in bundle: False
+summary counts: {'PASS': 11, ...} -> {'PASS': 10, 'NOT_RUN': 13}
+restored: PASS again
+```
+
+— so the report's numbers now move when their inputs move. That is the property §54.6 said was absent, and it is present for the data metrics.
+
+**What §54.10 item 1 said, verbatim:** *"Replace every literal in `build_tier_a_results_bundle()` with a value read from an existing engine output … Where no engine output exists, omit the key so the criterion evaluates `NOT RUN`."*
+
+Five literals survive in that function, and they are not incidental:
+
+```python
+"strict_decimal_accounting": True,
+"fail_closed_on_unexplained_gaps": True,
+"point_in_time_universe": True,
+"zero_data_fabrication": True,
+"statutory_costs_enforced": True,
+```
+
+They carry five binding `PASS`es — `CRIT-DATA-01`, `CRIT-DATA-02`, `CRIT-DATA-03`, `CRIT-DATA-04`, `CRIT-COST-01` — whose evidence text reads as observation ("Zero binary floating-point representation in cash ledger, order records, and PnL"). No code reads the ledger. The comment above them says "verified by repository architecture", but a comment is not a computation, and §9.1 has no exemption for properties that happen to be true: the tests may well prove strict Decimal accounting, and the report still may not print `PASS` because a script wrote `True`.
+
+So the metric-literal defect is fixed and the invariant-literal defect is not. Of the 11 `PASS` entries in the committed report, 3 are computed (`CRIT-WINDOW-01`, `CRIT-DATA-05`, `CRIT-DATA-06`), 5 rest on the literals above, and 3 rest on criteria flags reported as observations (§55.4). I am keeping H-73 open on the five literals and on nothing else — the goalpost is the sentence above, quoted, not a new standard.
+
+One further literal in the same function feeds the window itself: `end_date_limit = datetime.date(2026, 10, 31)`. The binding start comes from criteria, the end does not; it is a typed date that happens to equal the corpus end, and the "1,196 sessions" sentence in the report inherits it. Deriving it from the last session covered by the archive manifest is the same one-line shape as the rest of item 1.
+
+### 55.4 H-75 (new, medium) — three PASSes report the requirement back as the observation
+
+`CRIT-EXEC-03`, `CRIT-EXEC-04` and `CRIT-EXEC-05` take their value from the criteria file:
+
+```
+"prohibit_buy_at_upper_circuit":  active_criteria.prohibit_buy_at_upper_circuit,   -> CRIT-EXEC-03 PASS val=True
+"prohibit_sell_at_lower_circuit": active_criteria.prohibit_sell_at_lower_circuit,  -> CRIT-EXEC-04 PASS val=True
+"execution_latency_sessions":     active_criteria.min_execution_latency_sessions,  -> CRIT-EXEC-05 PASS val=1
+```
+
+The criteria file is where the *requirement* lives: `prohibit_buy_at_upper_circuit: true` says a fill at the upper circuit is forbidden. Reading that flag back and marking "Simulator strictly enforces zero BUY fills when the price equals the upper circuit" as `PASS` tests nothing but the file's own consistency. The observation that would justify the `PASS` is a simulated fill at a band-limited session, or a gate exit status — not the flag whose compliance is in question.
+
+This is not the literals H-73 names, so it is a new finding rather than a reopening, but it is the same §9.1 sentence: a `PASS` that survives any change to the code it claims to describe is a typed verdict.
+
+### 55.5 H-76 (new, medium) — the generator still asserts the answer
+
+§54.10 item 1 said to delete the expected-count assertions; they are deleted. Three assertions of a different shape replaced them:
+
+```python
+assert report.overall_verdict == OverallVerdict.NO_GO
+assert report.summary_counts.get("FAIL", 0) == 0
+assert report.summary_counts.get("PASS", 0) > 0
+```
+
+Each is now a statement about the result rather than about its derivation, and each is wrong in the direction the project is moving. The first means that the round which finally attests the archives — the wave §53.7 and §54.10 both point at — makes this script exit 1 instead of publishing the `GO` it earned. The second means the first genuinely failing metric crashes the generator rather than appearing as `FAIL` in the report it is supposed to generate. A generator must not be able to fail because the market data improved.
+
+### 55.6 Minor
+
+- **N-63** — Gate 2D-5's "zero hardcoded metric literals" check is a seven-string blacklist (`"342"`, `"1.6850"`, `"0.9720"`, `"0.8500"`, `"0.0245"`, `"12.50"`, `"100.0000"`). It detects §54's incident, not the invariant: a new `Decimal("1.6")` for `profit_factor` would pass it, and `True` is not a "metric literal" and so was never in scope. The gate also compares run 1 against run 2 but not against the committed report, so a stale committed JSON would pass while the generator is green. (Measured for this round: committed == fresh, so nothing is stale today.)
+- **N-64** — `CURRENT_STAGE_OF_WORK.md` line 583 now cites `§53.6 at 2a28c19` and `§54 at 9052d68`, which is the right shape, but describes the generator as "implemented and **verified** against computed repository artifacts". §54 at `9052d68` says the opposite — that the report was literals — and no audit section has used "verified" for it. Rule 11.3 forbids the word without such a verdict. Correct form: "implemented; H-70/H-72/H-71/H-74 verified at `b163940`; report content not yet audited".
+- **N-65** — the same line 583 states "zero hardcoded metric literals", which is true of metrics and false of the five invariant flags in §55.3. Narrow the claim to what was measured.
+
+### 55.7 Verdict
+
+**Wave 3 — GO stands, unchanged.** No execution, portfolio or cost file is touched.
+
+**Phase 2D engine — GO stands.** H-70, H-72, H-71 and H-74 all close on adversarial measurement, and the provenance path is now stricter than the work order asked: a tampered trust root raises instead of degrading to `NOT RUN`.
+
+**Phase 2D phase — NO-GO to sign off, second round, on one item.** H-73 remains open for the five unconditional `true` keys exactly as §54.10 item 1 wrote it, H-75 for the three criteria echoes, H-76 for the assertions. The report is now computed where it counts — the 12 `NOT RUN`s are honest and the falsifier works — which is real progress and is why this is a hold on five lines rather than on a document. `CURRENT_STAGE_OF_WORK.md` must not gain a Phase 3 section, and N-64's "verified" must be corrected in the same commit that closes this.
+
+What would falsify this verdict: every `PASS` in the regenerated report tracing to a value that code read from the repository — with no `True` assigned to a bundle key in the generator and no criteria flag reported as an observation — while the window, the 1,196 sessions and the 12 `NOT RUN`s stay as they are. That is a small diff, and it is the last one standing between Phase 2D and Phase 3.
+
+### 55.8 Work order
+
+1. **H-73 (remainder).** For each of the five flags, either derive it from a computation — run the owning gate (`verify_phase2b5_storage.py` for Decimal accounting, the simulator's circuit tests for the prohibition flags, the cost engine's schedule for statutory costs) and record its exit status or returned assertion count — or remove the key so the criterion evaluates `NOT RUN` with evidence naming the gate that does prove it. Derive `end_date_limit` from the last session present in `bhavcopy_archive_manifest.jsonl`. *Accept:* `grep '": True'` in `build_tier_a_results_bundle()` returns nothing; deleting the gate output that a flag came from flips that criterion to `NOT RUN`.
+2. **H-75.** `CRIT-EXEC-03/04/05` must be valued by an observation — a simulated fill attempt on a band-limited session, or the measured latency of an executed order — not by the criteria flag that states the requirement. If no observation exists yet, `NOT RUN`. *Accept:* setting `prohibit_buy_at_upper_circuit: false` in a copy of the criteria does not, by itself, change any report status.
+3. **H-76.** Delete the three verdict-shaped assertions; keep only assertions about derivation (e.g. every `PASS` value is traceable to a recorded source). *Accept:* injecting a genuine `FAIL` metric produces a report containing `FAIL` and still exits 0; a bundle whose provenance claim is legitimately attested produces `GO` and exits 0.
+4. **N-63.** Replace the seven-string blacklist with a structural check — parse the generator's AST and refuse a numeric literal assigned to a results-bundle key — and compare the regenerated output against the committed report so a stale artifact fails the gate.
+5. **N-64 / N-65.** Rewrite the status sentences to state what was measured at `b163940` and cite §55; drop "verified" and narrow "zero hardcoded metric literals" to "zero hardcoded metric values; five invariant flags remain typed pending H-73".
+
+After item 1–3 the report is either computed or honestly `NOT RUN` in every line, and Phase 2D can close on its evidence rather than on its intent. The wave that follows is still the one §53.7 names: attested provenance (`source_url` and retrieval timestamps for all 1,195 archives), because no amount of reporting work moves `CRIT-PROV-01` off `NOT RUN`.
