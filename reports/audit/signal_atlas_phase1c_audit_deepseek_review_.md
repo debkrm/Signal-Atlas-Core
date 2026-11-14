@@ -3403,3 +3403,95 @@ Both halves are now dynamic: tags are discovered with `git tag -l`, filtered to 
 The pattern held for a fourth round, and it is worth naming precisely because it is now predictable: each remediation fixes the named instance and leaves the same shape a level in — the sweep now computes its number but not its denominator, the seal now judges the run's criteria but reads them from the run, the tags are now discovered but the requirement was still deletable until this commit. The countervailing fact is that the fixes are converging: 1,195 sessions and 2,390,165 rows now agree with an independent auditor count to the row, and five of six notes closed rather than moved. What is left is not a measurement problem. Both remaining items are about *provenance* — where a number came from, and whether the object claiming it can prove it. That is the right problem to have left, and it is the one Phase 2D will not forgive if it is skipped.
 
 ---
+
+## 44. Review of `5a98981` — H-55 closes on bytes, not on sessions; N-39 closes
+
+Independent measurements taken at `5a98981d955daaa31a0bcf607f1f8b5d681ae224`, before reading the diff's claims:
+
+```
+python scripts/verify_audit_append_only.py  -> 4/4 PASS, exit 0
+  W0.5-2: 7/7 verification scripts exit 0 (cov 48.63s)
+  W0.5-3: 268 passed in 15.67s, 0 skipped, 0 xfailed
+  W0.5-4: 19 tags verified incl. feat-s43-5a98981 -> 5a98981
+COV-2 standalone:  1,195 archives, all digests verified against manifest,
+                   2,390,165 / 2,390,165 across 1,195 sessions (100.0000%)
+data/reference/bhavcopy_archive_manifest.jsonl: 1,195 entries, 1,195 unique
+   keys, 1,195 unique session_dates 2022-01-03..2026-10-30, row sum 2,390,165
+self-registration (manifest.jsonl line 31): 279,166 bytes / 7ea5f97bb5affae6 — matches the file on disk
+derived identity table: unchanged, sha256 b1746c9ec38a7f59962b39c8…, 4,510 intervals
+```
+
+### 44.1 H-55, part one — CLOSED: the environment can no longer choose the scope
+
+Three runs of the same script with different `NSE_RAW_ARCHIVES_DIR`, all from this commit:
+
+| Environment | Result |
+|---|---|
+| default `data/raw` (1,195) | `[PASS] All 1195 archive digests verified against committed manifest` → COV-2 PASS |
+| `.audit_tmp/flat`, 1,195 hardlinks of the same bytes | identical PASS — correct, content is the same |
+| same directory, one archive deleted (1,194) | `[FAIL] requires all 1,195 raw Bhavcopy archives … but discovered 1194` |
+| same directory, one archive re-zipped with identical CSV content but different bytes | `[FAIL] Archive cm12JAN2024bhav.csv.zip size 100315 != manifest byte_count 100331` |
+
+The §43.3 defect — 22 fixture archives producing the same PASS as 1,195 — is gone, and gone in the right place: the count is asserted, the bytes are asserted, and the two silent skips I named (`continue` on an unrecognised header, `continue` on a malformed ISIN) now print the archive name and the offending row and return False. A zero-row session fails instead of being dropped. The sibling-repo fallback is deleted from both `verify_cash_universe_coverage.py` and `derive_cash_universe_intervals.py`.
+
+I also checked the fidelity of the commit itself, which the manifest cannot attest to on its own: all 1,195 archives in `data/raw` are byte-identical to the retrieval set in the sibling checkout (`sha256` diff over both trees: 1,195/1,195 equal, no file present on one side only), and 1,195/1,195 match the manifest digests. The Bronze committed here is a faithful copy of the bytes that were retrieved, not a re-derivation.
+
+### 44.2 H-55, part two — still open, and now measured against a source the manifest cannot author. H-56 — new, hard
+
+The COV-2 docstring claims four new enforcements, the third of which is: *"Calendar cross-check: distinct session dates match manifest sessions exactly (H-55)."* That is not a calendar check. The code compares `distinct_sessions` — the `TradDt` values read out of the archives — with `manifest_dates` — the same values, written into the manifest by the same agent from the same archives. Both sides descend from one input, so the comparison is true by construction and cannot fail for any archive set.
+
+Checked against the repository's own authoritative calendar, `configs/trading_calendar_nse.json` (`calendar_id: NSE-TRADING-CALENDAR`, `binding_start_date: 2018-04-01`, provenance `NSE_CIRCULARS_ANNUAL_TRADING_HOLIDAYS_AND_SPECIAL_SESSIONS`):
+
+```
+sessions in calendar, 2022-01-03..2026-10-31 : 1201
+sessions in manifest                        : 1195
+in calendar, absent from manifest : 8
+   2025-02-01, 2025-10-22, 2026-01-15, 2026-03-26,
+   2026-03-31, 2026-05-28, 2026-06-26, 2026-09-14
+in manifest, not in calendar      : 2
+   2026-03-20, 2026-05-27
+```
+
+Ten sessions disagree and the gate is silent about all ten. Both phantom dates carry genuine NSE-format archives with `TradDt == BizDt` equal to the date and 2,432 / 2,463 traded `EQ` rows — a closed market produces no rows, so those files are either real sessions the calendar omits, or rows that should not exist. Both missing dates sit next to a phantom one (2026-03-31 beside 2026-03-20, 2026-05-28 beside 2026-05-27), which is the shape of a moon-sighting holiday: a calendar built from the pre-published annual list and a market that traded the observed date. 2025-02-01 is not ambiguous in the same way — it is a Saturday special session (Union Budget day), it is in the calendar, and there is no archive for it in either checkout.
+
+I cannot settle which side is right from the repository, and that is the finding. §6.3 requires every instrument's sequence to be verified against the calendar and any session without circular evidence to raise `UNEXPLAINED_MISSING_RECORD` and fail closed; §10.5 makes the calendar the interval authority. A gate that reports `2,390,165 / 2,390,165 across 1,195 sessions` is reporting a row count over *what was retrieved*, including 4,895 rows from two sessions the calendar says did not exist, and excluding eight sessions the calendar says did. The percentage is unaffected — identity resolution is per session and 100% holds on every session present — but the phrase "across all archived sessions" now means "across all sessions I have", which is the defect H-55 named, moved from the directory to the manifest.
+
+**H-56 (hard).** COV-2 must load `configs/trading_calendar_nse.json`, derive the expected session set for `[min_binding_evaluation_start_date, window_end]`, and fail closed on any calendar session with no archive and any archived date absent from the calendar — unless an appended circular reference in the calendar's provenance records the special session or the observed holiday shift. Two of the ten have an obvious home (2025-02-01 is a special session and belongs in the calendar with a circular citation; either 2026-03-20 or 2026-03-31 is the observed Eid and the other is not). The remedy is a calendar reconciliation table committed alongside the manifest, not a wider tolerance in the gate.
+
+### 44.3 N-39 — CLOSED: one authoritative source, and the guard is on every path
+
+The rewrite does what §43.5 said it should. `load_go_no_go_criteria()` is called unconditionally, so there is no branch in which the criteria file is not consulted; the version check is no longer inside an `else`; `compute_criteria_fingerprint(criteria)` is recomputed from the loaded criteria and compared against the carried `criteria_fingerprint`; the carried `min_binding_evaluation_start_date`, if present, must equal the authoritative one; and `min_start` is taken from the criteria object rather than from `execution_config` before the fold loop runs. Editing the dictionary now produces a contradiction instead of a bypass.
+
+Measured with the extra probes (appended to `tests/unit/test_walkforward.py`, run, then reverted with `git checkout --`; tree clean afterwards):
+
+```
+(a) pre-window fold + execution_config={} + correct version
+    -> WalkForwardEngineError: "precedes the minimum binding evaluation start date"   REJECTED
+(b) criteria_fingerprint="deadbeef" on an otherwise valid result
+    -> WalkForwardEngineError: "criteria_fingerprint ... does not match"              REJECTED
+(c) pre-window fold + execution_config={} + criteria_version=None
+    -> WalkForwardEngineError: "precedes the minimum binding evaluation start date"   REJECTED
+```
+
+Case (c) is the one worth keeping: blanking `criteria_version` no longer skips anything, because the date is not carried at all any more — it is read from the file. The three layers are now independent (version, fingerprint, fold dates), which is why the probes that defeated the last two attempts find nothing: there is no longer a single field whose removal silences the check.
+
+### 44.4 N-40 — new, notes only
+
+1. **The verdict constants are typed, not derived.** COV-2 hardcodes `1,195` twice and `2,390,165` once, while `manifest_expected_eq_rows` is computed from the manifest four lines earlier and never read, and `len(manifest_entries)` is available and also unused. This is the N-37 shape reappearing at a higher level: the criterion is now a literal in the gate's source instead of a literal in the PASS string. It has the compensating virtue of pinning the result — the count cannot drift without the gate failing — but the value that *should* be the expectation is sitting in a variable named `manifest_expected_eq_rows` with no reader.
+2. **The manifest carries no retrieval metadata.** Entries hold `archive_file`, `session_date`, `byte_count`, `sha256`, `traded_eq_rows`, `format` — and no `source_url` and no retrieval timestamp. §10.7 requires both per retrieval. The consequence is the one §6.5 mandates stating: these archives are `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED`. The digests prove nobody changed the bytes after they were written here; they cannot show where the bytes came from.
+3. **No reverse coverage assertion.** Each discovered archive must be found in the manifest, and both counts are pinned to 1,195, but nothing asserts that every manifest entry was consumed by a discovered archive. With equal counts and unique filenames this is nearly unreachable; it is a one-line fix when the count literals are replaced by derived ones.
+4. **156 MB of Bronze now lives in git history** (1,195 binaries under `data/raw`, one commit). This is the deliberate choice that let the fallback be deleted, and it is defensible under §10.2, but it is permanent: a yearly institutionalised re-run of this decision adds tens of megabytes to every clone forever. Worth a written policy before Phase 2D adds more partitions.
+
+### 44.5 Verdict
+
+**Closed at `5a98981`:** N-39 (three independent layers, no path skips the authoritative criteria; three further probes rejected) and H-55's environment and integrity half — the archive count is asserted, every archive is digest-verified, a substituted byte fails, the silent skips fail closed, and the external-checkout fallback is gone from both scripts.
+
+**Still open:** **H-56** (new, hard) — the session set is reconciled against a manifest derived from the same archives rather than against `configs/trading_calendar_nse.json`, and the ten disagreeing sessions I measured (8 calendar sessions with no archive, 2 archives dated on non-sessions) pass without comment. **N-40** — four notes, none blocking on its own: typed verdict constants beside an unused derived expectation, no `source_url`/retrieval timestamp in the manifest, no reverse coverage assertion, and 156 MB of Bronze now permanent in history.
+
+**Wave 3 — GO stands at `a093682`; extends to `5a98981` for 2022-01-03..2026-10-31.** The derived identity table is byte-unchanged (`b1746c9e…`, 4,510 intervals), and the COV-2 result is stronger than the one §41 accepted: the same 2,390,165 rows, now with every input archive pinned by digest and every unparsable row failing loudly instead of being skipped. Nothing in this commit touches the fill path, the cost schedule or the settlement logic.
+
+**Phase 2D — still conditional, on one item.** H-56 is the only thing between this commit and a research verdict, and it is small in code (load the calendar, compare two date sets, allow a session only where the calendar's provenance cites a circular) but not small in substance: the window is missing eight sessions the calendar records, one of them the 2025-02-01 special session, and a backtest begun tomorrow would silently bridge them. That is `UNEXPLAINED_MISSING_RECORD` by §6.3, whichever side of the Eid ambiguity turns out to be right.
+
+The convergence claim from §43.9 continues to hold, and this round is the cleanest evidence yet: the last two rounds' failure mode was a check whose *input* was chosen by the party being checked, and N-39's fix is the first in this series where the input is a file the checking party cannot rewrite into agreement — its three probes all fail closed. H-56 is the same shape one more time, and it is now visible only because the manifest made the gap countable: 1,195 archives versus 1,201 calendar sessions. A count that disagrees with an authority is a better state than a count with no authority at all, which is what this gate had on `5c0272a`.
+
+---
