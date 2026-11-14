@@ -25,7 +25,7 @@
         "NSE/CMTR/65729",
         "NSE/MSD/66381"
       ],
-      "reason": "Saturday live trading session conducted for Union Budget. Designated as a settlement holiday with no standard T+0 settlement and restricted BTST squaring. Standard daily Bhavcopy archive unarchived/not published in daily CM bhavcopy distribution feed."
+      "reason": "Saturday live trading session convened for Union Budget presentation per Circular Ref 172/2024 (Download Ref NSE/CMTR/65729) and NSE/MSD/66381. Market traded live 09:15-15:30. Authoritative calendar models this as a SPECIAL trading session. Standard daily Bhavcopy archive is unarchived/absent from local Bronze storage (local data gap); cited exception per AGENTS.md §6.3."
     },
     {
       "session_date": "2025-10-22",

@@ -5,33 +5,123 @@
   "market": "NSE_CASH_EQUITY",
   "segment": "Capital Market",
   "subject": "Trading Holidays for the Calendar Year 2026",
+  "source_url": "https://nsearchives.nseindia.com/content/circulars/CMTR71775.pdf",
+  "retrieved_at": "2026-11-14T06:00:00Z",
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
   "trading_holidays": [
-    {"date": "2026-01-15", "day": "Thursday", "description": "Municipal Corporation Election - Maharashtra"},
-    {"date": "2026-01-26", "day": "Monday", "description": "Republic Day"},
-    {"date": "2026-03-03", "day": "Tuesday", "description": "Holi"},
-    {"date": "2026-03-26", "day": "Thursday", "description": "Shri Ram Navami"},
-    {"date": "2026-03-31", "day": "Tuesday", "description": "Shri Mahavir Jayanti"},
-    {"date": "2026-04-03", "day": "Friday", "description": "Good Friday"},
-    {"date": "2026-04-14", "day": "Tuesday", "description": "Dr. Baba Saheb Ambedkar Jayanti"},
-    {"date": "2026-05-01", "day": "Friday", "description": "Maharashtra Day"},
-    {"date": "2026-05-28", "day": "Thursday", "description": "Bakri Id"},
-    {"date": "2026-06-26", "day": "Friday", "description": "Muharram"},
-    {"date": "2026-09-14", "day": "Monday", "description": "Ganesh Chaturthi"},
-    {"date": "2026-10-02", "day": "Friday", "description": "Mahatma Gandhi Jayanti"},
-    {"date": "2026-10-20", "day": "Tuesday", "description": "Dussehra"},
-    {"date": "2026-11-10", "day": "Tuesday", "description": "Diwali-Balipratipada"},
-    {"date": "2026-11-24", "day": "Tuesday", "description": "Prakash Gurpurb Sri Guru Nanak Dev"},
-    {"date": "2026-12-25", "day": "Friday", "description": "Christmas"}
+    {
+      "date": "2026-01-15",
+      "day": "Thursday",
+      "description": "Municipal Corporation Election - Maharashtra"
+    },
+    {
+      "date": "2026-01-26",
+      "day": "Monday",
+      "description": "Republic Day"
+    },
+    {
+      "date": "2026-03-03",
+      "day": "Tuesday",
+      "description": "Holi"
+    },
+    {
+      "date": "2026-03-26",
+      "day": "Thursday",
+      "description": "Shri Ram Navami"
+    },
+    {
+      "date": "2026-03-31",
+      "day": "Tuesday",
+      "description": "Shri Mahavir Jayanti"
+    },
+    {
+      "date": "2026-04-03",
+      "day": "Friday",
+      "description": "Good Friday"
+    },
+    {
+      "date": "2026-04-14",
+      "day": "Tuesday",
+      "description": "Dr. Baba Saheb Ambedkar Jayanti"
+    },
+    {
+      "date": "2026-05-01",
+      "day": "Friday",
+      "description": "Maharashtra Day"
+    },
+    {
+      "date": "2026-05-28",
+      "day": "Thursday",
+      "description": "Bakri Id"
+    },
+    {
+      "date": "2026-06-26",
+      "day": "Friday",
+      "description": "Muharram"
+    },
+    {
+      "date": "2026-09-14",
+      "day": "Monday",
+      "description": "Ganesh Chaturthi"
+    },
+    {
+      "date": "2026-10-02",
+      "day": "Friday",
+      "description": "Mahatma Gandhi Jayanti"
+    },
+    {
+      "date": "2026-10-20",
+      "day": "Tuesday",
+      "description": "Dussehra"
+    },
+    {
+      "date": "2026-11-10",
+      "day": "Tuesday",
+      "description": "Diwali-Balipratipada"
+    },
+    {
+      "date": "2026-11-24",
+      "day": "Tuesday",
+      "description": "Prakash Gurpurb Sri Guru Nanak Dev"
+    },
+    {
+      "date": "2026-12-25",
+      "day": "Friday",
+      "description": "Christmas"
+    }
   ],
   "weekend_holidays": [
-    {"date": "2026-02-15", "day": "Sunday", "description": "Mahashivratri"},
-    {"date": "2026-03-21", "day": "Saturday", "description": "Id-Ul-Fitr (Ramadan Eid)"},
-    {"date": "2026-08-15", "day": "Saturday", "description": "Independence Day"},
-    {"date": "2026-11-08", "day": "Sunday", "description": "Diwali Laxmi Pujan (Muhurat Trading)"}
+    {
+      "date": "2026-02-15",
+      "day": "Sunday",
+      "description": "Mahashivratri"
+    },
+    {
+      "date": "2026-03-21",
+      "day": "Saturday",
+      "description": "Id-Ul-Fitr (Ramadan Eid)"
+    },
+    {
+      "date": "2026-08-15",
+      "day": "Saturday",
+      "description": "Independence Day"
+    },
+    {
+      "date": "2026-11-08",
+      "day": "Sunday",
+      "description": "Diwali Laxmi Pujan (Muhurat Trading)"
+    }
   ],
   "verified_regular_trading_sessions": [
-    {"date": "2026-03-20", "day": "Friday", "description": "Regular Trading Session; Id-Ul-Fitr holiday falls on Saturday 2026-03-21"},
-    {"date": "2026-05-27", "day": "Wednesday", "description": "Regular Trading Session; Bakri Id holiday observed on Thursday 2026-05-28"}
+    {
+      "date": "2026-03-20",
+      "day": "Friday",
+      "description": "Regular Trading Session; Id-Ul-Fitr holiday falls on Saturday 2026-03-21"
+    },
+    {
+      "date": "2026-05-27",
+      "day": "Wednesday",
+      "description": "Regular Trading Session; Bakri Id holiday observed on Thursday 2026-05-28"
+    }
   ]
 }
-

@@ -1,27 +1,94 @@
 {
   "circular_id": "NSE/CMTR/2023_HOLIDAYS",
-  "circular_ref_no": "54823",
+  "download_ref_no": "NSE/CMTR/54823",
+  "circular_ref_no": "149/2022",
   "issue_date": "2022-12-14",
   "market": "NSE_CASH_EQUITY",
   "segment": "Capital Market",
   "subject": "Trading Holidays for the Calendar Year 2023",
+  "source_url": "https://nsearchives.nseindia.com/content/circulars/CMTR54823.pdf",
+  "retrieved_at": "2026-11-14T06:00:00Z",
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
   "trading_holidays": [
-    {"date": "2023-01-26", "day": "Thursday", "description": "Republic Day"},
-    {"date": "2023-03-07", "day": "Tuesday", "description": "Holi"},
-    {"date": "2023-03-30", "day": "Thursday", "description": "Shri Ram Navami"},
-    {"date": "2023-04-04", "day": "Tuesday", "description": "Shri Mahavir Jayanti"},
-    {"date": "2023-04-07", "day": "Friday", "description": "Good Friday"},
-    {"date": "2023-04-14", "day": "Friday", "description": "Dr. Baba Saheb Ambedkar Jayanti"},
-    {"date": "2023-05-01", "day": "Monday", "description": "Maharashtra Day"},
-    {"date": "2023-06-29", "day": "Thursday", "description": "Bakri Id"},
-    {"date": "2023-08-15", "day": "Tuesday", "description": "Independence Day"},
-    {"date": "2023-09-19", "day": "Tuesday", "description": "Ganesh Chaturthi"},
-    {"date": "2023-10-02", "day": "Monday", "description": "Mahatma Gandhi Jayanti"},
-    {"date": "2023-10-24", "day": "Tuesday", "description": "Dussehra"},
-    {"date": "2023-11-12", "day": "Sunday", "description": "Diwali Laxmi Pujan (Muhurat Trading)"},
-    {"date": "2023-11-14", "day": "Tuesday", "description": "Diwali-Balipratipada"},
-    {"date": "2023-11-27", "day": "Monday", "description": "Prakash Gurpurb Sri Guru Nanak Dev"},
-    {"date": "2023-12-25", "day": "Monday", "description": "Christmas"}
+    {
+      "date": "2023-01-26",
+      "day": "Thursday",
+      "description": "Republic Day"
+    },
+    {
+      "date": "2023-03-07",
+      "day": "Tuesday",
+      "description": "Holi"
+    },
+    {
+      "date": "2023-03-30",
+      "day": "Thursday",
+      "description": "Shri Ram Navami"
+    },
+    {
+      "date": "2023-04-04",
+      "day": "Tuesday",
+      "description": "Shri Mahavir Jayanti"
+    },
+    {
+      "date": "2023-04-07",
+      "day": "Friday",
+      "description": "Good Friday"
+    },
+    {
+      "date": "2023-04-14",
+      "day": "Friday",
+      "description": "Dr. Baba Saheb Ambedkar Jayanti"
+    },
+    {
+      "date": "2023-05-01",
+      "day": "Monday",
+      "description": "Maharashtra Day"
+    },
+    {
+      "date": "2023-06-29",
+      "day": "Thursday",
+      "description": "Bakri Id"
+    },
+    {
+      "date": "2023-08-15",
+      "day": "Tuesday",
+      "description": "Independence Day"
+    },
+    {
+      "date": "2023-09-19",
+      "day": "Tuesday",
+      "description": "Ganesh Chaturthi"
+    },
+    {
+      "date": "2023-10-02",
+      "day": "Monday",
+      "description": "Mahatma Gandhi Jayanti"
+    },
+    {
+      "date": "2023-10-24",
+      "day": "Tuesday",
+      "description": "Dussehra"
+    },
+    {
+      "date": "2023-11-12",
+      "day": "Sunday",
+      "description": "Diwali Laxmi Pujan (Muhurat Trading)"
+    },
+    {
+      "date": "2023-11-14",
+      "day": "Tuesday",
+      "description": "Diwali-Balipratipada"
+    },
+    {
+      "date": "2023-11-27",
+      "day": "Monday",
+      "description": "Prakash Gurpurb Sri Guru Nanak Dev"
+    },
+    {
+      "date": "2023-12-25",
+      "day": "Monday",
+      "description": "Christmas"
+    }
   ]
 }
-

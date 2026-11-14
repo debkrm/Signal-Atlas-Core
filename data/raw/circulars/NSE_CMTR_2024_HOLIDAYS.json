@@ -1,28 +1,99 @@
 {
   "circular_id": "NSE/CMTR/2024_HOLIDAYS",
-  "circular_ref_no": "59737",
+  "download_ref_no": "NSE/CMTR/59737",
+  "circular_ref_no": "158/2023",
   "issue_date": "2023-12-14",
   "market": "NSE_CASH_EQUITY",
   "segment": "Capital Market",
   "subject": "Trading Holidays for the Calendar Year 2024",
+  "source_url": "https://nsearchives.nseindia.com/content/circulars/CMTR59737.pdf",
+  "retrieved_at": "2026-11-14T06:00:00Z",
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
   "trading_holidays": [
-    {"date": "2024-01-22", "day": "Monday", "description": "Special Holiday - Ram Mandir Pran Pratishtha"},
-    {"date": "2024-01-26", "day": "Friday", "description": "Republic Day"},
-    {"date": "2024-03-08", "day": "Friday", "description": "Mahashivratri"},
-    {"date": "2024-03-25", "day": "Monday", "description": "Holi"},
-    {"date": "2024-03-29", "day": "Friday", "description": "Good Friday"},
-    {"date": "2024-04-11", "day": "Thursday", "description": "Id-Ul-Fitr (Ramadan Eid)"},
-    {"date": "2024-04-17", "day": "Wednesday", "description": "Shri Ram Navami"},
-    {"date": "2024-05-01", "day": "Wednesday", "description": "Maharashtra Day"},
-    {"date": "2024-05-20", "day": "Monday", "description": "General Parliamentary Elections - Mumbai"},
-    {"date": "2024-06-17", "day": "Monday", "description": "Bakri Id"},
-    {"date": "2024-07-17", "day": "Wednesday", "description": "Muharram"},
-    {"date": "2024-08-15", "day": "Thursday", "description": "Independence Day"},
-    {"date": "2024-10-02", "day": "Wednesday", "description": "Mahatma Gandhi Jayanti"},
-    {"date": "2024-11-01", "day": "Friday", "description": "Diwali Laxmi Pujan (Muhurat Trading)"},
-    {"date": "2024-11-15", "day": "Friday", "description": "Prakash Gurpurb Sri Guru Nanak Dev"},
-    {"date": "2024-11-20", "day": "Wednesday", "description": "General Assembly Election - Maharashtra"},
-    {"date": "2024-12-25", "day": "Wednesday", "description": "Christmas"}
+    {
+      "date": "2024-01-22",
+      "day": "Monday",
+      "description": "Special Holiday - Ram Mandir Pran Pratishtha"
+    },
+    {
+      "date": "2024-01-26",
+      "day": "Friday",
+      "description": "Republic Day"
+    },
+    {
+      "date": "2024-03-08",
+      "day": "Friday",
+      "description": "Mahashivratri"
+    },
+    {
+      "date": "2024-03-25",
+      "day": "Monday",
+      "description": "Holi"
+    },
+    {
+      "date": "2024-03-29",
+      "day": "Friday",
+      "description": "Good Friday"
+    },
+    {
+      "date": "2024-04-11",
+      "day": "Thursday",
+      "description": "Id-Ul-Fitr (Ramadan Eid)"
+    },
+    {
+      "date": "2024-04-17",
+      "day": "Wednesday",
+      "description": "Shri Ram Navami"
+    },
+    {
+      "date": "2024-05-01",
+      "day": "Wednesday",
+      "description": "Maharashtra Day"
+    },
+    {
+      "date": "2024-05-20",
+      "day": "Monday",
+      "description": "General Parliamentary Elections - Mumbai"
+    },
+    {
+      "date": "2024-06-17",
+      "day": "Monday",
+      "description": "Bakri Id"
+    },
+    {
+      "date": "2024-07-17",
+      "day": "Wednesday",
+      "description": "Muharram"
+    },
+    {
+      "date": "2024-08-15",
+      "day": "Thursday",
+      "description": "Independence Day"
+    },
+    {
+      "date": "2024-10-02",
+      "day": "Wednesday",
+      "description": "Mahatma Gandhi Jayanti"
+    },
+    {
+      "date": "2024-11-01",
+      "day": "Friday",
+      "description": "Diwali Laxmi Pujan (Muhurat Trading)"
+    },
+    {
+      "date": "2024-11-15",
+      "day": "Friday",
+      "description": "Prakash Gurpurb Sri Guru Nanak Dev"
+    },
+    {
+      "date": "2024-11-20",
+      "day": "Wednesday",
+      "description": "General Assembly Election - Maharashtra"
+    },
+    {
+      "date": "2024-12-25",
+      "day": "Wednesday",
+      "description": "Christmas"
+    }
   ]
 }
-

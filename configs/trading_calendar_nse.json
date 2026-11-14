@@ -15,17 +15,15 @@
       "NSE/CMTR/2022_HOLIDAYS",
       "NSE/CMTR/2023_HOLIDAYS",
       "NSE/CMTR/2024_HOLIDAYS",
-      "NSE/CMTR/2025_HOLIDAYS",
-      "NSE/CMTR/2026_HOLIDAYS",
-      "NSE/MSD/60300",
-      "NSE/MSD/60318",
       "NSE/CMTR/65587",
       "NSE/CMTR/65729",
       "NSE/MSD/66381",
-      "NSE/CMTR/71775"
+      "NSE/CMTR/71775",
+      "NSE/MSD/60300",
+      "NSE/MSD/60318"
     ],
     "retrieved_at": "2026-11-12T06:00:00Z",
-    "sha256": "e5e77c018039a3c1d270d7b2069357a5570efd0e328f4d171c4d2f753e054f62",
+    "sha256": "af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad",
     "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED"
   },
   "annual_session_counts": {
@@ -39,7 +37,7 @@
     "2022": 248,
     "2023": 246,
     "2024": 249,
-    "2025": 248,
+    "2025": 249,
     "2026": 212
   },
   "sessions": [
@@ -2540,6 +2538,7 @@
     "2025-01-29",
     "2025-01-30",
     "2025-01-31",
+    "2025-02-01",
     "2025-02-03",
     "2025-02-04",
     "2025-02-05",
@@ -20459,6 +20458,13 @@
       "description": "Regular Trading Session"
     },
     {
+      "date": "2025-02-01",
+      "session_type": "SPECIAL",
+      "open_time": "09:15:00",
+      "close_time": "15:30:00",
+      "description": "Union Budget Live Trading Session"
+    },
+    {
       "date": "2025-02-03",
       "session_type": "FULL",
       "open_time": "09:15:00",
@@ -23517,5 +23523,6 @@
       "close_time": "15:30:00",
       "description": "Regular Trading Session"
     }
-  ]
+  ],
+  "fingerprint": "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad"
 }

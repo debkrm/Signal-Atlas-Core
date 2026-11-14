@@ -1,6 +1,6 @@
 """
 Authoritative Bronze Circular Payload Loader and Registry for Indian Financial Markets.
-Implements exchange circular provenance and parsing per AGENTS.md §6.3, §10.7, and Audit §45 Finding H-57.
+Implements exchange circular provenance and parsing per AGENTS.md §6.3, §10.7, and Audit §§45-46 Findings H-57, H-60.
 """
 
 from __future__ import annotations
@@ -28,6 +28,8 @@ class CircularHoliday:
     date: datetime.date
     circular_id: str
     description: str
+    is_muhurat: bool = False
+    circular_ids: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +40,7 @@ class CircularSpecialSession:
     session_type: str
     is_settlement_holiday: bool
     description: str
+    circular_ids: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,12 +49,13 @@ class CircularTradingDayClarification:
     date: datetime.date
     circular_id: str
     description: str
+    circular_ids: Tuple[str, ...] = ()
 
 
 class BronzeCircularRegistry:
     """
     Immutable in-memory registry of parsed Bronze circular documents.
-    Provides fail-closed verification of exchange holiday and special session claims (Finding H-57).
+    Provides fail-closed verification of exchange holiday and special session claims (Findings H-57, H-60).
     """
 
     def __init__(
@@ -90,7 +94,7 @@ class BronzeCircularRegistry:
         rec = self._holidays.get(query_date)
         if rec is None:
             return False
-        return rec.circular_id == circular_id
+        return circular_id == rec.circular_id or circular_id in rec.circular_ids
 
     def verify_special_session_claim(self, query_date: datetime.date, circular_id: str) -> bool:
         """
@@ -100,7 +104,7 @@ class BronzeCircularRegistry:
         rec = self._special_sessions.get(query_date)
         if rec is None:
             return False
-        return rec.circular_id == circular_id
+        return circular_id == rec.circular_id or circular_id in rec.circular_ids
 
     def verify_trading_day_claim(self, query_date: datetime.date, circular_id: str) -> bool:
         """
@@ -110,7 +114,7 @@ class BronzeCircularRegistry:
         rec = self._verified_trading_days.get(query_date)
         if rec is None:
             return False
-        return rec.circular_id == circular_id
+        return circular_id == rec.circular_id or circular_id in rec.circular_ids
 
 
 def load_all_bronze_circulars(
@@ -119,7 +123,7 @@ def load_all_bronze_circulars(
 ) -> BronzeCircularRegistry:
     """
     Discovers, digest-verifies against manifest.jsonl, and parses all Bronze circular payloads.
-    Fails closed if any circular is missing, unparseable, or tampered with (§10.7, Finding H-57).
+    Fails closed if any circular is unregistered, missing, unparseable, or tampered with (§10.7, Finding H-57).
     """
     c_dir = circulars_dir or DEFAULT_CIRCULARS_DIR
     m_path = manifest_path or DEFAULT_MANIFEST_PATH
@@ -151,16 +155,20 @@ def load_all_bronze_circulars(
         sha256 = hashlib.sha256(raw_bytes).hexdigest()
         byte_count = len(raw_bytes)
 
-        # Check manifest registration
+        # Check manifest registration - MANDATORY per Finding H-57 (refuse unregistered files fail-closed)
         rel_key = f"circulars/{c_path.name}"
         manifest_rec = manifest_entries.get(rel_key) or manifest_entries.get(c_path.name)
-        if manifest_rec:
-            if manifest_rec.get("sha256") != sha256 or manifest_rec.get("byte_count") != byte_count:
-                raise CircularError(
-                    f"Bronze circular {c_path.name} digest/size mismatch vs manifest: "
-                    f"computed sha={sha256}, byte_count={byte_count}; "
-                    f"manifest sha={manifest_rec.get('sha256')}, byte_count={manifest_rec.get('byte_count')}"
-                )
+        if not manifest_rec:
+            raise CircularError(
+                f"Unregistered Bronze circular payload '{c_path.name}' found on disk without active manifest entry (Finding H-57)"
+            )
+
+        if manifest_rec.get("sha256") != sha256 or manifest_rec.get("byte_count") != byte_count:
+            raise CircularError(
+                f"Bronze circular {c_path.name} digest/size mismatch vs manifest: "
+                f"computed sha={sha256}, byte_count={byte_count}; "
+                f"manifest sha={manifest_rec.get('sha256')}, byte_count={manifest_rec.get('byte_count')}"
+            )
 
         try:
             payload = json.loads(raw_bytes.decode("utf-8"))
@@ -171,13 +179,38 @@ def load_all_bronze_circulars(
         if not c_id:
             raise CircularError(f"Bronze circular {c_path.name} missing mandatory circular_id")
 
+        source_url = payload.get("source_url")
+        if not source_url:
+            raise CircularError(f"Bronze circular {c_path.name} missing mandatory source_url (Finding H-57)")
+
+        prov_status = payload.get("provenance_status")
+        if not prov_status:
+            raise CircularError(f"Bronze circular {c_path.name} missing mandatory provenance_status (Finding H-57)")
+
+        # Collect all recognized IDs / aliases for this circular
+        id_set = {c_id}
+        if payload.get("download_ref_no"):
+            id_set.add(payload["download_ref_no"])
+        if payload.get("circular_ref_no"):
+            id_set.add(payload["circular_ref_no"])
+            id_set.add(f"NSE/CMTR/{payload['circular_ref_no']}")
+            id_set.add(f"NSE/MSD/{payload['circular_ref_no']}")
+        id_tuple = tuple(sorted(id_set))
+
         circular_digests[c_id] = sha256
 
         # Parse trading holidays
         for h in payload.get("trading_holidays", []):
             dt = datetime.date.fromisoformat(h["date"])
             desc = h.get("description", "Trading Holiday")
-            holidays[dt] = CircularHoliday(date=dt, circular_id=c_id, description=desc)
+            is_muhurat = "muhurat" in desc.lower()
+            holidays[dt] = CircularHoliday(
+                date=dt,
+                circular_id=c_id,
+                description=desc,
+                is_muhurat=is_muhurat,
+                circular_ids=id_tuple,
+            )
 
         # Parse special sessions
         for s in payload.get("special_sessions", []):
@@ -191,6 +224,7 @@ def load_all_bronze_circulars(
                 session_type=st,
                 is_settlement_holiday=sh,
                 description=desc,
+                circular_ids=id_tuple,
             )
 
         # Parse verified trading days
@@ -201,6 +235,7 @@ def load_all_bronze_circulars(
                 date=dt,
                 circular_id=c_id,
                 description=desc,
+                circular_ids=id_tuple,
             )
 
     return BronzeCircularRegistry(

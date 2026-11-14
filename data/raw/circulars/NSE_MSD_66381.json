@@ -5,6 +5,9 @@
   "market": "NSE_CASH_EQUITY",
   "segment": "Capital Market & Futures and Options",
   "subject": "Trading Timings for Live Trading Sessions on Saturday, February 01, 2025",
+  "source_url": "https://nsearchives.nseindia.com/content/circulars/MSD66381.pdf",
+  "retrieved_at": "2026-11-14T06:00:00Z",
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
   "session_timings": [
     {
       "date": "2025-02-01",
@@ -15,4 +18,3 @@
     }
   ]
 }
-
