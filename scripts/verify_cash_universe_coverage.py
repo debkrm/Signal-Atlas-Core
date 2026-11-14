@@ -35,7 +35,6 @@ from signal_core.storage.bronze import BronzeStorage
 from signal_core.storage.calendar import (
     CalendarError,
     load_anchored_nse_trading_calendar,
-    load_nse_trading_calendar,
 )
 from signal_core.storage.circulars import load_all_bronze_circulars
 from signal_core.storage.gold import GoldEngine
@@ -119,7 +118,7 @@ def verify_gate_cov1_artifact_integrity() -> bool:
         print(f"[FAIL] Missing reference artifact: {INTERVALS_CSV}")
         return False
 
-    cal = load_nse_trading_calendar()
+    cal = load_anchored_nse_trading_calendar()
     valid_sessions = set(cal.sessions)
 
     raw_data = INTERVALS_CSV.read_bytes()
@@ -741,7 +740,7 @@ def verify_gate_cov3_series_partitioned_accounting() -> bool:
 def verify_gate_cov4_walkforward_verified_fold() -> bool:
     """Verifies a walk-forward fold over authentic January 2024 archives achieving VERIFIED (Findings H-44, H-53, Note N-24)."""
     print("--- Gate COV-4: Walk-Forward Fold with Authentic Exchange Data (Findings H-44, H-53) ---")
-    cal = load_nse_trading_calendar()
+    cal = load_anchored_nse_trading_calendar()
     sm = build_production_security_master()
 
     bhav_12 = resolve_raw_bhavcopy_archive("cm12JAN2024bhav.csv.zip")

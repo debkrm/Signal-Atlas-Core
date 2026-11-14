@@ -49,7 +49,7 @@ MANIFEST_PATH = REPO_ROOT / "data" / "reference" / "manifest.jsonl"
 
 # Add src to path for calendar imports
 sys.path.insert(0, str(REPO_ROOT / "src"))
-from signal_core.storage.calendar import load_nse_trading_calendar
+from signal_core.storage.calendar import load_anchored_nse_trading_calendar
 
 
 def parse_date(raw_date_str: str) -> datetime.date:
@@ -76,7 +76,7 @@ def extract_session_observations() -> Tuple[List[datetime.date], Dict[datetime.d
         sorted_sessions: List of trading sessions observed.
         session_map: session_date -> {symbol: (isin, series)}
     """
-    cal = load_nse_trading_calendar()
+    cal = load_anchored_nse_trading_calendar()
     valid_sessions = set(cal.sessions)
 
     if not RAW_ARCHIVES_DIR.is_dir():
@@ -170,7 +170,7 @@ def build_intervals(
       - When ISIN transitions to a new ISIN for a symbol, old interval closes on ex-date.
       - When symbol renames to a new symbol for an ISIN, old interval closes on rename date.
     """
-    cal = load_nse_trading_calendar()
+    cal = load_anchored_nse_trading_calendar()
     all_cal_sessions = sorted(cal.sessions)
     session_to_idx = {s: i for i, s in enumerate(all_cal_sessions)}
 
@@ -237,7 +237,7 @@ def validate_and_save_intervals(
     intervals: List[Tuple[str, str, str, datetime.date, Optional[datetime.date]]],
     output_path: Path,
 ) -> None:
-    cal = load_nse_trading_calendar()
+    cal = load_anchored_nse_trading_calendar()
     valid_sessions = set(cal.sessions)
 
     # Sort intervals deterministically: symbol, effective_from, isin

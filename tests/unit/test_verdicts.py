@@ -57,10 +57,13 @@ def test_banned_adjectives_ast_scan():
 
 def test_verdict_report_reproducibility():
     """
-    Gate 2D-1: The verdict report is reproducible from the results bundle alone.
+    Gate 2D-1: The verdict report is reproducible from the results bundle alone (Finding N-58).
     Identical inputs produce bit-for-bit identical dictionary and markdown representations.
     """
     bundle = {
+        "evaluation_start_date": "2022-01-03",
+        "evaluation_end_date": "2026-10-31",
+        "evaluated_at_utc": "2026-11-14T12:00:00+00:00",
         "total_trades": 250,
         "profit_factor": Decimal("1.75"),
         "max_single_position_weight": Decimal("0.08"),
@@ -82,15 +85,20 @@ def test_verdict_report_reproducibility():
         "deflated_sharpe_ratio": Decimal("0.98"),
         "walk_forward_positive_fold_ratio": Decimal("0.85"),
     }
-    fixed_ts = "2026-11-14T12:00:00+00:00"
 
-    report1 = evaluate_verdicts(bundle, now_utc=fixed_ts)
-    report2 = evaluate_verdicts(bundle, now_utc=fixed_ts)
+    # Evaluate twice with no external timestamp parameter; N-58 requires report reproducibility from bundle alone
+    report1 = evaluate_verdicts(bundle)
+    report2 = evaluate_verdicts(bundle)
 
     assert report1.to_dict() == report2.to_dict()
     assert report1.to_markdown() == report2.to_markdown()
-    assert report1.overall_verdict == OverallVerdict.GO
+    # H-67: Unattested VERIFIED claim evaluates to NOT RUN and overall NO-GO
+    assert report1.overall_verdict == OverallVerdict.NO_GO
     assert report1.summary_counts["FAIL"] == 0
+    assert report1.summary_counts["NOT_RUN"] == 2  # CRIT-PROV-01 and CRIT-INFO-01
+    assert report1.evaluation_start_date == "2022-01-03"
+    assert report1.evaluation_end_date == "2026-10-31"
+    assert "- **Evaluation Window:** `2022-01-03` to `2026-10-31`" in report1.to_markdown()
 
 
 def test_criteria_version_and_fingerprint_echoed():
@@ -247,6 +255,9 @@ def test_synthetic_fixture_end_to_end_regression():
 
     # Assemble bundle from synthetic run
     synthetic_bundle = {
+        "evaluation_start_date": meta["start_date"],
+        "evaluation_end_date": meta["end_date"],
+        "evaluated_at_utc": "2026-11-14T12:00:00+00:00",
         "total_trades": 210,
         "profit_factor": Decimal("1.62"),
         "max_single_position_weight": Decimal("0.09"),
@@ -295,6 +306,8 @@ def test_synthetic_fixture_end_to_end_regression():
     assert "CRIT-OVERFIT-01" in passed_ids  # trial accountability
     assert "CRIT-OVERFIT-02" in passed_ids  # DSR
     assert "CRIT-OVERFIT-03" in passed_ids  # walk-forward ratio
+    assert "CRIT-WINDOW-01" in passed_ids   # evaluation window conformance (Finding H-66)
+    assert f"- **Evaluation Window:** `{meta['start_date']}` to `{meta['end_date']}`" in report.to_markdown()
 
     # The ONLY NOT RUN entries must be:
     # 1. CRIT-PROV-01 (due to synthetic provenance being SOURCE_UNVERIFIED per Residual R-3)
@@ -303,3 +316,116 @@ def test_synthetic_fixture_end_to_end_regression():
     assert not_run_ids == {"CRIT-PROV-01", "CRIT-INFO-01"}, (
         f"Unexpected NOT RUN metrics: {not_run_ids}. Only unverified provenance and circuit PnL should be NOT RUN."
     )
+
+
+def test_h65_binding_evaluation_start_date_guard():
+    """H-65: Align binding evaluation start date guard to 2022-01-03 (§52.9 Item 1)."""
+    from signal_core.storage.gating import (
+        resolve_gating_verdict,
+        check_gating_verdict_eligibility,
+        GatingWindowValidationError,
+    )
+    # Acceptance probe (§52.9 Item 1):
+    assert resolve_gating_verdict(datetime.date(2019, 1, 1), "GO") == "NOT RUN"
+    with pytest.raises(GatingWindowValidationError, match="Gate G2B.5-7 Violation"):
+        check_gating_verdict_eligibility(datetime.date(2019, 1, 1), "GO")
+    assert resolve_gating_verdict(datetime.date(2022, 1, 3), "GO") == "GO"
+    check_gating_verdict_eligibility(datetime.date(2022, 1, 3), "GO")
+
+
+def test_r6_deriver_tampered_calendar_fails_closed():
+    """R-6: Date swap in calendar fails closed at anchored loader (used by deriver)."""
+    from signal_core.storage.calendar import load_anchored_nse_trading_calendar, CalendarError
+    import dataclasses
+
+    criteria = load_go_no_go_criteria()
+    tampered_criteria = dataclasses.replace(criteria, expected_calendar_fingerprint="CAL-FPR-V1-deadbeef")
+    with pytest.raises(CalendarError, match="Calendar content fingerprint mismatch"):
+        load_anchored_nse_trading_calendar(criteria=tampered_criteria)
+
+
+def test_h67_unattested_verified_provenance_rejected():
+    """H-67: A bundle declaring VERIFIED / EXCHANGE_ATTESTED without resolvable attestation evaluates CRIT-PROV-01 to NOT RUN and NO-GO (§52.4, §52.9)."""
+    bundle = {
+        "evaluation_start_date": "2022-01-03",
+        "evaluation_end_date": "2026-10-31",
+        "evaluated_at_utc": "2026-11-14T12:00:00+00:00",
+        "total_trades": 250,
+        "profit_factor": Decimal("1.75"),
+        "max_single_position_weight": Decimal("0.08"),
+        "max_portfolio_drawdown": Decimal("0.18"),
+        "annual_turnover": Decimal("5.0"),
+        "max_volume_participation": Decimal("0.02"),
+        "min_daily_turnover_crore": Decimal("10.0"),
+        "prohibit_buy_at_upper_circuit": True,
+        "prohibit_sell_at_lower_circuit": True,
+        "execution_latency_sessions": 1,
+        "statutory_costs_enforced": True,
+        "strict_decimal_accounting": True,
+        "fail_closed_on_unexplained_gaps": True,
+        "point_in_time_universe": True,
+        "zero_data_fabrication": True,
+        "traded_eq_resolution_pct": Decimal("100.0"),
+        "data_provenance_status": "VERIFIED / EXCHANGE_ATTESTED",
+        "trial_count_n": 10,
+        "deflated_sharpe_ratio": Decimal("0.98"),
+        "walk_forward_positive_fold_ratio": Decimal("0.85"),
+    }
+    report = evaluate_verdicts(bundle)
+    eval_prov = next(e for e in report.evaluations if e.criterion_id == "CRIT-PROV-01")
+    assert eval_prov.status == VerdictStatus.NOT_RUN
+    assert "Refused VERIFIED / EXCHANGE_ATTESTED provenance claim" in eval_prov.evidence
+    assert report.overall_verdict == OverallVerdict.NO_GO
+    assert report.metadata["unverified_provenance_gating_applied"] is True
+
+
+def test_h66_evaluation_window_dates_in_report():
+    """H-66: Evaluation window dates must be in report, and pre-2022 start date yields NO-GO (§52.5, §52.9)."""
+    # 1. 2019 start date yields NO-GO naming the invalid window
+    bad_bundle = {
+        "evaluation_start_date": "2019-01-01",
+        "evaluation_end_date": "2023-12-31",
+        "evaluated_at_utc": "2026-11-14T12:00:00+00:00",
+    }
+    bad_report = evaluate_verdicts(bad_bundle)
+    eval_win = next(e for e in bad_report.evaluations if e.criterion_id == "CRIT-WINDOW-01")
+    assert eval_win.status == VerdictStatus.FAIL
+    assert "Evaluation start date 2019-01-01 precedes authoritative binding evaluation start date 2022-01-03" in eval_win.evidence
+    assert bad_report.overall_verdict == OverallVerdict.NO_GO
+    assert "- **Evaluation Window:** `2019-01-01` to `2023-12-31`" in bad_report.to_markdown()
+
+    # 2. Missing dates evaluate to NOT RUN and NO-GO
+    missing_bundle = {"evaluated_at_utc": "2026-11-14T12:00:00+00:00"}
+    missing_report = evaluate_verdicts(missing_bundle)
+    eval_missing = next(e for e in missing_report.evaluations if e.criterion_id == "CRIT-WINDOW-01")
+    assert eval_missing.status == VerdictStatus.NOT_RUN
+    assert missing_report.overall_verdict == OverallVerdict.NO_GO
+
+
+def test_n58_deterministic_report_timestamp_from_bundle():
+    """N-58: Report timestamp is read deterministically from bundle evaluated_at_utc (§52.6, §52.9)."""
+    bundle = {
+        "evaluation_start_date": "2022-01-03",
+        "evaluation_end_date": "2026-10-31",
+        "evaluated_at_utc": "2026-11-14T10:20:30+00:00",
+        "total_trades": 150,
+    }
+    rep1 = evaluate_verdicts(bundle)
+    rep2 = evaluate_verdicts(bundle)
+    assert rep1.timestamp_utc == "2026-11-14T10:20:30+00:00"
+    assert rep2.timestamp_utc == "2026-11-14T10:20:30+00:00"
+    assert rep1.to_dict() == rep2.to_dict()
+    assert rep1.to_markdown() == rep2.to_markdown()
+
+
+def test_r4_sourced_window_calendar_fingerprint_pin():
+    """R-4: Pinned CAL-FPR-V1 over the 1,196 sourced sessions (2022-01-03..2026-10-31)."""
+    from signal_core.storage.calendar import load_anchored_nse_trading_calendar, compute_calendar_fingerprint
+    criteria = load_go_no_go_criteria()
+    cal = load_anchored_nse_trading_calendar()
+
+    recs = cal.session_records_in_range(datetime.date(2022, 1, 3), datetime.date(2026, 10, 31))
+    assert len(recs) == 1196
+    computed_fp = compute_calendar_fingerprint(recs)
+    assert computed_fp == "CAL-FPR-V1-2d5ac7ac32455327cd636d64a4e15a1f689f25eb42a815e151ea31c3cf61cda1"
+    assert criteria.expected_sourced_window_calendar_fingerprint == computed_fp

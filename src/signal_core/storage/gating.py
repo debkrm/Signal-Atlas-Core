@@ -14,7 +14,7 @@ import datetime
 from enum import Enum
 from typing import Optional, Union
 
-BINDING_EVALUATION_START_DATE = datetime.date(2018, 4, 1)
+BINDING_EVALUATION_START_DATE = datetime.date(2022, 1, 3)
 
 
 class GatingWindowValidationError(ValueError):

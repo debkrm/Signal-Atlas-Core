@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 DEFAULT_CALENDAR_PATH = Path(__file__).resolve().parent.parent.parent.parent / "configs" / "trading_calendar_nse.json"
-BINDING_EVALUATION_START_DATE = datetime.date(2018, 4, 1)
+BINDING_EVALUATION_START_DATE = datetime.date(2022, 1, 3)
 
 
 class CalendarError(ValueError):
@@ -245,10 +245,18 @@ class TradingCalendar:
             raise CalendarError(f"Annual session count mismatch for {year}: expected {expected}, actual {actual}")
 
 
-def load_nse_trading_calendar(path: Optional[Union[str, Path]] = None) -> TradingCalendar:
+def load_nse_trading_calendar(
+    path: Optional[Union[str, Path]] = None,
+    anchored: bool = True,
+    criteria: Optional[Any] = None,
+    criteria_path: Optional[Union[str, Path]] = None,
+) -> TradingCalendar:
     """
     Loads and validates the committed NSE trading calendar JSON file into typed immutable contract.
-    Fails closed if dates are corrupt, non-monotonic, missing, or lack provenance.
+    By default (anchored=True), validates the calendar against the criteria identity and count pins
+    per AGENTS.md §6.3, §9.2, Finding H-64, Residual R-6 (§50.8, §52.3), and Residual R-4 (§52.9).
+    Fails closed if dates are corrupt, non-monotonic, missing, or lack provenance, or if criteria
+    fingerprints/counts do not match.
     """
     file_path = Path(path) if path else DEFAULT_CALENDAR_PATH
     if not file_path.is_file():
@@ -330,6 +338,51 @@ def load_nse_trading_calendar(path: Optional[Union[str, Path]] = None) -> Tradin
         annual_session_counts={str(k): int(v) for k, v in annual_counts.items()},
     )
 
+    if anchored:
+        if criteria is None:
+            from signal_core.contracts.criteria import load_go_no_go_criteria
+            criteria = load_go_no_go_criteria(path=criteria_path)
+
+        # 1. Identity anchor (Finding H-64, Residual R-6)
+        if calendar.fingerprint != criteria.expected_calendar_fingerprint:
+            raise CalendarError(
+                f"Calendar content fingerprint mismatch (Finding H-64, Residual R-6):\n"
+                f"  loaded   = {calendar.fingerprint}\n"
+                f"  criteria = {criteria.expected_calendar_fingerprint}\n"
+                f"  Any date swap, session_type change, or time change invalidates this pin."
+            )
+
+        # 2. Total session count anchor (completeness count)
+        if calendar.total_sessions != criteria.expected_total_calendar_sessions:
+            raise CalendarError(
+                f"Calendar total session count mismatch: "
+                f"loaded={calendar.total_sessions} != criteria={criteria.expected_total_calendar_sessions}"
+            )
+
+        # 3. Evaluation window session count anchor
+        eval_start = criteria.min_binding_evaluation_start_date
+        if isinstance(eval_start, str):
+            eval_start = datetime.date.fromisoformat(eval_start)
+        eval_end = datetime.date(2026, 10, 31)
+        eval_sessions = calendar.session_count_between(eval_start, eval_end)
+        if eval_sessions != criteria.expected_authoritative_calendar_sessions:
+            raise CalendarError(
+                f"Calendar evaluation window session count mismatch: "
+                f"loaded={eval_sessions} != criteria={criteria.expected_authoritative_calendar_sessions}"
+            )
+
+        # 4. Sourced window calendar fingerprint anchor (Residual R-4, §52.9)
+        sourced_recs = calendar.session_records_in_range(eval_start, eval_end)
+        sourced_fp = compute_calendar_fingerprint(sourced_recs)
+        expected_sourced_fp = getattr(criteria, "expected_sourced_window_calendar_fingerprint", None)
+        if expected_sourced_fp and sourced_fp != expected_sourced_fp:
+            raise CalendarError(
+                f"Calendar sourced window content fingerprint mismatch (Residual R-4):\n"
+                f"  loaded   = {sourced_fp}\n"
+                f"  criteria = {expected_sourced_fp}\n"
+                f"  Any date swap or change in {eval_start}..{eval_end} invalidates this pin."
+            )
+
     return calendar
 
 
@@ -340,43 +393,15 @@ def load_anchored_nse_trading_calendar(
 ) -> TradingCalendar:
     """
     Loads and validates the committed NSE trading calendar, explicitly anchoring it against
-    the human-pinned criteria values (expected_calendar_fingerprint, expected_authoritative_calendar_sessions,
-    expected_total_calendar_sessions) per AGENTS.md §6.3, §9.2, Finding H-64, and Residual R-6 (§50.8).
+    the human-pinned criteria values (expected_calendar_fingerprint, expected_sourced_window_calendar_fingerprint,
+    expected_authoritative_calendar_sessions, expected_total_calendar_sessions) per AGENTS.md §6.3, §9.2,
+    Finding H-64, Residual R-6 (§50.8, §52.3), and Residual R-4 (§52.9).
 
     Fails closed if the calendar content fingerprint does not match the pinned criteria string.
     """
-    cal = load_nse_trading_calendar(path=path)
-
-    if criteria is None:
-        from signal_core.contracts.criteria import load_go_no_go_criteria
-        criteria = load_go_no_go_criteria(path=criteria_path)
-
-    # 1. Identity anchor (Finding H-64, Residual R-6)
-    if cal.fingerprint != criteria.expected_calendar_fingerprint:
-        raise CalendarError(
-            f"Calendar content fingerprint mismatch (Finding H-64, Residual R-6):\n"
-            f"  loaded   = {cal.fingerprint}\n"
-            f"  criteria = {criteria.expected_calendar_fingerprint}\n"
-            f"  Any date swap, session_type change, or time change invalidates this pin."
-        )
-
-    # 2. Total session count anchor
-    if cal.total_sessions != criteria.expected_total_calendar_sessions:
-        raise CalendarError(
-            f"Calendar total session count mismatch: "
-            f"loaded={cal.total_sessions} != criteria={criteria.expected_total_calendar_sessions}"
-        )
-
-    # 3. Evaluation window session count anchor
-    eval_start = criteria.min_binding_evaluation_start_date
-    if isinstance(eval_start, str):
-        eval_start = datetime.date.fromisoformat(eval_start)
-    eval_end = datetime.date(2026, 10, 31)
-    eval_sessions = cal.session_count_between(eval_start, eval_end)
-    if eval_sessions != criteria.expected_authoritative_calendar_sessions:
-        raise CalendarError(
-            f"Calendar evaluation window session count mismatch: "
-            f"loaded={eval_sessions} != criteria={criteria.expected_authoritative_calendar_sessions}"
-        )
-
-    return cal
+    return load_nse_trading_calendar(
+        path=path,
+        anchored=True,
+        criteria=criteria,
+        criteria_path=criteria_path,
+    )

@@ -46,6 +46,7 @@ def test_load_committed_go_no_go_criteria():
     # Market data and accounting invariants (Finding H-54, Finding N-32)
     assert criteria.min_binding_evaluation_start_date == datetime.date(2022, 1, 3)
     assert criteria.min_traded_eq_resolution_pct == Decimal("100.0")
+    assert criteria.expected_sourced_window_calendar_fingerprint == "CAL-FPR-V1-2d5ac7ac32455327cd636d64a4e15a1f689f25eb42a815e151ea31c3cf61cda1"
 
     # Statutory taxes
     costs = criteria.statutory_costs
@@ -193,6 +194,7 @@ def test_criteria_n51_missing_count_pins_fail_closed(tmp_path: Path):
         "authorized_calendar_holiday_exclusions",
         "authorized_calendar_trading_inclusions",
         "expected_calendar_fingerprint",
+        "expected_sourced_window_calendar_fingerprint",
     )
 
     for mandatory_key in mandatory_keys:

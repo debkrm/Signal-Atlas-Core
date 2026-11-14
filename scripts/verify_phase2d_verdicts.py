@@ -38,10 +38,13 @@ from signal_core.storage.calendar import (
 
 
 def verify_gate_2d1_reproducibility() -> bool:
-    """Gate 2D-1: Verdict report reproducibility from results bundle alone."""
+    """Gate 2D-1: Verdict report reproducibility from results bundle alone (Finding N-58)."""
     print("--- Gate 2D-1: Verdict Report Determinism & Reproducibility ---")
 
     bundle = {
+        "evaluation_start_date": "2022-01-03",
+        "evaluation_end_date": "2026-10-31",
+        "evaluated_at_utc": "2026-11-14T12:00:00+00:00",
         "total_trades": 250,
         "profit_factor": Decimal("1.75"),
         "max_single_position_weight": Decimal("0.08"),
@@ -63,10 +66,10 @@ def verify_gate_2d1_reproducibility() -> bool:
         "deflated_sharpe_ratio": Decimal("0.98"),
         "walk_forward_positive_fold_ratio": Decimal("0.85"),
     }
-    fixed_ts = "2026-11-14T12:00:00+00:00"
 
-    rep1 = evaluate_verdicts(bundle, now_utc=fixed_ts)
-    rep2 = evaluate_verdicts(bundle, now_utc=fixed_ts)
+    # Evaluate twice with no external timestamp parameter; N-58 requires report reproducibility from bundle alone
+    rep1 = evaluate_verdicts(bundle)
+    rep2 = evaluate_verdicts(bundle)
 
     dict1 = rep1.to_dict()
     dict2 = rep2.to_dict()
@@ -80,11 +83,21 @@ def verify_gate_2d1_reproducibility() -> bool:
         print("[FAIL] Verdict reports from identical inputs produced non-identical markdown representations!")
         return False
 
-    if rep1.overall_verdict != OverallVerdict.GO:
-        print(f"[FAIL] Expected overall verdict GO for compliant bundle, got: {rep1.overall_verdict}")
+    # H-67: Unattested VERIFIED claim evaluates to NOT RUN and overall NO-GO
+    if rep1.overall_verdict != OverallVerdict.NO_GO:
+        print(f"[FAIL] Expected overall verdict NO-GO for unattested bundle (Finding H-67), got: {rep1.overall_verdict}")
         return False
 
-    print(f"[PASS] Gate 2D-1: Bit-for-bit reproducibility verified across dictionary and markdown outputs.")
+    # H-66: Window echoed in report
+    if rep1.evaluation_start_date != "2022-01-03" or rep1.evaluation_end_date != "2026-10-31":
+        print(f"[FAIL] Evaluation window dates missing or mismatched in report: {rep1.evaluation_start_date} .. {rep1.evaluation_end_date}")
+        return False
+    if "- **Evaluation Window:** `2022-01-03` to `2026-10-31`" not in md1:
+        print("[FAIL] Evaluation window dates missing from markdown report (Finding H-66)!")
+        return False
+
+    print(f"[PASS] Gate 2D-1: Bit-for-bit reproducibility verified across dictionary and markdown outputs (Note N-58).")
+    print(f"       Evaluation Window: {rep1.evaluation_start_date} to {rep1.evaluation_end_date} (Finding H-66)")
     print(f"       Criteria Version: {rep1.criteria_version} | Fingerprint: {rep1.criteria_fingerprint}")
     return True
 
@@ -131,6 +144,9 @@ def verify_gate_2d3_synthetic_fixture_end_to_end() -> bool:
 
     meta = fixture_data["metadata"]
     synthetic_bundle = {
+        "evaluation_start_date": meta["start_date"],
+        "evaluation_end_date": meta["end_date"],
+        "evaluated_at_utc": "2026-11-14T12:00:00+00:00",
         "total_trades": 210,
         "profit_factor": Decimal("1.62"),
         "max_single_position_weight": Decimal("0.09"),
@@ -172,8 +188,14 @@ def verify_gate_2d3_synthetic_fixture_end_to_end() -> bool:
         print(f"[FAIL] Unexpected NOT RUN criteria: {not_run_ids} != {expected_not_run}")
         return False
 
+    expected_win_str = f"- **Evaluation Window:** `{meta['start_date']}` to `{meta['end_date']}`"
+    if expected_win_str not in report.to_markdown():
+        print(f"[FAIL] Expected evaluation window string {expected_win_str!r} not in markdown report (Finding H-66)!")
+        return False
+
     print(f"[PASS] Gate 2D-3: End-to-end synthetic evaluation succeeded:")
     print(f"       PASS={passed_count}, FAIL={fail_count}, NOT RUN={not_run_count} (Total={len(report.evaluations)})")
+    print(f"       Evaluation Window echoed in report: {meta['start_date']} to {meta['end_date']} (Finding H-66).")
     print(f"       Honest provenance gating (Residual R-3) correctly marked CRIT-PROV-01 as NOT RUN.")
     return True
 
@@ -223,6 +245,27 @@ def verify_gate_2d4_adversarial_fail_closed() -> bool:
         print("[FAIL] Tampered calendar fingerprint was not rejected with CalendarError (Residual R-6)!")
         return False
     print("[PASS] Tampered calendar fingerprint rejected fail-closed (Finding H-64, Residual R-6).")
+
+    # 5. Pre-binding evaluation start date (e.g. 2019-01-01) must FAIL closed to NO-GO (Finding H-66, §10.8)
+    rep_pre2022 = evaluate_verdicts({
+        "evaluation_start_date": "2019-01-01",
+        "evaluation_end_date": "2019-12-31",
+    })
+    eval_win = next(e for e in rep_pre2022.evaluations if e.criterion_id == "CRIT-WINDOW-01")
+    if eval_win.status != VerdictStatus.FAIL or rep_pre2022.overall_verdict != OverallVerdict.NO_GO:
+        print(f"[FAIL] Pre-binding evaluation window was not rejected with FAIL / NO-GO! Got: {eval_win.status}, {rep_pre2022.overall_verdict}")
+        return False
+    print("[PASS] Pre-binding evaluation window (2019) rejected fail-closed to NO-GO (Finding H-66).")
+
+    # 6. Unattested VERIFIED provenance claim must evaluate CRIT-PROV-01 to NOT RUN and NO-GO (Finding H-67)
+    rep_unattested = evaluate_verdicts({
+        "data_provenance_status": "VERIFIED / EXCHANGE_ATTESTED",
+    })
+    eval_prov = next(e for e in rep_unattested.evaluations if e.criterion_id == "CRIT-PROV-01")
+    if eval_prov.status != VerdictStatus.NOT_RUN or rep_unattested.overall_verdict != OverallVerdict.NO_GO:
+        print(f"[FAIL] Unattested VERIFIED provenance was not rejected with NOT RUN / NO-GO! Got: {eval_prov.status}, {rep_unattested.overall_verdict}")
+        return False
+    print("[PASS] Unattested VERIFIED provenance claim rejected to NOT RUN and NO-GO fail-closed (Finding H-67).")
 
     print("[PASS] Gate 2D-4: All adversarial fail-closed invariants verified.")
     return True

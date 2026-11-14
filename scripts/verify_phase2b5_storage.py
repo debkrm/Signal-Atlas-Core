@@ -373,13 +373,13 @@ def run_phase_2b5_verification() -> bool:
         print(f"       Column type: {type_res[0][0]} | Numeric predicate correct: {numeric_cmp_ok} | Corrupt partition caught: {corrupt_caught}")
 
         # ----------------------------------------------------------------------
-        # E-14 / GATE G2B.5-7: Gating Window Enforcement (No GO/APPROVED/PASS Prior to 2018-04-01)
+        # E-14 / GATE G2B.5-7: Gating Window Enforcement (No GO/APPROVED/PASS Prior to BINDING_EVALUATION_START_DATE)
         # ----------------------------------------------------------------------
         print("\n--- Gate G2B.5-7 (E-14): Gating Window Enforcement ---")
-        warmup_eval_start = datetime.date(2017, 1, 1)
-        binding_eval_start = datetime.date(2018, 4, 1)
+        warmup_eval_start = datetime.date(2019, 1, 1)
+        binding_eval_start = BINDING_EVALUATION_START_DATE
 
-        g7_warmup_classified = (classify_gating_window(warmup_eval_start, datetime.date(2017, 12, 31)) == GatingWindowClassification.PRE_SURVEILLANCE_WARMUP)
+        g7_warmup_classified = (classify_gating_window(warmup_eval_start, datetime.date(2021, 12, 31)) == GatingWindowClassification.PRE_SURVEILLANCE_WARMUP)
         g7_binding_classified = (classify_gating_window(binding_eval_start, datetime.date(2023, 12, 31)) == GatingWindowClassification.BINDING_EVALUATION)
 
         # Check that GO, APPROVED, and PASS are all blocked fail-closed (E-14)

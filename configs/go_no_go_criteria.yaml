@@ -127,6 +127,8 @@ market_data_and_accounting_invariants:
   # and compared against this human-authored string. A date swap that preserves counting passes H-61 but fails H-64.
   # This string is the ONLY copy that is not derived from the calendar file itself.
   expected_calendar_fingerprint: "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad"
+  # R-4: Calendar identity anchor scoped strictly to the 1,196 sourced sessions in binding window 2022-01-03..2026-10-31
+  expected_sourced_window_calendar_fingerprint: "CAL-FPR-V1-2d5ac7ac32455327cd636d64a4e15a1f689f25eb42a815e151ea31c3cf61cda1"
   # Pinned uncurated baseline schedule sessions in evaluation window 2022-01-03..2026-10-31
   expected_baseline_calendar_sessions: 1201
   # Pinned authoritative exchange trading sessions held in evaluation window 2022-01-03..2026-10-31

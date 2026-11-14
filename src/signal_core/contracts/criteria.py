@@ -125,6 +125,8 @@ class GoNoGoCriteria:
     # CAL-FPR-V1 covers dates, session_types, open/close times of all 2,935 sessions — recomputed from
     # session_records at load time and compared against this pin; a date swap passes counting but not identity.
     expected_calendar_fingerprint: str = ""
+    # R-4: calendar fingerprint pinned for the 1,196 sourced sessions in binding window 2022-01-03..2026-10-31
+    expected_sourced_window_calendar_fingerprint: str = ""
     expected_baseline_calendar_sessions: int = 1201
     expected_authoritative_calendar_sessions: int = 1196
     expected_total_calendar_sessions: int = 2935
@@ -236,6 +238,13 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
             f"expected_calendar_fingerprint must be a CAL-FPR-V1-... string, got {raw_fingerprint!r} (Finding H-64)"
         )
 
+    # expected_sourced_window_calendar_fingerprint must be present and non-empty (Residual R-4)
+    raw_sourced_fingerprint = _require_mda("expected_sourced_window_calendar_fingerprint")
+    if not isinstance(raw_sourced_fingerprint, str) or not raw_sourced_fingerprint.startswith("CAL-FPR-V1-"):
+        raise CriteriaValidationError(
+            f"expected_sourced_window_calendar_fingerprint must be a CAL-FPR-V1-... string, got {raw_sourced_fingerprint!r} (Residual R-4)"
+        )
+
     return GoNoGoCriteria(
         version=str(meta.get("version", "1.0.0")),
         effective_date=datetime.date.fromisoformat(str(meta.get("effective_date", "2026-11-11"))),
@@ -270,6 +279,7 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         ),
         # H-64 / N-51: mandatory human-authored identity anchors — no defaults
         expected_calendar_fingerprint=raw_fingerprint,
+        expected_sourced_window_calendar_fingerprint=raw_sourced_fingerprint,
         expected_baseline_calendar_sessions=int(_require_mda("expected_baseline_calendar_sessions")),
         expected_authoritative_calendar_sessions=int(_require_mda("expected_authoritative_calendar_sessions")),
         expected_total_calendar_sessions=int(_require_mda("expected_total_calendar_sessions")),

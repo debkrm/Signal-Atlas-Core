@@ -21,9 +21,11 @@ from signal_core.contracts.criteria import (
     compute_criteria_fingerprint,
     load_go_no_go_criteria,
 )
+from signal_core.contracts.provenance import ProvenanceStatus
 from signal_core.storage.calendar import (
     CalendarError,
     TradingCalendar,
+    compute_calendar_fingerprint,
     load_anchored_nse_trading_calendar,
 )
 
@@ -73,7 +75,7 @@ class CriterionEvaluation:
 class VerdictReport:
     """
     Immutable, reproducible verdict report representing an evaluation run.
-    Contains computed criterion results, criteria fingerprint, calendar fingerprint, and overall verdict.
+    Contains computed criterion results, criteria fingerprint, calendar fingerprint, evaluation window, and overall verdict.
     """
     criteria_version: str
     criteria_fingerprint: str
@@ -83,6 +85,8 @@ class VerdictReport:
     evaluations: Tuple[CriterionEvaluation, ...]
     summary_counts: Mapping[str, int]
     metadata: Mapping[str, Any]
+    evaluation_start_date: str = ""
+    evaluation_end_date: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializes verdict report to JSON-compatible dictionary."""
@@ -91,6 +95,8 @@ class VerdictReport:
             "criteria_fingerprint": self.criteria_fingerprint,
             "calendar_fingerprint": self.calendar_fingerprint,
             "timestamp_utc": self.timestamp_utc,
+            "evaluation_start_date": self.evaluation_start_date,
+            "evaluation_end_date": self.evaluation_end_date,
             "overall_verdict": self.overall_verdict.value,
             "summary_counts": dict(self.summary_counts),
             "evaluations": [
@@ -117,6 +123,7 @@ class VerdictReport:
             "",
             f"- **Overall Decision:** `{self.overall_verdict.value}`",
             f"- **Evaluated At (UTC):** `{self.timestamp_utc}`",
+            f"- **Evaluation Window:** `{self.evaluation_start_date}` to `{self.evaluation_end_date}`",
             f"- **Criteria Version:** `{self.criteria_version}`",
             f"- **Criteria Fingerprint:** `{self.criteria_fingerprint}`",
             f"- **Calendar Fingerprint:** `{self.calendar_fingerprint}`",
@@ -197,7 +204,68 @@ def evaluate_verdicts(
             )
 
     evaluations: List[CriterionEvaluation] = []
-    ts = now_utc or datetime.datetime.now(datetime.timezone.utc).isoformat()
+    # N-58: Deterministic timestamp prioritized from bundle evaluated_at_utc
+    ts = str(results_bundle.get("evaluated_at_utc") or now_utc or datetime.datetime.now(datetime.timezone.utc).isoformat())
+
+    # H-66: Evaluation Window Conformance Check (§10.8, Findings H-65, H-66)
+    eval_start_raw = results_bundle.get("evaluation_start_date")
+    eval_end_raw = results_bundle.get("evaluation_end_date")
+    start_d: Optional[datetime.date] = None
+    end_d: Optional[datetime.date] = None
+
+    if eval_start_raw:
+        try:
+            start_d = datetime.date.fromisoformat(str(eval_start_raw))
+        except Exception:
+            start_d = None
+    if eval_end_raw:
+        try:
+            end_d = datetime.date.fromisoformat(str(eval_end_raw))
+        except Exception:
+            end_d = None
+
+    if start_d is not None and end_d is not None:
+        min_start = active_criteria.min_binding_evaluation_start_date
+        if start_d < min_start:
+            window_status = VerdictStatus.FAIL
+            window_evidence = (
+                f"Evaluation start date {start_d.isoformat()} precedes authoritative binding "
+                f"evaluation start date {min_start.isoformat()} per AGENTS.md §10.8 and Finding H-65."
+            )
+        elif start_d > end_d:
+            window_status = VerdictStatus.FAIL
+            window_evidence = (
+                f"Evaluation start date {start_d.isoformat()} is after evaluation end date {end_d.isoformat()}."
+            )
+        else:
+            window_status = VerdictStatus.PASS
+            window_evidence = (
+                f"Evaluation window ({start_d.isoformat()} to {end_d.isoformat()}) conforms to "
+                f"authoritative binding evaluation schedule >= {min_start.isoformat()} (Finding H-65, H-66)."
+            )
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-WINDOW-01",
+            category="Evaluation Window Integrity",
+            metric_name="Binding Evaluation Window Conformance",
+            computed_value=f"{start_d.isoformat()} .. {end_d.isoformat()}",
+            threshold_value=f">= {min_start.isoformat()}",
+            comparator=">=",
+            status=window_status,
+            evidence=window_evidence,
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-WINDOW-01",
+            category="Evaluation Window Integrity",
+            metric_name="Binding Evaluation Window Conformance",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_binding_evaluation_start_date.isoformat()}",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Evaluation window dates ('evaluation_start_date', 'evaluation_end_date') not provided in results bundle (Finding H-66).",
+            is_binding=True,
+        ))
 
     # -------------------------------------------------------------------------
     # Section A: Statistical & Risk Limits (§9.2)
@@ -658,8 +726,21 @@ def evaluate_verdicts(
             is_binding=True,
         ))
 
-    # D6: Calendar Identity Fingerprint Anchor (Residual R-6, Finding H-64)
-    cal_status = VerdictStatus.PASS if active_cal.fingerprint == active_criteria.expected_calendar_fingerprint else VerdictStatus.FAIL
+    # D6: Calendar Identity Fingerprint Anchor (Residual R-6, Finding H-64, Residual R-4)
+    cal_fp_match = (active_cal.fingerprint == active_criteria.expected_calendar_fingerprint)
+    eval_start_dt = active_criteria.min_binding_evaluation_start_date
+    if isinstance(eval_start_dt, str):
+        eval_start_dt = datetime.date.fromisoformat(eval_start_dt)
+    sourced_recs = active_cal.session_records_in_range(
+        eval_start_dt,
+        datetime.date(2026, 10, 31),
+    )
+    sourced_fp = compute_calendar_fingerprint(sourced_recs)
+    sourced_fp_match = True
+    if hasattr(active_criteria, "expected_sourced_window_calendar_fingerprint") and active_criteria.expected_sourced_window_calendar_fingerprint:
+        sourced_fp_match = (sourced_fp == active_criteria.expected_sourced_window_calendar_fingerprint)
+
+    cal_status = VerdictStatus.PASS if (cal_fp_match and sourced_fp_match) else VerdictStatus.FAIL
     evaluations.append(CriterionEvaluation(
         criterion_id="CRIT-DATA-06",
         category="Calendar Integrity",
@@ -668,40 +749,74 @@ def evaluate_verdicts(
         threshold_value=active_criteria.expected_calendar_fingerprint,
         comparator="==",
         status=cal_status,
-        evidence=f"Loaded calendar anchored and verified against criteria pin ({active_cal.fingerprint}).",
+        evidence=(
+            f"Loaded calendar anchored and verified against criteria pins: "
+            f"full={active_cal.fingerprint}, sourced_1196={sourced_fp}."
+        ),
         is_binding=True,
     ))
 
     # -------------------------------------------------------------------------
-    # Section E: Data Provenance Honesty (Rule 6.5, Audit §50.8 Residual R-3)
+    # Section E: Data Provenance Honesty (Rule 6.5, Finding H-67, Audit §50.8 Residual R-3)
     # -------------------------------------------------------------------------
-    # A claim resting on non-VERIFIED data (CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED)
-    # MUST print NOT RUN rather than PASS per AGENTS.md Rule 6.5 and Residual R-3.
+    # Provenance must be evidence, not declaration (Finding H-67, §52.4, §52.9).
+    # Validate against ProvenanceStatus. Refuse VERIFIED / EXCHANGE_ATTESTED unless
+    # a committed attestation artifact/certificate is named, resolvable, and exists in repository.
     prov_status_val = results_bundle.get("data_provenance_status")
+    attestation_ref = results_bundle.get("provenance_attestation_reference") or results_bundle.get("provenance_attestation_artifact")
+    resolved_attestation = False
+    resolved_attestation_str = ""
+
+    if attestation_ref and str(attestation_ref).strip():
+        att_str = str(attestation_ref).strip()
+        att_path = Path(att_str)
+        if not att_path.is_absolute():
+            att_path = Path(__file__).resolve().parent.parent.parent.parent / att_path
+        if att_path.is_file():
+            resolved_attestation = True
+            resolved_attestation_str = att_str
+
     if prov_status_val is not None:
-        if str(prov_status_val).strip() == "VERIFIED / EXCHANGE_ATTESTED":
-            evaluations.append(CriterionEvaluation(
-                criterion_id="CRIT-PROV-01",
-                category="Data Provenance",
-                metric_name="Data Provenance Verification",
-                computed_value="VERIFIED / EXCHANGE_ATTESTED",
-                threshold_value="VERIFIED / EXCHANGE_ATTESTED",
-                comparator="==",
-                status=VerdictStatus.PASS,
-                evidence="Primary market data attested by authentic exchange archive signatures (§6.5).",
-                is_binding=True,
-            ))
+        prov_str = str(prov_status_val).strip()
+        if prov_str in ("VERIFIED", "VERIFIED / EXCHANGE_ATTESTED", ProvenanceStatus.VERIFIED.value):
+            if resolved_attestation:
+                evaluations.append(CriterionEvaluation(
+                    criterion_id="CRIT-PROV-01",
+                    category="Data Provenance",
+                    metric_name="Data Provenance Verification",
+                    computed_value="VERIFIED / EXCHANGE_ATTESTED",
+                    threshold_value="VERIFIED / EXCHANGE_ATTESTED",
+                    comparator="==",
+                    status=VerdictStatus.PASS,
+                    evidence=f"Primary market data attested by authentic exchange archive signatures ({resolved_attestation_str}) (§6.5).",
+                    is_binding=True,
+                ))
+            else:
+                evaluations.append(CriterionEvaluation(
+                    criterion_id="CRIT-PROV-01",
+                    category="Data Provenance",
+                    metric_name="Data Provenance Verification",
+                    computed_value=f"{prov_str} (UNATTESTED)",
+                    threshold_value="VERIFIED / EXCHANGE_ATTESTED",
+                    comparator="==",
+                    status=VerdictStatus.NOT_RUN,
+                    evidence=(
+                        f"Refused {prov_str} provenance claim: no resolvable committed exchange "
+                        f"attestation artifact or certificate reference found in repository per AGENTS.md §6.5 (Finding H-67)."
+                    ),
+                    is_binding=True,
+                ))
         else:
             evaluations.append(CriterionEvaluation(
                 criterion_id="CRIT-PROV-01",
                 category="Data Provenance",
                 metric_name="Data Provenance Verification",
-                computed_value=str(prov_status_val),
+                computed_value=prov_str,
                 threshold_value="VERIFIED / EXCHANGE_ATTESTED",
                 comparator="==",
                 status=VerdictStatus.NOT_RUN,
                 evidence=(
-                    f"Dataset provenance is '{prov_status_val}'; per AGENTS.md Rule 6.5 and Audit §50.8 (Residual R-3), "
+                    f"Dataset provenance is '{prov_str}'; per AGENTS.md Rule 6.5 and Audit §50.8 (Residual R-3), "
                     "claims resting on unverified sources are NOT RUN for gating until verified archive proofs exist."
                 ),
                 is_binding=True,
@@ -879,6 +994,8 @@ def evaluate_verdicts(
         criteria_fingerprint=criteria_fpr,
         calendar_fingerprint=active_cal.fingerprint,
         timestamp_utc=ts,
+        evaluation_start_date=str(eval_start_raw or "UNSPECIFIED"),
+        evaluation_end_date=str(eval_end_raw or "UNSPECIFIED"),
         overall_verdict=overall_verdict,
         evaluations=tuple(evaluations),
         summary_counts={
@@ -889,6 +1006,6 @@ def evaluate_verdicts(
         metadata={
             "binding_criteria_count": sum(1 for e in evaluations if e.is_binding),
             "binding_failed_count": len(binding_failures),
-            "unverified_provenance_gating_applied": prov_status_val != "VERIFIED / EXCHANGE_ATTESTED",
+            "unverified_provenance_gating_applied": not (prov_status_val in ("VERIFIED", "VERIFIED / EXCHANGE_ATTESTED", ProvenanceStatus.VERIFIED.value) and resolved_attestation),
         },
     )
