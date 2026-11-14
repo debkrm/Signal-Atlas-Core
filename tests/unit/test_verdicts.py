@@ -635,13 +635,28 @@ def test_total_trades_decimal_parsing_and_plausibility_bound():
 
 def test_tier_a_report_omitted_engine_output_falsifier():
     """
-    Finding H-73: Verifies that Tier-A report evaluates omitted engine outputs honestly to NOT RUN,
-    with zero fallback literals.
+    Findings H-73, H-75, H-76, N-63: Verifies that Tier-A report evaluates omitted engine outputs
+    and unobserved execution/accounting flags honestly to NOT RUN, with zero fallback literals
+    and zero hardcoded boolean or numeric constants.
     """
-    from scripts.generate_phase2d_tier_a_report import build_tier_a_results_bundle
+    import ast
+    from scripts.generate_phase2d_tier_a_report import build_tier_a_results_bundle, REPO_ROOT
     bundle = build_tier_a_results_bundle()
 
-    # Backtest and walk-forward metrics must not be present in bundle
+    # 1. Structural AST check on generator script (Findings H-73, N-63)
+    gen_script = REPO_ROOT / "scripts" / "generate_phase2d_tier_a_report.py"
+    tree = ast.parse(gen_script.read_text(encoding="utf-8"))
+    bundle_func = next(
+        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "build_tier_a_results_bundle"
+    )
+    for node in ast.walk(bundle_func):
+        if isinstance(node, ast.Dict):
+            for val in node.values:
+                assert not (isinstance(val, ast.Constant) and isinstance(val.value, (bool, int, float))), (
+                    f"Forbidden constant literal {val.value!r} found in build_tier_a_results_bundle AST"
+                )
+
+    # 2. Backtest, walk-forward, invariant flags, and execution observation flags must be omitted
     for uncomputed_key in (
         "total_trades",
         "profit_factor",
@@ -653,11 +668,25 @@ def test_tier_a_report_omitted_engine_output_falsifier():
         "trial_count_n",
         "deflated_sharpe_ratio",
         "walk_forward_positive_fold_ratio",
+        "strict_decimal_accounting",
+        "fail_closed_on_unexplained_gaps",
+        "point_in_time_universe",
+        "zero_data_fabrication",
+        "statutory_costs_enforced",
+        "prohibit_buy_at_upper_circuit",
+        "prohibit_sell_at_lower_circuit",
+        "execution_latency_sessions",
     ):
         assert uncomputed_key not in bundle, f"{uncomputed_key} should be omitted until computed by engine"
 
-    # Evaluated report must have these as NOT RUN
+    # 3. Evaluated report must have 3 PASS, 0 FAIL, 20 NOT RUN, overall NO-GO
     rep = evaluate_verdicts(bundle)
+    assert rep.overall_verdict == OverallVerdict.NO_GO
+    assert rep.summary_counts == {"PASS": 3, "FAIL": 0, "NOT_RUN": 20}
+
+    passed_ids = {e.criterion_id for e in rep.evaluations if e.status == VerdictStatus.PASS}
+    assert passed_ids == {"CRIT-WINDOW-01", "CRIT-DATA-05", "CRIT-DATA-06"}
+
     eval_stat1 = next(e for e in rep.evaluations if e.criterion_id == "CRIT-STAT-01")
     assert eval_stat1.status == VerdictStatus.NOT_RUN
     assert "not provided in results bundle" in eval_stat1.evidence
@@ -666,11 +695,28 @@ def test_tier_a_report_omitted_engine_output_falsifier():
     assert eval_dsr.status == VerdictStatus.NOT_RUN
     assert "not provided in results bundle" in eval_dsr.evidence
 
-    # Falsifier check: removing traded_eq_resolution_pct turns CRIT-DATA-05 to NOT RUN
+    eval_dec = next(e for e in rep.evaluations if e.criterion_id == "CRIT-DATA-01")
+    assert eval_dec.status == VerdictStatus.NOT_RUN
+    assert "not provided in results bundle" in eval_dec.evidence
+
+    eval_exec3 = next(e for e in rep.evaluations if e.criterion_id == "CRIT-EXEC-03")
+    assert eval_exec3.status == VerdictStatus.NOT_RUN
+    assert "not provided in results bundle" in eval_exec3.evidence
+
+    # 4. H-75 acceptance probe: criteria flag mutation alone does not alter evaluation status
+    import dataclasses
+    crit = load_go_no_go_criteria()
+    mutated_crit = dataclasses.replace(crit, prohibit_buy_at_upper_circuit=False)
+    rep_mut = evaluate_verdicts(bundle, criteria=mutated_crit)
+    assert rep_mut.summary_counts == rep.summary_counts
+    assert rep_mut.overall_verdict == rep.overall_verdict
+
+    # 5. Falsifier check: removing traded_eq_resolution_pct turns CRIT-DATA-05 to NOT RUN
     bundle_no_cov = dict(bundle)
     bundle_no_cov.pop("traded_eq_resolution_pct", None)
     rep_no_cov = evaluate_verdicts(bundle_no_cov)
     eval_cov = next(e for e in rep_no_cov.evaluations if e.criterion_id == "CRIT-DATA-05")
     assert eval_cov.status == VerdictStatus.NOT_RUN
     assert "not provided in results bundle" in eval_cov.evidence
+    assert rep_no_cov.summary_counts == {"PASS": 2, "FAIL": 0, "NOT_RUN": 21}
 

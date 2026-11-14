@@ -11,6 +11,7 @@ Enforces AGENTS.md §6.5, §7.1, §8.1, §8.2, §9.1, §9.2, §9.3, and Phase 2D
 
 from __future__ import annotations
 
+import ast
 import datetime
 from decimal import Decimal
 import json
@@ -365,20 +366,56 @@ def verify_gate_2d4_adversarial_fail_closed() -> bool:
 
 
 def verify_gate_2d5_tier_a_report_generation() -> bool:
-    """Gate 2D-5: Phase 2D Tier-A Report Generator Execution & Reproducibility (Finding H-73, H-74)."""
+    """Gate 2D-5: Phase 2D Tier-A Report Generator Execution & Reproducibility (Findings H-73, H-74, N-63)."""
     print("\n--- Gate 2D-5: Phase 2D Tier-A Report Generator Execution & Reproducibility ---")
     gen_script = REPO_ROOT / "scripts" / "generate_phase2d_tier_a_report.py"
     if not gen_script.exists():
         print(f"[FAIL] Tier-A report generator missing at {gen_script}")
         return False
 
-    # Check zero hardcoded metric literals in generator script (Finding H-73)
+    # Structural AST check: zero boolean or numeric literals assigned to bundle keys (Findings H-73, N-63)
     gen_source = gen_script.read_text(encoding="utf-8")
-    for lit in ["342", "1.6850", "0.9720", "0.8500", "0.0245", "12.50", "100.0000"]:
-        if lit in gen_source:
-            print(f"[FAIL] Hardcoded metric literal {lit!r} found in {gen_script.name} (Finding H-73)!")
-            return False
-    print("[PASS] Verified zero hardcoded metric literals in Tier-A report generator (Finding H-73).")
+    tree = ast.parse(gen_source, filename=str(gen_script))
+    bundle_func = next(
+        (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "build_tier_a_results_bundle"),
+        None,
+    )
+    if bundle_func is None:
+        print(f"[FAIL] Function build_tier_a_results_bundle not found in {gen_script.name}!")
+        return False
+
+    for node in ast.walk(bundle_func):
+        if isinstance(node, ast.Dict):
+            for key, val in zip(node.keys, node.values):
+                key_name = getattr(key, "value", getattr(key, "id", str(key)))
+                if isinstance(val, ast.Constant) and isinstance(val.value, (bool, int, float)):
+                    print(
+                        f"[FAIL] Hardcoded constant literal {val.value!r} ({type(val.value).__name__}) assigned to key {key_name!r} "
+                        f"in build_tier_a_results_bundle (Findings H-73, N-63)!"
+                    )
+                    return False
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Subscript):
+                    sub_key = getattr(target.slice, "value", str(target.slice))
+                    val = node.value
+                    if isinstance(val, ast.Constant) and isinstance(val.value, (bool, int, float)):
+                        print(
+                            f"[FAIL] Hardcoded constant literal {val.value!r} ({type(val.value).__name__}) assigned to subscript {sub_key!r} "
+                            f"in build_tier_a_results_bundle (Findings H-73, N-63)!"
+                        )
+                        return False
+
+    print("[PASS] Verified zero boolean or numeric literals assigned in build_tier_a_results_bundle AST (Findings H-73, N-63).")
+
+    json_path = REPO_ROOT / "reports" / "verdicts" / "phase2d_tier_a_2022_2026_verdict.json"
+    md_path = REPO_ROOT / "reports" / "verdicts" / "phase2d_tier_a_2022_2026_verdict.md"
+    if not json_path.exists() or not md_path.exists():
+        print("[FAIL] Committed Tier-A verdict reports missing from reports/verdicts/!")
+        return False
+
+    committed_json = json_path.read_bytes()
+    committed_md = md_path.read_bytes()
 
     # Run generator subprocess (Finding H-74)
     proc1 = subprocess.run(
@@ -394,16 +431,16 @@ def verify_gate_2d5_tier_a_report_generation() -> bool:
         return False
     print("[PASS] Tier-A report generator executed with exit code 0 on platform (Finding H-74).")
 
-    json_path = REPO_ROOT / "reports" / "verdicts" / "phase2d_tier_a_2022_2026_verdict.json"
-    md_path = REPO_ROOT / "reports" / "verdicts" / "phase2d_tier_a_2022_2026_verdict.md"
-    if not json_path.exists() or not md_path.exists():
-        print("[FAIL] Generated Tier-A verdict reports missing from reports/verdicts/!")
+    # Verify that freshly regenerated report matches committed report byte-for-byte (Finding N-63)
+    if json_path.read_bytes() != committed_json:
+        print("[FAIL] Regenerated Tier-A JSON verdict report does not match committed artifact byte-for-byte (Finding N-63)!")
         return False
+    if md_path.read_bytes() != committed_md:
+        print("[FAIL] Regenerated Tier-A Markdown verdict report does not match committed artifact byte-for-byte (Finding N-63)!")
+        return False
+    print("[PASS] Regenerated Tier-A reports match committed artifacts byte-for-byte (Finding N-63).")
 
-    json_run1 = json_path.read_bytes()
-    md_run1 = md_path.read_bytes()
-
-    # Second run to test exact byte-reproducibility
+    # Second run to test exact byte-reproducibility across repeated executions
     proc2 = subprocess.run(
         [sys.executable, str(gen_script)],
         cwd=str(REPO_ROOT),
@@ -415,8 +452,8 @@ def verify_gate_2d5_tier_a_report_generation() -> bool:
         print(f"[FAIL] Tier-A report generator failed on second run: exit code {proc2.returncode}")
         return False
 
-    if json_path.read_bytes() != json_run1 or md_path.read_bytes() != md_run1:
-        print("[FAIL] Tier-A report generator outputs are not byte-identical across runs!")
+    if json_path.read_bytes() != committed_json or md_path.read_bytes() != committed_md:
+        print("[FAIL] Tier-A report generator outputs are not byte-identical across repeated runs!")
         return False
     print("[PASS] Byte-identical reproducibility verified across repeated generator executions.")
 

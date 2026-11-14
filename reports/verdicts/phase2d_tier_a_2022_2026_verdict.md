@@ -6,7 +6,7 @@
 - **Criteria Version:** `1.1.0`
 - **Criteria Fingerprint:** `CRIT-FPR-V1-22520357204d0645f0df9bd057bd4386f837a3708528376e68f2b66218a98799`
 - **Calendar Fingerprint:** `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad`
-- **Summary Counts:** `PASS=11`, `FAIL=0`, `NOT RUN=12` (Total=23)
+- **Summary Counts:** `PASS=3`, `FAIL=0`, `NOT RUN=20` (Total=23)
 
 ## Detailed Criteria Evaluation Matrix
 
@@ -20,14 +20,14 @@
 | CRIT-STAT-05 | Risk & Performance | Annual Portfolio Turnover | `<= 12.0` | `—` | **NOT RUN** | YES | Metric 'annual_turnover' not provided in results bundle. |
 | CRIT-EXEC-01 | Execution Realism | Volume Participation Cap | `<= 0.03` | `—` | **NOT RUN** | YES | Metric 'max_volume_participation' not provided in results bundle. |
 | CRIT-EXEC-02 | Execution Realism | Min Traded Value (Cr) | `>= 5.0` | `—` | **NOT RUN** | YES | Metric 'min_daily_turnover_crore' not provided in results bundle. |
-| CRIT-EXEC-03 | Execution Realism | Upper Circuit BUY Prohibition | `True` | `True` | **PASS** | YES | Simulator strictly enforces zero BUY fills when price equals Upper Circuit band (§5.3). |
-| CRIT-EXEC-04 | Execution Realism | Lower Circuit SELL Prohibition | `True` | `True` | **PASS** | YES | Simulator strictly enforces zero SELL / Stop-Loss fills when price equals Lower Circuit band (§5.3). |
-| CRIT-EXEC-05 | Execution Realism | Execution Latency (Sessions) | `>= 1` | `1` | **PASS** | YES | Orders execute at session T+1 following signal calculation at session T close. |
-| CRIT-COST-01 | Cost Realism | Statutory Cost Model Enforced | `True` | `True` | **PASS** | YES | Full statutory Indian schedule (STT, NSE turnover, SEBI charges, Stamp Duty, GST with IPFT, brokerage) computed. |
-| CRIT-DATA-01 | Accounting Integrity | Strict Decimal Accounting | `True` | `True` | **PASS** | YES | Zero binary floating-point representation in cash ledger, order fills, fees, or PnL (§6.4). |
-| CRIT-DATA-02 | Data Integrity | Fail Closed on Unexplained Gaps | `True` | `True` | **PASS** | YES | Price series partitioned into continuous segments on UNEXPLAINED_MISSING_RECORD (§6.3). |
-| CRIT-DATA-03 | Data Integrity | Point-in-Time Universe Selection | `True` | `True` | **PASS** | YES | Tradable constituents determined strictly prior to market open on session T (§6.1). |
-| CRIT-DATA-04 | Data Integrity | Zero Data Fabrication | `True` | `True` | **PASS** | YES | Zero forward-filling, linear interpolation, zero-price imputation, or NaN masking (§6.3). |
+| CRIT-EXEC-03 | Execution Realism | Upper Circuit BUY Prohibition | `True` | `—` | **NOT RUN** | YES | Flag 'prohibit_buy_at_upper_circuit' not provided in results bundle. |
+| CRIT-EXEC-04 | Execution Realism | Lower Circuit SELL Prohibition | `True` | `—` | **NOT RUN** | YES | Flag 'prohibit_sell_at_lower_circuit' not provided in results bundle. |
+| CRIT-EXEC-05 | Execution Realism | Execution Latency (Sessions) | `>= 1` | `—` | **NOT RUN** | YES | Metric 'execution_latency_sessions' not provided in results bundle. |
+| CRIT-COST-01 | Cost Realism | Statutory Cost Model Enforced | `True` | `—` | **NOT RUN** | YES | Flag 'statutory_costs_enforced' not provided in results bundle. |
+| CRIT-DATA-01 | Accounting Integrity | Strict Decimal Accounting | `True` | `—` | **NOT RUN** | YES | Flag 'strict_decimal_accounting' not provided in results bundle. |
+| CRIT-DATA-02 | Data Integrity | Fail Closed on Unexplained Gaps | `True` | `—` | **NOT RUN** | YES | Flag 'fail_closed_on_unexplained_gaps' not provided in results bundle. |
+| CRIT-DATA-03 | Data Integrity | Point-in-Time Universe Selection | `True` | `—` | **NOT RUN** | YES | Flag 'point_in_time_universe' not provided in results bundle. |
+| CRIT-DATA-04 | Data Integrity | Zero Data Fabrication | `True` | `—` | **NOT RUN** | YES | Flag 'zero_data_fabrication' not provided in results bundle. |
 | CRIT-DATA-05 | Universe Integrity | Traded EQ Resolution Pct | `>= 100.0%` | `100.0000%` | **PASS** | YES | Active traded EQ scrips resolved to authoritative ISINs: 100.0000% (§41.3, Finding H-54). |
 | CRIT-DATA-06 | Calendar Integrity | Calendar Fingerprint Anchor | `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad` | `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad` | **PASS** | YES | Loaded calendar anchored and verified against criteria pins: full=CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad, sourced_1196=CAL-FPR-V1-2d5ac7ac32455327cd636d64a4e15a1f689f25eb42a815e151ea31c3cf61cda1. |
 | CRIT-PROV-01 | Data Provenance | Data Provenance Verification | `VERIFIED / EXCHANGE_ATTESTED` | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` | **NOT RUN** | YES | Dataset provenance is 'CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED'; per AGENTS.md Rule 6.5 and Audit §50.8 (Residual R-3), claims resting on unverified sources are NOT RUN for gating until verified archive proofs exist. |

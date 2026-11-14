@@ -7,9 +7,9 @@
   "evaluation_end_date": "2026-10-30",
   "overall_verdict": "NO-GO",
   "summary_counts": {
-    "PASS": 11,
+    "PASS": 3,
     "FAIL": 0,
-    "NOT_RUN": 12
+    "NOT_RUN": 20
   },
   "evaluations": [
     {
@@ -104,88 +104,88 @@
       "criterion_id": "CRIT-EXEC-03",
       "category": "Execution Realism",
       "metric_name": "Upper Circuit BUY Prohibition",
-      "computed_value": "True",
+      "computed_value": null,
       "threshold_value": "True",
       "comparator": "==",
-      "status": "PASS",
-      "evidence": "Simulator strictly enforces zero BUY fills when price equals Upper Circuit band (\u00a75.3).",
+      "status": "NOT RUN",
+      "evidence": "Flag 'prohibit_buy_at_upper_circuit' not provided in results bundle.",
       "is_binding": true
     },
     {
       "criterion_id": "CRIT-EXEC-04",
       "category": "Execution Realism",
       "metric_name": "Lower Circuit SELL Prohibition",
-      "computed_value": "True",
+      "computed_value": null,
       "threshold_value": "True",
       "comparator": "==",
-      "status": "PASS",
-      "evidence": "Simulator strictly enforces zero SELL / Stop-Loss fills when price equals Lower Circuit band (\u00a75.3).",
+      "status": "NOT RUN",
+      "evidence": "Flag 'prohibit_sell_at_lower_circuit' not provided in results bundle.",
       "is_binding": true
     },
     {
       "criterion_id": "CRIT-EXEC-05",
       "category": "Execution Realism",
       "metric_name": "Execution Latency (Sessions)",
-      "computed_value": "1",
+      "computed_value": null,
       "threshold_value": ">= 1",
       "comparator": ">=",
-      "status": "PASS",
-      "evidence": "Orders execute at session T+1 following signal calculation at session T close.",
+      "status": "NOT RUN",
+      "evidence": "Metric 'execution_latency_sessions' not provided in results bundle.",
       "is_binding": true
     },
     {
       "criterion_id": "CRIT-COST-01",
       "category": "Cost Realism",
       "metric_name": "Statutory Cost Model Enforced",
-      "computed_value": "True",
+      "computed_value": null,
       "threshold_value": "True",
       "comparator": "==",
-      "status": "PASS",
-      "evidence": "Full statutory Indian schedule (STT, NSE turnover, SEBI charges, Stamp Duty, GST with IPFT, brokerage) computed.",
+      "status": "NOT RUN",
+      "evidence": "Flag 'statutory_costs_enforced' not provided in results bundle.",
       "is_binding": true
     },
     {
       "criterion_id": "CRIT-DATA-01",
       "category": "Accounting Integrity",
       "metric_name": "Strict Decimal Accounting",
-      "computed_value": "True",
+      "computed_value": null,
       "threshold_value": "True",
       "comparator": "==",
-      "status": "PASS",
-      "evidence": "Zero binary floating-point representation in cash ledger, order fills, fees, or PnL (\u00a76.4).",
+      "status": "NOT RUN",
+      "evidence": "Flag 'strict_decimal_accounting' not provided in results bundle.",
       "is_binding": true
     },
     {
       "criterion_id": "CRIT-DATA-02",
       "category": "Data Integrity",
       "metric_name": "Fail Closed on Unexplained Gaps",
-      "computed_value": "True",
+      "computed_value": null,
       "threshold_value": "True",
       "comparator": "==",
-      "status": "PASS",
-      "evidence": "Price series partitioned into continuous segments on UNEXPLAINED_MISSING_RECORD (\u00a76.3).",
+      "status": "NOT RUN",
+      "evidence": "Flag 'fail_closed_on_unexplained_gaps' not provided in results bundle.",
       "is_binding": true
     },
     {
       "criterion_id": "CRIT-DATA-03",
       "category": "Data Integrity",
       "metric_name": "Point-in-Time Universe Selection",
-      "computed_value": "True",
+      "computed_value": null,
       "threshold_value": "True",
       "comparator": "==",
-      "status": "PASS",
-      "evidence": "Tradable constituents determined strictly prior to market open on session T (\u00a76.1).",
+      "status": "NOT RUN",
+      "evidence": "Flag 'point_in_time_universe' not provided in results bundle.",
       "is_binding": true
     },
     {
       "criterion_id": "CRIT-DATA-04",
       "category": "Data Integrity",
       "metric_name": "Zero Data Fabrication",
-      "computed_value": "True",
+      "computed_value": null,
       "threshold_value": "True",
       "comparator": "==",
-      "status": "PASS",
-      "evidence": "Zero forward-filling, linear interpolation, zero-price imputation, or NaN masking (\u00a76.3).",
+      "status": "NOT RUN",
+      "evidence": "Flag 'zero_data_fabrication' not provided in results bundle.",
       "is_binding": true
     },
     {
@@ -268,7 +268,7 @@
   ],
   "metadata": {
     "binding_criteria_count": 22,
-    "binding_failed_count": 11,
+    "binding_failed_count": 19,
     "unverified_provenance_gating_applied": true
   }
 }

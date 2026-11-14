@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
 Signal Atlas — First Real Phase 2D Tier-A Verdict Report Generator.
-Assembles results bundle strictly from computed repository artifacts and engine invariants
-over 2022-01-03..2026-10-31 per AGENTS.md §6.5, §7.1, §7.2, §8.1, §8.2, §9.1, §9.2, §9.3,
-§10.8, and Audit §54.10 Item 1.
+Assembles results bundle strictly from computed repository artifacts and criteria contracts
+over 2022-01-03..2026-10-30 per AGENTS.md §6.5, §7.1, §7.2, §8.1, §8.2, §9.1, §9.2, §9.3,
+§10.8, and Audit §55.8.
 
 Invariants:
-- Zero hardcoded metric literals (Finding H-73). All values are read from pipeline outputs
-  or evaluated criteria/calendar contracts.
+- Zero hardcoded metric or boolean literals in results bundle (Findings H-73, H-75). All values are
+  read from pipeline outputs or dynamically evaluated criteria/calendar contracts.
 - Metrics not yet computed across the full 2022-2026 corpus (backtest execution ledger,
-  walk-forward fold ratios, DSR, circuit bands) are omitted, honestly evaluating to NOT RUN.
+  walk-forward fold ratios, DSR, circuit bands, statutory costs) are omitted, honestly evaluating to NOT RUN.
 - Evaluates strictly and honestly to NO-GO on unverified archive provenance (CRIT-PROV-01: NOT RUN)
   and pending full-corpus backtest/walk-forward execution metrics.
 - Deterministic evaluated_at_utc.
@@ -50,9 +50,10 @@ def build_tier_a_results_bundle(
     calendar: TradingCalendar | None = None,
 ) -> dict:
     """
-    Builds the authoritative Phase 2D Tier-A results bundle over 2022-01-03..2026-10-31.
-    All data is read from verified repository artifacts and criteria contracts (Finding H-73).
-    Uncomputed backtest/walk-forward metrics are omitted, evaluating honestly to NOT RUN.
+    Builds the authoritative Phase 2D Tier-A results bundle over 2022-01-03..2026-10-30.
+    All data is read from verified repository artifacts and criteria contracts (Findings H-73, H-75).
+    Uncomputed backtest/walk-forward metrics and unobserved execution/accounting flags are omitted,
+    evaluating honestly to NOT RUN per AGENTS.md §9.1 and Audit §55.8.
     """
     active_criteria = criteria or load_go_no_go_criteria()
     active_calendar = calendar or load_anchored_nse_trading_calendar(criteria=active_criteria)
@@ -79,9 +80,10 @@ def build_tier_a_results_bundle(
     dataset_fp = f"DATA-CTNT-V2-{bhavcopy_manifest_entry['sha256']}"
     prov_status = bhavcopy_manifest_entry.get("provenance_status", "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED")
 
-    # 2. Compute traded EQ resolution percentage dynamically from bhavcopy archive manifest
+    # 2. Compute traded EQ resolution percentage and derive archive end date dynamically
     bhavcopy_manifest_file = REPO_ROOT / "data" / "reference" / "bhavcopy_archive_manifest.jsonl"
     traded_eq_resolution_pct = None
+    archive_dates: list[datetime.date] = []
     if bhavcopy_manifest_file.is_file():
         total_traded_rows = 0
         with open(bhavcopy_manifest_file, "r", encoding="utf-8") as f:
@@ -91,6 +93,8 @@ def build_tier_a_results_bundle(
                     continue
                 row = json.loads(line_str)
                 total_traded_rows += int(row.get("traded_eq_rows", 0))
+                if "session_date" in row:
+                    archive_dates.append(datetime.date.fromisoformat(row["session_date"]))
 
         expected_total_rows = int(bhavcopy_manifest_entry.get("total_traded_eq_rows", 0))
         if expected_total_rows > 0:
@@ -98,9 +102,9 @@ def build_tier_a_results_bundle(
                 Decimal(str(total_traded_rows)) / Decimal(str(expected_total_rows))
             ) * Decimal("100")
 
-    # 3. Resolve evaluation window dates from criteria and calendar
+    # 3. Resolve evaluation window dates dynamically from criteria and archive manifest (Finding H-73)
     start_date_str = active_criteria.min_binding_evaluation_start_date.isoformat()
-    end_date_limit = datetime.date(2026, 10, 31)
+    end_date_limit = max(archive_dates) if archive_dates else active_calendar.end_date
     eligible_sessions = [s for s in active_calendar.sessions if s <= end_date_limit]
     end_date_str = eligible_sessions[-1].isoformat() if eligible_sessions else end_date_limit.isoformat()
 
@@ -114,25 +118,16 @@ def build_tier_a_results_bundle(
         # Data provenance status sourced from manifest (Rule 6.5, Residual R-3, Finding H-70)
         "data_provenance_status": prov_status,
         "provenance_attestation_reference": str(bhavcopy_manifest_file),
-
-        # System and accounting invariants verified by repository architecture (§6.3, §6.4, §7.1, §7.2)
-        "strict_decimal_accounting": True,
-        "fail_closed_on_unexplained_gaps": True,
-        "point_in_time_universe": True,
-        "zero_data_fabrication": True,
-        "statutory_costs_enforced": True,
-        "prohibit_buy_at_upper_circuit": active_criteria.prohibit_buy_at_upper_circuit,
-        "prohibit_sell_at_lower_circuit": active_criteria.prohibit_sell_at_lower_circuit,
-        "execution_latency_sessions": active_criteria.min_execution_latency_sessions,
     }
 
     # Traded EQ resolution percentage is dynamically populated only when computed from manifest
     if traded_eq_resolution_pct is not None:
         bundle["traded_eq_resolution_pct"] = traded_eq_resolution_pct
 
-    # Backtest and walk-forward evaluations across the full 2022-2026 Bhavcopy corpus are pending (Phase 3).
-    # Per AGENTS.md §9.1, §9.3 and Audit §54.10 Item 1, uncomputed metrics are omitted from the bundle
-    # and honestly evaluate to NOT RUN rather than asserting false PASS statuses on hardcoded literals.
+    # System invariants and execution metrics (Findings H-73, H-75):
+    # Invariant flags (strict Decimal, gap fail-closed, PIT universe, zero fabrication, statutory costs)
+    # and execution observation flags (circuit limits, execution latency) are omitted from the bundle
+    # until backed by recorded engine execution outputs, honestly evaluating to NOT RUN per §9.1 and §55.8.
 
     return bundle
 
@@ -164,16 +159,11 @@ def generate_report() -> VerdictReport:
     with open(md_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(report.to_markdown() + "\n")
 
-    # Honest assertions on computed verdict (§54.10 Item 1)
-    assert report.overall_verdict == OverallVerdict.NO_GO, (
-        f"Expected overall verdict NO-GO, got: {report.overall_verdict}"
-    )
-    assert report.summary_counts.get("FAIL", 0) == 0, (
-        f"Expected 0 FAIL criteria, got: {report.summary_counts.get('FAIL', 0)}"
-    )
-    assert report.summary_counts.get("PASS", 0) > 0, (
-        f"Expected at least 1 PASS criterion, got: {report.summary_counts.get('PASS', 0)}"
-    )
+    # Structural and file assertions (Finding H-76, Audit §55.5)
+    assert report is not None
+    assert len(report.evaluations) == 23
+    assert json_path.is_file() and json_path.stat().st_size > 0
+    assert md_path.is_file() and md_path.stat().st_size > 0
 
     print("=" * 80)
     print("PHASE 2D TIER-A VERDICT REPORT GENERATED SUCCESSFULLY")
