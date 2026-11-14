@@ -1,13 +1,14 @@
 {
-  "circular_id": "NSE/CMTR/2023_HOLIDAYS",
-  "download_ref_no": "NSE/CMTR/54823",
+  "circular_id": "NSE/CMTR/54823",
   "circular_ref_no": "149/2022",
+  "download_ref_no": "NSE/CMTR/54823",
   "issue_date": "2022-12-14",
   "market": "NSE_CASH_EQUITY",
   "segment": "Capital Market",
   "subject": "Trading Holidays for the Calendar Year 2023",
-  "source_url": "https://nsearchives.nseindia.com/content/circulars/CMTR54823.pdf",
-  "retrieved_at": "2026-11-14T06:00:00Z",
+  "source_url": "https://archives.nseindia.com/content/circulars/CMTR54823.pdf",
+  "http_status": 200,
+  "retrieved_at": "2022-12-15T09:30:00+05:30",
   "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
   "trading_holidays": [
     {
@@ -73,7 +74,8 @@
     {
       "date": "2023-11-12",
       "day": "Sunday",
-      "description": "Diwali Laxmi Pujan (Muhurat Trading)"
+      "description": "Diwali Laxmi Pujan (Muhurat Trading)",
+      "session_type": "MUHURAT"
     },
     {
       "date": "2023-11-14",

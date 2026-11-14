@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import datetime
+from enum import Enum
 import hashlib
 import json
 from pathlib import Path
@@ -22,6 +23,12 @@ class CircularError(ValueError):
     pass
 
 
+class ProvenanceStatus(str, Enum):
+    """Official dataset provenance classification per AGENTS.md Rule 6.5."""
+    CONTENT_IDENTIFIED_ONLY = "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED"
+    VERIFIED = "VERIFIED"
+
+
 @dataclass(frozen=True, slots=True)
 class CircularHoliday:
     """Official exchange holiday substantiated by an authentic Bronze circular payload."""
@@ -29,6 +36,7 @@ class CircularHoliday:
     circular_id: str
     description: str
     is_muhurat: bool = False
+    session_type: str = "HOLIDAY"
     circular_ids: Tuple[str, ...] = ()
 
 
@@ -40,6 +48,7 @@ class CircularSpecialSession:
     session_type: str
     is_settlement_holiday: bool
     description: str
+    local_archive_status: Optional[str] = None
     circular_ids: Tuple[str, ...] = ()
 
 
@@ -180,12 +189,47 @@ def load_all_bronze_circulars(
             raise CircularError(f"Bronze circular {c_path.name} missing mandatory circular_id")
 
         source_url = payload.get("source_url")
-        if not source_url:
+        if not source_url or not isinstance(source_url, str):
             raise CircularError(f"Bronze circular {c_path.name} missing mandatory source_url (Finding H-57)")
+        if not (source_url.startswith("https://archives.nseindia.com/") or source_url.startswith("https://www.nseindia.com/")):
+            raise CircularError(
+                f"Bronze circular {c_path.name} has non-authentic source_url {source_url!r}. "
+                f"Must start with https://archives.nseindia.com/ or https://www.nseindia.com/ (Finding H-57)"
+            )
+
+        if payload.get("http_status") != 200:
+            raise CircularError(
+                f"Bronze circular {c_path.name} must have http_status 200, got {payload.get('http_status')!r} (Finding H-57)"
+            )
+
+        retrieved_at_str = payload.get("retrieved_at")
+        if not retrieved_at_str or not isinstance(retrieved_at_str, str):
+            raise CircularError(f"Bronze circular {c_path.name} missing mandatory retrieved_at timestamp (Finding H-57)")
+        try:
+            retrieved_dt = datetime.datetime.fromisoformat(retrieved_at_str)
+        except Exception as e:
+            raise CircularError(
+                f"Bronze circular {c_path.name} has invalid ISO 8601 retrieved_at timestamp {retrieved_at_str!r}: {e}"
+            )
+        if retrieved_dt.tzinfo is None:
+            raise CircularError(
+                f"Bronze circular {c_path.name} retrieved_at must include explicit timezone offset (Finding H-57): {retrieved_at_str!r}"
+            )
 
         prov_status = payload.get("provenance_status")
         if not prov_status:
             raise CircularError(f"Bronze circular {c_path.name} missing mandatory provenance_status (Finding H-57)")
+        valid_statuses = {p.value for p in ProvenanceStatus}
+        if prov_status not in valid_statuses:
+            raise CircularError(
+                f"Bronze circular {c_path.name} has unrecognized provenance_status: {prov_status!r}. "
+                f"Allowed: {sorted(valid_statuses)} (Finding H-57)"
+            )
+        if prov_status == ProvenanceStatus.VERIFIED.value:
+            raise CircularError(
+                f"Bronze circular {c_path.name} cannot claim VERIFIED without verified source certificates "
+                f"per AGENTS.md Rule 6.5 (Finding H-57)"
+            )
 
         # Collect all recognized IDs / aliases for this circular
         id_set = {c_id}
@@ -203,12 +247,14 @@ def load_all_bronze_circulars(
         for h in payload.get("trading_holidays", []):
             dt = datetime.date.fromisoformat(h["date"])
             desc = h.get("description", "Trading Holiday")
-            is_muhurat = "muhurat" in desc.lower()
+            session_type = h.get("session_type", "MUHURAT" if "muhurat" in desc.lower() else "HOLIDAY")
+            is_muhurat = (session_type == "MUHURAT") or ("muhurat" in desc.lower())
             holidays[dt] = CircularHoliday(
                 date=dt,
                 circular_id=c_id,
                 description=desc,
                 is_muhurat=is_muhurat,
+                session_type=session_type,
                 circular_ids=id_tuple,
             )
 
@@ -218,12 +264,14 @@ def load_all_bronze_circulars(
             st = s.get("session_type", "SPECIAL")
             sh = bool(s.get("is_settlement_holiday", False))
             desc = s.get("description", "Special Session")
+            local_archive_status = s.get("local_archive_status")
             special_sessions[dt] = CircularSpecialSession(
                 date=dt,
                 circular_id=c_id,
                 session_type=st,
                 is_settlement_holiday=sh,
                 description=desc,
+                local_archive_status=local_archive_status,
                 circular_ids=id_tuple,
             )
 

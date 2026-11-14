@@ -121,3 +121,28 @@ market_data_and_accounting_invariants:
   point_in_time_universe_required: true
   # Zero forward-filling or linear interpolation of missing OHLC records
   zero_data_fabrication_required: true
+
+  # Authoritative Calendar and Session Reconciliation Invariants (AGENTS.md §6.3, §9.2, Findings H-56, H-61, H-62)
+  # Pinned uncurated baseline schedule sessions in evaluation window 2022-01-03..2026-10-31
+  expected_baseline_calendar_sessions: 1201
+  # Pinned authoritative exchange trading sessions held in evaluation window 2022-01-03..2026-10-31
+  expected_authoritative_calendar_sessions: 1196
+  # Pinned total authoritative trading sessions across full calendar 2015-01-01..2026-11-11
+  expected_total_calendar_sessions: 2935
+  # Strict enumeration of authorized unarchived special session data gaps (Finding H-62)
+  # Unarchived session gaps are strictly capped and cannot be extended without human criteria commit
+  authorized_unarchived_special_sessions:
+    - "2025-02-01"
+  # Strict enumeration of authorized baseline calendar holiday exclusions (Finding H-61)
+  authorized_calendar_holiday_exclusions:
+    - "2025-10-22"
+    - "2026-01-15"
+    - "2026-03-26"
+    - "2026-03-31"
+    - "2026-05-28"
+    - "2026-06-26"
+    - "2026-09-14"
+  # Strict enumeration of authorized baseline calendar trading session inclusions (Finding H-61)
+  authorized_calendar_trading_inclusions:
+    - "2026-03-20"
+    - "2026-05-27"

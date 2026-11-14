@@ -237,7 +237,135 @@ def test_muhurat_trading_session_modeling_and_circular_coexistence():
         assert session_rec is not None, f"Muhurat date {m_date} missing from calendar"
         assert session_rec.session_type == SessionType.MUHURAT, f"Muhurat date {m_date} session_type != MUHURAT"
 
-        # 2. Bronze circular registry flags daytime settlement holiday with is_muhurat=True
+        # 2. Bronze circular registry flags daytime settlement holiday with is_muhurat=True and session_type == MUHURAT
         circ_holiday = registry.holidays.get(m_date)
         assert circ_holiday is not None, f"Muhurat date {m_date} missing from circular holidays"
         assert circ_holiday.is_muhurat is True, f"Muhurat date {m_date} not flagged as is_muhurat"
+        assert circ_holiday.session_type == "MUHURAT", f"Muhurat date {m_date} session_type != MUHURAT (Note N-50)"
+
+
+def test_circular_special_session_local_archive_status():
+    """Verify 2025-02-01 special session models local Bronze archive absence (Finding H-60, Note N-49)."""
+    registry = load_all_bronze_circulars()
+    feb1 = datetime.date(2025, 2, 1)
+    rec = registry.special_sessions.get(feb1)
+    assert rec is not None, "2025-02-01 missing from special sessions"
+    assert rec.session_type == "SPECIAL"
+    assert rec.is_settlement_holiday is True
+    assert rec.local_archive_status == "ABSENT_FROM_LOCAL_BRONZE_STORAGE", (
+        f"2025-02-01 local_archive_status mismatch: {rec.local_archive_status!r} (Note N-49)"
+    )
+
+
+def test_circular_validation_rejects_unauthentic_source_url(tmp_path: Path):
+    """Verify circular loader rejects non-NSE source_url fail closed (Finding H-57)."""
+    payload = {
+        "circular_id": "NSE/CMTR/99991",
+        "circular_ref_no": "991/2023",
+        "issue_date": "2023-03-10",
+        "market": "NSE_CASH_EQUITY",
+        "subject": "Fake URL",
+        "source_url": "https://unauthorized-domain.com/fake.pdf",
+        "http_status": 200,
+        "retrieved_at": "2026-11-14T06:00:00+05:30",
+        "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+    }
+    raw_bytes = json.dumps(payload, indent=2).encode("utf-8")
+    c_path = tmp_path / "NSE_CMTR_99991.json"
+    c_path.write_bytes(raw_bytes)
+
+    m_path = tmp_path / "manifest.jsonl"
+    m_entry = {
+        "artifact": "circulars/NSE_CMTR_99991.json",
+        "is_current": True,
+        "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+        "byte_count": len(raw_bytes),
+    }
+    m_path.write_text(json.dumps(m_entry) + "\n", encoding="utf-8")
+
+    with pytest.raises(CircularError, match="has non-authentic source_url"):
+        load_all_bronze_circulars(circulars_dir=tmp_path, manifest_path=m_path)
+
+
+def test_circular_validation_rejects_naive_retrieved_at_timestamp(tmp_path: Path):
+    """Verify circular loader rejects naive retrieved_at timestamp lacking tz offset (Finding H-57)."""
+    payload = {
+        "circular_id": "NSE/CMTR/99992",
+        "source_url": "https://archives.nseindia.com/content/circulars/CMTR99992.pdf",
+        "http_status": 200,
+        "retrieved_at": "2026-11-14T06:00:00",  # Missing timezone offset
+        "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+    }
+    raw_bytes = json.dumps(payload, indent=2).encode("utf-8")
+    c_path = tmp_path / "NSE_CMTR_99992.json"
+    c_path.write_bytes(raw_bytes)
+
+    m_path = tmp_path / "manifest.jsonl"
+    m_entry = {
+        "artifact": "circulars/NSE_CMTR_99992.json",
+        "is_current": True,
+        "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+        "byte_count": len(raw_bytes),
+    }
+    m_path.write_text(json.dumps(m_entry) + "\n", encoding="utf-8")
+
+    with pytest.raises(CircularError, match="must include explicit timezone offset"):
+        load_all_bronze_circulars(circulars_dir=tmp_path, manifest_path=m_path)
+
+
+def test_circular_validation_rejects_unauthorized_verified_promotion(tmp_path: Path):
+    """Verify circular loader rejects unauthorized VERIFIED provenance_status (Finding H-57, Rule 6.5)."""
+    payload = {
+        "circular_id": "NSE/CMTR/99993",
+        "source_url": "https://archives.nseindia.com/content/circulars/CMTR99993.pdf",
+        "http_status": 200,
+        "retrieved_at": "2026-11-14T06:00:00+05:30",
+        "provenance_status": "VERIFIED",  # Self-promotion prohibited
+    }
+    raw_bytes = json.dumps(payload, indent=2).encode("utf-8")
+    c_path = tmp_path / "NSE_CMTR_99993.json"
+    c_path.write_bytes(raw_bytes)
+
+    m_path = tmp_path / "manifest.jsonl"
+    m_entry = {
+        "artifact": "circulars/NSE_CMTR_99993.json",
+        "is_current": True,
+        "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+        "byte_count": len(raw_bytes),
+    }
+    m_path.write_text(json.dumps(m_entry) + "\n", encoding="utf-8")
+
+    with pytest.raises(CircularError, match="cannot claim VERIFIED without verified source certificates"):
+        load_all_bronze_circulars(circulars_dir=tmp_path, manifest_path=m_path)
+
+
+def test_calendar_annual_session_counts_reconciliation_failure():
+    """Verify TradingCalendar construction fails closed if annual session count mismatches actual sessions (Finding H-61)."""
+    cal = load_nse_trading_calendar()
+    from signal_core.storage.calendar import CalendarError, TradingCalendar
+
+    # Tamper annual_session_counts by altering 2023 count
+    tampered_counts = dict(cal.annual_session_counts)
+    tampered_counts["2023"] = tampered_counts["2023"] - 1
+
+    with pytest.raises(CalendarError, match="Calendar annual session count mismatch for year 2023"):
+        TradingCalendar(
+            calendar_id=cal.calendar_id,
+            market=cal.market,
+            session_records=cal.session_records,
+            binding_start_date=cal.binding_start_date,
+            fingerprint=cal.fingerprint,
+            provenance=cal.provenance,
+            annual_session_counts=tampered_counts,
+        )
+
+
+def test_criteria_calendar_invariants_and_unauthorized_special_rejection():
+    """Verify criteria pins calendar session counts and authorized special session sets (Findings H-61, H-62)."""
+    criteria = load_go_no_go_criteria()
+    assert criteria.expected_total_calendar_sessions == 2935
+    assert criteria.expected_authoritative_calendar_sessions == 1196
+    assert criteria.expected_baseline_calendar_sessions == 1201
+    assert criteria.authorized_unarchived_special_sessions == ("2025-02-01",)
+    assert len(criteria.authorized_calendar_holiday_exclusions) == 7
+    assert len(criteria.authorized_calendar_trading_inclusions) == 2

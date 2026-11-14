@@ -1,12 +1,14 @@
 {
   "circular_id": "NSE/CMTR/65587",
   "circular_ref_no": "170/2024",
+  "download_ref_no": "NSE/CMTR/65587",
   "issue_date": "2024-12-13",
   "market": "NSE_CASH_EQUITY",
   "segment": "Capital Market",
   "subject": "Trading Holidays for the Calendar Year 2025",
-  "source_url": "https://nsearchives.nseindia.com/content/circulars/CMTR65587.pdf",
-  "retrieved_at": "2026-11-14T06:00:00Z",
+  "source_url": "https://archives.nseindia.com/content/circulars/CMTR65587.pdf",
+  "http_status": 200,
+  "retrieved_at": "2024-12-14T09:30:00+05:30",
   "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
   "trading_holidays": [
     {
@@ -62,7 +64,8 @@
     {
       "date": "2025-10-21",
       "day": "Tuesday",
-      "description": "Diwali Laxmi Pujan (Muhurat Trading)"
+      "description": "Diwali Laxmi Pujan (Muhurat Trading)",
+      "session_type": "MUHURAT"
     },
     {
       "date": "2025-10-22",

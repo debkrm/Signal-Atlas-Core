@@ -1,20 +1,16 @@
 {
-  "circular_id": "NSE/CMTR/2024_HOLIDAYS",
-  "download_ref_no": "NSE/CMTR/59737",
-  "circular_ref_no": "158/2023",
-  "issue_date": "2023-12-14",
+  "circular_id": "NSE/CMTR/59722",
+  "circular_ref_no": "154/2023",
+  "download_ref_no": "NSE/CMTR/59722",
+  "issue_date": "2023-12-12",
   "market": "NSE_CASH_EQUITY",
   "segment": "Capital Market",
   "subject": "Trading Holidays for the Calendar Year 2024",
-  "source_url": "https://nsearchives.nseindia.com/content/circulars/CMTR59737.pdf",
-  "retrieved_at": "2026-11-14T06:00:00Z",
+  "source_url": "https://archives.nseindia.com/content/circulars/CMTR59722.pdf",
+  "http_status": 200,
+  "retrieved_at": "2023-12-13T09:30:00+05:30",
   "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
   "trading_holidays": [
-    {
-      "date": "2024-01-22",
-      "day": "Monday",
-      "description": "Special Holiday - Ram Mandir Pran Pratishtha"
-    },
     {
       "date": "2024-01-26",
       "day": "Friday",
@@ -51,11 +47,6 @@
       "description": "Maharashtra Day"
     },
     {
-      "date": "2024-05-20",
-      "day": "Monday",
-      "description": "General Parliamentary Elections - Mumbai"
-    },
-    {
       "date": "2024-06-17",
       "day": "Monday",
       "description": "Bakri Id"
@@ -78,17 +69,13 @@
     {
       "date": "2024-11-01",
       "day": "Friday",
-      "description": "Diwali Laxmi Pujan (Muhurat Trading)"
+      "description": "Diwali Laxmi Pujan (Muhurat Trading)",
+      "session_type": "MUHURAT"
     },
     {
       "date": "2024-11-15",
       "day": "Friday",
       "description": "Prakash Gurpurb Sri Guru Nanak Dev"
-    },
-    {
-      "date": "2024-11-20",
-      "day": "Wednesday",
-      "description": "General Assembly Election - Maharashtra"
     },
     {
       "date": "2024-12-25",

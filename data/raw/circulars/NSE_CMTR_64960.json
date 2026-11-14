@@ -1,0 +1,20 @@
+{
+  "circular_id": "NSE/CMTR/64960",
+  "circular_ref_no": "154/2024",
+  "download_ref_no": "NSE/CMTR/64960",
+  "issue_date": "2024-11-08",
+  "market": "NSE_CASH_EQUITY",
+  "segment": "Capital Market",
+  "subject": "Declaration of Trading Holiday on November 20, 2024 - Assembly Elections",
+  "source_url": "https://archives.nseindia.com/content/circulars/CMTR64960.pdf",
+  "http_status": 200,
+  "retrieved_at": "2024-11-09T09:30:00+05:30",
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "trading_holidays": [
+    {
+      "date": "2024-11-20",
+      "day": "Wednesday",
+      "description": "General Assembly Election - Maharashtra"
+    }
+  ]
+}

@@ -1,12 +1,14 @@
 {
   "circular_id": "NSE/CMTR/71775",
   "circular_ref_no": "172/2025",
+  "download_ref_no": "NSE/CMTR/71775",
   "issue_date": "2025-12-12",
   "market": "NSE_CASH_EQUITY",
   "segment": "Capital Market",
   "subject": "Trading Holidays for the Calendar Year 2026",
-  "source_url": "https://nsearchives.nseindia.com/content/circulars/CMTR71775.pdf",
-  "retrieved_at": "2026-11-14T06:00:00Z",
+  "source_url": "https://archives.nseindia.com/content/circulars/CMTR71775.pdf",
+  "http_status": 200,
+  "retrieved_at": "2025-12-13T09:30:00+05:30",
   "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
   "trading_holidays": [
     {
@@ -109,7 +111,8 @@
     {
       "date": "2026-11-08",
       "day": "Sunday",
-      "description": "Diwali Laxmi Pujan (Muhurat Trading)"
+      "description": "Diwali Laxmi Pujan (Muhurat Trading)",
+      "session_type": "MUHURAT"
     }
   ],
   "verified_regular_trading_sessions": [

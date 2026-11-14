@@ -112,6 +112,26 @@ class TradingCalendar:
                 )
             prev_date = curr_date
 
+        # Reconcile annual session counts against actual sessions per Finding H-61
+        actual_counts: Dict[str, int] = {}
+        for r in self.session_records:
+            y_str = str(r.date.year)
+            actual_counts[y_str] = actual_counts.get(y_str, 0) + 1
+
+        for y_str, declared in self.annual_session_counts.items():
+            actual = actual_counts.get(str(y_str), 0)
+            if actual != int(declared):
+                raise CalendarError(
+                    f"Calendar annual session count mismatch for year {y_str}: "
+                    f"declared {declared} != actual {actual} sessions (Finding H-61)."
+                )
+
+        for y_str, actual in actual_counts.items():
+            if y_str not in self.annual_session_counts:
+                raise CalendarError(
+                    f"Calendar contains {actual} sessions in year {y_str} not tracked in annual_session_counts (Finding H-61)."
+                )
+
     @property
     def sessions(self) -> Tuple[datetime.date, ...]:
         """Ordered tuple of all session dates."""

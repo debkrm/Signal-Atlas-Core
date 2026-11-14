@@ -1,12 +1,14 @@
 {
   "circular_id": "NSE/CMTR/65729",
   "circular_ref_no": "172/2024",
+  "download_ref_no": "NSE/CMTR/65729",
   "issue_date": "2024-12-23",
   "market": "NSE_CASH_EQUITY",
   "segment": "Capital Market",
   "subject": "Live Trading Session on February 01, 2025 \u2013 Presentation of Union Budget",
-  "source_url": "https://nsearchives.nseindia.com/content/circulars/CMTR65729.pdf",
-  "retrieved_at": "2026-11-14T06:00:00Z",
+  "source_url": "https://archives.nseindia.com/content/circulars/CMTR65729.pdf",
+  "http_status": 200,
+  "retrieved_at": "2024-12-24T09:30:00+05:30",
   "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
   "special_sessions": [
     {
@@ -17,8 +19,8 @@
       "is_settlement_holiday": true,
       "t0_available": false,
       "btst_restricted": true,
-      "bhavcopy_distribution": "UNARCHIVED_SPECIAL_SESSION",
-      "reason": "Live trading session convened on Saturday, February 01, 2025 on account of Union Budget presentation per Circular Ref 172/2024. Market hours 09:15-15:30. Declared settlement holiday. Daily Bhavcopy archive unarchived in local Bronze cache."
+      "local_archive_status": "ABSENT_FROM_LOCAL_BRONZE_STORAGE",
+      "reason": "Live trading session convened on Saturday, February 01, 2025 on account of Union Budget presentation per Circular Ref 172/2024. Market hours 09:15-15:30. Declared settlement holiday. Daily Bhavcopy archive is absent from local Bronze storage cache."
     }
   ]
 }

@@ -1,12 +1,14 @@
 {
   "circular_id": "NSE/MSD/66381",
   "circular_ref_no": "06/2025",
+  "download_ref_no": "NSE/MSD/66381",
   "issue_date": "2025-01-29",
   "market": "NSE_CASH_EQUITY",
   "segment": "Capital Market & Futures and Options",
   "subject": "Trading Timings for Live Trading Sessions on Saturday, February 01, 2025",
-  "source_url": "https://nsearchives.nseindia.com/content/circulars/MSD66381.pdf",
-  "retrieved_at": "2026-11-14T06:00:00Z",
+  "source_url": "https://archives.nseindia.com/content/circulars/MSD66381.pdf",
+  "http_status": 200,
+  "retrieved_at": "2025-01-30T09:30:00+05:30",
   "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
   "session_timings": [
     {

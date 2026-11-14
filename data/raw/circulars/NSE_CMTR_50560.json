@@ -1,13 +1,14 @@
 {
-  "circular_id": "NSE/CMTR/2022_HOLIDAYS",
-  "download_ref_no": "NSE/CMTR/50543",
-  "circular_ref_no": "138/2021",
-  "issue_date": "2021-12-08",
+  "circular_id": "NSE/CMTR/50560",
+  "circular_ref_no": "117/2021",
+  "download_ref_no": "NSE/CMTR/50560",
+  "issue_date": "2021-12-10",
   "market": "NSE_CASH_EQUITY",
   "segment": "Capital Market",
-  "subject": "Trading Holidays for the Calendar Year 2022",
-  "source_url": "https://nsearchives.nseindia.com/content/circulars/CMTR50543.pdf",
-  "retrieved_at": "2026-11-14T06:00:00Z",
+  "subject": "Trading holidays for the calendar year 2022",
+  "source_url": "https://archives.nseindia.com/content/circulars/CMTR50560.pdf",
+  "http_status": 200,
+  "retrieved_at": "2021-12-11T09:30:00+05:30",
   "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
   "trading_holidays": [
     {
@@ -63,7 +64,8 @@
     {
       "date": "2022-10-24",
       "day": "Monday",
-      "description": "Diwali Laxmi Pujan (Muhurat Trading)"
+      "description": "Diwali Laxmi Pujan (Muhurat Trading)",
+      "session_type": "MUHURAT"
     },
     {
       "date": "2022-10-26",

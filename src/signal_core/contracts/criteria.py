@@ -118,9 +118,26 @@ class GoNoGoCriteria:
     # Statutory cost schedule
     statutory_costs: StatutoryCostCriteria
 
-    # Market data and accounting invariants (§10.8, Audit §40.5, Finding H-54)
+    # Market data and accounting invariants (§10.8, Audit §40.5, Finding H-54, H-61, H-62)
     min_binding_evaluation_start_date: datetime.date = datetime.date(2022, 1, 3)
     min_traded_eq_resolution_pct: Decimal = Decimal("100.0")
+    expected_baseline_calendar_sessions: int = 1201
+    expected_authoritative_calendar_sessions: int = 1196
+    expected_total_calendar_sessions: int = 2935
+    authorized_unarchived_special_sessions: Tuple[str, ...] = ("2025-02-01",)
+    authorized_calendar_holiday_exclusions: Tuple[str, ...] = (
+        "2025-10-22",
+        "2026-01-15",
+        "2026-03-26",
+        "2026-03-31",
+        "2026-05-28",
+        "2026-06-26",
+        "2026-09-14",
+    )
+    authorized_calendar_trading_inclusions: Tuple[str, ...] = (
+        "2026-03-20",
+        "2026-05-27",
+    )
 
 
 def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCriteria:
@@ -227,6 +244,28 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         min_traded_eq_resolution_pct=_to_decimal(
             data.get("market_data_and_accounting_invariants", {}).get("min_traded_eq_resolution_pct", "100.0"),
             "min_traded_eq_resolution_pct",
+        ),
+        expected_baseline_calendar_sessions=int(
+            data.get("market_data_and_accounting_invariants", {}).get("expected_baseline_calendar_sessions", 1201)
+        ),
+        expected_authoritative_calendar_sessions=int(
+            data.get("market_data_and_accounting_invariants", {}).get("expected_authoritative_calendar_sessions", 1196)
+        ),
+        expected_total_calendar_sessions=int(
+            data.get("market_data_and_accounting_invariants", {}).get("expected_total_calendar_sessions", 2935)
+        ),
+        authorized_unarchived_special_sessions=tuple(
+            data.get("market_data_and_accounting_invariants", {}).get("authorized_unarchived_special_sessions", ["2025-02-01"])
+        ),
+        authorized_calendar_holiday_exclusions=tuple(
+            data.get("market_data_and_accounting_invariants", {}).get("authorized_calendar_holiday_exclusions", [
+                "2025-10-22", "2026-01-15", "2026-03-26", "2026-03-31", "2026-05-28", "2026-06-26", "2026-09-14"
+            ])
+        ),
+        authorized_calendar_trading_inclusions=tuple(
+            data.get("market_data_and_accounting_invariants", {}).get("authorized_calendar_trading_inclusions", [
+                "2026-03-20", "2026-05-27"
+            ])
         ),
     )
 

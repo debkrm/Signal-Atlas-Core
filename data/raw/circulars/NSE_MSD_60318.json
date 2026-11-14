@@ -1,0 +1,21 @@
+{
+  "circular_id": "NSE/MSD/60318",
+  "circular_ref_no": "06/2024",
+  "download_ref_no": "NSE/MSD/60318",
+  "issue_date": "2024-01-18",
+  "market": "NSE_CASH_EQUITY",
+  "segment": "Capital Market & Futures and Options",
+  "subject": "Live trading session on Saturday, March 02, 2024 with intra-day switch over to DR Site",
+  "source_url": "https://archives.nseindia.com/content/circulars/MSD60318.pdf",
+  "http_status": 200,
+  "retrieved_at": "2024-01-19T09:30:00+05:30",
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "special_sessions": [
+    {
+      "date": "2024-03-02",
+      "session_type": "SPECIAL",
+      "description": "Live trading session on Saturday, March 02, 2024 from DR Site",
+      "is_settlement_holiday": false
+    }
+  ]
+}

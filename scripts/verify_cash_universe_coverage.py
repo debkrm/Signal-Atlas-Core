@@ -435,6 +435,54 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
     # Baseline uncurated schedule reconstruction (Finding H-56, H-59, H-60)
     baseline_sessions = (cal_sessions | excluded_from_cal) - included_in_archives
 
+    # Finding H-61: Verify calendar session counts against criteria-pinned invariants
+    if cal.total_sessions != criteria.expected_total_calendar_sessions:
+        print(
+            f"[FAIL] Total calendar sessions {cal.total_sessions} != "
+            f"criteria expected_total_calendar_sessions {criteria.expected_total_calendar_sessions} (Finding H-61)"
+        )
+        return False
+
+    if len(cal_sessions) != criteria.expected_authoritative_calendar_sessions:
+        print(
+            f"[FAIL] Authoritative calendar sessions in binding window {len(cal_sessions)} != "
+            f"criteria expected_authoritative_calendar_sessions {criteria.expected_authoritative_calendar_sessions} (Finding H-61)"
+        )
+        return False
+
+    if len(baseline_sessions) != criteria.expected_baseline_calendar_sessions:
+        print(
+            f"[FAIL] Reconstructed baseline calendar sessions {len(baseline_sessions)} != "
+            f"criteria expected_baseline_calendar_sessions {criteria.expected_baseline_calendar_sessions} (Finding H-61)"
+        )
+        return False
+
+    # Finding H-62: Assert that special sessions, holiday exclusions, and trading inclusions
+    # strictly match the governance-authorized set pinned in criteria.yaml (fail closed against unbounded self-declared exemptions)
+    expected_unarchived_special = {datetime.date.fromisoformat(s) for s in criteria.authorized_unarchived_special_sessions}
+    if unarchived_special_sessions != expected_unarchived_special:
+        print(
+            f"[FAIL] Unarchived special sessions {unarchived_special_sessions} does not strictly match "
+            f"governance-authorized set {expected_unarchived_special} per AGENTS.md §9.2 (Finding H-62)"
+        )
+        return False
+
+    expected_holiday_exclusions = {datetime.date.fromisoformat(s) for s in criteria.authorized_calendar_holiday_exclusions}
+    if excluded_from_cal != expected_holiday_exclusions:
+        print(
+            f"[FAIL] Calendar holiday exclusions {excluded_from_cal} does not strictly match "
+            f"governance-authorized set {expected_holiday_exclusions} per AGENTS.md §9.2 (Finding H-62)"
+        )
+        return False
+
+    expected_trading_inclusions = {datetime.date.fromisoformat(s) for s in criteria.authorized_calendar_trading_inclusions}
+    if included_in_archives != expected_trading_inclusions:
+        print(
+            f"[FAIL] Calendar trading inclusions {included_in_archives} does not strictly match "
+            f"governance-authorized set {expected_trading_inclusions} per AGENTS.md §9.2 (Finding H-62)"
+        )
+        return False
+
     # Expected archives derived from calendar: all authoritative sessions EXCEPT substantiated unarchived special sessions (§46 H-60)
     expected_archived_sessions = cal_sessions - unarchived_special_sessions
     if len(expected_archived_sessions) != manifest_expected_archive_count:
