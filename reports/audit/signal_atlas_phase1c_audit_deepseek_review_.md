@@ -3818,3 +3818,199 @@ This is the same defect §46.2 recorded, one layer further out. It cannot be clo
 The trajectory across §§43–47, as measured: `5c0272a` let the environment choose the swept scope; `5a98981` compared the session set with itself; `0edc158` compared the exception list with a list of allowed exceptions; `0b88f67` compared the date list with a payload the same author wrote; `95f4af2` restored the missing session and, in removing the last pinned number to satisfy that finding, left the comparison with nothing on the other side at all. Each iteration has closed the specific hole I named and widened the general one, because the fix has consistently been applied to the artefact rather than to the invariant: the invariant is still "the repository agrees with itself", and a repository always agrees with itself.
 
 ---
+
+## 48. Review of `fe3dca4` — 14 November 2026
+
+Scope: `fe3dca4` against the §47.6 verdict. Clean tree at that commit, re-measured today: `282 passed in 11.94s`, all eight `scripts/verify_*.py` exit 0 (the append-only gate discovers all eight), `verify_cash_universe_coverage.py` prints `2,390,165 / 2,390,165 traded EQ rows resolved across 1,195 sessions (100.0000%)`. Five rewrite attacks were applied to the working tree and each was reverted and re-measured green afterwards (H-62 exemption, H-61 deletion by count, H-64 substitution, N-51 criteria deletion, N-52 pre-2022 substitution).
+
+### 48.1 Closed
+
+**H-62 — CLOSED.** Measured: delete `2023-03-15` from Bronze and the manifest, append a `special_sessions` block for it to the already-registered 2023 holiday payload, re-register, add one reconciliation row with an `EXCLUDE_FROM_EXPECTED_ARCHIVES` action. Result:
+
+```
+[FAIL] Unarchived special sessions {2023-03-15, 2025-02-01} does not strictly match
+       governance-authorized set {2025-02-01} per AGENTS.md §9.2 (Finding H-62)
+OVERALL VERDICT: ONE OR MORE GATES FAILED
+```
+
+The three claim sets — unarchived special sessions, calendar holiday exclusions, archive-derived trading inclusions — are now compared as *sets* against enumerations in `configs/go_no_go_criteria.yaml`, not merely counted. That is the control I asked for and it works: an exemption is now a criteria commit, not a payload edit.
+
+**N-46 — CLOSED.** The placeholder identities (`NSE/CMTR/2015_HOLIDAYS` … `2024_HOLIDAYS`) are gone from the calendar's provenance; twelve real circular identifiers replace them.
+
+**N-48 — CLOSED.** The active manifest entries describe 2,935 sessions and the 65729 payload correctly. The stale `(008/2025)` text survives only inside a superseded entry, which is what append-only history should look like.
+
+**N-49 — CLOSED.** `bhavcopy_distribution: UNARCHIVED_SPECIAL_SESSION` — a claim about what the exchange distributed, which was false — is replaced by `local_archive_status: ABSENT_FROM_LOCAL_BRONZE_STORAGE`, a claim about this repository. The latter is true and is the honest form.
+
+**N-50 — CLOSED.** Muhurat sessions now carry an explicit `session_type` in the payload and on `CircularHoliday`; the substring test remains only as a fallback, and a test asserts the typed value.
+
+---
+
+### 48.2 H-61 — half closed: deletion is blocked, replacement is not
+
+The §47.2 attack (delete `2023-03-15`, its 1,923 rows and its manifest row, remove the date from `sessions` and `session_records`, decrement `annual_session_counts["2023"]`, re-register the reference artefacts, adjust the summary) now dies at the first pinned number:
+
+```
+[FAIL] Total calendar sessions 2934 != criteria expected_total_calendar_sessions 2935 (Finding H-61)
+OVERALL VERDICT: ONE OR MORE GATES FAILED
+```
+
+`TradingCalendar.__post_init__` also reconciles `annual_session_counts` against the actual per-year session counts in both directions, and a test drives that path. The three counts that were unreconciled at `95f4af2` — total, binding window, reconstructed baseline — are now compared against committed values, and removing a session changes all three. **This half of the finding is fixed.**
+
+The other half is not. Pinning *how many* sessions there were says nothing about *which*. The three counts are unchanged by any one-for-one date substitution within a year, and the annual count is unchanged by any substitution within the same year. So the same forge that failed as a deletion succeeds as a swap.
+
+---
+
+### 48.3 H-64 — new, hard: a session in the evaluated window can be replaced by a Saturday
+
+Take `2023-03-22` (a Wednesday session, 1,926 traded EQ rows). Rewrite the `TIMESTAMP` column of its Bhavcopy from `22-MAR-2023` to `25-MAR-2023`, rename the member and the archive to `cm25MAR2023bhav.csv.zip`, point the manifest row at `2023-03-25` with the new digest, replace `2023-03-22` with `2023-03-25` in `sessions` and `session_records`, re-seal and re-register the calendar. No payload, no criteria edit, no test change. Result:
+
+```
+[PASS] Authoritative calendar reconciliation verified: 1201 baseline calendar sessions - 7 excluded
+       holidays (substantiated by Bronze circulars) + 2 included trading sessions = 1196 authoritative
+       calendar sessions (1 unarchived special session gap documented) reconciling to 1195 Bronze archives
+[INFO] Per-Session Sweep Complete: 2,390,165 / 2,390,165 traded EQ rows resolved across 1,195 sessions (100.0000%)
+OVERALL VERDICT: ALL CASH UNIVERSE COVERAGE GATES PASSED
+282 passed in 11.61s
+```
+
+State after the edit: `2023-03-22` absent, `2023-03-25` present and a Saturday, `annual_session_counts["2023"]` still 246, total still 2,935, row total still 2,390,165, and the registry still knows of only three special sessions (2024-01-20, 2024-03-02, 2025-02-01). No NSE circular authorises a session on 25 March 2023. Every gate is green and every test passes.
+
+Two consequences. First, the exchange's actual Wednesday session has vanished from the research window and a Saturday that never traded has replaced it, with that Wednesday's 1,926 rows relabelled as its data. Second, the substitution is not visible anywhere in the verdict, because the verdict is computed from the calendar the substitution edited.
+
+There is a partial second lock today, and it is accidental. `verify_cov3` requires every `effective_from`/`effective_to` in `cash_equity_symbol_intervals.csv` to be a valid session, and `verify_cov2` resolves each row's ISIN against a date-sensitive symbol master. Both fire on some substitutions — a move onto or off an interval endpoint, or across an ISIN's first-trade date, dies in `COV-2`/`COV-3`. But these are properties of the interval table, not of the calendar, and the table covers a minority of sessions. Measured over the committed table: of the **246** sessions of 2023, **196** appear as an `effective_from`/`effective_to` endpoint and **50** do not. Neither `2023-03-22` nor `2023-03-25` is an endpoint, so `COV-3` has nothing to say about the swap, and `COV-2` resolves all 1,926 `EQ` rows of the redated archive because the symbol master is keyed to first trade, not to session. The forge above used one of those 50.
+
+---
+
+### 48.4 H-57 — open, but substantially reduced
+
+The document identities are now real. I checked the three I could falsify last round against NSE's archive and all three are correct: 2022 → `NSE/CMTR/50560` (Ref 117/2021, 10 Dec 2021), 2023 → `NSE/CMTR/54823` (Ref 149/2022, 14 Dec 2022), 2024 → `NSE/CMTR/59722` (Ref 154/2023, 12 Dec 2023). The 2022, 2023, 2024 and 2025 holiday lists match the published lists item for item, the 2024 amendments are now separate payloads (`60336` for 22 Jan, `61518` for 20 May, `64960` for 20 Nov) rather than folded into the base circular, and the muhurat dates are typed. That is a large, verifiable improvement in the corpus and it should be recorded as such.
+
+It is still not retrieved bytes, and one payload contains a date its document cannot contain. `data/raw/circulars/NSE_CMTR_71775.json` declares `retrieved_at: 2025-12-13T09:30:00+05:30`, and its `trading_holidays` list contains `2026-01-15`. Circular `NSE/CMTR/71775` (12 Dec 2025) does not contain 15 January 2026: that date was notified later, by `NSE/CMTR/72260` (Ref 07/2026, 12 Jan 2026), whose operative sentence is *"In partial modification to Exchange circular reference no. NSE/CMTR/71775, the Exchange hereby notifies Thursday, January 15, 2026 as a trading holiday in Capital Market (CM) Segment on account of Municipal Corporation Election in Maharashtra"* — checked against `nsearchives.nseindia.com/content/circulars/CMTR72260.pdf` this round, not inferred. The same circular establishes that the base 71775 was issued 12 Dec 2025, which is the payload's own `issue_date`. So the payload includes an amendment published 30 days *after* its own retrieval timestamp, cites only the base circular, and the reconciliation table credits the exclusion to `NSE/CMTR/71775`:
+
+```
+2026-01-15 OFFICIAL_EXCHANGE_HOLIDAY ['NSE/CMTR/71775']
+```
+
+`NSE/CMTR/72260` appears nowhere in the repository: the holiday table credits `2026-01-15` to `NSE/CMTR/71775` and the payload lists it under that circular's `trading_holidays`. This is the §47.4 defect — an amendment folded into a base document — reproduced with a document I can name, and the retrieval timestamp is what makes it falsifiable rather than merely suspect: a payload retrieved on 2025-12-13 declares content published on 2026-01-12, and cites only the document it modified.
+
+The rest of the metadata is authored, not observed. All twelve payloads declare `http_status: 200` for a URL that was never fetched; there is no response digest, byte count or fetch log anywhere in the corpus. All twelve carry `retrieved_at == issue_date + 1 day at exactly 09:30:00+05:30`:
+
+```
+50560 2021-12-10 -> 2021-12-11T09:30:00+05:30     61518 2024-04-08 -> 2024-04-09T09:30:00+05:30
+54823 2022-12-14 -> 2022-12-15T09:30:00+05:30     64960 2024-11-08 -> 2024-11-09T09:30:00+05:30
+59722 2023-12-12 -> 2023-12-13T09:30:00+05:30     71775 2025-12-12 -> 2025-12-13T09:30:00+05:30
+```
+
+A retrieval is an event with variance; twelve independent retrievals at the same wall-clock minute on the day after issue is a formula. And `provenance_status` now has exactly one admissible value — `VERIFIED` is rejected — so the field is a constant that every claim rests on: the gate still prints `substantiated by Bronze circulars` and `PASS` while all twelve documents declare `SOURCE_UNVERIFIED`. The remedy I specified in §47.6, that a claim resting on a non-`VERIFIED` payload is reported `NOT RUN` rather than `PASS`, is not present anywhere in `scripts/` or `src/`. H-57 therefore stays open, at materially lower severity than at `95f4af2`: the window no longer rests on these documents (H-62's criteria sets now govern it), so what remains is the accuracy of the substantiation narrative and the amendment chain.
+
+---
+
+### 48.5 Notes
+
+**N-51 — the committed criteria file is not the authority.** Delete the three `expected_*_calendar_sessions` keys from `configs/go_no_go_criteria.yaml` and the loader silently substitutes the identical hardcoded defaults from `criteria.py`; the gate is green:
+
+```
+silently reverted to code defaults: 2935 1196 1201
+OVERALL VERDICT: ALL CASH UNIVERSE COVERAGE GATES PASSED
+```
+
+A missing invariant should be a failure, not a fallback. The pins now live in two places and the repository's answer to "what is the expected session count" depends on which one is consulted.
+
+**N-52 — 2015–2021 are unsubstantiated, and one can be rewritten.** The calendar's provenance cites twelve circulars, all 2022–2026. The 1,731 sessions of 2015–2021 cite nothing at all: no payload, no placeholder, no note. `binding_start_date` is `2018-04-01`, so 930 of those sessions are inside the range the calendar itself calls binding (measured: 1,731 sessions ≤ 2021, of which 930 fall on or after 2018-04-01; 801 precede it). They are constrained only by per-year counts, which a substitution does not change: replace `2019-03-05` with `2019-03-09` (a Saturday) in `sessions` and `session_records`, re-seal, re-register — `ALL CASH UNIVERSE COVERAGE GATES PASSED`, `282 passed`. This is H-64 in the years where not even an interval table stands in the way, and it is the same silence N-46 traded a fabrication for.
+
+**N-53 — `verified_regular_trading_sessions` is an inference wearing a verification's name.** The field in the 2026 payload asserts that 2026-03-20 and 2026-05-27 are trading days. A holiday circular does not say which days trade; it says which do not. Publishing an absence-of-evidence as a positive claim is the same shape of error as N-49, one level down.
+
+---
+
+### 48.6 Verdict
+
+**H-62 — CLOSED.** Measured against the exact attack that opened it, and the same construction now fails with a named set mismatch. This is the first finding in this series whose remedy closed the *class* rather than the instance: enumerating the admissible claim sets in a committed criteria file converts "any date can be excused" into "a criteria commit is required", and a criteria commit is exactly the human act §9.2 is meant to force.
+
+**H-61 — PARTIALLY CLOSED.** Deletion is dead: the three cardinalities and the annual counts are pinned and reconciled, and the §47.2 forge now fails at its first check. Replacement is not: **H-64** shows a Wednesday session in the evaluated window replaced by a Saturday, 1,926 rows relabelled, every gate green, every test passing. Counting is not identity.
+
+**H-57 — OPEN, reduced.** The corpus is now real — correct identities, correct date lists for 2022–2025, amendments as their own payloads — and the corpus earned that judgement: I could check it and it held. What remains is that the payloads are still transcriptions (no fetched bytes, no digest, `http_status` typed, retrieval timestamps a formula at `issue_date + 1d 09:30`), and one payload still folds an uncited amendment: `NSE_CMTR_71775.json` contains `2026-01-15`, notified by `NSE/CMTR/72260` on 12 Jan 2026, thirty days after the payload's own `retrieved_at`.
+
+**Notes:** N-46, N-48, N-49, N-50 CLOSED. New: **N-51** (missing criteria keys silently fall back to duplicated code defaults), **N-52** (2015–2021 cite no document and a 2019 session can be swapped for a Saturday with everything green), **N-53** (`verified_regular_trading_sessions` states an inference as a verification).
+
+**Wave 3 — GO stands, unchanged.** The fill path, statutory cost schedule, slippage model, settlement handling and fold engine are untouched by this commit; 282 tests green.
+
+**Phase 2D — NO-GO**, on one reason now instead of three. The window can no longer be shortened by deletion (H-61's first half) or widened by exemption (H-62), and the criteria sets are the right control. But the identity of the sessions in that window is still written by the same commit that writes the data, and H-64 demonstrates that a substitution is not merely possible but green. A research window whose dates can be relabelled is not yet a window; it is a row count.
+
+**The one change that closes it.** `TradingCalendar` already computes `CAL-FPR-V1-<sha256>` over the ordered date/type/time list, and already compares the declared digest against the computed one — with the declared value living in the same file it re-seals. Move that comparison one level out: put the expected fingerprint string in `configs/go_no_go_criteria.yaml` and fail when `cal.fingerprint` differs. Then a substituted date changes the fingerprint, the criteria pin is the thing that rejects it, and the anchor is a value only a human criteria edit can move — which is the same governance boundary H-62 just established, applied to identity rather than cardinality. Pair it with N-51 (no silent defaults for a pinned invariant) and the ordering is: **H-64 first, because it is the only remaining hole in the evaluated window; then the `72260` amendment and the retrieval metadata (H-57); then N-51, N-52, N-53. Then Phase 2D.**
+
+Measured trajectory: §47 asked for an input the author cannot author, and `fe3dca4` produced one — the criteria file — which closed H-62 outright and closed half of H-61. What it pinned was how many sessions there were. The remaining defect is the same defect one level down: what they were. Four rounds have now each closed the count and left the identity, and this is the first round where the fix was structural enough that the residual is a single, well-defined anchor rather than a missing one.
+
+---
+
+---
+
+## 49. Phase-wise verdict register at `fe3dca4` — 14 November 2026
+
+The user asked for a phase-wise pass over everything up to the current head, then a verdict on the head itself. §§1–48 already contain the per-round measurements; what follows is the consolidated register, re-measured today rather than copied from earlier sections, plus the ordered set that stands between this commit and Wave 4.
+
+### 49.1 Baseline re-measured on the tree at `fe3dca4`
+
+```
+282 passed in 11.94s                      (python -m pytest -q, zero skip, zero xfail)
+scripts/verify_audit_append_only.py       exit 0   (append-only, tag integrity, 8 discovered scripts, suite)
+scripts/verify_cash_universe_coverage.py  exit 0   (COV-1..COV-4 PASS; 2,390,165/2,390,165 rows, 1,195 archives)
+scripts/verify_historical_snapshot.py     exit 0
+scripts/verify_phase2a_containment_and_trials.py exit 0
+scripts/verify_phase2b_significance.py    exit 0
+scripts/verify_phase2b5_storage.py        exit 0
+scripts/verify_phase2c_walkforward.py     exit 0
+scripts/verify_wave1_thin_slice.py        exit 0
+```
+
+Sign-off tags present and correctly aimed: `wave0-signed-off-d2fd8e0`, `wave1-signed-off-95ac584`, `wave2-signed-off-982c9fa`, `wave3-signed-off-a093682`. `wave3-signed-off-a093682` is an ancestor of HEAD, so the tag does not claim a later commit; the Wave 3 extension in §§42–47 is carried in prose with §N citations, which is the weaker but permitted form under §12.2.
+
+### 49.2 Register
+
+Verdicts below are the ones this report has recorded; nothing is upgraded by the passage of commits.
+
+| Stage | Governing verdict | Status at `fe3dca4` | Residual that binds the next stage |
+|---|---|---|---|
+| Phase 1A / 1B — contracts, snapshot compat, Bhavcopy reconciliation | §17 (Phase 1E final, after 12 PASS / 0 FAIL) inherits 1A–1D | Signed off | none open |
+| Phase 1C — feature/indicator engine | §10 conditional GO; F-08/F-10 residuals carried | Signed off with R-1 (weekly path), R-2 (byte-identity) | R-1 still bars weekly features from a 2D strategy |
+| Phase 1D — cost engine, simulator | §12 E-1…E-6 closed | Signed off | E-1-R: no verified circuit-band source existed then; superseded by Wave 3 H-44 (§41) |
+| Phase 1E — ledger, position, portfolio | §17 | Signed off | none open |
+| Phase 2A — containment, trial registry | §20 | Signed off | `filter_partition_observations` still unwired to strategy logic (disclosed) |
+| Phase 2B — DSR / Haircut Sharpe | §22 | Signed off | C-2 (registry wiping visible only through git) |
+| Phase 2B.5 — ingestion & immutable storage | §24 | Signed off (GO) | storage layer untouched since; no regression measured |
+| Phase 2C / Wave 2 — strategy contract, walk-forward | §33, §34 | Signed off (GO at `982c9fa`) | none open on the engine |
+| Wave 0 — pre-ingest containment, schema freeze | §29 | Signed off (GO at `d2fd8e0`) | H-16/H-20 (caller-supplied unlock token, name-based root test) still open per §30 |
+| Wave 0.5 — repository foundation gate | §40.7 only; **no wave verdict exists** | Partially implemented: 0.5b/0.5c operate (append-only gate, dynamic discovery, red-on-skip), 0.5a (branch protection) unverifiable from repository files | N-21 stands as documentation-integrity: `ci.yml` states protection is NOT VERIFIED |
+| Wave 1 — thin real-data slice | §30 | Signed off | H-23 (float volume) and H-24 (date latch) CLOSED at §32; H-25 CLOSED for targeted ingest only — truncation stays silent when `target_isins` is `None`, which is the Wave 3 bulk-parse path and is not measured this round |
+| Wave 3 — full historical backfill, 2022-01-03..2026-10-31 | §41 GO, extended §42–§47 | **GO stands**; 2018-04-01..2021-12-31 NOT RUN, unsourced, declared in criteria | H-64 (session *identity* unanchored), H-57 (corpus transcribed, one folded amendment), N-51/N-52/N-53 |
+| Wave 4 / Phase 2D — computed verdict engine | no verdict yet | **NO-GO** | the Wave 3 identity hole: a verdict engine reading a calendar whose dates nobody outside the commit authorised would compute verdicts over a window that is not the exchange's |
+
+Two invariants that the whole register depends on and that this round re-measured rather than assumed:
+
+- the fill/cost/ledger path is byte-unchanged by `fe3dca4` — the commit touches `configs/`, `data/raw/circulars/`, `data/reference/manifest.jsonl`, `scripts/verify_cash_universe_coverage.py`, `contracts/criteria.py`, `storage/calendar.py`, `storage/circulars.py` and one test file; no file under `execution/` or `portfolio/` appears in its diffstat, which is why §48.6 is able to leave Wave 3's GO untouched;
+- the appended-only rule for this report holds through the commit: `verify_audit_append_only.py` exit 0 on a tree that now contains §48 and this section.
+
+### 49.3 The blocking set, in the order it must be closed
+
+Each item names the probe that must fail closed before the item is closed. A probe that passes on the unmodified tree is not a probe.
+
+1. **H-64 — pin the calendar's identity, not its cardinality.** Add `expected_calendar_fingerprint` to `configs/go_no_go_criteria.yaml` and compare it in `verify_cash_universe_coverage.py` against `TradingCalendar.fingerprint`. The value that must be pinned at this commit is:
+   ```
+   CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad
+   ```
+   Acceptance: the §48.3 substitution (`2023-03-22` → `2023-03-25`) and the §48.5 N-52 substitution (`2019-03-05` → `2019-03-09`) must both print a named `[FAIL]` and exit non-zero, and an unchanged tree must stay exit 0. This works because the loader already recomputes `CAL-FPR-V1` from `session_records` and compares it against `provenance.sha256` — a digest that lives in the same file it re-seals. Moving one copy of that string into the criteria file converts a self-seal into an external anchor, and a criteria edit is the human act §9.2 exists to force. It is the same boundary H-62's set enumerations just established, applied to identity.
+2. **N-51 — a missing pinned invariant is a failure, not a fallback.** Delete any `expected_*_calendar_sessions` key and the run must fail; today `criteria.py` substitutes `1201 / 1196 / 2935` and the gate is green (measured: `ALL CASH UNIVERSE COVERAGE GATES PASSED`, exit 0). Do this with 1, because both pins live in the same loader path.
+3. **H-57 — the amendment chain and honest retrieval metadata.** `NSE/CMTR/72260` (Ref 07/2026, 12 Jan 2026) must exist as its own payload, be cited by the `2026-01-15` reconciliation row, and `71775` must no longer carry that date. Then choose one of two honest states for the metadata: bytes fetched with a response digest, or `retrieved_at` removed from payloads that were never fetched. `provenance_status` must admit more than one value, and a claim resting on a non-`VERIFIED` payload must print `NOT RUN` rather than `PASS` — that last clause is what §47.6 asked for and it is still absent from `scripts/` and `src/`.
+4. **N-52 — 2015–2021 are either substantiated or not binding.** 930 sessions on or after `2018-04-01` cite no document at all. Either source them, or state in the criteria that the binding window begins where the sourced documents begin and stop counting the earlier sessions as authoritative.
+5. **N-53 — `verified_regular_trading_sessions` states an inference as a verification.** A holiday circular says which days do not trade. Rename or delete the field; do not publish an absence-of-evidence as a positive claim.
+
+Ordering rationale: 1 and 2 are one change to one comparison and remove the only hole in the evaluated window; 3 is corpus work that no longer gates the window (H-62 closed that) but is the difference between a substantiated exclusion and a narrated one; 4 and 5 are honesty of the same artefact.
+
+### 49.4 Verdict
+
+**Wave 3 — GO stands, unchanged, for `2022-01-03..2026-10-31`.** The execution path this verdict covers is not in this commit's diff, the gate that judges the data is green on real archives, and 282 tests pass on a clean tree. The GO continues to exclude `2018-04-01..2021-12-31`, which remains `NOT RUN` in the committed criteria — N-52 sharpens *why*, it does not change *that*.
+
+**Wave 4 / Phase 2D — NO-GO.** One blocking reason, and it is narrower than last round: the window can no longer be shortened by deletion (H-61's cardinalities) or excused by exemption (H-62's sets), but the *identity* of the sessions in it is still written by the same commit that writes the data. Measured today: a Wednesday session in the evaluated window became a Saturday, 1,926 rows relabelled, the three cardinalities intact at 2,935 / 1,196 / 1,201, `2,390,165 / 2,390,165` rows resolved, four gates PASS, 282 tests green. A verdict engine run over that window would compute a verdict about a market that did not exist that day. Phase 2D's own gates — a reproducible report, every label traceable, adversarial cases fail closed — are satisfiable; they would simply be satisfied over the wrong dates.
+
+This is the fourth consecutive round in which the fix landed on the artefact and left the invariant. It is also the first in which the remaining defect has a one-line form: the calendar declares its own fingerprint and the repository compares it with itself. Pin that string in the criteria file and the class closes, not just this instance.
+
+**What would change this verdict.** H-64 closed with item 1's probe failing on both substitutions and on nothing else; N-51 closed in the same loader; H-57's amendment payload and metadata honesty in place; N-52 and N-53 stated honestly. Items 3–5 may trail 1–2 if the implementer prefers, but item 1 is not optional and no Phase 2D work should start before it is measured.
