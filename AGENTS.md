@@ -236,6 +236,7 @@ This project has one branch (`main`), no CI history, and documents that cite com
 4. **A gate is not passed by weakening it.** No `skip`, `xfail`, `pytest.ini` exclusion, or widened tolerance to reach green. No coverage-percentage threshold as a merge gate — it measures lines executed, not invariants upheld (§9.1). If a check must be relaxed, that is a documented decision in the same commit, naming what is now unverified.
 5. **Offline is a test result.** CI has no network. A test that needs the live NSE archive is a fixture-extraction task (cached bytes committed to Bronze), not a test.
 6. **CI never publishes, never projects, never touches holdout.** It computes and fails. Anything that writes outside the working tree is human-invoked.
+7. **Commits carry no AI or co-author attribution trailers.** No `Co-Authored-By`, no "Generated with" line, no co-author identity of any kind, unless the maintainer asks for it on a specific commit. A trailer adds a name to the contributor list, and that is not a decision an agent makes.
 
 ---
 
@@ -252,3 +253,22 @@ Strategy scope is a researched decision, not a default. The current scope is **d
 4. **Breadth over frequency.** With multi-session holds, independent observations come from cross-sectional breadth (positions per rebalance), not from trade frequency. Prefer ranked baskets over single-name timing; both the multiple-testing budget (§8.2) and the observation count are measured in that unit.
 5. **Swing is configuration, not a second engine.** Holding horizon, universe filter, exit rule, and cost schedule are parameters of the single authoritative engine (§7.4). A `swing_simulator` or a forked fill/cost path is a §7.4 violation regardless of intent.
 6. **Scope changes are recorded.** Moving to intraday, F&O, or `BE` entry requires a committed decision stating the evidence that motivated it. It is never introduced as an experiment inside a strategy file.
+
+---
+
+## 14. Auditor Role and Review Cadence
+
+A review round produces three things, in this order: a **verdict** on the commit under review, the **evidence** that produced it, and an **ordered work order** for the next round. A round that ends with a finding but no instruction to the implementer is incomplete.
+
+1. **Audit a commit, never a working tree.** A verdict cites a SHA. Uncommitted work may be reviewed as a pre-commit check, but it must be labelled as such and it can close nothing.
+2. **One round is one numbered section**, appended to the audit report (§11.1), containing four parts:
+   - the baseline re-measured at that SHA: suite count with skip/xfail count, every `scripts/verify_*.py` exit status, and the gate's own verdict line;
+   - per-finding status — `CLOSED`, `PARTIAL`, `OPEN` — each with the measurement that decided it;
+   - the verdict for every phase the commit touches, with residuals named rather than implied;
+   - the work order: numbered, ordered by what it unblocks, each item naming the probe that must fail closed before the item is closed, and the phase in `CURRENT_STAGE_OF_WORK.md` it serves.
+3. **Reproduce, don't read.** Re-measure every load-bearing claim with an attack the finding implies — reseal a self-declared digest before testing a pin, delete the payload before testing substantiation, remove the pinned key before testing fail-closed. A check that passes on the unmodified tree is not a check.
+4. **Watch for the additive fix.** The recurring failure in this repository is a remedy that adds a guarded path beside the unguarded one: a new anchored loader while the old one stays exported and called, a new criteria pin while the code default remains, a new set check beside the count check. When a finding says "a consumer cannot", the acceptance is measured at every existing consumer, not at the new function.
+5. **Never move the goalposts.** Conditions named in a previous section are the contract for the next round. If they are met, the verdict changes even if better conditions can be imagined; if they were explicitly allowed to trail, they are carried as named residuals, not promoted to blockers.
+6. **The implementer's documents are theirs.** `CURRENT_STAGE_OF_WORK.md` is not edited by the auditor. Disagreement goes in a separate note citing the finding ID and the measurement contradicting it (§11.2).
+7. **Say what would falsify the verdict.** End each verdict with the observation that would make it wrong, so the next round knows what to measure rather than what to believe.
+8. **Instructions to the implementer live in the audit report**, not in chat, not in this file. The report is the citation target; anything said only in a conversation is lost with it.
