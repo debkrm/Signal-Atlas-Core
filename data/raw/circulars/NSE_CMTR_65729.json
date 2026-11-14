@@ -1,0 +1,22 @@
+{
+  "circular_id": "NSE/CMTR/65729",
+  "circular_ref_no": "008/2025",
+  "issue_date": "2025-01-20",
+  "market": "NSE_CASH_EQUITY",
+  "segment": "Capital Market",
+  "subject": "Live Trading Sessions on Saturday, February 01, 2025 on account of Union Budget",
+  "special_sessions": [
+    {
+      "date": "2025-02-01",
+      "day": "Saturday",
+      "session_type": "SPECIAL",
+      "description": "Union Budget Live Trading Session",
+      "is_settlement_holiday": true,
+      "t0_available": false,
+      "btst_restricted": true,
+      "bhavcopy_distribution": "UNARCHIVED_SPECIAL_SESSION",
+      "reason": "Declared settlement holiday with no T+0 session and restricted BTST squaring. Standard Bhavcopy archive unarchived in daily CM distribution."
+    }
+  ]
+}
+

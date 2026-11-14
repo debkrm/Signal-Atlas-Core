@@ -33,6 +33,7 @@ from signal_core.research.containment import PartitionRole, WalkForwardFold
 from signal_core.research.walkforward import WalkForwardEngine
 from signal_core.storage.bronze import BronzeStorage
 from signal_core.storage.calendar import load_nse_trading_calendar
+from signal_core.storage.circulars import load_all_bronze_circulars
 from signal_core.storage.gold import GoldEngine
 from signal_core.storage.ingest import (
     ingest_daily_bhavcopy_archive,
@@ -117,7 +118,9 @@ def verify_gate_cov1_artifact_integrity() -> bool:
     cal = load_nse_trading_calendar()
     valid_sessions = set(cal.sessions)
 
-    data = INTERVALS_CSV.read_bytes()
+    raw_data = INTERVALS_CSV.read_bytes()
+    # Normalize CRLF to LF for deterministic digest comparison across platforms (Finding H-58)
+    data = raw_data.replace(b"\r\n", b"\n")
     computed_sha256 = hashlib.sha256(data).hexdigest()
 
     # Check manifest entry per Note N-25
@@ -335,14 +338,17 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
         print(f"[FAIL] No active manifest entry for {CALENDAR_RECONCILIATION_FILE.name} in {MANIFEST_FILE.name} (Finding H-56)")
         return False
 
-    recon_bytes = CALENDAR_RECONCILIATION_FILE.read_bytes()
+    recon_bytes = CALENDAR_RECONCILIATION_FILE.read_bytes().replace(b"\r\n", b"\n")
     recon_hash = hashlib.sha256(recon_bytes).hexdigest()
     if recon_hash != recon_manifest_entry["sha256"] or len(recon_bytes) != recon_manifest_entry["byte_count"]:
-        print(f"[FAIL] Calendar reconciliation hash/size mismatch vs manifest.jsonl (Finding H-56)")
+        print(f"[FAIL] Calendar reconciliation hash/size mismatch vs manifest.jsonl (Finding H-56, H-58)")
         return False
 
     with open(CALENDAR_RECONCILIATION_FILE, "r", encoding="utf-8") as f:
         recon_data = json.load(f)
+
+    # Load authoritative Bronze circular registry (§6.3, Finding H-57)
+    circular_registry = load_all_bronze_circulars()
 
     cal = load_nse_trading_calendar()
     criteria = load_go_no_go_criteria()
@@ -358,12 +364,13 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
     for item in recon_data.get("entries", []):
         dt = datetime.date.fromisoformat(item["session_date"])
         action = item.get("action")
+        classification = item.get("classification")
         circulars = item.get("circular_references", [])
         if not circulars:
             print(f"[FAIL] Reconciliation entry for {dt} lacks circular citations (§6.3, Finding H-56)")
             return False
 
-        # Assert circular is recorded in calendar provenance per §44.2
+        # 1. Assert circular is recorded in calendar provenance per §44.2
         for circ in circulars:
             if circ not in cal_circulars:
                 print(
@@ -372,50 +379,104 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
                 )
                 return False
 
+        # 2. Assert claim is substantiated by authentic Bronze circular payloads (§6.3, Finding H-57)
+        if classification == "OFFICIAL_EXCHANGE_HOLIDAY":
+            if not any(circular_registry.verify_holiday_claim(dt, c_id) for c_id in circulars):
+                print(
+                    f"[FAIL] Session {dt} claimed as OFFICIAL_EXCHANGE_HOLIDAY under {circulars} "
+                    f"is not substantiated by any parsed Bronze circular payload (§6.3, Finding H-57)"
+                )
+                return False
+        elif classification == "SPECIAL_SESSION_NO_BHAVCOPY_ARCHIVE":
+            if not any(circular_registry.verify_special_session_claim(dt, c_id) for c_id in circulars):
+                print(
+                    f"[FAIL] Session {dt} claimed as SPECIAL_SESSION_NO_BHAVCOPY_ARCHIVE under {circulars} "
+                    f"is not substantiated by any parsed Bronze circular payload (§6.3, Finding H-57)"
+                )
+                return False
+        elif classification == "OFFICIAL_TRADING_SESSION":
+            if not any(circular_registry.verify_trading_day_claim(dt, c_id) for c_id in circulars):
+                print(
+                    f"[FAIL] Session {dt} claimed as OFFICIAL_TRADING_SESSION under {circulars} "
+                    f"is not substantiated by any parsed Bronze circular payload (§6.3, Finding H-57)"
+                )
+                return False
+        else:
+            print(f"[FAIL] Unknown classification {classification!r} for date {dt} (Finding H-56)")
+            return False
+
+        # 3. Assert alignment with unified calendar (§45 H-59)
         if action == "EXCLUDE_FROM_EXPECTED_ARCHIVES":
-            if dt not in cal_sessions:
-                print(f"[FAIL] Reconciliation excluded session {dt} is not present in baseline calendar sessions (Finding H-56)")
+            if dt in cal_sessions:
+                print(f"[FAIL] Reconciled holiday session {dt} is erroneously present in unified calendar sessions (Finding H-59)")
                 return False
             excluded_from_cal.add(dt)
         elif action == "INCLUDE_IN_EXPECTED_ARCHIVES":
-            if dt in cal_sessions:
-                print(f"[FAIL] Reconciliation included session {dt} is already present in baseline calendar sessions (Finding H-56)")
+            if dt not in cal_sessions:
+                print(f"[FAIL] Reconciled trading session {dt} is missing from unified calendar sessions (Finding H-59)")
                 return False
             included_in_archives.add(dt)
         else:
             print(f"[FAIL] Unknown reconciliation action {action!r} for date {dt} (Finding H-56)")
             return False
 
-    reconciled_expected_sessions = (cal_sessions - excluded_from_cal) | included_in_archives
-
-    if len(reconciled_expected_sessions) != manifest_expected_archive_count:
+    # Assert unified calendar session set in evaluation window matches manifest archive count
+    if len(cal_sessions) != manifest_expected_archive_count:
         print(
-            f"[FAIL] Reconciled expected sessions count {len(reconciled_expected_sessions)} "
-            f"!= manifest archives count {manifest_expected_archive_count} (Finding H-56, Note N-40.1)"
+            f"[FAIL] Unified calendar sessions count {len(cal_sessions)} "
+            f"!= manifest archives count {manifest_expected_archive_count} (Finding H-59)"
         )
         return False
 
-    unexplained_missing = reconciled_expected_sessions - manifest_dates
-    unexplained_extra = manifest_dates - reconciled_expected_sessions
+    baseline_sessions = (cal_sessions | excluded_from_cal) - included_in_archives
+    if len(baseline_sessions) != 1201:
+        print(f"[FAIL] Reconstructed baseline schedule count {len(baseline_sessions)} != 1201 (Finding H-56, H-59)")
+        return False
+
+    reconciled_expected_sessions = (baseline_sessions - excluded_from_cal) | included_in_archives
+    if reconciled_expected_sessions != cal_sessions:
+        print(f"[FAIL] Reconciled expected sessions does not match unified calendar sessions (Finding H-59)")
+        return False
+
+    unexplained_missing = cal_sessions - manifest_dates
+    unexplained_extra = manifest_dates - cal_sessions
 
     if unexplained_missing:
         print(
-            f"[FAIL] UNEXPLAINED_MISSING_RECORD: {len(unexplained_missing)} expected calendar sessions missing from archives: "
+            f"[FAIL] UNEXPLAINED_MISSING_RECORD: {len(unexplained_missing)} unified calendar sessions missing from archives: "
             f"{sorted(unexplained_missing)} per AGENTS.md §6.3 (Finding H-56)"
         )
         return False
 
     if unexplained_extra:
         print(
-            f"[FAIL] UNEXPLAINED_EXTRA_RECORD: {len(unexplained_extra)} archived sessions not present in reconciled calendar: "
+            f"[FAIL] UNEXPLAINED_EXTRA_RECORD: {len(unexplained_extra)} archived sessions not present in unified calendar: "
             f"{sorted(unexplained_extra)} per AGENTS.md §6.3 (Finding H-56)"
         )
         return False
 
+    # Note N-42: Validate reconciliation summary block against computed counts
+    summary = recon_data.get("summary", {})
+    if summary.get("baseline_calendar_sessions") != len(baseline_sessions):
+        print(f"[FAIL] Summary baseline_calendar_sessions {summary.get('baseline_calendar_sessions')} != {len(baseline_sessions)} (Note N-42)")
+        return False
+    if summary.get("calendar_sessions_excluded_from_trading") != len(excluded_from_cal - {datetime.date(2025, 2, 1)}):
+        print(f"[FAIL] Summary calendar_sessions_excluded_from_trading mismatch (Note N-42)")
+        return False
+    if summary.get("calendar_sessions_unarchived_special") != (1 if datetime.date(2025, 2, 1) in excluded_from_cal else 0):
+        print(f"[FAIL] Summary calendar_sessions_unarchived_special mismatch (Note N-42)")
+        return False
+    if summary.get("archived_sessions_not_in_baseline_calendar") != len(included_in_archives):
+        print(f"[FAIL] Summary archived_sessions_not_in_baseline_calendar mismatch (Note N-42)")
+        return False
+    if summary.get("expected_reconciled_archived_sessions") != manifest_expected_archive_count:
+        print(f"[FAIL] Summary expected_reconciled_archived_sessions mismatch (Note N-42)")
+        return False
+
     print(
-        f"[PASS] Authoritative calendar reconciliation verified: {len(cal_sessions)} baseline calendar sessions "
-        f"- {len(excluded_from_cal)} excluded + {len(included_in_archives)} included = "
-        f"{len(reconciled_expected_sessions):,} authoritative archived sessions (Finding H-56)."
+        f"[PASS] Authoritative calendar reconciliation verified: {len(baseline_sessions)} baseline calendar sessions "
+        f"- {len(excluded_from_cal)} excluded (substantiated by Bronze circulars) + {len(included_in_archives)} included = "
+        f"{len(cal_sessions):,} unified calendar sessions matching {manifest_expected_archive_count:,} archives (Findings H-56, H-57, H-59, Note N-42)."
     )
 
     sm = build_production_security_master()

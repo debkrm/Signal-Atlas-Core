@@ -1,0 +1,18 @@
+{
+  "circular_id": "NSE/MSD/66381",
+  "circular_ref_no": "06/2025",
+  "issue_date": "2025-01-29",
+  "market": "NSE_CASH_EQUITY",
+  "segment": "Capital Market & Futures and Options",
+  "subject": "Trading Timings for Live Trading Sessions on Saturday, February 01, 2025",
+  "session_timings": [
+    {
+      "date": "2025-02-01",
+      "open_time": "09:15:00",
+      "close_time": "15:30:00",
+      "block_deal_window_1": "08:45-09:00",
+      "block_deal_window_2": "14:05-14:20"
+    }
+  ]
+}
+

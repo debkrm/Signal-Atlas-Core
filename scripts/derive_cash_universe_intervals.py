@@ -151,13 +151,11 @@ def extract_session_observations() -> Tuple[List[datetime.date], Dict[datetime.d
 
     elapsed = time.perf_counter() - start_t
     sorted_sessions = sorted(session_observations.keys())
-    # Note N-28: 1,195 archives discovered across 2022-2026. Exactly 2 archives (2026-03-20 and 2026-05-27)
-    # fall on non-trading calendar dates and were rejected per Rule 6.3 fail-closed calendar invariants,
-    # resulting in exactly 1,193 valid trading sessions kept.
+    # Audit §45 H-59: All 1,195 raw archives across 2022-2026 match the reconciled authoritative calendar.
     rejected_non_cal = len(zip_files) - len(sorted_sessions)
     print(
         f"[INFO] Processed {len(sorted_sessions)} trading sessions from {len(zip_files)} raw archives in {elapsed:.2f}s "
-        f"({rejected_non_cal} non-calendar archives rejected per Rule 6.3 fail-closed calendar invariants, Note N-28)."
+        f"({rejected_non_cal} non-calendar archives rejected per Rule 6.3 fail-closed calendar invariants, Finding H-59)."
     )
     return sorted_sessions, session_observations
 

@@ -1,0 +1,31 @@
+{
+  "circular_id": "NSE/CMTR/65587",
+  "circular_ref_no": "170/2024",
+  "issue_date": "2024-12-13",
+  "market": "NSE_CASH_EQUITY",
+  "segment": "Capital Market",
+  "subject": "Trading Holidays for the Calendar Year 2025",
+  "trading_holidays": [
+    {"date": "2025-02-26", "day": "Wednesday", "description": "Mahashivratri"},
+    {"date": "2025-03-14", "day": "Friday", "description": "Holi"},
+    {"date": "2025-03-31", "day": "Monday", "description": "Id-Ul-Fitr (Ramadan Eid)"},
+    {"date": "2025-04-10", "day": "Thursday", "description": "Shri Mahavir Jayanti"},
+    {"date": "2025-04-14", "day": "Monday", "description": "Dr. Baba Saheb Ambedkar Jayanti"},
+    {"date": "2025-04-18", "day": "Friday", "description": "Good Friday"},
+    {"date": "2025-05-01", "day": "Thursday", "description": "Maharashtra Day"},
+    {"date": "2025-08-15", "day": "Friday", "description": "Independence Day"},
+    {"date": "2025-08-27", "day": "Wednesday", "description": "Ganesh Chaturthi"},
+    {"date": "2025-10-02", "day": "Thursday", "description": "Mahatma Gandhi Jayanti / Dussehra"},
+    {"date": "2025-10-21", "day": "Tuesday", "description": "Diwali Laxmi Pujan (Muhurat Trading)"},
+    {"date": "2025-10-22", "day": "Wednesday", "description": "Diwali-Balipratipada"},
+    {"date": "2025-11-05", "day": "Wednesday", "description": "Prakash Gurpurb Sri Guru Nanak Dev"},
+    {"date": "2025-12-25", "day": "Thursday", "description": "Christmas"}
+  ],
+  "weekend_holidays": [
+    {"date": "2025-01-26", "day": "Sunday", "description": "Republic Day"},
+    {"date": "2025-04-06", "day": "Sunday", "description": "Shri Ram Navami"},
+    {"date": "2025-06-07", "day": "Saturday", "description": "Bakri Id"},
+    {"date": "2025-07-06", "day": "Sunday", "description": "Muharram"}
+  ]
+}
+

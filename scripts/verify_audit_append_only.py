@@ -131,16 +131,19 @@ def check_verification_scripts() -> bool:
             capture_output=True,
             text=True,
             encoding="utf-8",
+            errors="replace",
             env=env,
         )
         elapsed = time.perf_counter() - start_t
 
         if proc.returncode != 0:
             print(f"[FAIL] {script_rel} exited with non-zero code {proc.returncode} ({elapsed:.2f}s)")
+            out = proc.stdout or ""
+            err = proc.stderr or ""
             print("--- STDOUT ---")
-            print(proc.stdout[-500:] if len(proc.stdout) > 500 else proc.stdout)
+            print(out[-500:] if len(out) > 500 else out)
             print("--- STDERR ---")
-            print(proc.stderr[-500:] if len(proc.stderr) > 500 else proc.stderr)
+            print(err[-500:] if len(err) > 500 else err)
             all_passed = False
         else:
             print(f"[PASS] {script_rel} (exit 0, {elapsed:.2f}s)")
