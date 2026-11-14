@@ -225,15 +225,15 @@ def check_verdict_tags() -> bool:
 
     required_wave_tags: dict[str, str] = {}
 
-    m0 = re.search(r"##\s+29\..*?`([0-9a-f]{7,8})`", audit_text)
+    m0 = re.search(r"^##\s+29\..*?`([0-9a-f]{7,8})`", audit_text, re.MULTILINE)
     if m0:
         required_wave_tags[f"wave0-signed-off-{m0.group(1)}"] = m0.group(1)
 
-    m1 = re.search(r"##\s+30\..*?`([0-9a-f]{7,8})`", audit_text)
+    m1 = re.search(r"^##\s+30\..*?`([0-9a-f]{7,8})`", audit_text, re.MULTILINE)
     if m1:
         required_wave_tags[f"wave1-signed-off-{m1.group(1)}"] = m1.group(1)
 
-    m2 = re.search(r"##\s+33\..*?`([0-9a-f]{7,8})`", audit_text)
+    m2 = re.search(r"^##\s+33\..*?`([0-9a-f]{7,8})`", audit_text, re.MULTILINE)
     if m2:
         required_wave_tags[f"wave2-signed-off-{m2.group(1)}"] = m2.group(1)
 
@@ -317,7 +317,6 @@ def check_verdict_tags() -> bool:
         print("[PASS] Gate W0.5-4: All sign-off and audit verdict tags verified.\n")
     else:
         print("[FAIL] Gate W0.5-4: One or more required verdict tags missing.\n")
-    return all_ok
     return all_ok
 
 

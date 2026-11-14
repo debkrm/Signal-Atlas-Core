@@ -1638,3 +1638,39 @@ def test_n32_pre_window_fold_refused_fail_closed(wf_environment):
             fold_spec_fingerprint="TEST",
         )
 
+    # 5. Finding N-39: Probe rejection when min_binding_evaluation_start_date is tampered in execution_config
+    res_tampered_cfg = dataclasses.replace(
+        valid_res,
+        execution_config={
+            **valid_res.execution_config,
+            "min_binding_evaluation_start_date": "1990-01-01",
+        },
+        criteria_version="v0.0.1-legacy",
+        verification_status="VERIFIED",
+    )
+    # Rejection of criteria version divergence despite tampered execution_config (Finding N-39)
+    with pytest.raises(WalkForwardEngineError, match="differs from criteria version"):
+        res_tampered_cfg.to_trial_record(
+            trial_id="N39-PROBE-VERSION",
+            hypothesis="Tampered execution config version bypass",
+            rationale="Test",
+            fold_spec_fingerprint="TEST",
+        )
+
+    # Rejection of tampered min_binding_evaluation_start_date even if criteria_version matches (Finding N-39)
+    res_tampered_date = dataclasses.replace(
+        valid_res,
+        execution_config={
+            **valid_res.execution_config,
+            "min_binding_evaluation_start_date": "1990-01-01",
+        },
+        verification_status="VERIFIED",
+    )
+    with pytest.raises(WalkForwardEngineError, match="contradicts authoritative criteria start date"):
+        res_tampered_date.to_trial_record(
+            trial_id="N39-PROBE-DATE",
+            hypothesis="Tampered execution config date bypass",
+            rationale="Test",
+            fold_spec_fingerprint="TEST",
+        )
+

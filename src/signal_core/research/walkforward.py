@@ -176,26 +176,42 @@ class WalkForwardResult:
                 "Every trade must execute with verified exchange price band evidence before publishing performance."
             )
 
-        # Invariant N-32 / N-35: Refuse trial record creation if any fold preceded min_binding_evaluation_start_date
-        # Judge by execution_config carried on the result or criteria in force during the run (Finding N-35).
-        min_start_str = self.execution_config.get("min_binding_evaluation_start_date")
-        if min_start_str:
-            min_start = datetime.date.fromisoformat(str(min_start_str))
-        else:
-            criteria = load_go_no_go_criteria()
-            if self.criteria_version and criteria.version != self.criteria_version:
-                raise WalkForwardEngineError(
-                    f"Cannot create trial record: current criteria version '{criteria.version}' "
-                    f"differs from criteria version '{self.criteria_version}' in force during the run (Finding N-35)."
-                )
-            min_start = criteria.min_binding_evaluation_start_date
+        # Invariant N-32 / N-35 / N-39: Refuse trial record creation if any fold preceded min_binding_evaluation_start_date.
+        # Judge against authoritative criteria in force:
+        # 1. Authoritative criteria loaded from load_go_no_go_criteria()
+        # 2. Check criteria_version equality on every path
+        # 3. Check criteria_fingerprint equality against authoritative criteria fingerprint
+        # 4. Check execution_config min_binding_evaluation_start_date matches authoritative criteria
+        # 5. Enforce min_binding_evaluation_start_date on every fold
+        criteria = load_go_no_go_criteria()
+        if self.criteria_version and criteria.version != self.criteria_version:
+            raise WalkForwardEngineError(
+                f"Cannot create trial record: current criteria version '{criteria.version}' "
+                f"differs from criteria version '{self.criteria_version}' in force during the run (Finding N-35, N-39)."
+            )
 
+        expected_crit_fpr = compute_criteria_fingerprint(criteria)
+        carried_crit_fpr = self.execution_config.get("criteria_fingerprint")
+        if carried_crit_fpr is not None and carried_crit_fpr != expected_crit_fpr:
+            raise WalkForwardEngineError(
+                f"Cannot create trial record: execution_config criteria_fingerprint '{carried_crit_fpr}' "
+                f"does not match authoritative criteria_fingerprint '{expected_crit_fpr}' (Finding N-39)."
+            )
+
+        carried_min_start = self.execution_config.get("min_binding_evaluation_start_date")
+        if carried_min_start is not None and str(carried_min_start) != criteria.min_binding_evaluation_start_date.isoformat():
+            raise WalkForwardEngineError(
+                f"Cannot create trial record: execution_config min_binding_evaluation_start_date '{carried_min_start}' "
+                f"contradicts authoritative criteria start date '{criteria.min_binding_evaluation_start_date}' (Finding N-39)."
+            )
+
+        min_start = criteria.min_binding_evaluation_start_date
         for f_res in self.fold_results:
             earliest = min(f_res.fold.train_start, f_res.fold.test_start)
             if earliest < min_start:
                 raise WalkForwardEngineError(
                     f"Cannot create trial record for fold evaluated on {earliest}, which precedes "
-                    f"the minimum binding evaluation start date ({min_start}) declared in criteria (Finding N-32, N-35)."
+                    f"the minimum binding evaluation start date ({min_start}) declared in criteria (Finding N-32, N-35, N-39)."
                 )
 
         # Audit §31 H-28 / §32 H-35: Dataset fingerprint cannot be overridden with spoofed or mismatched value

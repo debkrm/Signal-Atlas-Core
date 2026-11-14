@@ -31,7 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def resolve_raw_archives_dir() -> Path:
-    """Configurable archive directory discovery per Audit §40 Note H-53, §12.5."""
+    """Configurable archive directory discovery per Audit §40 Note H-53, §12.5, Finding H-55."""
     env_dir = os.environ.get("NSE_RAW_ARCHIVES_DIR")
     if env_dir:
         cand = Path(env_dir)
@@ -40,9 +40,6 @@ def resolve_raw_archives_dir() -> Path:
     cand1 = REPO_ROOT / "data" / "raw"
     if cand1.is_dir():
         return cand1
-    cand2 = REPO_ROOT.parent / "Signal-Atlas" / "data" / "raw"
-    if cand2.is_dir():
-        return cand2
     return cand1
 
 

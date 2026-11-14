@@ -52,23 +52,22 @@ from signal_core.strategy.base import OrderIntent, Strategy
 INTERVALS_CSV = REPO_ROOT / "data" / "reference" / "cash_equity_symbol_intervals.csv"
 SEC_LIST_CSV = REPO_ROOT / "data" / "reference" / "sec_list_20240116.csv"
 MANIFEST_FILE = REPO_ROOT / "data" / "reference" / "manifest.jsonl"
+BHAVCOPY_ARCHIVE_MANIFEST = REPO_ROOT / "data" / "reference" / "bhavcopy_archive_manifest.jsonl"
 
 
 def resolve_all_bhavcopy_archives() -> List[Path]:
     """
-    Discovers all available raw Bhavcopy archives for per-session identity verification (Finding N-34).
+    Discovers all raw Bhavcopy archives for per-session identity verification (Findings N-34, H-55).
     Checks:
     1. NSE_RAW_ARCHIVES_DIR environment variable
     2. REPO_ROOT / "data" / "raw"
-    3. REPO_ROOT.parent / "Signal-Atlas" / "data" / "raw"
-    4. Committed repo fixture: REPO_ROOT / "data" / "reference" / "bhavcopy_2024"
+    Note: External-repo fallback to sibling Signal-Atlas removed per Finding H-55.
     """
     env_dir = os.environ.get("NSE_RAW_ARCHIVES_DIR")
     search_dirs = []
     if env_dir:
         search_dirs.append(Path(env_dir))
     search_dirs.append(REPO_ROOT / "data" / "raw")
-    search_dirs.append(REPO_ROOT.parent / "Signal-Atlas" / "data" / "raw")
 
     for base_dir in search_dirs:
         if base_dir.is_dir():
@@ -81,12 +80,6 @@ def resolve_all_bhavcopy_archives() -> List[Path]:
             flat_zips = sorted(base_dir.glob("*.zip"))
             if flat_zips:
                 return flat_zips
-
-    ref_dir = REPO_ROOT / "data" / "reference" / "bhavcopy_2024"
-    if ref_dir.is_dir():
-        zips = sorted(ref_dir.glob("*.zip"))
-        if zips:
-            return zips
 
     return []
 
@@ -210,33 +203,113 @@ def verify_gate_cov1_artifact_integrity() -> bool:
 
 
 def verify_gate_cov2_bhavcopy_resolution() -> bool:
-    """Verifies per-session symbol->ISIN resolution across all archived Bhavcopy sessions (Findings H-52, H-54, N-34, N-37)."""
-    print("--- Gate COV-2: Traded EQ Bhavcopy Scrips Point-in-Time Resolution (Findings H-54, N-34) ---")
+    """
+    Verifies per-session symbol->ISIN resolution across all archived Bhavcopy sessions (Findings H-52, H-54, H-55, N-34, N-37).
+    Enforces:
+    1. Committed digest manifest: every archive's SHA-256 and byte count verified against bhavcopy_archive_manifest.jsonl (§10.7, H-55).
+    2. Scope assertion: exactly 1,195 archives covering evaluation window 2022-01-03..2026-10-31 (H-55).
+    3. Calendar cross-check: distinct session dates match manifest sessions exactly (H-55).
+    4. Zero silent drops: malformed headers, invalid rows, or empty sessions fail closed (H-55).
+    5. Exact row conservation: 2,390,165 traded EQ rows resolved 100.0000% via Decimal arithmetic (N-34, N-37).
+    """
+    print("--- Gate COV-2: Traded EQ Bhavcopy Scrips Point-in-Time Resolution (Findings H-54, H-55, N-34, N-37) ---")
+
+    # 1. Verify committed Bronze archive manifest exists and load entries (Finding H-55, §10.7)
+    if not BHAVCOPY_ARCHIVE_MANIFEST.is_file():
+        print(f"[FAIL] Committed Bhavcopy archive manifest missing at: {BHAVCOPY_ARCHIVE_MANIFEST} (Finding H-55)")
+        return False
+
+    manifest_entries: Dict[str, dict] = {}
+    manifest_dates: Set[datetime.date] = set()
+    manifest_expected_eq_rows = 0
+
+    with open(BHAVCOPY_ARCHIVE_MANIFEST, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            entry = json.loads(line)
+            manifest_entries[entry["archive_file"]] = entry
+            manifest_dates.add(datetime.date.fromisoformat(entry["session_date"]))
+            manifest_expected_eq_rows += int(entry.get("traded_eq_rows", 0))
+
+    if len(manifest_entries) != 1195:
+        print(f"[FAIL] Manifest holds {len(manifest_entries)} archives; expected exactly 1,195 (Finding H-55)")
+        return False
+
+    # 2. Discover archives
     archives = resolve_all_bhavcopy_archives()
     if not archives:
-        print("[FAIL] No raw Bhavcopy archives found for Gate COV-2 per-session sweep (Finding H-53, N-34).")
+        print("[FAIL] No raw Bhavcopy archives found for Gate COV-2 per-session sweep (Finding H-53, H-55).")
         return False
+
+    if len(archives) != 1195:
+        print(
+            f"[FAIL] Gate COV-2 requires all 1,195 raw Bhavcopy archives for evaluation window "
+            f"2022-01-03..2026-10-31, but discovered {len(archives)} archives (Finding H-55)."
+        )
+        return False
+
+    print(f"[INFO] Discovered {len(archives)} raw Bhavcopy archives; verifying digests against manifest...")
+
+    # 3. Digest verification for every archive against committed manifest
+    for z_path in archives:
+        rel_key = f"{z_path.parent.name}/{z_path.name}"
+        manifest_rec = manifest_entries.get(rel_key) or manifest_entries.get(z_path.name)
+        if not manifest_rec:
+            for k, v in manifest_entries.items():
+                if k.endswith(z_path.name):
+                    manifest_rec = v
+                    break
+
+        if not manifest_rec:
+            print(f"[FAIL] Discovered archive {z_path.name} not found in committed manifest (Finding H-55)")
+            return False
+
+        if z_path.stat().st_size != manifest_rec["byte_count"]:
+            print(
+                f"[FAIL] Archive {z_path.name} size {z_path.stat().st_size} "
+                f"!= manifest byte_count {manifest_rec['byte_count']} (Finding H-55)"
+            )
+            return False
+
+        h = hashlib.sha256()
+        with open(z_path, "rb") as f:
+            while chunk := f.read(65536):
+                h.update(chunk)
+        if h.hexdigest() != manifest_rec["sha256"]:
+            print(
+                f"[FAIL] Archive {z_path.name} SHA-256 {h.hexdigest()} "
+                f"!= manifest digest {manifest_rec['sha256']} (Finding H-55)"
+            )
+            return False
+
+    print(f"[PASS] All {len(archives)} archive digests verified against committed manifest (Finding H-55).")
 
     sm = build_production_security_master()
     criteria = load_go_no_go_criteria()
 
-    print(f"[INFO] Discovered {len(archives)} raw Bhavcopy archives for per-session traded EQ resolution sweep.")
-
     total_sessions = 0
     total_eq_rows = 0
     resolved_eq_rows = 0
+    distinct_sessions: Set[datetime.date] = set()
 
     for z_path in archives:
         with zipfile.ZipFile(z_path) as zf:
-            for name in zf.namelist():
-                if not name.lower().endswith(".csv") or "bhav" not in name.lower():
-                    continue
+            bhav_csvs = [n for n in zf.namelist() if n.lower().endswith(".csv") and "bhav" in n.lower()]
+            if not bhav_csvs:
+                print(f"[FAIL] Archive {z_path.name} contains no Bhavcopy CSV member (Finding H-45, H-55)")
+                return False
+
+            for name in bhav_csvs:
                 with zf.open(name) as f:
                     reader = csv.reader(io.TextIOWrapper(f, encoding="utf-8", errors="replace"))
                     try:
                         header = next(reader)
                     except StopIteration:
-                        continue
+                        print(f"[FAIL] Archive {z_path.name} member {name} is empty (Finding H-55)")
+                        return False
+
                     h_map = {c.strip().upper(): i for i, c in enumerate(header)}
 
                     def _find_col(*cands: str) -> Optional[int]:
@@ -251,7 +324,11 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
                     dt_col = _find_col("TRADDT", "TIMESTAMP", "TRADEDATE")
 
                     if None in (sym_col, isin_col, srs_col, dt_col):
-                        continue
+                        print(
+                            f"[FAIL] Archive {z_path.name} member {name} missing required columns: "
+                            f"{header} (Finding H-55)"
+                        )
+                        return False
 
                     max_idx = max(sym_col, isin_col, srs_col, dt_col)
                     session_date = None
@@ -263,10 +340,15 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
                             continue
                         if row[srs_col].strip().upper() != "EQ":
                             continue
+
                         sym = row[sym_col].strip().upper()
                         isin = row[isin_col].strip().upper()
                         if not sym or not isin or len(isin) != 12:
-                            continue
+                            print(
+                                f"[FAIL] Malformed traded EQ row in {z_path.name}: "
+                                f"symbol={sym!r}, isin={isin!r} (Finding H-55)"
+                            )
+                            return False
 
                         if session_date is None:
                             d_str = row[dt_col].strip()
@@ -291,22 +373,38 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
                         session_rows += 1
                         session_resolved += 1
 
-                    if session_rows > 0:
-                        total_sessions += 1
-                        total_eq_rows += session_rows
-                        resolved_eq_rows += session_resolved
+                    if session_rows == 0:
+                        print(f"[FAIL] Session archive {z_path.name} yielded 0 traded EQ rows (Finding H-55)")
+                        return False
 
-    if total_eq_rows == 0:
-        print("[FAIL] Zero traded EQ rows found across discovered archives.")
+                    distinct_sessions.add(session_date)
+                    total_sessions += 1
+                    total_eq_rows += session_rows
+                    resolved_eq_rows += session_resolved
+
+    if len(distinct_sessions) != 1195:
+        print(f"[FAIL] Covered {len(distinct_sessions)} distinct sessions; expected exactly 1,195 (Finding H-55)")
+        return False
+
+    missing_dates = manifest_dates - distinct_sessions
+    if missing_dates:
+        print(f"[FAIL] Missing {len(missing_dates)} manifest session dates: {sorted(missing_dates)[:5]} (Finding H-55)")
+        return False
+
+    if total_eq_rows != 2390165 or resolved_eq_rows != 2390165:
+        print(
+            f"[FAIL] Row count mismatch: resolved {resolved_eq_rows} of {total_eq_rows}; "
+            f"expected exactly 2,390,165 (Finding H-55)"
+        )
         return False
 
     pct = (Decimal(str(resolved_eq_rows)) / Decimal(str(total_eq_rows))) * Decimal("100")
     print(f"[INFO] Per-Session Sweep Complete: {resolved_eq_rows:,} / {total_eq_rows:,} traded EQ rows resolved across {total_sessions:,} sessions ({pct:.4f}%).")
 
-    if pct < criteria.min_traded_eq_resolution_pct or resolved_eq_rows != total_eq_rows:
+    if pct < criteria.min_traded_eq_resolution_pct:
         print(
             f"[FAIL] Traded EQ resolution {pct:.4f}% below required criteria invariant "
-            f"{criteria.min_traded_eq_resolution_pct}% (resolved {resolved_eq_rows} of {total_eq_rows})"
+            f"{criteria.min_traded_eq_resolution_pct}% (Finding H-54)"
         )
         return False
 
