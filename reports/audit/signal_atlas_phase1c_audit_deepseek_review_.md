@@ -4184,3 +4184,99 @@ Do not start any Phase 2D number before item 1 and item 2 are measured: 2D compu
 - Do not edit this report (§11.1); disagreements go in a separate note citing the finding ID.
 - No status word in `CURRENT_STAGE_OF_WORK.md` that the cited audit section does not use, and no citation without the SHA it applies to (§11.3).
 - A probe that passes on the unmodified tree is not a probe; every closure above is accepted on a named failure, not on a green run.
+---
+
+## 52. Audit of `cbc1656` — Phase 2D engine and carried residuals — 14 November 2026
+
+`cbc1656` delivers the Phase 2D module, its gate script, and claims five closures: R-3, R-5/N-53, R-6, N-54, N-55. Measured: N-53, N-54 and N-55 are closed; R-6 and R-3 are partial in the same way as every previous round — the new guarded path exists and the old unguarded path is still reachable — and the engine itself introduces two hard defects that would be inherited by the first verdict it publishes.
+
+### 52.1 Baseline at `cbc1656`
+
+```
+298 passed in 15.04s                       (zero skip, zero xfail)
+scripts/verify_audit_append_only.py        exit 0  (8 verification scripts, suite, tag integrity)
+scripts/verify_phase2d_verdicts.py         exit 0  (Gates 2D-1..2D-4 PASS)
+scripts/verify_cash_universe_coverage.py   exit 0  (COV-1..COV-4 PASS)
+```
+
+The commit's one-line change to `scripts/verify_audit_append_only.py` was checked first, being the gate that polices this report: it adds `scripts/verify_phase2d_verdicts.py` to the hardcoded `VERIFICATION_SCRIPTS` list and nothing else. No check was relaxed.
+
+### 52.2 Closed
+
+- **R-5 / N-53 — CLOSED.** `verified_regular_trading_sessions` is now `inferred_trading_sessions`, with `verify_trading_day_inference` in the typed registry and the two sessions still substantiated as inferences rather than assertions.
+- **N-54 — CLOSED.** The amendment note reads "Declares 2026-01-15 as an additional trading holiday … (not listed in 71775 base schedule)" — the direction of the amendment is now correct in the payload.
+- **N-55 — CLOSED.** The active manifest entry describes the artefact as substantiating 2026-01-15 via `NSE/CMTR/72260` and 2026-03-20/05-27 as inferred non-holiday sessions. The stale "cites both" string survives only in a superseded entry, which append-only history requires it to.
+- **Phase 2D scaffolding.** The adjective scan, the `NOT RUN`-on-missing-metric path, and the four adversarial cases (holdout breach, `N ≤ 1`, latency 0, tampered calendar) all measured green, with the tampered calendar producing `CRIT-DATA-06 FAIL` and `NO_GO` rather than an exception — fail-closed either way.
+
+### 52.3 R-6 — PARTIAL, measured at the consumers
+
+The new `load_anchored_nse_trading_calendar` is correct and `verdicts.py` uses it. The unanchored loader is still exported and still called:
+
+```
+scripts/derive_cash_universe_intervals.py:79, :173, :240
+scripts/verify_cash_universe_coverage.py:122, :744
+```
+
+Measured with the calendar swapped (`2023-03-22` → `2023-03-25`) and its own digest resealed, so the loader's self-seal is satisfied:
+
+```
+python scripts/derive_cash_universe_intervals.py   -> exit 0
+  rewrites data/reference/cash_equity_symbol_intervals.csv
+  appends a provenance entry to data/reference/manifest.jsonl
+  treats 2023-03-25 as a session and drops 2023-03-22
+```
+
+The cash-universe identity table — the artefact COV-1 and COV-3 judge — is therefore still derived from an unanchored calendar, by a script that has no verify gate in front of it. This is the additive-fix shape named in §14.4: the finding closed at the new function, the hole stayed at the old caller.
+
+### 52.4 H-67 (new, hard) — the verdict engine trusts the bundle about its own provenance
+
+`CRIT-PROV-01` compares `results_bundle["data_provenance_status"]` against the literal `"VERIFIED / EXCHANGE_ATTESTED"` and passes when they match. Nothing checks that such an attestation exists, although `ProvenanceStatus` forbids the claim repository-wide and no payload, manifest or certificate in this repository carries one.
+
+Measured, with every other metric legitimate:
+
+```
+bundle: data_provenance_status = "VERIFIED / EXCHANGE_ATTESTED"
+CRIT-PROV-01  PASS  "Primary market data attested by authentic exchange archive signatures (§6.5)."
+OVERALL       GO
+metadata      {'binding_criteria_count': 21, 'binding_failed_count': 0,
+               'unverified_provenance_gating_applied': False}
+```
+
+So the engine converts a self-description into a printed attestation. R-3 asked that a claim resting on `SOURCE_UNVERIFIED` print `NOT RUN` — that branch exists and works — but the complementary invariant was never written: only evidence may produce `VERIFIED`. As it stands, the one place in the repository that can print "attested by authentic exchange archive signatures" is the one place that performs no check at all.
+
+### 52.5 H-66 (new, hard) — the report has no evaluation window
+
+`VerdictReport` carries `criteria_version`, two fingerprints, a timestamp, the evaluations and counts, and `metadata`. It carries no dates. Measured: `to_markdown()` contains no start or end date, and the phrase "evaluation window" appears once, as unspecific prose inside a criterion's evidence string.
+
+A `GO` from this engine therefore cannot be attributed to a period. That is the finding this report has now spent three rounds on — H-64's date identity, H-65's unsourced window — reappearing one layer up, in the artefact that is supposed to be the final word. It is also why §51.2's stop condition existed: with H-65 still open (`resolve_gating_verdict(2019-01-01, "GO")` still returns `GO`, measured), a report with no window is a `GO` that could describe any four years of the exchange's history.
+
+### 52.6 N-58 — the report is not reproducible from the bundle alone
+
+Phase 2D's own gate says "the verdict report is reproducible from the results bundle alone". Measured: `evaluate_verdicts(b)` called twice on the same bundle returns reports that differ, in `timestamp_utc` only; and a bundle key `evaluated_at_utc` is ignored, because the timestamp comes from the `now_utc` parameter (`ts = now_utc or datetime.now(...)`) and never from the bundle. Either read the timestamp from the bundle, or state the reproducibility claim as "reproducible up to the timestamp".
+
+### 52.7 N-59 — the status document claims closures this report has not granted
+
+`CURRENT_STAGE_OF_WORK.md` now states "**R-6 CLOSED**" and "**R-3 / H-57 metadata CLOSED in Verdict Engine**". No audit section grants either (§11.3); §50 recorded both as residuals and §52 records both as partial. Reword to "implemented; measured at the new path, still open at the consumers (§52.3, §52.4)" or cite §52 and its verdict.
+
+### 52.8 Verdict
+
+**Wave 3 — GO stands.** The commit touches no file under `src/signal_core/execution/` or `src/signal_core/portfolio/`; the fill, cost and ledger paths judged in §41–§47 are unchanged.
+
+**Phase 2D — GO to continue building; NO-GO to publish any verdict from this engine.**
+
+The engine is real work: 21 computed criteria, a working adjective gate, and four adversarial cases that fail closed. But publishing from it today would print `GO` over an unattributable window (H-66) with a provenance line the repository cannot evidence (H-67), while H-65 still admits a 2019 window and R-6 still leaves the universe derivation unanchored. §51.2 made H-65 and R-6 the precondition for a 2D number; both are measured open, so the precondition is unmet — this is not a new condition, it is the one already stated.
+
+What would make this verdict wrong: a first Phase 2D report that names its dates and its provenance evidence, produced after items 1–4 below are measured. If such a report exists and I have called it unpublished, that measurement reopens this section.
+
+### 52.9 Work order
+
+Ordered by what it unblocks. Each item closes only on the named probe failing, on a tree that is otherwise green.
+
+1. **H-65** — align `BINDING_EVALUATION_START_DATE` (`gating.py:17`, `calendar.py:24`) to `criteria.min_binding_evaluation_start_date`. *Accept:* `resolve_gating_verdict(2019-01-01, "GO") == "NOT RUN"`, `check_gating_verdict_eligibility(2019-01-01, "GO")` raises, `2022-01-03` still returns `GO`.
+2. **R-6, at the consumers** — remove the unanchored export or make anchoring the default, and migrate `derive_cash_universe_intervals.py` (3 sites) and `verify_cash_universe_coverage.py:122, :744`. *Accept:* with the calendar swapped and resealed, the deriver raises `CalendarError` and writes nothing; the unchanged tree still exits 0 everywhere.
+3. **H-67** — provenance must be evidence, not declaration. Validate the bundle's status against `ProvenanceStatus`, refuse `VERIFIED` unless a committed attestation (digest or certificate reference) is named and resolvable, and print that reference as the criterion's evidence. *Accept:* the bundle in §52.4 evaluates `CRIT-PROV-01` to `NOT RUN` with a named reason and the overall verdict is `NO-GO`.
+4. **H-66** — put the window in the report. Add `evaluation_start_date` / `evaluation_end_date` to the bundle, validate the start against the criteria pin, echo both in `to_dict()` and `to_markdown()`, and make a pre-window bundle `NO-GO` with a named reason. *Accept:* a 2019 bundle returns `NO-GO` naming the window; the synthetic fixture's report prints its dates.
+5. **N-58** — read the timestamp from the bundle (or restate the claim). *Accept:* two evaluations of the same bundle produce byte-identical `to_dict()` output.
+6. **N-59** — reword the R-6 and R-3 lines in `CURRENT_STAGE_OF_WORK.md` to cite §52.3/§52.4 or drop the closure claim.
+
+Then, and only then: **R-4** (a second `CAL-FPR-V1` pin over the 1,196 sourced sessions, `expected_total_calendar_sessions` treated as a completeness count), and Phase 2D's first end-to-end report on the real Tier-A window, whose only `NOT RUN` entries should be the ones the data cannot support — currently circuit-verified PnL.
