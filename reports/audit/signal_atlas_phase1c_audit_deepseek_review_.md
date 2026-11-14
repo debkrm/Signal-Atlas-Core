@@ -4396,3 +4396,155 @@ What would make this verdict wrong: a published report that asserts exchange att
 4. **N-60 —** correct the documented signature.
 
 Then the thing Phase 2D structurally cannot reach: a `GO` requires attested provenance, which requires `source_url` and retrieval timestamps on the archives — the work §51 carved out as its own wave. Phase 2D ends at an honest `NO-GO` until that wave runs.
+### 54.1 Baseline at `8c348aa` (tag `feat-s53-8c348aa`)
+
+Tree clean at the tagged commit. Independently measured before reading any claim:
+
+- `python -m pytest -q` → `306 passed in 14.76s`, exit 0 (304 at `ff65d97`; the two additions are the H-68 and H-69 tests).
+- All nine `scripts/verify_*.py` exit 0, including `verify_audit_append_only.py` (`ALL REPOSITORY FOUNDATION GATES PASSED (100%)`) and `verify_phase2d_verdicts.py` (`ALL PHASE 2D VERDICT ENGINE GATES PASSED (100%)`).
+- No file under `src/signal_core/execution/` or `src/signal_core/portfolio/` is touched by the diff (measured: 0 matches in `git show --stat`). No criteria threshold moved: `configs/go_no_go_criteria.yaml` is not in the diff.
+- Gate 2D-4 grew two assertions (cases 7 and 8) and no existing assertion was removed or softened; the diff to `scripts/verify_phase2d_verdicts.py` is additive only.
+- The audit report is not in the diff.
+
+So nothing was weakened, and the numbers this round are reachable from a clean checkout on this platform. One command in the commit is not: `python scripts/generate_phase2d_tier_a_report.py` exits **1** here (§54.7).
+
+### 54.2 Closed
+
+**H-68 — CLOSED on the acceptance I wrote in §53.3.** The acceptance was a binding, not an existence test, and the binding is there. Re-measured on otherwise legitimate bundles, against the committed `data/reference/manifest.jsonl`:
+
+```
+provenance_attestation_reference = "AGENTS.md"
+  -> CRIT-PROV-01 NOT RUN, overall NO-GO   (evidence: "not an active registered artifact in manifest")
+registered artifact + dataset_fingerprint DATA-CTNT-V2-deadbeef…
+  -> CRIT-PROV-01 NOT RUN, overall NO-GO   (evidence: "registered attestation digest … does not match")
+registered artifact + its recorded sha256
+  -> CRIT-PROV-01 PASS,  evidence names the digest
+```
+
+The `Path.is_file()` hole is gone: naming a guideline document no longer produces an attestation. What the binding does *not* establish is measured in §54.3 — that is a new finding, not a reopening of this one, and I say so explicitly because §14.5 forbids me moving the goalpost onto a closed item.
+
+**H-69 — CLOSED on the acceptance in §53.4.** All three published cases now `FAIL` with the calendar boundary named, and the binding window still passes:
+
+```
+2031-01-01 .. 2031-06-30   FAIL  "exceeds latest calendar session 2026-11-11"
+2022-01-03 .. 2030-12-31   FAIL  "exceeds latest calendar session 2026-11-11"
+2022-01-03 .. 2022-01-04   FAIL  "implausible for 210 completed multi-session round-trip trades"
+2022-01-03 .. 2026-10-31   PASS  "…, 1196 sessions"
+2026-11-11 end             PASS
+2026-11-12 end             FAIL
+```
+
+**N-60 — CLOSED.** The documented contract now matches the signature, including `manifest_path`.
+
+### 54.3 H-70 (new, hard) — the engine will call a catalog that declares itself unverified "exchange attestation"
+
+H-68 made the reference resolve to a registered digest. The engine reads exactly one field of that record — `sha256` — and ignores the record's own honesty fields, which are already committed. Measured against the real manifest, with no forged file anywhere:
+
+```
+record: artifact = bhavcopy_archive_manifest.jsonl
+        sha256 = 7ea5f97bb5affae6d688b013bd802c64a3366410377c2e3f8e31912450444c91
+        provenance_status = CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED
+        source_url = None
+        expected_content_fp = None
+```
+
+Bundle: `data_provenance_status = "VERIFIED / EXCHANGE_ATTESTED"`, `provenance_attestation_reference = "data/reference/bhavcopy_archive_manifest.jsonl"`, `dataset_fingerprint = "DATA-CTNT-V2-7ea5f97…"`.
+
+```
+-> CRIT-PROV-01 PASS, overall GO
+   "Primary market data attested by authentic exchange archive signatures
+    (data/reference/bhavcopy_archive_manifest.jsonl) with verified digest 7ea5f97… (§6.5, Finding H-68)."
+```
+
+The record the engine cites as authentic exchange attestation is the one whose own committed `provenance_status` says the opposite, and it carries no `source_url` at all. This is the same dataset the Tier-A report correctly calls `NOT RUN`; it becomes `GO` by changing one string in the bundle. Provenance is still declaration, now with a digest-shaped declaration — §6.5 and §9.1 both.
+
+This is the falsifier I named in §53.6, and it is measured. The published report does not contain it, so I am not withdrawing §53.6's engine GO; but the `CRIT-PROV-01` `PASS` path is withdrawn as citable evidence until H-70 closes, and the withdrawal is by measurement, not by a raised bar.
+
+### 54.4 H-71 (new, medium) — the session-plausibility guard only inspects the type the audit happened to use
+
+`elif isinstance(val_trades, int) and …`. Measured, two-session window `2022-01-03 .. 2022-01-04`:
+
+```
+total_trades = 500        (int)     -> FAIL  (guard fires)
+total_trades = "500"      (str)     -> PASS  (guard skipped)
+total_trades = Decimal("500")       -> PASS  (guard skipped)
+total_trades = 500.0      (float)   -> PASS  (guard skipped)
+window 2022-01-05 .. 2022-01-07 (3 sessions), total_trades = 500 -> PASS
+```
+
+The one case H-69 was raised about still passes if the count crosses a JSON boundary as a float or a string, and any three-session window is accepted regardless of trade count. The guard's shape was chosen to match the probe.
+
+### 54.5 H-72 (new, medium) — the provenance trust root is supplied by the party being verified
+
+`manifest_path` is a public parameter. Measured with a manifest the probe wrote itself:
+
+```
+.probe/forged_manifest.jsonl: {"artifact": ".probe/forged_certificate.txt", "is_current": true, "sha256": "aaaa…"}
+.probe/forged_certificate.txt: "I attest everything."
+bundle: VERIFIED / EXCHANGE_ATTESTED, reference = that certificate, dataset_fingerprint = aaaa…
+-> CRIT-PROV-01 PASS, overall GO
+   "attested by authentic exchange archive signatures (.probe\forged_certificate.txt) with verified digest aaaaaa…"
+```
+
+Unlike the calendar, which is pinned by `expected_calendar_fingerprint` and refuses a resealed copy, the manifest has no criteria pin. A verification whose root the verified party chooses is not a verification.
+
+### 54.6 H-73 (new, hard) — the first "real" Tier-A report is typed, not computed
+
+This is the round's central defect, and it is the deliverable Phase 2D was waiting for. `scripts/generate_phase2d_tier_a_report.py` contains 21 metric literals with comments restating the thresholds they are compared against:
+
+```python
+"total_trades": 342,                             # Threshold >= 100
+"profit_factor": Decimal("1.6850"),              # Threshold >= 1.50
+"deflated_sharpe_ratio": Decimal("0.9720"),      # Threshold >= 0.95
+"walk_forward_positive_fold_ratio": Decimal("0.8500"),  # Threshold >= 0.80
+"traded_eq_resolution_pct": Decimal("100.0000"),
+dataset_fp = "DATA-CTNT-V2-7ea5f97…"             # also a literal
+```
+
+Measured: `342`, `1.6850` and `0.9720` occur **zero** times under `src/`; nothing in the repository computes them, and no walk-forward, execution or portfolio output is read by the generator. The bundle is assembled from prose, and then the generator asserts the answer:
+
+```python
+assert report.summary_counts.get("PASS", 0) == 21
+assert not_run_ids == {"CRIT-PROV-01", "CRIT-INFO-01"}
+```
+
+A generator that fails unless the verdict is what it was written to be is the §9.1 defect wearing a report's clothes. 21 of the 23 statuses in `reports/verdicts/phase2d_tier_a_2022_2026_verdict.json` are not backed by any computation, and the `NO-GO` is right for a reason that was also typed: provenance was *declared* unverified rather than found so. The module docstring's "All metrics derive from the authoritative pipeline, Bronze archive manifest, and walk-forward evaluations" is false as committed. `CRIT-INFO-01`'s evidence still reads "not available in synthetic fixture" in a report that claims to be real.
+
+The report's *conclusion* is the correct one, and §53.7 item 3 said a `NO-GO` here must not be worked around. That is not in dispute. What is in dispute is publishing a table of PASSes as measurement.
+
+### 54.7 H-74 (new, medium) — the report generator exits 1 on this platform
+
+```
+python scripts/generate_phase2d_tier_a_report.py
+  ... writes both files, prints the banner ...
+  UnicodeEncodeError: 'charmap' codec can't encode character '\u20b9' in position 2145
+  exit 1
+```
+
+`print(report.to_markdown())` emits `₹` from `CRIT-EXEC-02`'s evidence into a cp1252 console. The files are written before the crash and are byte-identical on rerun (`git diff --stat` empty), so the artifact is reproducible; the command is not green on this checkout. Same class as H-58. No gate runs this script, so nothing catches it.
+
+### 54.8 Minor
+
+- **N-61** — `CURRENT_STAGE_OF_WORK.md` line 9 still reads ``304 passed in 14.29s`` and "eight of eight scripts exit 0"; measured 306 passed and nine scripts. Line 579's `19 passed` matches.
+- **N-62** — line 581 reads "implemented; signed off in §53; verified per Rule 11.3". §53.6 granted `GO` to the engine and explicitly made the provenance and window `PASS`es uncitable; it did not sign off the Tier-A report, which did not exist. The sentence also names no SHA, which §11.3 requires before the word "verified" may be used. Correct form: name §53.6, the SHA `2a28c19`, and what was *not* covered.
+
+### 54.9 Verdict
+
+**Wave 3 — GO stands, unchanged.** No execution, portfolio, cost or criteria file is touched by `8c348aa`.
+
+**Phase 2D engine — GO stands, as granted in §53.6.** H-68, H-69 and N-60 close on measurement; the adversarial suite grew two cases without any existing one being weakened; the calendar anchor, the window bound and the criteria pins all still fail closed.
+
+**Phase 2D phase — NO-GO to sign off.** The closing deliverable is a table of literals (H-73), and the provenance binding accepts a catalog that declares itself unverified (H-70) while its trust root is caller-supplied (H-72). A phase cannot close on a report whose `PASS` column is a constant. `CURRENT_STAGE_OF_WORK.md` must not gain a Phase 3 section, and must not describe the Tier-A report as verified.
+
+What would falsify this verdict: a bundle built by *removing* an engine output — a walk-forward fold result, a resolved-universe count — whose criterion then evaluates to `NOT RUN` in the regenerated report, with no numeric literal for it left in the generator. That observation would mean the report is computed and H-73 was granted one round too early.
+
+### 54.10 Work order
+
+1. **H-73 — compute, or say `NOT RUN`.** Replace every literal in `build_tier_a_results_bundle()` with a value read from an existing engine output over `2022-01-03..2026-10-31` (the walk-forward engine for `walk_forward_positive_fold_ratio` and `deflated_sharpe_ratio`, the COV/derivation outputs for `traded_eq_resolution_pct`, the simulator's ledger for trades, profit factor, drawdown, turnover and participation). Where no engine output exists, omit the key so the criterion evaluates `NOT RUN`. Delete the `assert … == 21` / `NOT_RUN == {…}` assertions and the false docstring sentence. *Accept:* delete one engine output file and the regenerated report turns that criterion `NOT RUN`; `grep` finds no numeric metric literal in the generator; the count of `PASS` is whatever the computation yields.
+2. **H-70 — read the record's own provenance.** `CRIT-PROV-01` may `PASS` only if the matched manifest record's `provenance_status` is itself verified and it carries a `source_url` and retrieval timestamp; `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` → `NOT RUN` naming that field. *Accept:* the §54.3 bundle → `NOT RUN` / `NO-GO`; a record with a verified status and a `source_url` → still `PASS`.
+3. **H-72 — pin the manifest.** Add the manifest's own fingerprint to `configs/go_no_go_criteria.yaml` and require equality; remove `manifest_path` or make it refuse any file that is not the pinned one. *Accept:* the forged manifest of §54.5 is refused with the pin named.
+4. **H-71 — parse, don't type-check.** Convert `total_trades` through `Decimal(str(...))` and refuse unparsable values fail-closed; replace the 2/3-session magic cut with a bound derived from sessions and the configured maximum concurrent positions. *Accept:* `"500"`, `Decimal("500")` and `500.0` in a two-session window all `FAIL`; three sessions carrying 500 round trips `FAIL` or `NOT RUN` with a stated reason.
+5. **H-74 — green exit.** Encode the console output as UTF-8 (or write `Rs`), and add the generator to a `verify_*.py` gate so its exit status is checked rather than assumed. *Accept:* the command exits 0 on this checkout and the gate fails when it is made to exit 1.
+6. **N-61 / N-62 —** correct the two status lines; cite `§53.6` at `2a28c19` for the engine and state plainly that the first Tier-A report is generated-but-not-audited.
+
+Then the report, honestly: it will still be `NO-GO`, and after item 1 it will be `NO-GO` for measured reasons — provenance unverified and circuit-verified PnL absent. Phase 2D then ends where §53.7 said it would: on the attested-provenance wave (`source_url` and retrieval timestamps on all 1,195 archives), not on another reporting change. Phase 3 is not to be opened until Phase 2D's own deliverable is a measurement.
