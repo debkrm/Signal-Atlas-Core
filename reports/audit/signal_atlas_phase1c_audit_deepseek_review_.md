@@ -3609,3 +3609,108 @@ The remedy belongs in the calendar, not in a second table: delete the eight non-
 The arc across §§43–45 is worth naming, because it is now three consecutive rounds of one defect in three places: a check whose input is chosen by the party being checked. `5c0272a` let the environment choose the swept scope; `5a98981` compared the session set against itself; `0edc158` compares the exception list against a list of allowed exceptions. Each fix enlarged the set of things that must agree, and each time the remaining freedom moved to whichever artefact is newest and least verifiable. The invariant to hold onto: no gate may pass on evidence that exists only as a string in a file the gate's own author commits — bytes with digests, or an external anchor, or the check is a formality.
 
 ---
+## 46. Review of `0b88f67` — H-58 and the H-59 wiring close; H-57's evidence is still written by the party it checks, and the unified calendar deletes a session the exchange held
+
+Scope: 18 files, +626/−129. The audit report and `CURRENT_STAGE_OF_WORK.md` are untouched by the commit. Everything below is measured at `0b88f67` on this Windows checkout unless stated.
+
+### 46.1 What closes
+
+**H-58 — CLOSED.** `.gitattributes` pins `* text=auto eol=lf` plus explicit `data/reference/**` and `configs/**`; the gate and the test now hash the CRLF-stripped bytes. On a clean tree with nothing patched:
+
+```
+configs/trading_calendar_nse.json   worktree 585454  c37bb3002c7c7455  crlf 0
+                                    blob     585454  c37bb3002c7c7455
+pytest tests/unit                  275 passed in 11.60s
+verify_cash_universe_coverage.py   OVERALL VERDICT: ALL CASH UNIVERSE COVERAGE GATES PASSED   EXIT=0
+verify_audit_append_only.py        W0.5-1 PASS, W0.5-2 seven of seven scripts PASS
+```
+
+The wave gate's own crash is fixed too (`errors="replace"` and the `None` guard at line 141) — it now reports the seven verification scripts by exit status rather than dying in its reader. This is the first commit in the series that is green on the machine that wrote it without me rewriting bytes first.
+
+**H-59 — CLOSED as wiring.** There is one calendar and every consumer now reads it: the reconciliation's `EXCLUDE` rows must be *absent* from `cal.sessions` and its `INCLUDE` rows *present*, `len(cal_sessions)` must equal the archive count, and the deriver no longer filters against a second schedule:
+
+```
+[INFO] Processed 1195 trading sessions from 1195 raw archives in 20.25s (0 non-calendar archives rejected per Rule 6.3 …)
+[SUCCESS] Wrote 4510 intervals
+committed bb950bf3ea985d5daf28c98d732434ce07b4cfd136d70d71f2d617391a5b2951 (174,725 bytes)
+fresh     bb950bf3ea985d5daf28c98d732434ce07b4cfd136d70d71f2d617391a5b2951 (174,725 bytes)
+```
+
+The artefact I flagged in §45.4 is corrected: `PRABHA-RE` and `STRIDERS` now both begin `2026-03-20`. Two other rows moved as consequences of the calendar edit and only one of them is an improvement (see H-60).
+
+**N-42 — CLOSED.** The `summary` block is now recomputed from `entries` in the gate and in a test, and the baseline count is reconstructed as `(cal_sessions ∪ excluded) − included` rather than trusted. **N-43 — CLOSED** for the calendar: it has a manifest entry (`c37bb300…`, 585,454 bytes) and its `provenance.sha256` is now a *derived* session-content digest that the loader recomputes and enforces — editing the calendar without recomputing it raises `CalendarError`, which is how I found the check. That is a real invariant, not a typed constant.
+
+### 46.2 H-57 (still open, hard) — the circular payloads are authored, not retrieved, and one of them is provably not the circular it claims to be
+
+The remediation is real work and it fixes the *shape* of the defect: a holiday or trading-day claim now has to appear as a date inside a payload file, not as a string in a list. But the payloads themselves are the same party's prose in a new directory, and three measurements show it.
+
+1. **Registration is optional.** `load_all_bronze_circulars` reads every `*.json` in `data/raw/circulars/` and only compares against `manifest.jsonl` when an entry happens to exist (`if manifest_rec:`). A payload with no manifest entry is loaded and trusted with no digest, no byte count, no timestamp and no rejection. None of the seven payloads carries `source_url`, `retrieved_at` or `provenance_status`; the manifest entries' only provenance is `"retrieval_reference": "Audit §45 (Finding H-57)"` — a citation of this report, not of NSE.
+2. **One payload is demonstrably wrong about the document it claims to be.** `NSE_CMTR_65729.json` says `circular_ref_no: "008/2025"`, `issue_date: "2025-01-20"`. The actual NSE/CMTR/65729 is dated **23 December 2024**, Circular Ref. No. **172/2024** (`nsearchives.nseindia.com/content/circulars/CMTR65729.pdf`, "Live Trading Session on February 01, 2025 – Presentation of Union Budget"). A transcription that misdates the circular it reproduces is not an archived document; it is a note.
+3. **The attack from §45.2 still works, one level deeper.** I deleted `2023-03-15` (1,923 traded EQ rows) from Bronze and from its manifest, deleted the date from the calendar's `sessions` and `session_records`, added an **unregistered** `NSE_CMTR_99999.json` declaring that date a holiday, added one reconciliation row citing it, raised `calendar_sessions_excluded_from_trading` to 8, and re-registered the two edited artefacts:
+
+```
+[PASS] All 1,194 archive digests verified … (1,194 / 1,194 entries)
+[PASS] Authoritative calendar reconciliation verified: 1201 baseline calendar sessions - 9 excluded
+       (substantiated by Bronze circulars) + 2 included = 1,194 unified calendar sessions matching 1,194 archives
+OVERALL VERDICT: ALL CASH UNIVERSE COVERAGE GATES PASSED        EXIT=0
+```
+
+The parenthetical is now false: one of the nine "substantiated" dates is substantiated by a file I wrote thirty seconds earlier and that nothing hashed. The control run — the same deletion with the calendar left alone — does fail (`[FAIL] Unified calendar sessions count 1195 != manifest archives count 1194`, exit 1), so the wiring added in this commit does buy detection against tampering with Bronze alone. What it does not buy is detection against the party that also writes the calendar and the payloads.
+
+The invariant I named at the end of §45.6 is the one still missing: no gate may pass on evidence that exists only as a document the gate's own author commits. Digests prove only that nobody edited the file afterwards. A payload needs `source_url`, `retrieved_at`, a retrieval digest recorded at fetch time, and `provenance_status: CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` until a human attaches the audit proof — and the loader must refuse a `*.json` that has no manifest entry rather than silently trust it.
+
+### 46.3 H-60 (new, hard) — the unified calendar now asserts the exchange was closed on 2025-02-01, a session it held and for which a Bhavcopy was published
+
+Seven of the eight dates removed from `cal.sessions` are genuine holidays and match the payload lists (`2025-10-22`, `2026-01-15`, `2026-03-26`, `2026-03-31`, `2026-05-28`→`05-27`, `2026-06-26`, `2026-09-14`). The eighth is not: **2025-02-01 was a live trading session**, announced by NSE/CMTR/65729 dated 23 Dec 2024 as "Live Trading Session on February 01, 2025 – Presentation of Union Budget" with normal market 09:15–15:30, preceded by a press release on 24 Jan 2025. NSE published a Bhavcopy for that day; public UDiFF mirror indexes list `2025-02-01 (Saturday) CSV 483 kB`. It is not a settlement-day curiosity with no prints — it is a session with prices.
+
+The commit deletes it from the calendar because the gate now demands it:
+
+```
+len(cal_sessions) == manifest_expected_archive_count          # archives are the denominator
+action == EXCLUDE  ->  assert dt not in cal_sessions          # an exclusion must not be a session
+```
+
+With no archive for that day in Bronze, the only representation the code permits is "not a session". Measured:
+
+```
+is_session(2025-02-01)                      False
+total_sessions                              2,934   (2,940 - 8 + 2)
+sessions_in_range(2022-01-03, 2026-10-31)   1,195   (true count: 1,196)
+recon entry for 2025-02-01                  discrepancy_type CALENDAR_SESSION_NO_ARCHIVE
+                                            classification SPECIAL_SESSION_NO_BHAVCOPY_ARCHIVE
+                                            (i.e. "a calendar session with no archive" — a session the calendar no longer has)
+```
+
+Four consequences, all fail-open in the direction that matters:
+
+1. **The fact that the market traded is gone from the system of record.** `docs/`/calendar now say closed; the payload in `data/raw/circulars/NSE_CMTR_65729.json` says open; the reconciliation table says open. Three artefacts, two answers, and the gate reads all three without noticing.
+2. **The missing archive is now unreportable.** A real data gap — one of the 1,196 sessions — is indistinguishable from a holiday by construction, because the calendar *is* the archive list. The `UNEXPLAINED_MISSING_RECORD` branch can only fire when a date is missing from one artefact and present in the other, and this edit removed the other.
+3. **Rolling windows skip a real session.** The deriver computes an exclusive end as `get_next_cal_session(last_observation)`; with 2025-02-01 absent, that is 2025-02-03. The committed table shows it: `INE581X20021,GLOBE-RE1,BE,2025-01-24,2025-02-03` — the previous `2025-02-01` was correct and this is one session late. Every EMA/ATR/survivorship window straddling that date is likewise one bar short, which is precisely the §6.2 error H-59 was raised to remove.
+4. **Any real 2025-02-01 print would be rejected as off-calendar** by `SilverStorage` (`silver.py:241`), so the bar can never be ingested even if retrieved.
+
+I own the instruction that produced this: §45.4 said "delete the eight non-sessions". The special session was never a non-session, and the implementer followed the letter of a remedy whose whole point was that a calendar must record what the exchange did, not what the archive directory happens to contain. The fix is to keep `2025-02-01` as a `SPECIAL` session record and represent the missing archive as a typed, cited gap; and to stop using `len(cal_sessions) == archive_count` as the primary invariant — the calendar is the expectation, the archive set is what exists, and a difference between them is the finding, not the thing to be deleted.
+
+### 46.4 Notes N-44 … N-47
+
+1. **N-44 — the constants came back.** `verify_cash_universe_coverage.py` now hardcodes `1201` for the reconstructed baseline and `datetime.date(2025, 2, 1)` inside three summary assertions; `test_calendar_reconciliation.py` asserts `1201`; `verify_phase2b5_storage.py` and `test_storage.py` assert `2934`, `e5e77c01…` and the `CAL-FPR-V1-` fingerprint. These are the typed expectations N-40.1 removed, now in two gates and two tests, and every one of them must be hand-edited when the calendar changes — the drift is guaranteed, only the occasion is unknown.
+2. **N-45 — the digest no longer proves byte-exactness.** Stripping CRLF before hashing makes a manifest digest EOL-insensitive: `sha256sum data/reference/calendar_reconciliation_2022_2026.json` on this checkout returns 6,729 bytes / `1e3aaf4c…` against a registered 6,590 / `65d30d17…`, and the gate is content because it normalises. That is a defensible choice for reproducibility and I would have taken it, but §10.1's "byte-exact as retrieved" now holds only up to line endings, and a mixed-EOL tamper is invisible to every archive digest in the repository.
+3. **N-46 — calendar provenance still cites eleven documents that do not exist.** `circular_references` holds 18 IDs; the payload directory has 7. The eleven without a payload are `NSE/CMTR/2015_HOLIDAYS` … `2021_HOLIDAYS`, `2025_HOLIDAYS`, `2026_HOLIDAYS`, `NSE/MSD/60300`, `NSE/MSD/60318`. "2025_HOLIDAYS" is a placeholder, not the real NSE/CMTR/65587 which is also listed. Nothing checks that a provenance entry resolves to a payload, so the provenance list is partly decorative.
+4. **N-47 — N-41 is half-addressed.** `test_adversarial_unsubstantiated_holiday_claim_rejected` is a real assertion about artefact content, but `test_calendar_reconciliation_fails_on_unexplained_missing_session` is unchanged: it removes one element from an in-memory copy of `cal_sessions` and checks the size of the resulting set difference. It cannot fail and it never calls the gate; the attack in §46.2 leaves the file at 7/7 green. Two payload dates also sit in both lists and would be a false positive for any future payload×calendar check: `2022-10-24`, `2023-11-12`, `2024-11-01` and `2025-10-21` are `trading_holidays` in the payloads and muhurat sessions in the calendar, which is correct — the day is a holiday and the evening is a session — but the model has no way to say so.
+
+### 46.5 Verdict
+
+**Closed at `0b88f67`:** **H-58** (clean-tree gate exit 0, 275 tests pass, wave gate completes, calendar worktree byte-identical to its blob); **H-59** as wiring (one calendar, one deriver input, `1,195 / 1,195` archives, derivation byte-identical at `bb950bf3…`); **N-42** (summary recomputed); **N-43** for the calendar (manifest entry plus a derived content digest the loader enforces). H-41's `PRABHA-RE` / `STRIDERS` error is corrected to `2026-03-20`.
+
+**Still open, hard:** **H-57** — payloads are authored rather than retrieved, one is provably misdated against the real circular, and registration is optional, so the §45.2 attack succeeds against the new design with an unregistered 400-byte JSON (`9 excluded (substantiated by Bronze circulars)`, gate exit 0, a real 1,923-row session gone). **H-60 (new)** — the unified calendar now states that NSE was closed on `2025-02-01`, a session NSE circularly convened and for which a Bhavcopy exists; the deletion was forced by `len(cal_sessions) == archive_count` plus "an exclusion must not be a session", and it erases a real data gap while moving `GLOBE-RE1`'s interval end one session late.
+
+**Notes:** N-44 (constants re-typed in two gates and two tests), N-45 (digests are now EOL-insensitive, so byte-exactness holds only modulo line endings), N-46 (eleven provenance IDs resolve to nothing), N-47 (one of N-41's two tautologies remains).
+
+**Wave 3 — the GO stands and extends to `0b88f67` for the execution path only.** Nothing here touches the fill model, the statutory cost schedule, slippage, settlement or the fold engine; `2,390,165 / 2,390,165` traded EQ rows resolve across 1,195 sessions and the four coverage gates plus the seven storage gates pass. But the GO is about fills, and it must not be read as certifying the session list: the calendar it now relies on is wrong for at least one session, and `cash_equity_symbol_intervals.csv` inherits that error.
+
+**Phase 2D — NO-GO, and this time on substance rather than provenance.** A walk-forward over this calendar evaluates 1,195 sessions where the exchange held 1,196, silently, with one symbol's identity interval one session late, and with an archive that is genuinely missing recorded as a holiday. H-57 remains the structural reason: the date list a research verdict is computed over can still be edited into agreement by the party being checked.
+
+**Order:** H-60 (restore `2025-02-01` as a `SPECIAL` session, represent the absent archive as a cited gap, re-derive `bb950bf3…`, drop `len(cal)==archives` as the primary invariant) → H-57 (payload fetch metadata, `provenance_status`, refuse unregistered payloads) → N-44/N-47 → Phase 2D.
+
+The pattern across §§43–46 is unchanged and is now measurable: `5c0272a` let the environment choose the swept scope; `5a98981` compared the session set with itself; `0edc158` compared the exception list with a list of allowed exceptions; `0b88f67` compares the date list with a payload the same author wrote and the same author can register. Each round the remaining freedom moved to the newest artefact — this time, `data/raw/circulars/`. The only thing that has not yet been tried is an input nobody in this repository is allowed to author.
+
+---
