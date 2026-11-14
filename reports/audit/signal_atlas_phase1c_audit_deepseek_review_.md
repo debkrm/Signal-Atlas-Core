@@ -3495,3 +3495,117 @@ Case (c) is the one worth keeping: blanking `criteria_version` no longer skips a
 The convergence claim from §43.9 continues to hold, and this round is the cleanest evidence yet: the last two rounds' failure mode was a check whose *input* was chosen by the party being checked, and N-39's fix is the first in this series where the input is a file the checking party cannot rewrite into agreement — its three probes all fail closed. H-56 is the same shape one more time, and it is now visible only because the manifest made the gap countable: 1,195 archives versus 1,201 calendar sessions. A count that disagrees with an authority is a better state than a count with no authority at all, which is what this gate had on `5c0272a`.
 
 ---
+## 45. Review of `0edc158` — H-56 closes on arithmetic; the evidence behind it is prose, the calendar behind it is still wrong, and the commit is red on the platform that wrote it
+
+Commit: `0edc158` "feat(remediation): close H-56 and N-40 via authoritative calendar reconciliation table and derived expectations". Files: `data/reference/calendar_reconciliation_2022_2026.json` (new, 6,590 bytes in the blob), `configs/trading_calendar_nse.json` (four circular IDs appended to provenance), `data/reference/manifest.jsonl` (provenance status on the archive manifest, new entry for the table), `docs/bronze_storage_policy.md` (new), `scripts/verify_cash_universe_coverage.py` (+186/−26), `tests/unit/test_calendar_reconciliation.py` (new, 130 lines). The audit report and `CURRENT_STAGE_OF_WORK.md` are untouched, as §11.1 requires. Tag `feat-s44-0edc158` added, annotated, sha-embedded; 19 tags total, none moved.
+
+### 45.1 What is now correct, measured
+
+The reconciliation's internal algebra is exact, and I verified it both by reading and by running the gate against blob-exact bytes:
+
+```
+1201 baseline calendar sessions  (criteria.min_binding_evaluation_start_date .. 2026-10-31)
+ -   8 excluded                  (7 official holidays + 1 special session without an archive)
+ +   2 included                  (archives dated 2026-03-20 and 2026-05-27, absent from the calendar)
+ =1195                           == manifest archives, and set-equal in both directions
+```
+
+`[PASS] Authoritative calendar reconciliation verified: 1201 baseline calendar sessions - 8 excluded + 2 included = 1,195 authoritative archived sessions (Finding H-56).` then `OVERALL VERDICT: ALL CASH UNIVERSE COVERAGE GATES PASSED`, exit 0, all four gates.
+
+The classification of the ten sessions is also the right shape, and it is the first time in this series that an absence had to be *enumerated* to pass: every one of the ten got a row, a day of week, a classification, a circular reference and a reason, and the 2025-02-01 Saturday Union-Budget session is correctly separated from the seven closed-market dates rather than lumped in with them. N-40 is addressed on all four points: the typed `1,195`/`2,390,165` constants are gone (`manifest_expected_archive_count`, `manifest_expected_eq_rows`), the manifest carries `provenance_status: CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED`, reverse coverage is asserted (`1,195 / 1,195 entries`), and `docs/bronze_storage_policy.md` writes down the 156 MB decision.
+
+**H-56 is therefore CLOSED as specified.** The expected session set is now derived from `configs/trading_calendar_nse.json` and compared against the manifest in both directions; a calendar session with no archive and an archive dated on a non-session both fail with `UNEXPLAINED_MISSING_RECORD` / `UNEXPLAINED_EXTRA_RECORD` naming the dates. The property I asked for — that the authority be an input the gate does not generate — holds. What does not hold is the *quality* of the thing that authorises an exception, which is the next finding.
+
+### 45.2 H-57 (new, hard) — the exclusion authority is an unarchived string, so the gate can be told to drop a real session
+
+The gate accepts an exclusion if the row carries a non-empty `circular_references` and each ID appears in `cal.provenance["circular_references"]` — a list this very commit extended by four entries (`NSE/CMTR/65587`, `NSE/CMTR/65729`, `NSE/MSD/66381`, `NSE/CMTR/71775`) for no other purpose than to satisfy that membership test. So the check is: does the table cite an ID that the table's author put on the allowed list. No circular payload exists anywhere in the repository — `grep` for the four IDs finds only `configs/trading_calendar_nse.json` and the reconciliation table itself, and `data/raw` holds no circular documents — so nothing in the pipeline can distinguish a citation from an invention, and §6.3's "verified exchange circular evidence" is, at present, a string comparison.
+
+Measured. I took a real session that trades 1,923 `EQ` rows (`2023-03-15`, `cm15MAR2023bhav.csv.zip`), appended one reconciliation row declaring it an `OFFICIAL_EXCHANGE_HOLIDAY` citing `NSE/CMTR/2023_HOLIDAYS` (already in provenance), deleted the archive from `data/raw/2023/`, dropped its line from `bhavcopy_archive_manifest.jsonl`, and re-registered the two edited digests in `manifest.jsonl` — an operation the same party owns and which takes three small file writes:
+
+```
+[PASS] All 1,194 archive digests verified against committed manifest and 100% reverse coverage confirmed (1,194 / 1,194 entries)
+[PASS] Authoritative calendar reconciliation verified: 1201 baseline calendar sessions - 9 excluded + 2 included = 1,194 authoritative archived sessions
+OVERALL VERDICT: ALL CASH UNIVERSE COVERAGE GATES PASSED          EXIT=0
+```
+
+Every artefact restored afterwards (`git checkout --` on the four paths; tree clean). The point is not that the implementer would do this; it is that the gate cannot tell the difference, and "1,195 archived sessions, 100% resolved" therefore rests on a table whose exceptions are self-certified. That is the same defect class as H-55 and H-56 for the third round running, one layer further up: from a denominator chosen by the environment, to a calendar check against itself, to an exception list checked against itself.
+
+The remedy is not more arithmetic. It is to *archive the evidence*: pull the four circular payloads into Bronze with byte counts and digests (§10.7), register them in the manifest, and derive the excluded/included date sets by parsing them rather than by reading a hand-written `action` field. Until then the honest reading of the green gate is "no unexplained discrepancy exists among the discrepancies someone chose to explain".
+
+### 45.3 H-58 (new, hard) — HEAD is red on the machine that produced it, and the trap is not specific to this file
+
+The digest check hashes the *working-tree* bytes, and the blob was committed LF-only while `core.autocrlf=true` here. After any git operation normalises the working copy, the file the gate hashes is not the file the manifest describes:
+
+```
+                bytes   sha256(first 16)   matches manifest?
+blob (HEAD)     6590    65d30d17dbc2b0b0   yes
+worktree        6729    1e3aaf4cc1a5bb0e   no   (139 CRLF conversions)
+```
+
+Consequences, measured at `0edc158` on a clean tree (`git status` empty):
+
+```
+scripts/verify_cash_universe_coverage.py
+  [FAIL] Calendar reconciliation hash/size mismatch vs manifest.jsonl (Finding H-56)
+  OVERALL VERDICT: ONE OR MORE GATES FAILED        EXIT=1
+
+python -m pytest tests/unit -q
+  1 failed, 272 passed in 11.53s
+  FAILED tests/unit/test_calendar_reconciliation.py::test_calendar_reconciliation_manifest_registration
+```
+
+Writing the exact blob bytes back into the path makes both green (gate exit 0, `1,195` authoritative sessions, `273 passed in 11.87s`) — so the logic is right and the state is not. CI runs `ubuntu-latest` (§`.github/workflows/ci.yml`) where `autocrlf=false`, so CI is green while the authoring platform is red; the file therefore passed verification at authoring time and fails on the next `git status`/`checkout`/`commit` that touches it. Two textual reference artefacts already in the repo are immune only because they were written before normalisation and never rewritten.
+
+This is not a false PASS — it fails closed, which is the right direction — but it makes "verified at `0edc158`" non-reproducible, and it will hit every future LF-committed JSON/CSV the gates digest. The fix is one line of policy, not code: a `.gitattributes` with `data/reference/** text eol=lf` (and `configs/**` likewise), or hash the committed blob (`git cat-file -p`) instead of the working tree. I recommend both: the attribute removes the class, the blob hash removes the dependence on local git configuration.
+
+The failure also takes the wave gate down with it: `scripts/verify_audit_append_only.py` reports `[FAIL] scripts/verify_cash_universe_coverage.py exited with non-zero code 1 (5.25s)` and then crashes in its own reader — `TypeError: object of type 'NoneType' has no len()` at line 141, after `UnicodeDecodeError: 'utf-8' codec can't decode byte 0x97` — so on this platform the append-only gate cannot even print the reason a script failed. Gate W0.5-1 itself passes (`0 deleted lines`); Gate W0.5-2 cannot complete.
+
+### 45.4 H-59 (new, hard) — the reconciliation binds only COV-2; the calendar all other code reads is still the wrong one
+
+`load_nse_trading_calendar()` returns the unreconciled file, and the reconciliation table is read by exactly two places: COV-2 and its new test. The identity deriver still filters observations through `set(cal.sessions)`:
+
+```
+[INFO] Processed 1193 trading sessions from 1195 raw archives in 18.31s
+       (2 non-calendar archives rejected per Rule 6.3 fail-closed calendar invariants, Note N-28)
+```
+
+Those two rejected archives are precisely the two sessions this commit declares `INCLUDE_IN_EXPECTED_ARCHIVES` as `OFFICIAL_TRADING_SESSION`. The comment asserting §6.3 compliance is now false in the same repository that contains the table proving it false, and the derived layer was not rebuilt. I re-derived the identity table with the two dates admitted (patch applied to the module's `load_nse_trading_calendar`; script and committed table untouched):
+
+```
+committed : b1746c9ec38a7f59962b39c87f72461872c3f5f718f09d212704f4636f79c1f4
+reconciled: 9ba609aa9b09f116e340ce028b77a296ad6c084f1ad54f4bfda52ccbe5493ccf
+identical : False        4,510 intervals both, 174,725 bytes both, exactly 2 rows differ
+
+INE0I0M20015,PRABHA-RE,BE,2026-03-23,2026-03-31   ->   ...,2026-03-20,2026-03-31
+INE1XWN01017,STRIDERS,SM,2026-03-23,               ->   ...,2026-03-20,
+```
+
+Two securities first traded on 2026-03-20; the delivered table says their identity begins on 2026-03-23. That is a point-in-time fact wrong by one session, in the artefact Wave 3's GO rests on, produced by the same commit that established the fact. The direction is conservative (they become eligible a session late rather than early), which is why this is not a fill-realism finding, but it is a §6.1 identity error, and it shows the reconciliation has no reach outside one gate.
+
+The same split shows up downstream: `SilverStorage` refuses an off-calendar session (`silver.py:241`, "Cannot write silver partition for off-calendar session"), so the two archives declared authoritative cannot be ingested at all; `calendar.sessions_in_range(2022-01-03, 2026-10-31)` still returns **1,201**, so session-gap detection expects eight partitions that can never exist, one of them 2025-02-01, while `is_session(2026-03-20)` is still `False`.
+
+The remedy belongs in the calendar, not in a second table: delete the eight non-sessions, insert the two real ones, attach the circular reference per session record, then re-derive the identity table and re-register its digest (the two rows above will change). If the calendar must stay a verbatim transcription of the published annual list, then `load_nse_trading_calendar()` has to apply the reconciliation, so that every consumer sees the same reconciled authority — otherwise the repository holds two calendars and only the gate knows which one is true.
+
+### 45.5 Notes N-41 … N-43
+
+1. **N-41 — two of the five new tests are tautologies.** `test_calendar_reconciliation_fails_on_unrecorded_circular` asserts that a fake ID is not in a set, then asserts that asserting it is in the set raises `AssertionError`; `test_calendar_reconciliation_fails_on_unexplained_missing_session` computes `cal_sessions - simulated_manifest` after removing one element from a copy of `cal_sessions` and checks the result has one element. Neither calls the gate. The §45.2 attack — a real session deleted from Bronze — leaves the suite green. The three remaining tests do exercise real files, and the exact-closure one is the useful one, but it re-types the constants N-40.1 removed (`1,201`, `1,195`, `8`, `2`, `10`), so the expectation and the artefact can drift together.
+2. **N-42 — the table's `summary` block is never read.** `baseline_calendar_sessions: 1201`, `calendar_sessions_excluded_from_trading: 7`, `calendar_sessions_unarchived_special: 1`, `archived_sessions_not_in_baseline_calendar: 2` and `expected_reconciled_archived_sessions: 1195` are all correct, and none of them is checked against `entries` by the gate or by any test; the gate recomputes from `entries` and the tests carry their own literals. Duplicated derived state that happens to agree today.
+3. **N-43 — the calendar itself is not fingerprinted, and UDiFF archives still cannot be ingested.** `configs/trading_calendar_nse.json` has no entry in `data/reference/manifest.jsonl`, and its `provenance.sha256` (`f9da922e…`) matches neither the blob (`446bc283…`) nor any working-tree state, so it is unverifiable by construction. Separately, and outside this remediation's scope: the 2025–2026 archives are in the new UDIFF format and `ingest_daily_bhavcopy_archive` cannot parse them at all — `BhavCopy_NSE_CM_0_0_0_20251231_F_0000.csv.zip` → `BhavcopyIngestError: Line 45: trade_date was not provided and date column could not be parsed`, likewise 2026-03-20 / 2026-03-23 / 2026-05-27. Pre-existing, but it means H-59's downstream consequence is currently latent: nothing can consume 2026 through the ingest path, so the two rejected sessions cost nothing yet. It will cost the moment the parser is fixed.
+
+### 45.6 Verdict
+
+**Closed at `0edc158`:** **H-56** — the expected session set is derived from the committed calendar, compared with the manifest in both directions, and any disagreement fails closed with the dates named (`1,201 − 8 + 2 = 1,195`, set-equal both ways; gate exit 0, four gates). **N-40.1–N-40.4** — counts derived from the manifest, reverse coverage asserted, provenance status recorded, storage policy written.
+
+**New, hard:** **H-57** — an exclusion is authorised by a string in a file that the author of the exclusion controls; measured green gate with a real 1,923-row session deleted from Bronze and re-declared a holiday. **H-58** — HEAD is red on the platform that produced it: working-tree EOL normalisation (6,729 ≠ 6,590 bytes) fails COV-2 and one test on a clean tree, while CI is green; fix with `.gitattributes` and/or blob hashing. **H-59** — the reconciliation binds only COV-2; the calendar every other consumer reads still contains eight non-sessions and omits two real ones, the deriver rejects them under a comment that now asserts the opposite of what the table says, and the identity table is one session late for two securities (`b1746c9e…` → `9ba609aa…`, 2 rows).
+
+**Notes:** N-41 (two tautological tests, constants re-typed), N-42 (unverified `summary` block), N-43 (calendar unfingerprinted; UDIFF archives unparseable by the ingest path).
+
+**Wave 3 — GO stands at `a093682`; extends to `0edc158`, with one caveat.** Nothing here touches the fill path, the statutory cost schedule, the slippage model or the settlement logic, and the 2,390,165-row resolution result is unchanged. The caveat is that the identity table the GO rests on is now known to be one session late for two securities (`PRABHA-RE`, `STRIDERS`), in the conservative direction; it must be re-derived after H-59 rather than left as the artefact of record.
+
+**Phase 2D — still conditional, on two items.** H-57 is the reason: a research verdict computed over a window whose session list can be edited into agreement is a verdict about the edit. H-59 is the operational reason: two calendars now exist and the pipeline uses the unreconciled one. H-58 should be fixed first because it is one line and it currently makes every gate result local to a git configuration.
+
+**Order:** H-58 (gitattributes, blob hashing) → H-59 (correct the calendar, re-derive identity, re-register digest) → H-57 (archive the circular payloads, derive exceptions from them) → Phase 2D.
+
+The arc across §§43–45 is worth naming, because it is now three consecutive rounds of one defect in three places: a check whose input is chosen by the party being checked. `5c0272a` let the environment choose the swept scope; `5a98981` compared the session set against itself; `0edc158` compares the exception list against a list of allowed exceptions. Each fix enlarged the set of things that must agree, and each time the remaining freedom moved to whichever artefact is newest and least verifiable. The invariant to hold onto: no gate may pass on evidence that exists only as a string in a file the gate's own author commits — bytes with digests, or an external anchor, or the check is a formality.
+
+---
