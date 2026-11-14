@@ -4014,3 +4014,123 @@ Ordering rationale: 1 and 2 are one change to one comparison and remove the only
 This is the fourth consecutive round in which the fix landed on the artefact and left the invariant. It is also the first in which the remaining defect has a one-line form: the calendar declares its own fingerprint and the repository compares it with itself. Pin that string in the criteria file and the class closes, not just this instance.
 
 **What would change this verdict.** H-64 closed with item 1's probe failing on both substitutions and on nothing else; N-51 closed in the same loader; H-57's amendment payload and metadata honesty in place; N-52 and N-53 stated honestly. Items 3–5 may trail 1–2 if the implementer prefers, but item 1 is not optional and no Phase 2D work should start before it is measured.
+---
+
+## 50. Wave 4 / Phase 2D verdict at `8e67e07` — 14 November 2026
+
+`8e67e07` implements §49.3 items 1–3 and part of 4. This section re-measures each one against the commit rather than against its message, which claims to "close H-64, N-51, H-57 partial amendment, and N-52". Two of those claims hold as written, two do not, and the difference matters for what Phase 2D inherits.
+
+### 50.1 Baseline at `8e67e07`
+
+```
+286 passed in 11.87s                       (python -m pytest -q, +4 vs fe3dca4, zero skip/xfail)
+scripts/verify_audit_append_only.py        exit 0  (append-only, dynamic discovery, all verify_* scripts, suite)
+scripts/verify_cash_universe_coverage.py   exit 0  (COV-1..COV-4 PASS; 2,390,165/2,390,165 rows, 1,195 archives)
+tag feat-s48-8e67e07                        verified against 8e67e07
+working tree                                clean
+```
+
+Manifest digests for the four artefacts this commit rewrites match the bytes on disk exactly (`trading_calendar_nse.json` 585,546; `NSE_CMTR_72260.json` 1,020; `NSE_CMTR_71775.json` 2,948; `calendar_reconciliation_2022_2026.json` 6,774), and a byte edit that is not followed by a manifest reseal raises `CircularError: digest/size mismatch vs manifest` from `load_all_bronze_circulars` — measured incidentally while probing 50.5.
+
+### 50.2 H-64 — CLOSED, measured three ways
+
+Every probe below rewrites `configs/trading_calendar_nse.json`, recomputes the `CAL-FPR-V1` digest from the tampered `session_records`, and reseals `provenance.sha256`, so the loader's own self-seal (the whole of the old defence) is satisfied before the gate runs.
+
+| Probe | Tampered | Gate result |
+|---|---|---|
+| date swap, evaluated window | `2023-03-22` (Wed) → `2023-03-25` (Sat) | `[FAIL] Calendar content fingerprint mismatch (Finding H-64)`, exit 1 |
+| date swap, warm-up window | `2019-03-05` → `2019-03-09` (Sat) | same FAIL, exit 1 |
+| session-time change | `2024-06-03` close `15:30` → `16:00` | same FAIL, exit 1 |
+| unmodified tree | — | `[PASS] Calendar identity fingerprint verified: CAL-FPR-V1-af8e309a…`, exit 0 |
+
+The pin is `expected_calendar_fingerprint` in `configs/go_no_go_criteria.yaml`, compared in `verify_gate_cov2_bhavcopy_resolution`. It covers dates, `session_type` and open/close times of all 2,935 sessions, so a Muhurat hour cannot hide in a changed time either. **H-64 is closed**: the substitution that motivated it now fails on the pin, and fails only on the pin.
+
+### 50.3 The coordinated variant — the anchor is a visibility device, and a second invariant catches the lie
+
+The pin is not tamper-detection: an edit that changes a session *and* rewrites the pinned digest is, by construction, a criteria diff, which is the human act §9.2 exists to force. Measured, that coordinated edit does not get through either:
+
+```
+swap 2023-03-22 -> 2023-03-25, criteria pin rewritten to the new digest
+[PASS] Calendar identity fingerprint verified: CAL-FPR-V1-4d44361e…
+[FAIL] UNEXPLAINED_MISSING_RECORD: 1 expected calendar sessions missing from archives:
+       [datetime.date(2023, 3, 25)] per AGENTS.md §6.3 (Finding H-56, H-60)
+OVERALL VERDICT: ONE OR MORE GATES FAILED          exit 1
+python -m pytest -q   -> FAILED tests/unit/test_calendar_reconciliation.py::test_h64_calendar_fingerprint_detects_date_swap
+```
+
+So a date can no longer be moved by one file's edit: it takes the calendar, the criteria pin, an archive, the manifest and the reconciliation table, and the failure is then named by an invariant that is independent of the pin. That is the boundary §9.2 asks for.
+
+### 50.4 N-51 — CLOSED
+
+Removing each pinned line from `configs/go_no_go_criteria.yaml` one at a time, then running the gate:
+
+| Key removed | Gate |
+|---|---|
+| `expected_calendar_fingerprint` | exit 1, `CriteriaValidationError` |
+| `expected_total_calendar_sessions` | exit 1, `CriteriaValidationError` |
+| `expected_baseline_calendar_sessions` | exit 1, `CriteriaValidationError` |
+| `expected_authoritative_calendar_sessions` | exit 1, `CriteriaValidationError` |
+| `authorized_unarchived_special_sessions` | exit 1 |
+| `authorized_calendar_holiday_exclusions` | exit 1, `CriteriaValidationError` |
+| `authorized_calendar_trading_inclusions` | exit 1, `CriteriaValidationError` |
+
+7 of 7 fail closed, and so does an empty fingerprint (`must be a CAL-FPR-V1-... string, got ''`). The `1201 / 1196 / 2935` fallbacks in `criteria.py` are gone, not merely bypassed. **N-51 is closed.**
+
+Residual, note-level (**N-56**): `min_binding_evaluation_start_date` and `min_traded_eq_resolution_pct` still resolve through `.get(..., default)` in the same loader, and `binding_start_date` is pinned by a literal in `scripts/verify_phase2b5_storage.py` rather than in the criteria file. Neither can move a result today — the start-date default is the stricter value — but the binding-window start is the one invariant whose absence is still silent, and it is the invariant Phase 2D's report will be read against.
+
+### 50.5 H-57 — the amendment is closed by enforcement; the metadata honesty is not
+
+The amendment half is real and load-bearing:
+
+```
+mv data/raw/circulars/NSE_CMTR_72260.json away
+[FAIL] Session 2026-01-15 claimed as OFFICIAL_EXCHANGE_HOLIDAY under ['NSE/CMTR/72260']
+       is not substantiated by any parsed Bronze circular payload (§6.3, Finding H-57)   exit 1
+pytest -> 2 failures (substantiation + adversarial unsubstantiated claim)
+```
+
+`NSE_CMTR_71775` no longer carries `2026-01-15` (15 base holidays remain), the reconciliation cites `NSE/CMTR/72260`, and the regression test asserts that the date is claimable under the amendment and *not* under the base circular. That is the correction §49.3 item 3 asked for, and it is enforced rather than narrated.
+
+The metadata half of the same item is untouched, and in one respect made firmer:
+
+- `issue_date` is read by nothing — `grep -rn "issue_date" src/signal_core/storage/circulars.py scripts/` returns no hit — so a payload may assert any relationship between issue and retrieval date;
+- `http_status` must equal 200 (`circulars.py:200`), so every payload is now *required* to attest a successful fetch, while Bronze stores no response bytes and no PDF digest for any of the 13 payloads; the assertion is unfalsifiable from the repository;
+- all 13 payloads remain `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED`, and no gate prints `NOT RUN` for a claim resting on one: COV-2 still prints `[PASS] … 100.0000%` over archives whose manifest status is unverified.
+
+The third clause of §49.3 item 3 was "a claim resting on a non-`VERIFIED` payload must print `NOT RUN` rather than `PASS`". It is absent from `scripts/` and `src/`. **H-57 remains open on metadata honesty**, with the amendment closed.
+
+Two new notes from the same files:
+
+- **N-54** — `NSE_CMTR_72260.json` `amendment_note` states the holiday was "originally listed in `NSE/CMTR/71775`", and the reconciliation repeats "Erroneously listed as a regular session". `71775` now carries 15 base holidays *without* 15 January, and its manifest description says "15 base holidays". The amendment *adds* the holiday; describing it as a confirmation reverses the amendment in the one layer that is supposed to be byte-honest.
+- **N-55** — the manifest entry for `calendar_reconciliation_2022_2026.json` describes it as one that "now cites both `NSE/CMTR/71775` and `NSE/CMTR/72260`"; the artifact cites only `NSE/CMTR/72260`.
+
+### 50.6 N-52 — PARTIAL; N-53 — OPEN
+
+`8e67e07` adds `pre_binding_calendar_provenance_note` to the criteria, which is the disclosure item 4 asked for. It does not do the second half: `expected_total_calendar_sessions: 2935` still counts the 930 sessions of `2018-04-01..2021-12-31` as authoritative, and 50.2's new pin now extends over **all 2,935** of them. The anchor therefore certifies the identity of 930 dates that no document in the repository supports — the count was the weaker claim, and it has been upgraded to a fingerprint. Item 4 said "stop counting the earlier sessions as authoritative"; either source them or split the pin so identity covers only the sourced window.
+
+`verified_regular_trading_sessions` is unchanged in `NSE_CMTR_71775.json`, still publishing as verified two sessions whose evidence is a holiday circular's silence. **N-53 is open.**
+
+**N-57** — the commit subject states it closes "N-52". Under §11.3 that is the same class of claim as a status document saying so: N-52 is disclosed, not closed.
+
+### 50.7 What this commit does not touch
+
+No file under `src/signal_core/execution/` or `src/signal_core/portfolio/` appears in the diffstat, so the fill, cost and ledger paths judged in §41–§47 are byte-unchanged and **Wave 3's GO is unaffected**.
+
+### 50.8 Verdict
+
+**Wave 3 — GO stands, unchanged, for `2022-01-03..2026-10-31`.**
+
+**Wave 4 / Phase 2D — GO.**
+
+§49.4 named five closing conditions and said items 3–5 could trail 1–2. Item 1 is measured closed here (50.2: three identity mutations, three named failures, one clean pass), item 2 is measured closed here (50.4: 7 of 7 pins fail closed). The blocking reason in §49.4 was that the evaluated window's dates were written by the same commit that wrote the data; that is no longer true, and the coordinated variant of the attack now fails on an invariant independent of the pinned string (50.3). Phase 2D work may start.
+
+Four residuals are carried into it. They bind the first published Phase 2D verdict, not the start of the work:
+
+1. **R-3 / H-57 metadata** — either store fetched bytes with a response digest, or drop `http_status` and `retrieved_at` from payloads that were never fetched; and make a claim resting on `SOURCE_UNVERIFIED` print `NOT RUN`, as §49.3 item 3 required. Until then no 2D report may present a `PASS` over the calendar's provenance.
+2. **R-4 / N-52** — source `2018-04-01..2021-12-31`, or move the total-count and fingerprint pins onto the sourced window so the anchor stops certifying undocumented dates.
+3. **R-5 / N-53** — rename or delete `verified_regular_trading_sessions`.
+4. **R-6** — the anchor lives in `verify_cash_universe_coverage.py`, not in `load_nse_trading_calendar`. Any consumer that loads the calendar outside that gate — the Phase 2D report generator is the next one — receives an unanchored calendar. Route 2D's calendar access through the anchored comparison rather than re-deriving it.
+
+N-54, N-55 and N-57 are honesty corrections to text already committed; they do not gate anything, but they are the kind of claim this report exists to stop at the source.
+
+What would make this verdict wrong: a 2D verdict computed from a calendar loaded without the pin comparison (R-6), or a 2D report whose cells print `PASS` while citing a payload the repository itself labels `SOURCE_UNVERIFIED` (R-3).
