@@ -4280,3 +4280,119 @@ Ordered by what it unblocks. Each item closes only on the named probe failing, o
 6. **N-59** — reword the R-6 and R-3 lines in `CURRENT_STAGE_OF_WORK.md` to cite §52.3/§52.4 or drop the closure claim.
 
 Then, and only then: **R-4** (a second `CAL-FPR-V1` pin over the 1,196 sourced sessions, `expected_total_calendar_sessions` treated as a completeness count), and Phase 2D's first end-to-end report on the real Tier-A window, whose only `NOT RUN` entries should be the ones the data cannot support — currently circuit-verified PnL.
+---
+
+## 53. Audit of `ff65d97` — §52 items and R-4 — 14 November 2026
+
+All seven items from §52.9 are closed on measurement, and R-4's window pin does real, separable work. Two defects remain, both at the boundary of a fix rather than in its centre: the attestation check accepts any file that exists, and the window check never consults the calendar. Neither invalidates the engine; both can put a false sentence into a published report.
+
+### 53.1 Baseline at `ff65d97`
+
+```
+304 passed in 12.44s                       (zero skip, zero xfail)
+scripts/verify_audit_append_only.py        exit 0  ALL REPOSITORY FOUNDATION GATES PASSED (100%)
+scripts/verify_phase2d_verdicts.py         exit 0  ALL PHASE 2D VERDICT ENGINE GATES PASSED (100%)
+scripts/verify_cash_universe_coverage.py   exit 0  ALL CASH UNIVERSE COVERAGE GATES PASSED
+```
+
+### 53.2 Closed
+
+**H-65 — CLOSED.** Both constants read `2022-01-03`:
+
+```
+resolve_gating_verdict(2019-01-01, "GO")            -> NOT RUN
+check_gating_verdict_eligibility(2019-01-01, "GO")  -> raises GatingWindowValidationError
+resolve_gating_verdict(2022-01-03, "GO")            -> GO
+```
+
+The G2B.5-7 test moved its probe from 2017 to 2019 and now asserts both years classify as warm-up, so the gate tests the boundary it claims to test rather than a date two regimes away.
+
+**R-6 — CLOSED at the consumers.** `anchored=True` is the default on `load_nse_trading_calendar`, and the five unanchored call sites are gone. Measured with `2023-03-22` swapped to `2023-03-25` and the calendar's own digest resealed:
+
+```
+python scripts/derive_cash_universe_intervals.py    -> exit 1, CalendarError: content fingerprint mismatch
+python scripts/verify_cash_universe_coverage.py     -> exit 1, same
+cash_equity_symbol_intervals.csv                    -> byte-identical to before the run
+```
+
+The deriver no longer writes a universe table derived from an unanchored calendar. The only remaining `anchored=False` is a keyword of `generate_walk_forward_folds` — a different function, unrelated to calendar loading.
+
+**R-4 — CLOSED, and independent of the identity pin.** Swapping a date *inside* the sourced window and re-pinning `expected_calendar_fingerprint` to the new total still fails, now on the sourced-window check:
+
+```
+swap 2023-03-22 -> 2023-03-25, reseal, re-pin identity
+  -> CalendarError: Calendar sourced window content fingerprint mismatch (Residual R-4)
+
+swap 2019-03-05 -> 2019-03-09, reseal, re-pin identity
+  -> exit 0, COV-1..COV-4 PASS
+```
+
+Both behaviours are the intended ones: the window pin protects the 1,196 sourced sessions independently, and a pre-2022 change that a human has deliberately re-pinned does not masquerade as a binding-window change.
+
+**H-66 — CLOSED** on the acceptance stated in §52.9. `CRIT-WINDOW-01` evaluates `FAIL` for a 2019 start and the report is `NO-GO` naming the pin; a bundle without dates is `NOT RUN`/`NO-GO`; `to_markdown()` prints `Evaluation Window: … to …`.
+
+**H-67 — CLOSED** on the acceptance stated in §52.9. A `VERIFIED` claim with no reference is refused:
+
+```
+computed = "VERIFIED / EXCHANGE_ATTESTED (UNATTESTED)"  status = NOT RUN  overall = NO-GO
+```
+
+The paragraph in §52.4 no longer appears. What replaced it is measured in §53.3.
+
+**N-58 — CLOSED.** Two evaluations of one bundle are byte-identical, and the timestamp comes from the bundle (`2026-11-14T00:00:00+00:00`), not the clock.
+
+**N-59 — CLOSED.** The status lines now read "implemented, measured per §52.3 / §52.4" — the word `CLOSED` is gone from both, which is what §11.3 required.
+
+### 53.3 H-68 (new, hard) — any file in the repository counts as an attestation
+
+`resolved_attestation` is set by `Path(att_str).is_file()` under the repository root. Nothing checks that the file is an attestation, or that it says anything about the dataset being evaluated. Measured, on an otherwise legitimate bundle:
+
+```
+data_provenance_status = "VERIFIED / EXCHANGE_ATTESTED"
+provenance_attestation_reference = "AGENTS.md"
+  -> CRIT-PROV-01 PASS
+     "Primary market data attested by authentic exchange archive signatures (AGENTS.md) (§6.5)."
+  -> overall GO
+
+provenance_attestation_reference = "tests/fixtures/small_synthetic_dataset.json"
+  -> CRIT-PROV-01 PASS, overall GO
+```
+
+So the engine will still print an exchange attestation it does not have, with a citation a reviewer can see is a guideline document. §52.4's failure is narrowed, not removed: the claim moved from one bundle string into a second bundle string, and the check became "does this path exist".
+
+The acceptance is a binding, not an existence test: the reference must resolve to a registered attestation whose recorded digest matches the evaluated dataset's fingerprint, and a registered attestation whose digest does not match must be refused as loudly as a missing one.
+
+### 53.4 H-69 (new, medium) — the window is never compared to the calendar
+
+`CRIT-WINDOW-01` compares the bundle's start against the criteria pin and the start against the end. It never asks whether the calendar covers the period, or whether the endpoints are sessions. Measured:
+
+```
+window 2031-01-01 .. 2031-06-30   -> CRIT-WINDOW-01 PASS   (200 sessions after the calendar ends)
+window 2022-01-03 .. 2030-12-31   -> CRIT-WINDOW-01 PASS   (end beyond the last committed session)
+window 2022-01-03 .. 2022-01-04   -> CRIT-WINDOW-01 PASS   (two sessions carrying 210 round trips)
+```
+
+A report whose window lies entirely outside the committed calendar would print PASS on window conformance. That is §10.8's rule — no gating on a period the calendar does not cover — applied to the report rather than to the fold, and it is the same class as H-66: a claim about a period that no verified session supports.
+
+### 53.5 N-60 (minor) — the documented signature is stale
+
+`CURRENT_STAGE_OF_WORK.md` describes the contract as `evaluate_verdicts(results_bundle, criteria=None, calendar=None)`. The function also takes `criteria_path`, `calendar_path` and `now_utc`. Documentation only.
+
+### 53.6 Verdict
+
+**Wave 3 — GO stands, unchanged.** No file under `src/signal_core/execution/` or `src/signal_core/portfolio/` is touched by the diff.
+
+**Phase 2D — GO.** The engine, its gate and its adversarial suite are now anchored to a criteria-pinned calendar, a pinned window, and an enforced binding window; all seven items I named last round are closed on measurement, plus R-4 which I had deferred. I am not converting H-68 and H-69 into a blocker for the phase, because they are narrower than the defects that justified the previous hold and they do not affect the report the next step produces.
+
+They are, however, blockers for *citing* one: no report may have its `CRIT-PROV-01` or `CRIT-WINDOW-01` PASS treated as evidence until H-68 and H-69 close, because those PASSes can currently be produced by naming a guideline document and by describing a year the calendar does not contain.
+
+What would make this verdict wrong: a published report that asserts exchange attestation via an unrelated file path, or a window outside 2022-01-03..2026-10-31, presented as conformant after this section. That observation would mean the GO was granted one round too early.
+
+### 53.7 Work order
+
+1. **H-68 — bind the attestation.** Accept a reference only if it is registered (manifest or equivalent), carries a digest, and that digest matches the evaluated dataset's fingerprint; otherwise `NOT RUN`. *Accept:* `AGENTS.md` as reference → `NOT RUN`/`NO-GO`; a registered attestation with a mismatched digest → `NOT RUN`/`NO-GO`; a matching one → `PASS` naming the digest.
+2. **H-69 — bound the window by the calendar.** Require the start and end to be sessions and the whole window to lie within the calendar's first and last session; a window outside coverage is `FAIL` naming the calendar boundary. *Accept:* the three cases in §53.4 all `FAIL`; `2022-01-03..2026-10-31` still `PASS`.
+3. **First real Tier-A report.** Assemble a results bundle from the authoritative engine's existing outputs over `2022-01-03..2026-10-31` — no new simulator, no second fill or cost path (§7.4) — and emit the report through `evaluate_verdicts`, with `evaluated_at_utc` in the bundle and the trial count `N` reported. Expect `NO-GO`: provenance is `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` repo-wide and circuit-verified PnL does not exist yet. A `NO-GO` here is the correct answer and must not be worked around.
+4. **N-60 —** correct the documented signature.
+
+Then the thing Phase 2D structurally cannot reach: a `GO` requires attested provenance, which requires `source_url` and retrieval timestamps on the archives — the work §51 carved out as its own wave. Phase 2D ends at an honest `NO-GO` until that wave runs.
