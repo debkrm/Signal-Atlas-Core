@@ -4134,3 +4134,53 @@ Four residuals are carried into it. They bind the first published Phase 2D verdi
 N-54, N-55 and N-57 are honesty corrections to text already committed; they do not gate anything, but they are the kind of claim this report exists to stop at the source.
 
 What would make this verdict wrong: a 2D verdict computed from a calendar loaded without the pin comparison (R-6), or a 2D report whose cells print `PASS` while citing a payload the repository itself labels `SOURCE_UNVERIFIED` (R-3).
+---
+
+## 51. Directive to the implementer at `8e67e07` — 14 November 2026
+
+`8e67e07` answers §49.3 and is accepted in §50. This section is the work order that follows from it. It is not a status claim; `CURRENT_STAGE_OF_WORK.md` remains theirs, and its entries must cite the audit section and SHA that grant them (§11.3).
+
+### 51.1 New finding — H-65: two binding windows, one of them sourced
+
+`src/signal_core/storage/gating.py:17` and `calendar.py:24` define `BINDING_EVALUATION_START_DATE = 2018-04-01`. `configs/go_no_go_criteria.yaml` pins `min_binding_evaluation_start_date: "2022-01-03"`, which is where the sourced data begins. Measured:
+
+```
+gating constant        : 2018-04-01
+criteria pin           : 2022-01-03
+resolve_gating_verdict(2019-01-01, "GO")   -> GO            # permitted
+check_gating_verdict_eligibility(2019-01-01, "GO") -> no exception
+resolve_gating_verdict(2017-01-01, "GO")   -> NOT RUN
+```
+
+So the guard that exists to stop a verdict on unsourced history admits four years of it — 930 sessions for which the repository holds no archive, no per-session circular and no surveillance interval table. This is the mechanism by which R-4 could be violated without any visible criteria diff, and it is why N-52 is not just a documentation note.
+
+**Close by binding the guard to the criteria value**, not by editing the criteria window. Acceptance: `resolve_gating_verdict(date(2019, 1, 1), "GO")` returns `"NOT RUN"`, `check_gating_verdict_eligibility(date(2019, 1, 1), "GO")` raises, and `resolve_gating_verdict(date(2022, 1, 3), "GO")` still returns `"GO"`.
+
+### 51.2 Work order
+
+Ordered, by what it unblocks. Each item names its acceptance probe; an item is closed when the probe fails closed and the tree is otherwise green.
+
+1. **H-65** — one constant, aligned to the criteria pin (§51.1). Do it first: it is the guard every other item is measured behind.
+2. **R-6** — move the calendar identity comparison out of `verify_cash_universe_coverage.py` and into the load path, so a consumer cannot obtain an unanchored calendar. Acceptance: a module that calls the loader directly on a tampered-and-resealed calendar raises, without running a verify script.
+3. **R-3** — provenance honesty: either store fetched bytes with a response digest, or remove `http_status`/`retrieved_at` from payloads that were never fetched; and make any claim resting on `SOURCE_UNVERIFIED` print `NOT RUN`. Acceptance: a gate cell that cites an unverified payload prints `NOT RUN`; a payload that asserts a fetch it cannot evidence fails closed.
+4. **N-53, N-54, N-55, N-56** — text and pin corrections: rename/delete `verified_regular_trading_sessions`; state the `72260` amendment as an addition rather than a confirmation; make the reconciliation manifest description match what the artifact cites; move `binding_start_date` and `min_binding_evaluation_start_date` into the mandatory-pin set so neither is a literal in a script.
+5. **R-4** — narrow the pin scope, per §51.3 below.
+
+Do not start any Phase 2D number before item 1 and item 2 are measured: 2D computes verdicts, and both items are about the window a verdict is computed over.
+
+### 51.3 Ingestion: what is done, what is not, and the decision
+
+**Done.** The gating window is ingested and reconciled: 1,195 daily Bhavcopy archives, 2,390,165 traded `EQ` rows, `2022-01-03..2026-10-30`, 100.0000% resolved, digests verified against the committed manifest, 286 tests and four COV gates green at `8e67e07`. Nothing in the GO'd window is waiting on ingestion.
+
+**Not done, and not scheduled.** `2018-04-01..2021-12-31` — 930 calendar sessions — has no Bronze archives, no per-session circulars, and no ASM/GSM/ESM interval history. No script under `scripts/` fetches anything; retrieval is human-invoked because CI is offline by §12.5. Today those sessions exist only as dates in a calendar file.
+
+**What ingesting them would require**, to be honest about the size: three datasets, not one — daily Bhavcopy archives for 930 sessions, the 2018–2021 annual holiday circulars and their amendments, and surveillance interval tables for a period when ASM (26 Mar 2018) and GSM (14 Mar 2017) stages were being applied. Under §10.8 a verdict may only be computed where all three exist. Prices alone would move the window's start without moving its evidentiary basis, which is the failure §10.8 was written to prevent.
+
+**Decision: do not gate Phase 2D on pre-2022 ingestion.** Pre-2022 backfill becomes its own wave with its own audit, run when someone can execute the fetch; until then R-4 is closed by adding a second pin — the `CAL-FPR-V1` digest of the sourced window alone, `2022-01-03..2026-10-31`, 1,196 sessions — and treating `expected_total_calendar_sessions = 2,935` (1,731 before 2022 + 1,196 in the window + 8 after 2026-10-31) as a completeness count rather than an identity claim, so the anchor stops certifying dates no document supports. Moving the binding window earlier later is then a criteria change with data behind it, not a constant in a module.
+
+### 51.4 Standing constraints for this round
+
+- Do not move the binding window earlier by editing criteria; §51.3 governs that path.
+- Do not edit this report (§11.1); disagreements go in a separate note citing the finding ID.
+- No status word in `CURRENT_STAGE_OF_WORK.md` that the cited audit section does not use, and no citation without the SHA it applies to (§11.3).
+- A probe that passes on the unmodified tree is not a probe; every closure above is accepted on a named failure, not on a green run.
