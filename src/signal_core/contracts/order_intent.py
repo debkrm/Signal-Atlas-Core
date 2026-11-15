@@ -12,7 +12,7 @@ import datetime
 from decimal import Decimal
 from typing import Any, Mapping, Optional
 
-from signal_core.execution.types import (
+from signal_core.contracts.order_types import (
     ExecutionOrder,
     ExecutionOrderValidationError,
     OrderProduct,

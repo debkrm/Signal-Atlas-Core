@@ -9,8 +9,7 @@ import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-from signal_core.execution.simulator import ExecutionFillResult
-from signal_core.execution.types import FillStatus, OrderSide
+from signal_core.contracts.order_types import ExecutionFillResult, FillStatus, OrderSide
 from signal_core.portfolio.types import (
     CashEntryType,
     CashLedgerEntry,

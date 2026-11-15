@@ -22,7 +22,7 @@ from signal_core.contracts.criteria import load_go_no_go_criteria
 from signal_core.contracts.exchange_series import APPROVED_EQ_ONLY_POLICY, ExchangeSeries, ExchangeSessionObservation
 from signal_core.contracts.price_band import PriceBandRecord
 from signal_core.contracts.price_bar import PriceBar
-from signal_core.execution.types import OrderProduct, OrderSide, OrderType
+from signal_core.execution.types import FillStatus, OrderProduct, OrderSide, OrderType
 from signal_core.strategy.base import OrderIntent, Strategy
 
 if TYPE_CHECKING:
@@ -138,16 +138,21 @@ class DeliverySwingTrendStrategy(Strategy):
 @dataclass(frozen=True, slots=True)
 class SwingSessionExecutionSummary:
     """
-    Structured summary of a swing strategy session execution run (Finding N-93).
-    Ensures missing price bands or bars are never silently mistaken for zero signals.
+    Structured summary of a swing strategy session execution run (Findings N-93, N-97).
+    Separates emitted tickets, fills, and rejections so frozen circuit sessions never
+    overstate executed fills per AGENTS.md §5.3.
     """
     as_of: datetime.date
     next_session: datetime.date
     intents_generated: int
-    tickets_executed: int
+    tickets_emitted: int
+    tickets_filled: int
+    tickets_rejected: int
+    tickets_executed: int  # reflects tickets_filled for backwards compatibility
     skipped_missing_bar: int
     skipped_missing_band: int
     skipped_unheld_sell: int
+    tickets_no_trade: int = 0
     skipped_already_held: int = 0
     skipped_missing_features: int = 0
     tickets: Tuple[DailyExecutionTicket, ...] = ()
@@ -276,14 +281,32 @@ def execute_swing_strategy_session(
         )
         tickets.append(ticket)
 
+    tickets_emitted = len(tickets)
+    tickets_filled = sum(
+        1 for t in tickets
+        if t.fill_result is not None and t.status in (FillStatus.FILLED, FillStatus.PARTIALLY_FILLED)
+    )
+    tickets_rejected = sum(
+        1 for t in tickets
+        if str(t.status.value if hasattr(t.status, "value") else t.status).startswith("REJECTED_")
+    )
+    tickets_no_trade = sum(
+        1 for t in tickets
+        if getattr(t, "is_no_trade", False) or t.status == FillStatus.UNTRIGGERED
+    )
+
     return SwingSessionExecutionSummary(
         as_of=as_of,
         next_session=next_session,
         intents_generated=len(raw_intents),
-        tickets_executed=len(tickets),
+        tickets_emitted=tickets_emitted,
+        tickets_filled=tickets_filled,
+        tickets_rejected=tickets_rejected,
+        tickets_executed=tickets_filled,
         skipped_missing_bar=skipped_missing_bar,
         skipped_missing_band=skipped_missing_band,
         skipped_unheld_sell=skipped_unheld_sell,
+        tickets_no_trade=tickets_no_trade,
         skipped_already_held=skipped_already_held,
         skipped_missing_features=skipped_missing_features,
         tickets=tuple(tickets),

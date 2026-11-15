@@ -10,8 +10,7 @@ import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional, Tuple
 
-from signal_core.execution.simulator import ExecutionFillResult
-from signal_core.execution.types import FillStatus, OrderSide
+from signal_core.contracts.order_types import ExecutionFillResult, FillStatus, OrderSide
 from signal_core.portfolio.types import (
     CorporateActionError,
     LedgerValidationError,
@@ -260,27 +259,33 @@ class Position:
             CorporateActionType.SPLIT,
             CorporateActionType.BONUS,
             CorporateActionType.CONSOLIDATION,
+            CorporateActionType.RIGHTS,
+            CorporateActionType.DELISTING,
         ):
             multiplier = action.ratio_numerator / action.ratio_denominator
-            new_qty_dec = Decimal(self._quantity) * multiplier
-            # Finding N-87: Fractional entitlement cannot be silently truncated. Fail closed!
-            if new_qty_dec != Decimal(int(new_qty_dec)):
-                raise CorporateActionError(
-                    f"Non-integral restatement from corporate action {action.action_type.value} on {self._instrument_id}: "
-                    f"{self._quantity} shares × {action.ratio_numerator}/{action.ratio_denominator} = {new_qty_dec} shares. "
-                    f"Fractional entitlements cannot be silently truncated (Finding N-87)."
-                )
-            new_qty = int(new_qty_dec)
-            if new_qty <= 0:
-                raise LedgerValidationError(
-                    f"Corporate action {action.action_type.value} resulted in non-positive quantity {new_qty} "
-                    f"from initial {self._quantity} shares."
-                )
-            self._quantity = new_qty
-            self._average_entry_price = (
-                self._total_cost_basis / Decimal(self._quantity)
-            ).quantize(PRICE_PRECISION, rounding=ROUND_HALF_UP)
-            # Total cost basis and unallocated buy charges remain strictly unchanged
+            if multiplier != Decimal("1"):
+                new_qty_dec = Decimal(self._quantity) * multiplier
+                # Finding N-87: Fractional entitlement cannot be silently truncated. Fail closed!
+                if new_qty_dec != Decimal(int(new_qty_dec)):
+                    raise CorporateActionError(
+                        f"Non-integral restatement from corporate action {action.action_type.value} on {self._instrument_id}: "
+                        f"{self._quantity} shares × {action.ratio_numerator}/{action.ratio_denominator} = {new_qty_dec} shares. "
+                        f"Fractional entitlements cannot be silently truncated (Finding N-87)."
+                    )
+                new_qty = int(new_qty_dec)
+                if new_qty <= 0:
+                    raise LedgerValidationError(
+                        f"Corporate action {action.action_type.value} resulted in non-positive quantity {new_qty} "
+                        f"from initial {self._quantity} shares."
+                    )
+                self._quantity = new_qty
+                self._average_entry_price = (
+                    self._total_cost_basis / Decimal(self._quantity)
+                ).quantize(PRICE_PRECISION, rounding=ROUND_HALF_UP)
+            # Finding H-96: Re-key position unconditionally if corporate action specifies new_isin
+            if action.new_isin:
+                self._instrument_id = action.new_isin
+            return
 
     def snapshot(self, market_price: Optional[Decimal] = None) -> PositionSnapshot:
         """

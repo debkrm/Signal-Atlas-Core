@@ -181,6 +181,15 @@ class DailyExecutionTicket:
     is_no_trade: bool = False
     no_trade_reason: Optional[str] = None
 
+    @property
+    def status(self) -> Optional[FillStatus]:
+        """Convenience property exposing execution fill status directly on ticket (Finding N-97)."""
+        if self.fill_result is not None:
+            return self.fill_result.status
+        if self.is_no_trade:
+            return FillStatus.UNTRIGGERED
+        return None
+
 
 def is_weekly_surveillance_trading_session(
     session_date: datetime.date,
@@ -202,6 +211,29 @@ def is_weekly_surveillance_trading_session(
             first_session_of_week = cur_day
             break
     return session_date == first_session_of_week
+
+
+class SurveillanceExitResult(tuple):
+    """Structured result of evaluating surveillance exit constraints (Findings N-92, CA-2)."""
+    session_date: Optional[datetime.date]
+    status: str
+    coverage_complete: bool
+    reason: Optional[str]
+
+    def __new__(
+        cls,
+        candidates: Sequence[DailySignalCandidate],
+        session_date: Optional[datetime.date] = None,
+        status: str = "RUN",
+        coverage_complete: bool = True,
+        reason: Optional[str] = None,
+    ) -> "SurveillanceExitResult":
+        instance = super().__new__(cls, tuple(candidates))
+        instance.session_date = session_date
+        instance.status = status
+        instance.coverage_complete = coverage_complete
+        instance.reason = reason
+        return instance
 
 
 class DailyTPlus1OrderRunner:
@@ -229,6 +261,7 @@ class DailyTPlus1OrderRunner:
         self._risk_per_trade_pct = risk_per_trade_pct
         self._atr_stop_multiple = atr_stop_multiple
         self._eligibility_policy = eligibility_policy
+        self.last_surveillance_result: Optional[SurveillanceExitResult] = None
 
     @property
     def portfolio(self) -> Portfolio:
@@ -571,4 +604,12 @@ class DailyTPlus1OrderRunner:
                     exit_candidates.append(exit_cand)
                     break
 
-        return tuple(exit_candidates)
+        res = SurveillanceExitResult(
+            candidates=exit_candidates,
+            session_date=session_date,
+            status="RUN" if security_master.surveillance_coverage_count > 0 else "NOT_RUN",
+            coverage_complete=security_master.surveillance_coverage_count > 0,
+            reason=None if security_master.surveillance_coverage_count > 0 else "Surveillance coverage unverified / 0 across registered universe",
+        )
+        self.last_surveillance_result = res
+        return res

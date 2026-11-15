@@ -662,6 +662,32 @@ def evaluate_verdicts(
             is_binding=True,
         ))
 
+    # B6: Surveillance Framework Exit Constraints (§5.2, §10.8, §13.2, Finding N-92, CA-2)
+    val_surv_enforced = results_bundle.get("surveillance_exit_constraints_enforced")
+    val_surv_status = results_bundle.get("surveillance_constraint_status")
+    if val_surv_enforced is not None or val_surv_status is not None:
+        if val_surv_enforced is True and val_surv_status != "NOT_RUN":
+            surv_status = VerdictStatus.PASS
+            surv_evidence = "Authoritative surveillance framework exit constraints (ASM/GSM/ESM) enforced on held positions (§5.2, §13.2)."
+        else:
+            surv_status = VerdictStatus.NOT_RUN
+            surv_evidence = (
+                str(results_bundle.get("surveillance_not_run_reason"))
+                if results_bundle.get("surveillance_not_run_reason")
+                else "Authoritative surveillance framework exit constraints (ASM/GSM/ESM) unverified or not run for evaluation window (§5.2, §10.8, §13.2, Finding N-92, CA-2)."
+            )
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-SURV-01",
+            category="Surveillance Realism",
+            metric_name="Surveillance Exit Constraints Enforced",
+            computed_value=str(val_surv_status or ("ENFORCED" if val_surv_enforced else "NOT RUN")),
+            threshold_value="ENFORCED / VERIFIED",
+            comparator="==",
+            status=surv_status,
+            evidence=surv_evidence,
+            is_binding=True,
+        ))
+
     # -------------------------------------------------------------------------
     # Section C: Statutory Indian Cost Schedule (§7.2)
     # -------------------------------------------------------------------------

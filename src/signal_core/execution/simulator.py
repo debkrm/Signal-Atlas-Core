@@ -42,6 +42,7 @@ from signal_core.contracts.price_bar import PriceBar
 from signal_core.execution.costs import TransactionCostBreakdown, TransactionCostModel
 from signal_core.execution.slippage import SlippageModel, SlippageResult
 from signal_core.execution.types import (
+    ExecutionFillResult,
     ExecutionOrder,
     ExecutionOrderValidationError,
     FillStatus,
@@ -65,37 +66,6 @@ def quantize_to_tick_grid(price: Decimal) -> Decimal:
     tick = Decimal("0.05") if price >= Decimal("1.00") else Decimal("0.01")
     ticks = (price / tick).to_integral_value(rounding=ROUND_HALF_UP)
     return (ticks * tick).quantize(Decimal("0.01"))
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutionFillResult:
-    """
-    Immutable comprehensive result of an order simulation attempt.
-    """
-    order: ExecutionOrder
-    status: FillStatus
-    fill_date: datetime.date
-    latency_sessions: int
-    filled_quantity: int
-    unfilled_quantity: int
-    executed_price: Optional[Decimal]
-    slippage: Optional[SlippageResult]
-    costs: Optional[TransactionCostBreakdown]
-    circuit_evidence_present: bool
-    rejection_reason: Optional[str]
-    fill_id: Optional[str] = None
-
-    def __post_init__(self) -> None:
-        if self.fill_id is not None:
-            if (
-                isinstance(self.fill_id, bool)
-                or not isinstance(self.fill_id, str)
-                or not self.fill_id.strip()
-                or self.fill_id != self.fill_id.strip()
-            ):
-                raise ExecutionOrderValidationError(
-                    f"fill_id must be a non-empty, non-whitespace string without leading/trailing whitespace, got {self.fill_id!r}"
-                )
 
 
 class ExecutionFillSimulator:
@@ -365,15 +335,15 @@ class ExecutionFillSimulator:
 
         is_unconstrained = price_band.is_unconstrained if price_band else False
 
+        # 1. Circuit Freeze Fills (AGENTS.md Rule 5.3, Rule 7.4):
+        # A BUY order cannot fill if fill reference price is at or through upper circuit limit
         if order.side == OrderSide.BUY and self._criteria.prohibit_buy_at_upper_circuit:
-            # 1. Fill reference price is at or through upper circuit limit
             if effective_upper is not None and ref_price >= effective_upper:
                 return self._create_rejected_result(
                     order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_UPPER_CIRCUIT,
                     f"Fill reference price ({ref_price}) is at or above Upper Circuit limit ({effective_upper}); zero ask liquidity",
                     circuit_evidence_present=circuit_evidence,
                 )
-            # 2. Whole-day locked upper circuit session (high == low)
             if price_bar.high == price_bar.low:
                 if effective_upper is not None and price_bar.high >= effective_upper:
                     return self._create_rejected_result(
@@ -382,22 +352,20 @@ class ExecutionFillSimulator:
                         circuit_evidence_present=circuit_evidence,
                     )
                 elif effective_upper is None:
-                    # Locked 0-range bar without explicit limit evidence (Audit §35 H-40 restored)
                     return self._create_rejected_result(
                         order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_UPPER_CIRCUIT,
                         f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); buyers rationed",
                         circuit_evidence_present=circuit_evidence,
                     )
 
+        # A SELL order cannot fill if fill reference price is at or through lower circuit limit
         if order.side == OrderSide.SELL and self._criteria.prohibit_sell_at_lower_circuit:
-            # 1. Fill reference price is at or through lower circuit limit
             if effective_lower is not None and ref_price <= effective_lower:
                 return self._create_rejected_result(
                     order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_LOWER_CIRCUIT,
                     f"Fill reference price ({ref_price}) is at or below Lower Circuit limit ({effective_lower}); sellers trapped",
                     circuit_evidence_present=circuit_evidence,
                 )
-            # 2. Whole-day locked lower circuit session (high == low)
             if price_bar.high == price_bar.low:
                 if effective_lower is not None and price_bar.low <= effective_lower:
                     return self._create_rejected_result(
@@ -406,34 +374,68 @@ class ExecutionFillSimulator:
                         circuit_evidence_present=circuit_evidence,
                     )
                 elif effective_lower is None:
-                    # Locked 0-range bar without explicit limit evidence (Audit §35 H-40 restored)
                     return self._create_rejected_result(
                         order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_LOWER_CIRCUIT,
                         f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); sellers trapped",
                         circuit_evidence_present=circuit_evidence,
                     )
 
-        # Invariant 9: Slippage Calculation & Execution Price Realism
-        max_buy_price = min(price_bar.high, effective_upper) if effective_upper is not None else price_bar.high
-        min_sell_price = max(price_bar.low, effective_lower) if effective_lower is not None else price_bar.low
+        # 2. Invariant 8a: Contradictory Price Band Invariants (Rule 5.3, 6.3, Finding H-97)
+        # Band and bar consistency check: fail closed if band contradicts price bar or is inverted.
+        # Zero rewriting to circuit limits: contradictory state must reject, never fabricate fills.
+        TICK_TOLERANCE = Decimal("0.05")
 
+        if effective_lower is not None and effective_upper is not None and effective_lower > effective_upper:
+            return self._create_rejected_result(
+                order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_PRICE_LIMIT,
+                f"Inverted price band: lower limit ({effective_lower}) > upper limit ({effective_upper})",
+                circuit_evidence_present=circuit_evidence,
+            )
+
+        if effective_upper is not None:
+            # Bar contradicts upper band: high exceeds upper limit by > 1 tick, or low/open exceeds upper limit
+            if price_bar.high > effective_upper + TICK_TOLERANCE or price_bar.low > effective_upper or price_bar.open > effective_upper:
+                return self._create_rejected_result(
+                    order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_PRICE_LIMIT,
+                    f"Session price bar [{price_bar.low}, {price_bar.high}, open={price_bar.open}] contradicts upper circuit band ({effective_upper})",
+                    circuit_evidence_present=circuit_evidence,
+                )
+
+        if effective_lower is not None:
+            # Bar contradicts lower band: low falls below lower limit by > 1 tick, or high/open falls below lower limit
+            if price_bar.low < effective_lower - TICK_TOLERANCE or price_bar.high < effective_lower or price_bar.open < effective_lower:
+                return self._create_rejected_result(
+                    order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_PRICE_LIMIT,
+                    f"Session price bar [{price_bar.low}, {price_bar.high}, open={price_bar.open}] contradicts lower circuit band ({effective_lower})",
+                    circuit_evidence_present=circuit_evidence,
+                )
+
+        # Invariant 9: Slippage Calculation & Execution Price Realism (Finding H-97)
+        # Compute adverse slippage from reference price without premature clamping
         slippage_result = self._slippage_model.compute_slippage(
             reference_price=ref_price,
             quantity=fill_qty,
             side=order.side,
             session_volume=price_bar.volume,
             average_daily_turnover=average_daily_turnover,
-            session_high=max_buy_price,
-            session_low=min_sell_price,
+            session_high=None,
+            session_low=None,
         )
-        executed_price = slippage_result.adjusted_price
+        raw_adjusted_price = slippage_result.adjusted_price
         should_quantize = self._quantize_to_tick if quantize_to_tick is None else quantize_to_tick
         if should_quantize:
-            executed_price = quantize_to_tick_grid(executed_price)
-            if effective_upper is not None and executed_price > effective_upper:
-                executed_price = effective_upper
-            if effective_lower is not None and executed_price < effective_lower:
-                executed_price = effective_lower
+            raw_adjusted_price = quantize_to_tick_grid(raw_adjusted_price)
+
+        # Round to the grid then clamp within session printed range and circuit limits (Finding H-97)
+        max_buy_price = min(price_bar.high, effective_upper) if effective_upper is not None else price_bar.high
+        min_sell_price = max(price_bar.low, effective_lower) if effective_lower is not None else price_bar.low
+
+        if raw_adjusted_price > max_buy_price:
+            executed_price = max_buy_price
+        elif raw_adjusted_price < min_sell_price:
+            executed_price = min_sell_price
+        else:
+            executed_price = raw_adjusted_price
 
         # Check limit boundary after slippage
         if order.order_type == OrderType.LIMIT:

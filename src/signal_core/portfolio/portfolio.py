@@ -13,8 +13,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from signal_core.contracts.criteria import GoNoGoCriteria, load_go_no_go_criteria
-from signal_core.execution.simulator import ExecutionFillResult
-from signal_core.execution.types import FillStatus, OrderSide
+from signal_core.contracts.order_types import ExecutionFillResult, FillStatus, OrderSide
 from signal_core.portfolio.ledger import CashLedger, PAISE_PRECISION, _quantize_paise
 from signal_core.portfolio.position import Position
 from signal_core.portfolio.types import (
@@ -159,7 +158,7 @@ class Portfolio:
         if pos is None or pos.is_closed or pos.quantity <= 0:
             return None
 
-        # Finding H-86: ISIN_TRANSITION re-keys the position in self._positions
+        # Finding H-86 & H-96: Re-key the position in self._positions whenever new_isin is specified
         if action.action_type == CorporateActionType.ISIN_TRANSITION:
             old_isin = action.isin
             new_isin = action.new_isin
@@ -167,6 +166,12 @@ class Portfolio:
                 raise CorporateActionError(
                     f"ISIN_TRANSITION requires new_isin for {old_isin} (Finding H-86)."
                 )
+            if new_isin in self._positions and self._positions[new_isin] is not pos:
+                existing_target = self._positions[new_isin]
+                if not existing_target.is_closed and existing_target.quantity > 0:
+                    raise CorporateActionError(
+                        f"Cannot transition {old_isin} to {new_isin}: target ISIN already has active open position."
+                    )
             pos.apply_corporate_action(action)
             del self._positions[old_isin]
             self._positions[new_isin] = pos
@@ -176,8 +181,40 @@ class Portfolio:
             CorporateActionType.SPLIT,
             CorporateActionType.BONUS,
             CorporateActionType.CONSOLIDATION,
+            CorporateActionType.RIGHTS,
         ):
             pos.apply_corporate_action(action)
+            # Finding H-96: If SPLIT/BONUS/CONSOLIDATION/RIGHTS carries new_isin, re-key the portfolio position mapping
+            if action.new_isin and action.new_isin != action.isin:
+                old_isin = action.isin
+                new_isin = action.new_isin
+                if new_isin in self._positions and self._positions[new_isin] is not pos:
+                    existing_target = self._positions[new_isin]
+                    if not existing_target.is_closed and existing_target.quantity > 0:
+                        raise CorporateActionError(
+                            f"Cannot re-key {old_isin} to {new_isin} on {action.action_type.value}: "
+                            f"target ISIN already has active open position (Finding H-96)."
+                        )
+                del self._positions[old_isin]
+                self._positions[new_isin] = pos
+            return None
+
+        elif action.action_type == CorporateActionType.DELISTING:
+            if action.new_isin and action.new_isin != action.isin:
+                old_isin = action.isin
+                new_isin = action.new_isin
+                if new_isin in self._positions and self._positions[new_isin] is not pos:
+                    existing_target = self._positions[new_isin]
+                    if not existing_target.is_closed and existing_target.quantity > 0:
+                        raise CorporateActionError(
+                            f"Cannot re-key {old_isin} to {new_isin} on {action.action_type.value}: "
+                            f"target ISIN already has active open position (Finding H-96)."
+                        )
+                pos.apply_corporate_action(action)
+                del self._positions[old_isin]
+                self._positions[new_isin] = pos
+            else:
+                del self._positions[action.isin]
             return None
 
         elif action.action_type == CorporateActionType.DIVIDEND:

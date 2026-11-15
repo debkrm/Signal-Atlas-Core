@@ -530,7 +530,7 @@ def test_h84_realised_risk_records_overnight_gap_open(runner, portfolio):
 
     expected_realised_risk = (Decimal(50) * (exec_p - Decimal("800.00"))).quantize(Decimal("0.01"))
     assert ticket.realised_risk == expected_realised_risk
-    assert ticket.realised_risk in (Decimal("15044.89"), Decimal("15045.00"))
+    assert ticket.realised_risk == Decimal("15045.00")
     assert ticket.fill_result.executed_price % Decimal("0.05") == Decimal("0.00")
 
     # Realised risk is ~1.504x the intended risk
@@ -633,7 +633,7 @@ def test_mid_hold_split_preserves_equity_invariant(runner, portfolio):
     Proves that a 1:2 stock split occurring mid-hold:
     1. Doubles position shares (50 -> 100).
     2. Halves average entry price (1000.8162 -> 500.4081) while cost basis stays constant.
-    3. Leaves total equity at ₹9,99,876.00 marked at ₹500.00 (ZERO fabricated MTM loss!).
+    3. Leaves total equity at ₹9,99,876.81 marked at ₹500.00 (ZERO fabricated MTM loss!).
     """
     signal_date = datetime.date(2024, 1, 2)
     target_date = datetime.date(2024, 1, 3)
@@ -697,7 +697,7 @@ def test_mid_hold_split_preserves_equity_invariant(runner, portfolio):
 
     # Position quantity doubled to 100 shares
     assert pos.quantity == 100
-    assert pos.total_cost_basis in (Decimal("50040.00"), Decimal("50040.81"))
+    assert pos.total_cost_basis == Decimal("50040.00")
 
     # Mark at post-split market price of ₹500.00
     equity_post_split = portfolio.current_total_equity({"INE002A01018": Decimal("500.00")})

@@ -73,6 +73,7 @@ def _validate_date(d: Optional[datetime.date], name: str) -> Optional[datetime.d
 class SurveillanceStage(str, Enum):
     """Standardized SEBI/NSE surveillance framework stages."""
     NONE = "NONE"
+    NORMAL = "NORMAL"
     GSM_STAGE_1 = "GSM_STAGE_1"
     GSM_STAGE_2 = "GSM_STAGE_2"
     GSM_STAGE_3 = "GSM_STAGE_3"
@@ -201,6 +202,8 @@ class CorporateAction:
     circular_ref: Optional[str] = None
     description: Optional[str] = None
     record_date: Optional[datetime.date] = None
+    symbol: Optional[str] = None
+    provenance: Optional[str] = None
 
     def __post_init__(self) -> None:
         _validate_identifier(self.isin, "isin")
@@ -267,9 +270,15 @@ class CorporateAction:
                 _validate_identifier(self.old_isin, "old_isin")
             if self.new_isin is not None:
                 _validate_identifier(self.new_isin, "new_isin")
+                if self.new_isin == self.isin:
+                    raise SecurityMasterError(f"new_isin cannot match isin: {self.isin} (Finding H-96)")
 
         if self.circular_ref is not None:
             _validate_identifier(self.circular_ref, "circular_ref")
+        if self.symbol is not None:
+            _validate_identifier(self.symbol, "symbol")
+        if self.provenance is not None:
+            _validate_identifier(self.provenance, "provenance")
 
     @property
     def adjustment_factor(self) -> Decimal:
@@ -297,6 +306,10 @@ class CorporateAction:
             d["description"] = self.description
         if self.record_date is not None:
             d["record_date"] = self.record_date.isoformat()
+        if self.symbol is not None:
+            d["symbol"] = self.symbol
+        if self.provenance is not None:
+            d["provenance"] = self.provenance
         return d
 
     @classmethod
@@ -316,6 +329,8 @@ class CorporateAction:
             circular_ref=str(data["circular_ref"]) if data.get("circular_ref") else None,
             description=str(data["description"]) if data.get("description") else None,
             record_date=rec_d,
+            symbol=str(data["symbol"]) if data.get("symbol") else None,
+            provenance=str(data["provenance"]) if data.get("provenance") else None,
         )
 
 
@@ -649,10 +664,26 @@ class SecurityMaster:
         matches = [s for s in self._surveillance_intervals if s.isin == isin and s.contains(as_of)]
         return tuple(matches)
 
-    def get_corporate_actions(self, isin: str, up_to: Optional[datetime.date] = None) -> Tuple[CorporateAction, ...]:
-        """Returns corporate actions for an ISIN up to an optional date, sorted by ex-date."""
+    def has_corporate_action_coverage(self, isin: str) -> bool:
+        """Returns True if the security is registered in the SecurityMaster store (Finding CA-1)."""
+        _validate_identifier(isin, "isin")
+        return isin in self._intervals_by_isin or any(ca.isin == isin for ca in self._corporate_actions)
+
+    def get_corporate_actions(
+        self,
+        isin: str,
+        up_to: Optional[datetime.date] = None,
+        require_registration: bool = False,
+    ) -> Tuple[CorporateAction, ...]:
+        """
+        Returns corporate actions for an ISIN up to an optional date, sorted by ex-date.
+        If require_registration is True, fails closed (SecurityMasterError) if ISIN is not registered in store.
+        A name with no events is distinguishable from a name with no row per CA-1.
+        """
         _validate_identifier(isin, "isin")
         _validate_date(up_to, "up_to")
+        if require_registration and not self.has_corporate_action_coverage(isin):
+            raise SecurityMasterError(f"ISIN '{isin}' is not registered in SecurityMaster (Finding CA-1).")
         actions = [
             ca for ca in self._corporate_actions
             if ca.isin == isin and (up_to is None or ca.ex_date <= up_to)
