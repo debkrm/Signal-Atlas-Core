@@ -18,6 +18,7 @@ Key Architecture:
 from dataclasses import dataclass
 import datetime
 from decimal import Decimal, InvalidOperation
+import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -152,12 +153,21 @@ def load_historical_snapshot(path: Union[str, Path]) -> HistoricalDataset:
     """
     file_path = Path(path)
     if not file_path.is_file():
-        raise FileNotFoundError(f"Historical snapshot file does not exist at: '{file_path}'")
+        # Check if gzipped equivalent exists (e.g. on clean CI clone)
+        gz_cand = file_path.with_name(file_path.name + ".gz")
+        if gz_cand.is_file():
+            file_path = gz_cand
+        else:
+            raise FileNotFoundError(f"Historical snapshot file does not exist at: '{file_path}'")
 
     # 1. Read JSON in read-only mode
     try:
-        with file_path.open("r", encoding="utf-8") as f:
-            raw = json.load(f)
+        if file_path.name.endswith(".gz"):
+            with gzip.open(file_path, "rt", encoding="utf-8") as f:
+                raw = json.load(f)
+        else:
+            with file_path.open("r", encoding="utf-8") as f:
+                raw = json.load(f)
     except Exception as exc:
         raise HistoricalSnapshotError(f"Failed to read/parse snapshot JSON at '{file_path}': {exc}") from exc
 

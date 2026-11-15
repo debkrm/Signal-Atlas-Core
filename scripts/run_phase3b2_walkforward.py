@@ -32,10 +32,12 @@ from collections import defaultdict
 from dataclasses import dataclass
 import datetime
 from decimal import Decimal
+import gzip
 import io
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
@@ -64,7 +66,10 @@ from signal_core.execution.order_runner import (
 )
 from signal_core.execution.simulator import ExecutionFillSimulator
 from signal_core.features.engine import SubsegmentIndicatorEngine
-from signal_core.loaders.historical_snapshot import load_historical_snapshot
+from signal_core.loaders.historical_snapshot import (
+    HistoricalDataset,
+    load_historical_snapshot,
+)
 from signal_core.portfolio.portfolio import Portfolio
 from signal_core.reporting.verdicts import (
     OverallVerdict,
@@ -137,10 +142,163 @@ class Phase3B2WalkForwardRunResult:
     total_skipped_missing_bar: int
 
 
+def build_historical_dataset_from_raw_bhavcopy(
+    raw_dirs: Optional[Sequence[Path]] = None,
+    target_series: Sequence[str] = ("EQ",),
+    holdout_cutoff: datetime.date = datetime.date(2025, 1, 1),
+) -> HistoricalDataset:
+    """
+    Builds an in-memory HistoricalDataset directly from committed raw Bhavcopy ZIP archives
+    across 2022..2024 strictly prior to holdout_cutoff (2025-01-01), keeping Holdout sealed.
+    """
+    from signal_core.contracts.dataset import (
+        DEFAULT_PROVENANCE_STATUS,
+        DatasetSnapshot,
+        PriceConvention,
+    )
+    from signal_core.contracts.legacy_compat import (
+        LegacyDatasetAdjustmentMetadata,
+        compute_legacy_dataset_content_fingerprint,
+    )
+    from signal_core.contracts.price_bar import PriceBar
+    from signal_core.contracts.provenance import compute_universe_schedule_fingerprint
+    from signal_core.contracts.universe import UniverseSchedule
+    from signal_core.storage.ingest import parse_bhavcopy_archive
+
+    if raw_dirs is None:
+        raw_dirs = [
+            REPO_ROOT / "data" / "raw" / "2022",
+            REPO_ROOT / "data" / "raw" / "2023",
+            REPO_ROOT / "data" / "raw" / "2024",
+        ]
+
+    all_zips: List[Path] = []
+    for d in raw_dirs:
+        if d.is_dir():
+            all_zips.extend(sorted(d.glob("*.zip")))
+
+    if not all_zips:
+        raise FileNotFoundError(
+            f"No Bhavcopy archives found in {[str(d) for d in raw_dirs]} to build HistoricalDataset."
+        )
+
+    prices_by_isin: Dict[str, List[PriceBar]] = defaultdict(list)
+    symbols_by_isin: Dict[str, str] = {}
+    universe_by_date: Dict[datetime.date, List[str]] = defaultdict(list)
+    trading_dates_set: Set[datetime.date] = set()
+
+    for zp in all_zips:
+        trade_date, silver_records = parse_bhavcopy_archive(zp, target_series=target_series)
+        if trade_date >= holdout_cutoff:
+            raise HoldoutSealedError(
+                f"Attempted to read archive {zp.name} for date {trade_date} >= holdout cutoff {holdout_cutoff} (Rule 8.1)."
+            )
+
+        trading_dates_set.add(trade_date)
+        for rec in silver_records:
+            if rec.series not in target_series:
+                continue
+            isin = rec.isin
+            symbols_by_isin[isin] = rec.symbol
+            universe_by_date[trade_date].append(isin)
+            prices_by_isin[isin].append(
+                PriceBar(
+                    instrument_id=isin,
+                    trade_date=trade_date,
+                    open=rec.open,
+                    high=rec.high,
+                    low=rec.low,
+                    close=rec.close,
+                    volume=rec.volume,
+                    traded_value=rec.traded_value,
+                )
+            )
+
+    sorted_dates = sorted(trading_dates_set)
+    for isin in prices_by_isin:
+        prices_by_isin[isin].sort(key=lambda b: b.trade_date)
+
+    universe_schedule = UniverseSchedule({d: tuple(sorted(set(members))) for d, members in universe_by_date.items()})
+    univ_fp = compute_universe_schedule_fingerprint(universe_schedule)
+    content_fp = compute_legacy_dataset_content_fingerprint(
+        trading_dates=sorted_dates,
+        prices_by_instrument=prices_by_isin,
+        symbols_by_instrument=symbols_by_isin,
+    )
+
+    total_inst_records = sum(len(bars) for bars in prices_by_isin.values())
+    snapshot = DatasetSnapshot(
+        dataset_id="EXP-RAW-BHAVCOPY-2022-2024",
+        schema_version="v1.0",
+        price_convention=PriceConvention.UNADJUSTED_CLOSE,
+        start_date=sorted_dates[0],
+        end_date=sorted_dates[-1],
+        session_count=len(sorted_dates),
+        instrument_count=len(prices_by_isin),
+        total_instrument_records=total_inst_records,
+        total_price_records=total_inst_records,
+        source_identity="NSE_BHAVCOPY_DAILY",
+        content_fingerprint=content_fp,
+        source_provenance_status=DEFAULT_PROVENANCE_STATUS,
+        universe_fingerprint=univ_fp,
+        benchmark_record_count=0,
+        source_format="signal-atlas-dataset-snapshot-v1",
+    )
+
+    return HistoricalDataset(
+        snapshot=snapshot,
+        prices_by_instrument=prices_by_isin,
+        benchmark_prices=(),
+        universe_schedule=universe_schedule,
+        trading_dates=sorted_dates,
+        symbols_by_instrument=symbols_by_isin,
+        legacy_adjustments=LegacyDatasetAdjustmentMetadata({}, {}),
+    )
+
+
+def resolve_or_build_historical_dataset(
+    snapshot_path: Optional[Union[str, Path]] = None,
+    dataset: Optional[HistoricalDataset] = None,
+) -> HistoricalDataset:
+    """
+    Resolves the 2022-2024 HistoricalDataset:
+    1. Direct in-memory HistoricalDataset if provided
+    2. Explicit snapshot_path (handling .gz transparently)
+    3. data/reference/historical_dev_dataset_2022_2024.json if present
+    4. data/reference/historical_dev_dataset_2022_2024.json.gz (decompressed on-demand per verify_historical_snapshot.py)
+    5. Clean-checkout fallback: builds directly in memory from committed data/raw/2022..2024 Bhavcopy archives.
+    """
+    if dataset is not None:
+        return dataset
+
+    if snapshot_path:
+        sp = Path(snapshot_path)
+        if sp.is_file():
+            return load_historical_snapshot(sp)
+        gz_cand = sp.with_name(sp.name + ".gz")
+        if gz_cand.is_file():
+            return load_historical_snapshot(gz_cand)
+
+    ref_json = REPO_ROOT / "data" / "reference" / "historical_dev_dataset_2022_2024.json"
+    if ref_json.is_file():
+        return load_historical_snapshot(ref_json)
+
+    ref_gz = REPO_ROOT / "data" / "reference" / "historical_dev_dataset_2022_2024.json.gz"
+    if ref_gz.is_file():
+        print(f"[INFO] Decompressing cached snapshot fixture: {ref_gz.name} -> {ref_json.name}")
+        with gzip.open(ref_gz, "rb") as f_in, open(ref_json, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
+        return load_historical_snapshot(ref_json)
+
+    print("[INFO] Historical snapshot JSON absent; building HistoricalDataset directly from committed 2022..2024 raw Bhavcopy archives...")
+    return build_historical_dataset_from_raw_bhavcopy()
+
+
 def run_phase3b2_walkforward(
     snapshot_path: Optional[Union[str, Path]] = None,
     registry_path: Optional[Union[str, Path]] = None,
     verdict_output_dir: Optional[Union[str, Path]] = None,
+    dataset: Optional[HistoricalDataset] = None,
     strategy_id: str = "SWING-TREND-EQ-V1",
     fast_indicator: str = "sma_20",
     slow_indicator: str = "sma_50",
@@ -160,7 +318,6 @@ def run_phase3b2_walkforward(
     """
     Executes the Phase 3B-2b walk-forward backtest and returns Phase3B2WalkForwardRunResult.
     """
-    snap_p = Path(snapshot_path) if snapshot_path else (REPO_ROOT / "data" / "reference" / "historical_dev_dataset_2022_2024.json")
     reg_p = Path(registry_path) if registry_path else (REPO_ROOT / "data" / "trials" / "trial_registry.jsonl")
     v_out_dir = Path(verdict_output_dir) if verdict_output_dir else (REPO_ROOT / "reports" / "verdicts")
 
@@ -195,18 +352,22 @@ def run_phase3b2_walkforward(
     # 3. Build Production Security Master (loading CA-3 price bands and CA-1 corporate actions)
     sec_master = build_production_security_master(include_cash_universe=True)
 
-    # 4. Load Historical Snapshot (2022-2024)
-    dataset = load_historical_snapshot(snap_p)
+    # 4. Load or Build Historical Snapshot (2022-2024)
+    dataset = resolve_or_build_historical_dataset(snapshot_path=snapshot_path, dataset=dataset)
 
-    # Map snapshot UUIDs -> point-in-time ISINs via SecurityMaster
+    # Map snapshot UUIDs / symbols -> point-in-time ISINs via SecurityMaster
     uuid_to_isin: Dict[str, str] = {}
     for u, sym in dataset.symbols_by_instrument.items():
-        isin = (
-            sec_master.resolve_isin_by_symbol(sym, datetime.date(2024, 1, 16), "EQ")
-            or sec_master.resolve_isin_by_symbol(sym, datetime.date(2022, 1, 3), "EQ")
-            or sec_master.resolve_isin_by_symbol(sym, datetime.date(2023, 1, 3), "EQ")
-            or sec_master.resolve_isin_by_symbol(sym, datetime.date(2024, 12, 31), "EQ")
-        )
+        isin = None
+        if (isinstance(u, str) and u in sec_master.registered_isins) or (isinstance(u, str) and u.startswith("INE")):
+            isin = u
+        else:
+            isin = (
+                sec_master.resolve_isin_by_symbol(sym, datetime.date(2024, 1, 16), "EQ")
+                or sec_master.resolve_isin_by_symbol(sym, datetime.date(2022, 1, 3), "EQ")
+                or sec_master.resolve_isin_by_symbol(sym, datetime.date(2023, 1, 3), "EQ")
+                or sec_master.resolve_isin_by_symbol(sym, datetime.date(2024, 12, 31), "EQ")
+            )
         if isin is None:
             raise ValueError(f"Failed to resolve authentic ISIN for symbol {sym} (UUID {u})")
         uuid_to_isin[u] = isin

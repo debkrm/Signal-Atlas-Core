@@ -35,12 +35,85 @@ from signal_core.research.containment import (
     load_canonical_partition_spec,
 )
 from signal_core.research.trials import TrialRegistry
+from signal_core.storage.calendar import load_anchored_nse_trading_calendar
 
 # Import the runner consumer
 from scripts.run_phase3b2_walkforward import (
     Phase3B2WalkForwardRunResult,
     run_phase3b2_walkforward,
 )
+
+
+def make_synthetic_snapshot(tmp_path: Path, num_sessions: int = 60) -> Path:
+    """
+    Constructs a deterministic multi-session synthetic snapshot fixture on disk.
+    Allows tests to run completely self-contained on any clean CI checkout without
+    relying on local untracked datasets.
+    """
+    criteria = load_go_no_go_criteria()
+    cal = load_anchored_nse_trading_calendar(criteria=criteria)
+    sessions = cal.sessions_in_range(datetime.date(2022, 1, 3), datetime.date(2022, 12, 31))[:num_sessions]
+
+    symbols = {"UUID-INFY": "INFY", "UUID-TCS": "TCS", "UUID-RIL": "RELIANCE"}
+    prices = {}
+    for u, sym in symbols.items():
+        bars = []
+        base_p = 1000 if sym == "INFY" else (3000 if sym == "TCS" else 2000)
+        for i, s in enumerate(sessions):
+            p = base_p + i * 5
+            bars.append({
+                "trade_date": s.isoformat(),
+                "open": f"{p}.00",
+                "high": f"{p+10}.00",
+                "low": f"{p-5}.00",
+                "close": f"{p+5}.00",
+                "volume": "100000.000000",
+                "raw_volume": 100000,
+                "traded_value": f"{(p+5)*100000}.00",
+                "cumulative_multiplier": "1.000000",
+                "prev_close": f"{p}.00",
+                "prev_close_multiplier": "1.000000",
+                "raw_prev_close": f"{p}.00",
+                "adjustment_version": "v1.4",
+            })
+        prices[u] = bars
+
+    bench = []
+    for i, s in enumerate(sessions):
+        p = 17000 + i * 20
+        bench.append({
+            "trade_date": s.isoformat(),
+            "open": f"{p}.00",
+            "high": f"{p+50}.00",
+            "low": f"{p-20}.00",
+            "close": f"{p+30}.00",
+            "volume": "50000.000000",
+            "raw_volume": 50000,
+            "traded_value": f"{(p+30)*50000}.00",
+            "cumulative_multiplier": "1.000000",
+            "prev_close": f"{p}.00",
+            "prev_close_multiplier": "1.000000",
+            "raw_prev_close": f"{p}.00",
+            "adjustment_version": "v1.4",
+        })
+
+    data = {
+        "snapshot_format": "signal-atlas-dataset-snapshot-v1",
+        "data_version": "EXP-DEV-SYNTHETIC-V1",
+        "source_identity": "NSE_BHAVCOPY_DAILY",
+        "content_fingerprint": "DATA-CTNT-V2-synthetictest1234567890",
+        "session_count": len(sessions),
+        "instrument_count": len(symbols),
+        "trading_dates": [s.isoformat() for s in sessions],
+        "symbols_by_instrument": symbols,
+        "universe_by_date": {s.isoformat(): list(symbols.keys()) for s in sessions},
+        "prices_by_instrument": prices,
+        "benchmark_prices": bench,
+    }
+
+    snap_file = tmp_path / "synthetic_snapshot.json"
+    snap_file.write_text(json.dumps(data), encoding="utf-8")
+    return snap_file
 
 
 def test_walkforward_runner_end_to_end(tmp_path: Path):
@@ -50,10 +123,12 @@ def test_walkforward_runner_end_to_end(tmp_path: Path):
     corporate actions are processed, summary counters are tracked,
     exact Decimal diagnostics are computed, and verdict reports are emitted.
     """
+    snap_p = make_synthetic_snapshot(tmp_path, num_sessions=60)
     reg_path = tmp_path / "test_trials.jsonl"
     verdict_dir = tmp_path / "verdicts"
 
     res = run_phase3b2_walkforward(
+        snapshot_path=snap_p,
         registry_path=reg_path,
         verdict_output_dir=verdict_dir,
         trial_id="TRIAL-TEST-E2E-001",
@@ -104,10 +179,12 @@ def test_trial_registry_append_before_read_ordering(tmp_path: Path):
     The trial record is appended to TrialRegistry BEFORE reading or printing
     performance metrics. At append time, sharpe_ratio and performance numbers on the record are None.
     """
+    snap_p = make_synthetic_snapshot(tmp_path, num_sessions=20)
     reg_path = tmp_path / "order_test_trials.jsonl"
     verdict_dir = tmp_path / "verdicts"
 
     res = run_phase3b2_walkforward(
+        snapshot_path=snap_p,
         registry_path=reg_path,
         verdict_output_dir=verdict_dir,
         trial_id="TRIAL-TEST-ORDER-001",
@@ -130,7 +207,7 @@ def test_trial_registry_append_before_read_ordering(tmp_path: Path):
     assert first_line["max_drawdown"] is None
 
 
-def test_holdout_partition_sealed_refusal():
+def test_holdout_partition_sealed_refusal(tmp_path: Path):
     """
     Test 3: Verifies AGENTS.md Rule 8.1 & §10.8:
     Out-of-sample Holdout (2025-01-01..2026-11-11) is physically and logically sealed.
@@ -145,8 +222,10 @@ def test_holdout_partition_sealed_refusal():
         check_partition_access(spec, PartitionRole.HOLDOUT)
 
     # 2. Attempting to evaluate holdout sessions fails closed
+    snap_p = make_synthetic_snapshot(tmp_path, num_sessions=10)
     with pytest.raises(HoldoutSealedError, match="Holdout partition"):
         run_phase3b2_walkforward(
+            snapshot_path=snap_p,
             eval_start_date=datetime.date(2025, 1, 1),
             eval_end_date=datetime.date(2025, 1, 31),
         )
@@ -161,10 +240,12 @@ def test_verdict_propagation_crit_surv_not_run_and_nogo(tmp_path: Path):
     - Evaluate CRIT-PROV-01 as NOT RUN
     - Return overall verdict strictly as NO-GO.
     """
+    snap_p = make_synthetic_snapshot(tmp_path, num_sessions=20)
     reg_path = tmp_path / "verdict_trials.jsonl"
     verdict_dir = tmp_path / "verdicts"
 
     res = run_phase3b2_walkforward(
+        snapshot_path=snap_p,
         registry_path=reg_path,
         verdict_output_dir=verdict_dir,
         trial_id="TRIAL-TEST-VERDICT-001",
