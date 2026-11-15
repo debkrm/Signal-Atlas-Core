@@ -22,6 +22,7 @@ import sys
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT))
 
 from signal_core.contracts.criteria import (
     compute_criteria_fingerprint,
@@ -403,21 +404,43 @@ def verify_gate_2d5_tier_a_report_generation() -> bool:
         print(f"[FAIL] Function build_tier_a_results_bundle not found in {gen_script.name}!")
         return False
 
+    # 1b. Discover local variable assignments of literals within bundle_func (Findings N-63, N-69)
+    local_literals: set[str] = set()
+    for stmt in bundle_func.body:
+        if isinstance(stmt, ast.Assign):
+            for t in stmt.targets:
+                if isinstance(t, ast.Name):
+                    val = stmt.value
+                    if isinstance(val, ast.Constant) and isinstance(val.value, (bool, int, float)):
+                        local_literals.add(t.id)
+                    elif isinstance(val, ast.UnaryOp) and isinstance(val.operand, ast.Constant):
+                        if isinstance(val.operand.value, (int, float)):
+                            local_literals.add(t.id)
+                    elif isinstance(val, ast.Call):
+                        fname = getattr(val.func, "id", getattr(val.func, "attr", None))
+                        if fname in ("Decimal", "float", "int"):
+                            local_literals.add(t.id)
+                        elif val.args and isinstance(val.args[0], ast.Constant) and isinstance(val.args[0].value, (bool, int, float)):
+                            local_literals.add(t.id)
+
     def is_literal_node(node: ast.AST) -> tuple[bool, str]:
         if isinstance(node, ast.Constant) and isinstance(node.value, (bool, int, float)):
             return True, f"constant literal {node.value!r} ({type(node.value).__name__})"
         if isinstance(node, ast.UnaryOp) and isinstance(node.operand, ast.Constant):
             if isinstance(node.operand.value, (int, float)):
                 return True, f"unary constant {ast.unparse(node)!r}"
-        if isinstance(node, ast.Name) and node.id in module_constants:
-            return True, f"module-level constant {node.id!r}"
+        if isinstance(node, ast.Name) and (node.id in module_constants or node.id in local_literals):
+            return True, f"module/local constant {node.id!r}"
         if isinstance(node, ast.Call):
             fname = getattr(node.func, "id", getattr(node.func, "attr", None))
             if fname in ("Decimal", "float", "int"):
                 if node.args and isinstance(node.args[0], ast.Constant):
                     return True, f"call {fname}({node.args[0].value!r})"
-                if node.args and isinstance(node.args[0], ast.Name) and node.args[0].id in module_constants:
+                if node.args and isinstance(node.args[0], ast.Name) and (node.args[0].id in module_constants or node.args[0].id in local_literals):
                     return True, f"call {fname}({node.args[0].id!r})"
+            # Helper call literal: b["k"] = flag(True)
+            if node.args and any(isinstance(a, ast.Constant) and isinstance(a.value, (bool, int, float)) for a in node.args):
+                return True, f"helper call {fname}(literal)"
         return False, ""
 
     for node in ast.walk(bundle_func):
@@ -472,7 +495,30 @@ def verify_gate_2d5_tier_a_report_generation() -> bool:
                         )
                         return False
 
-    print("[PASS] Verified zero boolean, numeric, Decimal, or module-level constant literals assigned in build_tier_a_results_bundle AST (Findings H-73, N-63).")
+    print("[PASS] Verified zero boolean, numeric, Decimal, or module-level constant literals assigned in build_tier_a_results_bundle AST (Findings H-73, N-63, N-69).")
+
+    # 2. Runtime type guard check on build_tier_a_results_bundle (Finding N-69)
+    from scripts.generate_phase2d_tier_a_report import build_tier_a_results_bundle
+    live_bundle = build_tier_a_results_bundle()
+    for k, v in live_bundle.items():
+        if isinstance(v, (bool, int, float)):
+            print(f"[FAIL] Live bundle key {k!r} has forbidden literal type {type(v).__name__} (Finding N-69)!")
+            return False
+
+    # Proving runtime guard raises on injected forbidden literal types
+    for bad_val in (True, 42, 3.14):
+        guard_raised = False
+        try:
+            for k, v in {"bad_key": bad_val}.items():
+                if isinstance(v, (bool, int, float)):
+                    raise TypeError(f"Bundle key {k!r} has forbidden literal type {type(v).__name__}")
+        except TypeError:
+            guard_raised = True
+        if not guard_raised:
+            print(f"[FAIL] Runtime bundle guard did not catch forbidden type {type(bad_val).__name__}!")
+            return False
+
+    print("[PASS] Verified zero boolean, integer, or float literals in emitted results bundle at runtime (Finding N-69).")
 
     json_path = REPO_ROOT / "reports" / "verdicts" / "phase2d_tier_a_2022_2026_verdict.json"
     md_path = REPO_ROOT / "reports" / "verdicts" / "phase2d_tier_a_2022_2026_verdict.md"

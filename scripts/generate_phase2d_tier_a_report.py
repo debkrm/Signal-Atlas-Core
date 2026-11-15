@@ -129,6 +129,14 @@ def build_tier_a_results_bundle(
     # and execution observation flags (circuit limits, execution latency) are omitted from the bundle
     # until backed by recorded engine execution outputs, honestly evaluating to NOT RUN per §9.1 and §55.8.
 
+    # Runtime guard against boolean/int/float literal injection (Findings H-73, N-63, N-69)
+    for k, v in bundle.items():
+        if isinstance(v, (bool, int, float)):
+            raise TypeError(
+                f"Bundle key {k!r} has forbidden literal type {type(v).__name__} (Finding N-69). "
+                "Only Decimal, str, or datetime types are permitted."
+            )
+
     return bundle
 
 

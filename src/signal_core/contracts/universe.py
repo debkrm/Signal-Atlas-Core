@@ -181,7 +181,11 @@ class UniverseSchedule:
     - Delimiter characters (',', ';', '\\n', '\\r', '\\t') are strictly prohibited.
     - Immutable read-only encapsulation via MappingProxyType and immutable tuples.
     """
-    def __init__(self, schedule: Mapping[datetime.date, Iterable[str]]):
+    def __init__(
+        self,
+        schedule: Mapping[datetime.date, Iterable[str]],
+        exclusion_reasons: Optional[Mapping[Tuple[datetime.date, str], str]] = None,
+    ):
         if not schedule:
             raise UniverseValidationError("Universe schedule mapping cannot be empty.")
 
@@ -225,7 +229,15 @@ class UniverseSchedule:
             clean_schedule[d] = sorted_tuple
             all_instruments.update(sorted_tuple)
 
+        clean_exclusions: Dict[Tuple[datetime.date, str], str] = {}
+        if exclusion_reasons is not None:
+            for (ex_date, ex_id), reason in exclusion_reasons.items():
+                if type(ex_date) is not datetime.date:
+                    raise UniverseValidationError(f"Exclusion reason date must be datetime.date, got {type(ex_date).__name__}")
+                clean_exclusions[(ex_date, str(ex_id))] = str(reason)
+
         self._schedule: Mapping[datetime.date, Tuple[str, ...]] = MappingProxyType(clean_schedule)
+        self._exclusion_reasons: Mapping[Tuple[datetime.date, str], str] = MappingProxyType(clean_exclusions)
         self._all_instruments: Tuple[str, ...] = tuple(sorted(all_instruments))
         self._dates: Tuple[datetime.date, ...] = tuple(sorted(clean_schedule.keys()))
 
@@ -253,6 +265,17 @@ class UniverseSchedule:
     def unique_instruments(self) -> Tuple[str, ...]:
         """All unique instruments eligible at any point in the schedule, lexicographically sorted."""
         return self._all_instruments
+
+    @property
+    def exclusion_reasons(self) -> Mapping[Tuple[datetime.date, str], str]:
+        """Mapping of (session_date, instrument_id) to named exclusion reason string (Finding N-71)."""
+        return self._exclusion_reasons
+
+    def get_exclusion_reason(self, trade_date: datetime.date, instrument_id: str) -> Optional[str]:
+        """Returns the exclusion reason for an instrument on a trade date, if recorded (Finding N-71)."""
+        if type(trade_date) is not datetime.date:
+            raise UniverseValidationError(f"trade_date must be a genuine datetime.date, got {type(trade_date).__name__}.")
+        return self._exclusion_reasons.get((trade_date, instrument_id))
 
     def get_universe_for_date(self, trade_date: datetime.date) -> Tuple[str, ...]:
         """

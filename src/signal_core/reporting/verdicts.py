@@ -688,7 +688,7 @@ def evaluate_verdicts(
             threshold_value="True",
             comparator="==",
             status=VerdictStatus.NOT_RUN,
-            evidence="Flag 'statutory_costs_enforced' not provided in results bundle (proven by scripts/verify_phase2b5_storage.py and tests/unit/test_costs.py; omit evaluates to NOT RUN per §9.1).",
+            evidence="Flag 'statutory_costs_enforced' not provided in results bundle (proven by scripts/verify_phase2b5_storage.py, tests/unit/test_costs.py, and tests/unit/test_portfolio.py; omit evaluates to NOT RUN per §9.1).",
             is_binding=True,
         ))
 
@@ -747,7 +747,7 @@ def evaluate_verdicts(
             threshold_value="True",
             comparator="==",
             status=VerdictStatus.NOT_RUN,
-            evidence="Flag 'fail_closed_on_unexplained_gaps' not provided in results bundle (proven by scripts/verify_cash_universe_coverage.py and tests/unit/test_calendar_reconciliation.py; omit evaluates to NOT RUN per §9.1).",
+            evidence="Flag 'fail_closed_on_unexplained_gaps' not provided in results bundle (proven by scripts/verify_phase2b5_storage.py Gate G2B.5-4, tests/unit/test_storage.py, and tests/unit/test_bhavcopy_reconciliation.py; omit evaluates to NOT RUN per §9.1).",
             is_binding=True,
         ))
 
