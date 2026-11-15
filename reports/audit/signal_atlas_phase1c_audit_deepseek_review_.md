@@ -4947,3 +4947,144 @@ What would falsify this verdict and let Phase 3A close: every one of the followi
    - **Daily T+1 order runner.** Signals at `T` close, fills at `T+1` open through `ExecutionFillSimulator` and the one cost model. *Accept:* a `T`-close fill raises; a `T+1` fill on a session at its upper band is rejected (§5.3).
    - **Hypothesis-driven EQ swing strategies** evaluated walk-forward on 2022–2024 with 2025–2026 sealed by the existing containment. *Accept:* a run whose fold touches a sealed date fails closed, and every parameter touched is written to `TrialRegistry` before the metric is read.
    - **Report `NO-GO`.** `CRIT-PROV-01` remains `NOT RUN`; a strategy wave that claims `GO` from this data is wrong by construction, and the verdict engine will say so.
+## §58 — Commit `d7590fe` (tag `feat-s57-d7590fe`)
+
+### 58.1 Baseline, measured before any finding
+
+Worktree clean at `d7590fe`; `git log` confirms `acb6b1d` (§57) → `d7590fe`.
+
+```
+python -m pytest -q                     -> 325 passed in 14.08s      exit 0
+python -m pytest -q -rs                 -> 325 passed, zero skipped, zero xfailed
+scripts/verify_audit_append_only.py     -> ALL REPOSITORY FOUNDATION GATES PASSED   exit 0
+scripts/verify_cash_universe_coverage.py-> COV-4 VERIFIED PASS                      exit 0
+scripts/verify_historical_snapshot.py   -> fingerprints PASSED 100%                 exit 0
+scripts/verify_phase2a_containment...   -> ALL MEASURED CHECKS PASSED 100%          exit 0
+scripts/verify_phase2b_significance.py  -> ALL MEASURED GATES PASSED 100%           exit 0
+scripts/verify_phase2b5_storage.py      -> 7/7 (100.0%)                             exit 0
+scripts/verify_phase2c_walkforward.py   -> 5/5 (100.0%)                             exit 0
+scripts/verify_phase2d_verdicts.py      -> ALL PHASE 2D GATES PASSED 100%           exit 0
+scripts/verify_wave1_thin_slice.py      -> ALL GATES PASSED 100%                    exit 0
+```
+
+Five new tests (320 → 325), all in `tests/unit/test_phase3a_sizing_and_universe.py`. `git diff --name-only 98c6f4c d7590fe -- configs data` is empty: no criteria, calendar, interval or Bronze file is touched. The Tier-A report re-evaluates to the same computed `overall_verdict: NO-GO` with `3 PASS / 20 NOT RUN` of 23 criteria; the only lines that changed in `reports/verdicts/phase2d_tier_a_2022_2026_verdict.json` and `.md` are the two evidence strings of §N-70. Nothing in this commit moves the report's substance, so **Wave 3 — GO stands** and **Phase 2D phase — GO stands**, both unchanged from §56.5 and §57.6.
+
+### 58.2 The six §57.7 items, measured
+
+**Item 1 — H-77 CLOSED.** The floored stop now re-derives the distance, so reported risk equals loss at the reported stop in every case I ran:
+
+```
+equity      entry  atr   k    qty      stop     dist     risk_amount  qty*(entry-stop)  match  binding
+1000000     0.10   0.50  2    200000   0.05     0.05     10000.00     10000.00         True   RISK_BUDGET
+1000000     0.06   0.50  2    300000   0.05     0.01      3000.00      3000.00         True   VOLUME_PARTICIPATION
+1000000     100    2     2      1000   96       4         4000        4000             True   MAX_POSITION_WEIGHT
+1000000     100    0.5   3      1000   98.5     1.5       1500.0      1500.0           True   MAX_POSITION_WEIGHT
+250000      37.5   1.25  2.5     666   34.375   3.125     2081.250     2081.250         True   MAX_POSITION_WEIGHT
+```
+
+The §57 failure — `risk_amount` ₹10,000 against an actual ₹500 loss — is gone. `entry_price` of `0.03`, `0.05` and `0.0500` each raise `PositionSizingValidationError`; the stop can no longer print above the entry. The delivered test pins the exact case my work order named (`quantity == 10000`, `risk_amount == Decimal("500.00")`, `stop_distance == 0.05`).
+
+**Item 2 — H-80 CLOSED.** A default call is now bounded by the criteria, not by a literal:
+
+```
+default call, volume 1e7   -> qty 1000  (= 0.10 * 1e6 / 100)     bind MAX_POSITION_WEIGHT
+default call, volume 1e4   -> qty 300   (= 0.03 * 10000)         bind VOLUME_PARTICIPATION
+criteria replaced 0.02     -> qty 200                            bind MAX_POSITION_WEIGHT
+criteria replaced 0.002    -> qty 20 (of 10000)                  bind VOLUME_PARTICIPATION
+no session_volume argument -> TypeError (required positional)
+session_volume in {None, 0, -5, True, 1.5} -> PositionSizingValidationError, each
+```
+
+The two `dataclasses.replace` runs are the load-bearing measurement: they change the committed bounds and the output follows, which a hardcoded default could not do. With §57's falsifier satisfied, the sizer imposes the committed 3% participation cap when called with defaults.
+
+**Item 3 — H-78 / H-79 CLOSED.** Three consecutive sessions in the binding window, with turnover present strictly before them:
+
+```
+2022-03-02: 3 members   2022-03-03: 3 members   2022-03-04: 3 members
+```
+
+The 2,172-member unfiltered first session is gone; every session is filtered or refuses. Calendar derivation now holds on every probe I could construct:
+
+```
+Saturday 2024-01-06 (cal.is_session == False)      -> UniverseValidationError
+5 dates spanning 729 days                          -> refused (no lookback history)
+single session 2015-01-08 (5 prior cal sessions)   -> refused: "only 5 prior calendar sessions"
+turnover dated on T or T+1, 999,000,000 INR        -> ignored (schedule 0 members)
+```
+
+The last line is the zero-lookahead check that matters: turnover stamped on the probe sessions themselves never enters the window, so the lookback cannot read the future.
+
+**Item 4 — N-71 CLOSED.** A name absent from `daily_turnover_inr` for the window is excluded with `MISSING_TURNOVER_RECORD: missing 20 session(s) in lookback window (e.g. 2022-02-01)`, absent from the schedule, and reachable through `UniverseSchedule.get_exclusion_reason`; a name recorded at `Decimal("0")` is separately excluded `BELOW_MIN_MEDIAN_TURNOVER`. The two conditions, previously indistinguishable, now report differently on 1,935 live names.
+
+**Item 5 — N-69 / N-70 / N-73 CLOSED on their stated acceptance.** I ran the gate's own AST block verbatim over thirteen shapes: 9 caught (direct dict, `Decimal("…")`, module constant, `setdefault`, `b |= {...}`, local-variable indirection, helper call with literal, inline dict, `Decimal("literal")`), 4 missed (§58.3, N-79). The decisive test is the runtime guard, which I exercised by exec'ing the generator source with one line injected *before* the guard:
+
+```
+_leak = True; bundle["leak"] = _leak   -> TypeError: Bundle key 'leak' has forbidden literal type bool
+```
+
+That is the exact shape §57.7.5 named as its accept criterion — a literal assigned through a local variable now fails the gate. Both N-70 evidence strings were verified against files, not prose: `tests/unit/test_storage.py:213` (`NonContiguousDatasetError … has unexplained missing record on session`), `tests/unit/test_bhavcopy_reconciliation.py` (subsegment partitioning at 337), `scripts/verify_phase2b5_storage.py:219,267` (Gate G2B.5-4), and `tests/unit/test_portfolio.py:314` (`net_pnl < gross_pnl`), which the costs pointer now cites. Both modules import nothing unused, and the former dead branch is reachable and correctly labelled (`equity=100` → `qty=0`, `bind=RISK_BUDGET`).
+
+**Item 6 — N-74 CLOSED, N-75 half.** The CSOW sentence now reads "loads defaults directly from `GoNoGoCriteria` (`max_single_position_weight=0.10`, `max_volume_participation_cap=0.03`) … strictly requires positive integer `session_volume`", which is what I measured. The earlier "strictly bounded by … participation cap (2.5% to 5.0%)" claim is gone. N-75 moved to the honest *form* ("implemented; verdict pending") but names the wrong section (§58.3, N-81).
+
+### 58.3 New findings
+
+**H-81 — an incomplete lookback window is emitted as an empty cross-section, not refused.** `has_any_lookback` is a single `any()` over the whole turnover map, so one key anywhere in the window satisfies it; each candidate is then excluded for `MISSING_TURNOVER_RECORD` and the session is emitted with zero members. Measured on the real archive set (1,195 archived sessions, 8 declared unarchived, of which only `2025-02-01` is a calendar session):
+
+```
+binding window 2022-01-03..2026-10-30 : 1,196 calendar sessions
+sessions whose 20-session lookback contains an unarchived session : 40 (3.3%)
+   raised (fail closed)                          : 1   (2022-01-03, no archive at all in the window)
+   emitted EMPTY cross-section silently          : 39
+   emitted non-empty                             : 0
+    2022-01-04 … 2022-02-01 (20 sessions, 2021-12 unarchived)
+    2025-02-03 … 2025-03-03 (19 sessions, 2025-02-01 unarchived)
+```
+
+Both clusters are structural, not hypothetical: the first month of the binding window, and the month after the one real session with no Bhavcopy. A consumer cannot distinguish "no name cleared ₹5 crore" from "we have no data for one session in the window" without reading 2,172 per-name exclusion strings. §10.8 requires those sessions to be declared warm-up/`NOT RUN`, and §6.3 requires a feature engine to refuse a lookback across an unexplained gap; a silent empty tuple does neither. This is the same failure class as H-78 in its partial-window form and it lands on the first fold of any Phase 3B walk-forward. Fix: make coverage all-or-nothing per session — raise a named error when any lookback session is absent from `daily_turnover_inr`, so the caller must declare the session warm-up rather than receive an empty set.
+
+**N-76 — the lookback parameter is unvalidated.** `turnover_lookback_sessions` of `0` is accepted and `prior[-0:]` silently becomes the *entire* prior history; `-1` becomes `prior[1:]`; `25` is accepted against a 40-session map and yields 0 members. No bound check exists, and `0` inverts the meaning of the argument rather than failing.
+
+**N-77 — `top_liquid_k` of 0 or negative is accepted and the cap silently disappears.** `top_liquid_k=0` and `-3` both return the full filtered set (3 and 5 names in my probes) because the branch is `if top_liquid_k is not None and top_liquid_k > 0`. A caller asking for zero names gets all of them.
+
+**N-78 — both new runtime-guard probes are tautologies.** In `scripts/verify_phase2d_verdicts.py` and again in `test_n63_n69_ast_checker_and_runtime_guard`, the injection case is written as `for k, v in {"bad_key": bad_val}.items(): if isinstance(v, (bool, int, float)): raise TypeError(...)` — an `if` the probe itself supplies. Deleting the guard from `generate_phase2d_tier_a_report.py` leaves both green. The gate is not actually weakened, because it separately type-checks the *live* bundle returned by the real function (which I verified independently), but the "proof" line printed from those loops proves nothing about production code.
+
+**N-79 — the test re-implements the checker it is testing, and has already drifted.** `run_ast_check` inside the test is a private copy of the gate's logic missing the helper-call-literal branch and the `AnnAssign`/tuple-unpack discovery; it will drift further on the next edit. What neither layer catches, measured: `K: bool = True` then `b["k"] = K`; `K, J = True, 1`; and any numeric value laundered through a string (`k = "1.6850"; b["k"] = Decimal(k)`), which passes the AST check *and* the runtime guard because `Decimal` is the type the guard permits. I accepted string laundering as review-caught in §57.4; the `Decimal`-from-local variant is the same act as the direct `Decimal("1.6850")` the AST check rejects, so the two layers are not equivalent for numeric literals.
+
+**N-80 — `MIN_TICK_SIZE = Decimal("0.05")` is not the NSE tick and is not sourced.** NSE cash-equity tick size is Re 0.01; the module rejects any entry at or below 0.05 and floors stops there. The direction is fail-closed (a 0.05-priced scrip is refused, never mis-sized), so this is not a safety hole, but it is a modelled exchange constraint asserted as a literal rather than read from a contract.
+
+**N-81 — the CSOW pending-verdict references point at §57, which already exists.** The Phase 3A section header reads "(Implemented; Verdict Pending §57)" and the N-63/N-67 clause reads "remediated in feat-s57 … verdict pending §57 (at commit `acb6b1d`)". §57 at `acb6b1d` is a delivered verdict and it was NO-GO on Phase 3A; the pending section for this commit is §58. The appended §57 row likewise says "Remediated in `feat-s57`" before any verdict cites that commit. Under §11.3 the honest form is "implemented in `feat-s57`; verdict pending §58 (§57 at `acb6b1d`)".
+
+### 58.4 What did not change
+
+`sizing.py` and `pit_universe.py` still have no importer anywhere in `src/`: `grep` for `portfolio.sizing` and `pit_universe` outside the two files returns nothing. `OrderIntent` carries `quantity` **or** `target_weight` (`strategy/base.py:55-56`), so the wiring is a direct one — the sizer already returns both. `UniverseSchedule`'s new `exclusion_reasons` parameter is optional and keyword-only; the three production call sites (`contracts/dataset.py:314`, `loaders/historical_snapshot.py:343`, `storage/gold.py:105`) and the tests pass one positional argument and are unaffected, which `325 passed` confirms.
+
+### 58.5 Verdict
+
+**Wave 3 — GO stands, unchanged.** No execution, cost, portfolio-ledger or calendar file is modified; the Tier-A report still computes `3 PASS / 0 FAIL / 20 NOT RUN` → `NO-GO`.
+
+**Phase 2D phase — GO stands, unchanged** (§56.5, §57.6).
+
+**Phase 3A — GO for the six §57.7 items, all measured closed.** H-77, H-78, H-79, H-80, N-69, N-70, N-71, N-72, N-73 and N-74 are CLOSED on the acceptance criteria I published in §57.7; N-75 is closed in form and open on its citation (N-81). I am not reopening the phase: the falsifier in §57.6 was explicit and every clause of it was met, and a phase whose stated acceptance is met does not stay shut because a later probe found something new.
+
+**That sign-off is scoped, and H-81 is the boundary.** Phase 3A is signed off as *implemented and verified for §57.7*. It is not signed off as *safe to consume*: H-81 silently empties 39 of 1,196 binding sessions, and the first Phase 3B fold would inherit exactly that. So Phase 3B splits:
+
+- **Phase 3B-1 — GO now.** The two pieces that do not read the universe: wire the sizer into `OrderIntent` (`quantity`, with `position_weight` for the weight path), and build the daily T+1 open order runner through `ExecutionFillSimulator` and the one cost model (§7.4). Neither can touch H-81.
+- **Phase 3B-2 — blocked on H-81.** Hypothesis-driven EQ swing strategies, walk-forward on 2022–2024 with 2025–2026 sealed, every trial logged to `TrialRegistry` before its metric is read. It may start only after H-81 measures closed, because its first fold consumes the universe builder.
+
+Any Phase 3B result remains `NO-GO` while `CRIT-PROV-01` is `NOT RUN` (`CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED`). A strategy wave that reports `GO` from this data is wrong by construction.
+
+### 58.6 What would falsify the remaining verdict
+
+H-81 closes when, measured: every one of the 39 sessions either raises or is explicitly declared warm-up/`NOT RUN` — **0 of 1,196** binding sessions emit an empty cross-section; a 20-session window containing one absent session raises a named error rather than excluding all 2,172 candidates; and a window that is complete still returns its filtered set unchanged (2022-05-02 → 5 members in my probe). Phase 3B-2 opens on that measurement, not on a description of the fix.
+
+The Phase 3A sign-off is falsified if any of the §58.2 numbers above is contradicted by a rerun at `d7590fe` on a clean tree, or if a later commit changes `sizing.py`/`pit_universe.py` in a way that re-opens H-77/H-78/H-79/H-80 without a superseding verdict.
+
+### 58.7 Work order
+
+1. **H-81.** Make lookback coverage all-or-nothing per session: if any session in the `turnover_lookback_sessions` window is absent from `daily_turnover_inr`, raise `UniverseValidationError` naming the missing session(s), so the caller must declare that session warm-up instead of receiving an empty tuple. *Accept:* the 39 measured sessions raise; 0 of 1,196 binding sessions emit an empty cross-section; a complete window still returns its members.
+2. **N-76 / N-77.** Validate `turnover_lookback_sessions >= 1` and `top_liquid_k >= 1` when provided; reject `0`/negative rather than silently redefining the window or dropping the cap. *Accept:* `0` and `-1` for either argument raise.
+3. **N-78 / N-79.** Make the guard probes exercise production code: call the real `build_tier_a_results_bundle` with a literal injected before its guard (or expose the guard as a named function and call it), and have the N-63 test import the gate's checker instead of copying it. Record in the docstring what neither layer catches — `AnnAssign`, tuple-unpack, and numeric literals laundered through a local string. *Accept:* deleting the production guard fails a test.
+4. **N-80.** Source the tick size from a contract or state it as a modelling floor with its direction (fail-closed) in the docstring. *Accept:* the constant's provenance is named, or the docstring says it is an assumed floor.
+5. **N-81.** Correct the CSOW references: "implemented in `feat-s57`; verdict pending §58 (§57 at `acb6b1d`)", and mark Phase 3A as signed off for §57.7 **with H-81 open** — quoting §58.5 rather than paraphrasing it upward.
+6. **Phase 3B-1 (may run in parallel with 1–5).** Feed `PositionSizeResult` into `OrderIntent`: `quantity` from the sizer, `position_weight` retained for the weight path. Build the daily T+1 runner: signal at `T` close, fill at `T+1` open through `ExecutionFillSimulator` and the single statutory cost model, no second fill or cost path. *Accept:* a higher-ATR name receives a smaller quantity/weight at equal equity; a `T`-close fill raises; a `T+1` attempt into an upper-circuit session is rejected (§5.3).
+7. **Phase 3B-2 (after H-81 measures closed).** Hypothesis-driven EQ swing strategies, walk-forward over 2022–2024, 2025–2026 physically sealed, every parameter written to `TrialRegistry` before its metric is read. *Accept:* a fold touching a sealed date fails closed; the trial count is reported beside the best result; the verdict engine returns `NO-GO` while `CRIT-PROV-01` is `NOT RUN`.
