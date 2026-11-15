@@ -19,6 +19,7 @@ from signal_core.portfolio.ledger import CashLedger, PAISE_PRECISION, _quantize_
 from signal_core.portfolio.position import Position
 from signal_core.portfolio.types import (
     CashLedgerEntry,
+    CorporateActionError,
     LedgerValidationError,
     PortfolioRiskLimitError,
     PortfolioSnapshot,
@@ -146,8 +147,9 @@ class Portfolio:
 
     def apply_corporate_action(self, action: CorporateAction) -> Optional[CashLedgerEntry]:
         """
-        Applies a mid-hold corporate action across open portfolio positions per AGENTS.md §13.2 and Audit §59.4, §59.7.
-        - For SPLIT, BONUS, ISIN_TRANSITION: restates position shares and average cost basis, keeping equity invariant.
+        Applies a mid-hold corporate action across open portfolio positions per AGENTS.md §13.2 and Audit §59.4, §59.7, §60.6.
+        - For SPLIT, BONUS, CONSOLIDATION: restates position shares and average cost basis, keeping equity invariant.
+        - For ISIN_TRANSITION: re-keys position identity in self._positions to new_isin, keeping shares and cost constant (Finding H-86).
         - For DIVIDEND: posts cash dividend inflow to CashLedger via CashEntryType.DIVIDEND_INFLOW.
         """
         if not isinstance(action, CorporateAction):
@@ -157,10 +159,22 @@ class Portfolio:
         if pos is None or pos.is_closed or pos.quantity <= 0:
             return None
 
-        if action.action_type in (
+        # Finding H-86: ISIN_TRANSITION re-keys the position in self._positions
+        if action.action_type == CorporateActionType.ISIN_TRANSITION:
+            old_isin = action.isin
+            new_isin = action.new_isin
+            if not new_isin:
+                raise CorporateActionError(
+                    f"ISIN_TRANSITION requires new_isin for {old_isin} (Finding H-86)."
+                )
+            pos.apply_corporate_action(action)
+            del self._positions[old_isin]
+            self._positions[new_isin] = pos
+            return None
+
+        elif action.action_type in (
             CorporateActionType.SPLIT,
             CorporateActionType.BONUS,
-            CorporateActionType.ISIN_TRANSITION,
             CorporateActionType.CONSOLIDATION,
         ):
             pos.apply_corporate_action(action)
@@ -457,4 +471,14 @@ class Portfolio:
         self._last_valuation_date = as_of_date
 
         return snapshot
+
+
+# Late-bind Portfolio into order_runner module to guarantee circular import immunity (Finding N-90)
+try:
+    import signal_core.execution.order_runner as _order_runner
+    if getattr(_order_runner, "Portfolio", None) is None:
+        _order_runner.Portfolio = Portfolio
+except Exception:
+    pass
+
 

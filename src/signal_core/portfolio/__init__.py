@@ -6,6 +6,7 @@ from signal_core.portfolio.portfolio import Portfolio
 from signal_core.portfolio.types import (
     CashEntryType,
     CashLedgerEntry,
+    CorporateActionError,
     LedgerValidationError,
     PortfolioRiskLimitError,
     PortfolioSnapshot,
@@ -16,6 +17,7 @@ __all__ = [
     "CashEntryType",
     "CashLedger",
     "CashLedgerEntry",
+    "CorporateActionError",
     "LedgerValidationError",
     "PAISE_PRECISION",
     "Portfolio",

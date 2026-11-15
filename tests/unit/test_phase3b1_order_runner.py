@@ -27,21 +27,25 @@ import tempfile
 import typing
 import pytest
 
+import hashlib
 from signal_core.contracts.criteria import load_go_no_go_criteria
 from signal_core.contracts.exchange_series import ExchangeSeries, ExchangeSessionObservation
 from signal_core.contracts.price_band import PriceBandRecord
 from signal_core.contracts.price_bar import PriceBar
+import signal_core.execution
 from signal_core.execution.order_runner import (
     DailyExecutionTicket,
     DailySignalCandidate,
     DailyTPlus1OrderRunner,
     OrderRunnerEligibilityError,
     OrderRunnerError,
+    is_weekly_surveillance_trading_session,
 )
 from signal_core.execution.simulator import ExecutionFillSimulator
 from signal_core.execution.types import FillStatus, OrderProduct, OrderSide, OrderType
 from signal_core.portfolio.portfolio import Portfolio
-from signal_core.portfolio.types import CashEntryType
+from signal_core.portfolio.position import Position
+from signal_core.portfolio.types import CashEntryType, CorporateActionError
 from signal_core.reporting.verdicts import OverallVerdict, VerdictStatus, evaluate_verdicts
 from signal_core.research.containment import (
     HoldoutSealedError,
@@ -56,12 +60,16 @@ from signal_core.storage.security_master import (
     CorporateAction,
     CorporateActionType,
     SecurityMaster,
+    SecurityMasterError,
     SurveillanceInterval,
     SurveillanceStage,
     SymbolInterval,
+    build_production_security_master,
+    load_corporate_actions,
+    load_surveillance_intervals,
 )
 from signal_core.strategy.base import LookaheadIntentError, OrderIntent, OrderIntentValidationError
-from signal_core.strategy.swing import DeliverySwingTrendStrategy
+from signal_core.strategy.swing import DeliverySwingTrendStrategy, execute_swing_strategy_session
 
 
 # =============================================================================
@@ -610,6 +618,8 @@ def test_n84_zero_quantity_sizing_returns_no_trade_outcome(criteria, simulator, 
     assert ticket.intent is None
     assert ticket.order is None
     assert ticket.fill_result is None
+    # Finding N-83 residual (§60.2 Item 3): No-trade ticket target_date carries T+1 (2024-01-03), not signal date
+    assert ticket.target_date == datetime.date(2024, 1, 3)
 
 
 # =============================================================================
@@ -1043,3 +1053,535 @@ def test_sell_order_exits_position_and_rejects_naked_short(runner, portfolio):
 
     # Net cash must increase by sell net proceeds (gross - costs)
     assert portfolio.current_cash > cash_after_buy
+
+
+# =============================================================================
+# 12. Mandatory Price Band on SELL & Lower Circuit Rejection (Finding H-85)
+# =============================================================================
+
+def test_h85_mandatory_price_band_on_sell_and_lower_circuit_rejection(runner, portfolio):
+    """
+    Finding H-85 Acceptance Probe (§60.6 Item 1):
+    Proves that:
+    1. A SELL exit without price_band raises OrderRunnerEligibilityError fail-closed (no band -> no fill).
+    2. A SELL exit on a bar opening at lower circuit (O=900, H=950, L=900, C=940) with price_band
+       is rejected as REJECTED_LOWER_CIRCUIT (sellers trapped per AGENTS.md §5.3).
+    """
+    signal_date = datetime.date(2024, 1, 2)
+    target_date = datetime.date(2024, 1, 3)
+
+    # Establish held position first: 50 shares @ ₹1000 (5% weight)
+    cand_buy = DailySignalCandidate(
+        instrument_id="INE002A01018",
+        signal_date=signal_date,
+        side=OrderSide.BUY,
+        entry_reference_price=Decimal("1000.00"),
+        atr=Decimal("100.00"),
+        session_volume=5000000,
+        series="EQ",
+    )
+    bar_buy = PriceBar(
+        instrument_id="INE002A01018",
+        trade_date=target_date,
+        open=Decimal("1000.00"),
+        high=Decimal("1050.00"),
+        low=Decimal("990.00"),
+        close=Decimal("1000.00"),
+        volume=5000000,
+        traded_value=Decimal("5000000000.00"),
+    )
+    band_buy = PriceBandRecord(
+        isin="INE002A01018",
+        trade_date=target_date,
+        series="EQ",
+        upper_circuit_limit=Decimal("1100.00"),
+        lower_circuit_limit=Decimal("900.00"),
+        band_percentage=Decimal("10.00"),
+    )
+    runner.run_candidate(
+        candidate=cand_buy,
+        t_plus_1_bar=bar_buy,
+        price_band=band_buy,
+        explicit_series=ExchangeSeries.EQ,
+    )
+    pos = portfolio.get_position("INE002A01018")
+    assert pos is not None and pos.quantity > 0
+
+    # SELL candidate on session T+2 (2024-01-03 -> 2024-01-04)
+    sell_signal_date = datetime.date(2024, 1, 3)
+    sell_target_date = datetime.date(2024, 1, 4)
+    cand_sell = DailySignalCandidate(
+        instrument_id="INE002A01018",
+        signal_date=sell_signal_date,
+        side=OrderSide.SELL,
+        entry_reference_price=Decimal("950.00"),
+        atr=Decimal("50.00"),
+        session_volume=5000000,
+        series="EQ",
+    )
+    # Bar opens at the lower circuit (900.00) and later trades up (H=950, C=940)
+    bar_sell_lower_circuit = PriceBar(
+        instrument_id="INE002A01018",
+        trade_date=sell_target_date,
+        open=Decimal("900.00"),
+        high=Decimal("950.00"),
+        low=Decimal("900.00"),
+        close=Decimal("940.00"),
+        volume=5000000,
+        traded_value=Decimal("4600000000.00"),
+    )
+
+    # Probe 1: Omitting price_band on SELL raises OrderRunnerEligibilityError (fail-closed, no fill)
+    with pytest.raises(OrderRunnerEligibilityError, match="Mandatory price band evidence missing for SELL"):
+        runner.run_candidate(
+            candidate=cand_sell,
+            t_plus_1_bar=bar_sell_lower_circuit,
+            price_band=None,
+            explicit_series=ExchangeSeries.EQ,
+        )
+
+    # Probe 2: With price_band provided, fill reference price (900.00) equals lower circuit limit -> REJECTED_LOWER_CIRCUIT
+    band_sell = PriceBandRecord(
+        isin="INE002A01018",
+        trade_date=sell_target_date,
+        series="EQ",
+        upper_circuit_limit=Decimal("1100.00"),
+        lower_circuit_limit=Decimal("900.00"),
+        band_percentage=Decimal("10.00"),
+    )
+    ticket_sell = runner.run_candidate(
+        candidate=cand_sell,
+        t_plus_1_bar=bar_sell_lower_circuit,
+        price_band=band_sell,
+        explicit_series=ExchangeSeries.EQ,
+    )
+    assert ticket_sell.fill_result is not None
+    assert ticket_sell.fill_result.status == FillStatus.REJECTED_LOWER_CIRCUIT
+    assert ticket_sell.fill_result.filled_quantity == 0
+    # Position remains held (not filled into frozen bid!)
+    assert not pos.is_closed
+    assert pos.quantity > 0
+
+
+# =============================================================================
+# 13. ISIN Transition Re-Keying & Tradeability (Finding H-86)
+# =============================================================================
+
+def test_h86_isin_transition_rekeys_position_and_permits_sell(runner, portfolio):
+    """
+    Finding H-86 Acceptance Probe (§60.6 Item 2):
+    Proves that applying the committed Cochin Shipyard ISIN transition row
+    (INE704P01017 -> INE704P01025):
+    1. Re-keys position in portfolio from old ISIN to new ISIN.
+    2. Keeps quantity and cost basis strictly invariant (multiplier excluded).
+    3. Marking before and after transition gives equal equity.
+    4. Subsequent SELL for new ISIN INE704P01025 finds position and executes cleanly.
+    """
+    signal_date = datetime.date(2024, 1, 2)
+    target_date = datetime.date(2024, 1, 3)
+
+    # Buy 50 shares of Cochin Shipyard under old ISIN INE704P01017 (5% weight)
+    cand_buy = DailySignalCandidate(
+        instrument_id="INE704P01017",
+        signal_date=signal_date,
+        side=OrderSide.BUY,
+        entry_reference_price=Decimal("1000.00"),
+        atr=Decimal("100.00"),
+        session_volume=5000000,
+        series="EQ",
+    )
+    bar_buy = PriceBar(
+        instrument_id="INE704P01017",
+        trade_date=target_date,
+        open=Decimal("1000.00"),
+        high=Decimal("1020.00"),
+        low=Decimal("990.00"),
+        close=Decimal("1000.00"),
+        volume=5000000,
+        traded_value=Decimal("5000000000.00"),
+    )
+    band_buy = PriceBandRecord(
+        isin="INE704P01017",
+        trade_date=target_date,
+        series="EQ",
+        upper_circuit_limit=Decimal("1200.00"),
+        lower_circuit_limit=Decimal("800.00"),
+        band_percentage=Decimal("20.00"),
+    )
+    runner.run_candidate(
+        candidate=cand_buy,
+        t_plus_1_bar=bar_buy,
+        price_band=band_buy,
+        explicit_series=ExchangeSeries.EQ,
+    )
+
+    pos_old = portfolio.get_position("INE704P01017")
+    assert pos_old is not None
+    initial_qty = pos_old.quantity
+    initial_cost = pos_old.total_cost_basis
+
+    # Pre-transition equity marked at ₹500.00
+    equity_pre = portfolio.current_total_equity({"INE704P01017": Decimal("500.00")})
+
+    # Apply committed Cochin Shipyard ISIN transition on ex-date 2024-01-10
+    transition_action = CorporateAction(
+        isin="INE704P01017",
+        ex_date=datetime.date(2024, 1, 10),
+        action_type=CorporateActionType.ISIN_TRANSITION,
+        ratio_numerator=Decimal("2"),
+        ratio_denominator=Decimal("1"),
+        old_isin="INE704P01017",
+        new_isin="INE704P01025",
+        circular_ref="UNATTESTED_NSE_CML_60114",
+        description="COCHIN SHIPYARD Sub-Division from Rs 10 to Rs 5",
+    )
+    portfolio.apply_corporate_action(transition_action)
+
+    # Post-transition assertions:
+    # 1. Old ISIN removed from open positions, new ISIN registered
+    assert portfolio.get_position("INE704P01017") is None
+    pos_new = portfolio.get_position("INE704P01025")
+    assert pos_new is not None
+    assert pos_new.instrument_id == "INE704P01025"
+
+    # 2. Quantity and cost basis unchanged (share multiplier excluded from ISIN_TRANSITION branch)
+    assert pos_new.quantity == initial_qty
+    assert pos_new.total_cost_basis == initial_cost
+
+    # 3. Marking at post-transition price ₹500.00 gives exact same equity
+    equity_post = portfolio.current_total_equity({"INE704P01025": Decimal("500.00")})
+    assert equity_post == equity_pre
+
+    # 4. SELL ticket for new ISIN INE704P01025 executes cleanly through order runner
+    sell_date = datetime.date(2024, 1, 10)
+    sell_target = datetime.date(2024, 1, 11)
+    cand_sell = DailySignalCandidate(
+        instrument_id="INE704P01025",
+        signal_date=sell_date,
+        side=OrderSide.SELL,
+        entry_reference_price=Decimal("500.00"),
+        atr=Decimal("20.00"),
+        session_volume=5000000,
+        series="EQ",
+    )
+    bar_sell = PriceBar(
+        instrument_id="INE704P01025",
+        trade_date=sell_target,
+        open=Decimal("500.00"),
+        high=Decimal("520.00"),
+        low=Decimal("490.00"),
+        close=Decimal("510.00"),
+        volume=5000000,
+        traded_value=Decimal("2500000000.00"),
+    )
+    band_sell = PriceBandRecord(
+        isin="INE704P01025",
+        trade_date=sell_target,
+        series="EQ",
+        upper_circuit_limit=Decimal("600.00"),
+        lower_circuit_limit=Decimal("400.00"),
+        band_percentage=Decimal("20.00"),
+    )
+    ticket_sell = runner.run_candidate(
+        candidate=cand_sell,
+        t_plus_1_bar=bar_sell,
+        price_band=band_sell,
+        explicit_series=ExchangeSeries.EQ,
+    )
+    assert ticket_sell.fill_result is not None
+    assert ticket_sell.fill_result.status == FillStatus.FILLED
+    assert ticket_sell.fill_result.filled_quantity == initial_qty
+    assert pos_new.is_closed
+
+
+# =============================================================================
+# 14. Fractional Entitlement Fail-Closed Protection (Finding N-87)
+# =============================================================================
+
+def test_n87_fractional_entitlement_raises_corporate_action_error(runner, portfolio):
+    """
+    Finding N-87 Acceptance Probe (§60.6 Item 6):
+    Proves that a 3:2 bonus on an odd holding (5 shares) fails closed by raising
+    CorporateActionError, preventing silent share truncation (5 * 1.5 = 7.5 shares).
+    """
+    pos = Position("INE002A01018")
+    pos._quantity = 5
+    pos._total_cost_basis = Decimal("5000.00")
+    pos._average_entry_price = Decimal("1000.0000")
+    portfolio._positions["INE002A01018"] = pos
+    assert pos.quantity == 5
+
+    # 3:2 bonus action (ratio_numerator=3, ratio_denominator=2)
+    bonus_3_2 = CorporateAction(
+        isin="INE002A01018",
+        ex_date=datetime.date(2024, 1, 4),
+        action_type=CorporateActionType.BONUS,
+        ratio_numerator=Decimal("3"),
+        ratio_denominator=Decimal("2"),
+        circular_ref="UNATTESTED_BONUS_3_2",
+    )
+
+    # 1. Proves Position.apply_corporate_action raises CorporateActionError
+    with pytest.raises(CorporateActionError, match="Non-integral restatement.*7.5"):
+        pos.apply_corporate_action(bonus_3_2)
+
+    # 2. Proves Portfolio.apply_corporate_action raises CorporateActionError
+    with pytest.raises(CorporateActionError, match="Non-integral restatement.*7.5"):
+        portfolio.apply_corporate_action(bonus_3_2)
+
+
+# =============================================================================
+# 15. Surveillance Coverage & Manifest Provenance (Findings H-87 & H-88)
+# =============================================================================
+
+def test_h87_h88_surveillance_coverage_and_manifest_registration():
+    """
+    Findings H-87 & H-88 Acceptance Probes (§60.6 Items 3 & 4):
+    1. Missing surveillance/CA file raises FileNotFoundError fail-closed.
+    2. SurveillanceInterval carries circular_ref.
+    3. SecurityMaster.has_surveillance_coverage distinguishes covered from unknown.
+    4. Held security with no surveillance coverage raises SecurityMasterError fail-closed.
+    5. manifest.jsonl registers both artifacts with matching sha256 and byte count.
+    6. build_production_security_master excludes SYNTHETIC_FIXTURE rows (coverage count = 0).
+    """
+    # Probe 1: Missing artifact raises FileNotFoundError
+    with pytest.raises(FileNotFoundError, match="Surveillance intervals artifact not found"):
+        load_surveillance_intervals(path="data/reference/__absent_file__.jsonl")
+
+    with pytest.raises(FileNotFoundError, match="Corporate actions artifact not found"):
+        load_corporate_actions(path="data/reference/__absent_file__.jsonl")
+
+    # Probe 2: SurveillanceInterval carries circular_ref
+    loaded_surv = load_surveillance_intervals()
+    assert len(loaded_surv) == 3
+    for s in loaded_surv:
+        assert s.circular_ref is not None
+        assert "SYNTHETIC_FIXTURE" in s.circular_ref
+
+    # Probe 3: Production SecurityMaster excludes fixtures, reporting coverage_count = 0
+    sec_master_prod = build_production_security_master(include_cash_universe=True)
+    assert sec_master_prod.surveillance_coverage_count == 0
+
+    # Probe 4: SecurityMaster.has_surveillance_coverage
+    assert sec_master_prod.has_surveillance_coverage("INE002A01018", datetime.date(2024, 1, 15)) is False
+
+    # Probe 5: Held position in unsurveilled security raises SecurityMasterError fail-closed
+    crit = load_go_no_go_criteria()
+    cal = load_anchored_nse_trading_calendar()
+    port = Portfolio(initial_capital=Decimal("1000000.00"), criteria=crit, initial_date=datetime.date(2024, 1, 1))
+    sim = ExecutionFillSimulator(criteria=crit, trading_calendar=cal.sessions)
+    runner = DailyTPlus1OrderRunner(portfolio=port, simulator=sim, calendar=cal, criteria=crit)
+
+    # Establish held position in INE002A01018 (50 shares, 5% weight)
+    cand_buy = DailySignalCandidate(
+        instrument_id="INE002A01018",
+        signal_date=datetime.date(2024, 1, 2),
+        side=OrderSide.BUY,
+        entry_reference_price=Decimal("1000.00"),
+        atr=Decimal("100.00"),
+        session_volume=5000000,
+        series="EQ",
+    )
+    bar_buy = PriceBar(
+        instrument_id="INE002A01018",
+        trade_date=datetime.date(2024, 1, 3),
+        open=Decimal("1000.00"),
+        high=Decimal("1020.00"),
+        low=Decimal("990.00"),
+        close=Decimal("1000.00"),
+        volume=5000000,
+        traded_value=Decimal("5000000000.00"),
+    )
+    band_buy = PriceBandRecord(
+        isin="INE002A01018",
+        trade_date=datetime.date(2024, 1, 3),
+        series="EQ",
+        upper_circuit_limit=Decimal("1100.00"),
+        lower_circuit_limit=Decimal("900.00"),
+        band_percentage=Decimal("10.00"),
+    )
+    runner.run_candidate(candidate=cand_buy, t_plus_1_bar=bar_buy, price_band=band_buy, explicit_series=ExchangeSeries.EQ)
+
+    # Evaluating surveillance exit constraints fails closed because INE002A01018 lacks surveillance coverage
+    with pytest.raises(SecurityMasterError, match="has no authoritative surveillance coverage"):
+        runner.evaluate_surveillance_exit_constraints(datetime.date(2024, 1, 15), sec_master_prod)
+
+    # Probe 6: Manifest registers both artifacts with matching sha256 and byte count
+    manifest_path = Path("data/reference/manifest.jsonl")
+    manifest_entries = {}
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                row = json.loads(line)
+                if row.get("status") == "active":
+                    manifest_entries[row["artifact"]] = row
+
+    for name in ("corporate_actions.jsonl", "surveillance_intervals.jsonl"):
+        assert name in manifest_entries, f"{name} must be registered in manifest.jsonl"
+        reg = manifest_entries[name]
+        p = Path("data/reference") / name
+        b = p.read_bytes()
+        assert reg["byte_count"] == len(b)
+        assert reg["sha256"] == hashlib.sha256(b).hexdigest()
+        assert reg["provenance_status"] == "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED"
+
+
+# =============================================================================
+# 16. Weekly Call Auction Cadence for GSM Stage 2+ (Finding N-88)
+# =============================================================================
+
+def test_n88_weekly_call_auction_cadence_for_gsm_stage_2(calendar, criteria):
+    """
+    Finding N-88 Acceptance Probe (§60.6 Item 7):
+    Proves that for a position held under GSM Stage 2:
+    1. An exit candidate is emitted strictly on the single weekly permitted session (Monday).
+    2. Zero exit candidates are emitted on Tuesday, Wednesday, Thursday, Friday.
+    3. Candidate inputs are derived from position and market.
+    """
+    port = Portfolio(initial_capital=Decimal("1000000.00"), criteria=criteria, initial_date=datetime.date(2024, 1, 1))
+    sim = ExecutionFillSimulator(criteria=criteria, trading_calendar=calendar.sessions)
+    runner = DailyTPlus1OrderRunner(portfolio=port, simulator=sim, calendar=calendar, criteria=criteria)
+
+    # Establish held position in fixture scrip INE999A01019
+    pos = Position("INE999A01019")
+    pos._quantity = 100
+    pos._average_entry_price = Decimal("100.0000")
+    pos._total_cost_basis = Decimal("10000.00")
+    port._positions["INE999A01019"] = pos
+
+    # Build security master with GSM Stage 2 surveillance covering January 2024
+    surv_interval = SurveillanceInterval(
+        isin="INE999A01019",
+        framework="GSM",
+        stage=SurveillanceStage.GSM_STAGE_2,
+        effective_from=datetime.date(2024, 1, 1),
+        effective_to=datetime.date(2024, 1, 31),
+        circular_ref="SYNTHETIC_FIXTURE_GSM2",
+    )
+    sec_master = SecurityMaster(
+        symbol_intervals=[
+            SymbolInterval(
+                isin="INE999A01019",
+                symbol="TESTGSM",
+                series="EQ",
+                effective_from=datetime.date(2020, 1, 1),
+                effective_to=None,
+            )
+        ],
+        surveillance_intervals=[surv_interval],
+    )
+
+    # Monday 2024-01-15 is the weekly call auction session -> exactly 1 exit candidate emitted
+    assert is_weekly_surveillance_trading_session(datetime.date(2024, 1, 15), calendar) is True
+    exits_mon = runner.evaluate_surveillance_exit_constraints(datetime.date(2024, 1, 15), sec_master)
+    assert len(exits_mon) == 1
+    assert exits_mon[0].instrument_id == "INE999A01019"
+    assert exits_mon[0].side == OrderSide.SELL
+
+    # Tuesday (2024-01-16), Wednesday (2024-01-17), Thursday (2024-01-18), Friday (2024-01-19)
+    # are NOT weekly trading sessions -> exactly 0 exit candidates emitted!
+    for d in (
+        datetime.date(2024, 1, 16),
+        datetime.date(2024, 1, 17),
+        datetime.date(2024, 1, 18),
+        datetime.date(2024, 1, 19),
+    ):
+        assert is_weekly_surveillance_trading_session(d, calendar) is False
+        exits_midweek = runner.evaluate_surveillance_exit_constraints(d, sec_master)
+        assert len(exits_midweek) == 0, f"Session {d} must emit 0 exits under GSM Stage 2 weekly constraint"
+
+
+# =============================================================================
+# 17. Strategy Execution Harness & Clean Introspection Exports (Findings N-89 & N-90)
+# =============================================================================
+
+def test_n89_n90_strategy_execution_harness_and_eager_exports(runner, portfolio, criteria, calendar):
+    """
+    Findings N-89 & N-90 Acceptance Probes (§60.6 Items 8 & 9):
+    1. 'DailyTPlus1OrderRunner' in dir(signal_core.execution) is True (clean introspection).
+    2. A synthetic 2-day fold routes DeliverySwingTrendStrategy intents through
+       execute_swing_strategy_session into DailyTPlus1OrderRunner and produces a real fill in portfolio.
+    3. Proves unheld SELL intents are filtered out cleanly.
+    """
+    # Probe 1: N-90 introspection check
+    assert "DailyTPlus1OrderRunner" in dir(signal_core.execution)
+    assert "DailySignalCandidate" in dir(signal_core.execution)
+    assert "DailyExecutionTicket" in dir(signal_core.execution)
+
+    # Probe 2: N-89 end-to-end execution harness
+    strategy = DeliverySwingTrendStrategy(
+        strategy_id="SWING-TREND-SYNTH-V1",
+        fast_indicator="sma_20",
+        slow_indicator="sma_50",
+        allocation_weight=Decimal("0.08"),
+        atr_stop_multiple=Decimal("2.0"),
+    )
+
+    class FeatureMock:
+        def __init__(self, close, sma_20, sma_50, atr, volume):
+            self.close = close
+            self.sma_20 = sma_20
+            self.sma_50 = sma_50
+            self.atr = atr
+            self.volume = volume
+
+    # On session T (2024-01-02 close):
+    # - INE002A01018: close 1000 > sma_20 950 > sma_50 900 -> Trend BUY
+    # - INE009A01021: close 400 < sma_50 500 -> Breakdown SELL (but unheld in portfolio!)
+    features = {
+        "INE002A01018": FeatureMock(Decimal("1000.00"), Decimal("950.00"), Decimal("900.00"), Decimal("100.00"), 5000000),
+        "INE009A01021": FeatureMock(Decimal("400.00"), Decimal("450.00"), Decimal("500.00"), Decimal("20.00"), 5000000),
+    }
+
+    t_session = datetime.date(2024, 1, 2)
+    t_plus_1 = datetime.date(2024, 1, 3)
+
+    bars_t_plus_1 = {
+        "INE002A01018": PriceBar(
+            instrument_id="INE002A01018",
+            trade_date=t_plus_1,
+            open=Decimal("1000.00"),
+            high=Decimal("1020.00"),
+            low=Decimal("990.00"),
+            close=Decimal("1010.00"),
+            volume=5000000,
+            traded_value=Decimal("5000000000.00"),
+        )
+    }
+    price_bands = {
+        "INE002A01018": PriceBandRecord(
+            isin="INE002A01018",
+            trade_date=t_plus_1,
+            series="EQ",
+            upper_circuit_limit=Decimal("1100.00"),
+            lower_circuit_limit=Decimal("900.00"),
+            band_percentage=Decimal("10.00"),
+        )
+    }
+
+    # Execute session through harness
+    tickets = execute_swing_strategy_session(
+        strategy=strategy,
+        runner=runner,
+        as_of=t_session,
+        next_session=t_plus_1,
+        universe=["INE002A01018", "INE009A01021"],
+        features=features,
+        bars_next_session=bars_t_plus_1,
+        price_bands_next_session=price_bands,
+        explicit_series=ExchangeSeries.EQ,
+    )
+
+    # Exactly 1 ticket executed (BUY INE002A01018); unheld SELL INE009A01021 filtered out cleanly!
+    assert len(tickets) == 1
+    t = tickets[0]
+    assert t.candidate.instrument_id == "INE002A01018"
+    assert t.candidate.side == OrderSide.BUY
+    assert t.fill_result is not None
+    assert t.fill_result.status == FillStatus.FILLED
+    assert t.fill_result.filled_quantity > 0
+
+    # Portfolio now holds INE002A01018
+    held_pos = portfolio.get_position("INE002A01018")
+    assert held_pos is not None and held_pos.quantity > 0
+

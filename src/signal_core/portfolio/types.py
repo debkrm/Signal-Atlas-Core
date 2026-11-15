@@ -26,6 +26,11 @@ class LedgerValidationError(ValueError):
     pass
 
 
+class CorporateActionError(LedgerValidationError):
+    """Raised when a corporate action fails validation or cannot be applied cleanly (Finding N-87)."""
+    pass
+
+
 class PortfolioRiskLimitError(ValueError):
     """Raised when an order or allocation breaches committed portfolio risk limits."""
     pass

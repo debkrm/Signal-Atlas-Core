@@ -13,6 +13,7 @@ from typing import Optional, Tuple
 from signal_core.execution.simulator import ExecutionFillResult
 from signal_core.execution.types import FillStatus, OrderSide
 from signal_core.portfolio.types import (
+    CorporateActionError,
     LedgerValidationError,
     PositionSnapshot,
 )
@@ -223,14 +224,30 @@ class Position:
         if self._quantity <= 0:
             return
 
+        # Finding H-86: ISIN_TRANSITION represents continuity change of identity, not share split multiplier.
+        # Re-key instrument_id to action.new_isin, keeping quantity and cost basis strictly invariant.
+        if action.action_type == CorporateActionType.ISIN_TRANSITION:
+            if not action.new_isin:
+                raise CorporateActionError(
+                    f"ISIN_TRANSITION requires new_isin for {self._instrument_id} (Finding H-86)."
+                )
+            self._instrument_id = action.new_isin
+            return
+
         if action.action_type in (
             CorporateActionType.SPLIT,
             CorporateActionType.BONUS,
-            CorporateActionType.ISIN_TRANSITION,
             CorporateActionType.CONSOLIDATION,
         ):
             multiplier = action.ratio_numerator / action.ratio_denominator
             new_qty_dec = Decimal(self._quantity) * multiplier
+            # Finding N-87: Fractional entitlement cannot be silently truncated. Fail closed!
+            if new_qty_dec != Decimal(int(new_qty_dec)):
+                raise CorporateActionError(
+                    f"Non-integral restatement from corporate action {action.action_type.value} on {self._instrument_id}: "
+                    f"{self._quantity} shares × {action.ratio_numerator}/{action.ratio_denominator} = {new_qty_dec} shares. "
+                    f"Fractional entitlements cannot be silently truncated (Finding N-87)."
+                )
             new_qty = int(new_qty_dec)
             if new_qty <= 0:
                 raise LedgerValidationError(

@@ -43,7 +43,13 @@ PAISE_PRECISION = Decimal("0.01")
 def _quantize_paise(val: Decimal) -> Decimal:
     """Quantizes a Decimal monetary quantity to exact paise (0.01 INR) via ROUND_HALF_UP."""
     return val.quantize(PAISE_PRECISION, rounding=ROUND_HALF_UP)
-from signal_core.portfolio.portfolio import Portfolio
+
+
+try:
+    from signal_core.portfolio.portfolio import Portfolio
+except ImportError:
+    Portfolio = None  # type: ignore[assignment, misc]
+
 from signal_core.portfolio.sizing import (
     PositionSizeResult,
     calculate_atr_r_multiple_position_size,
@@ -52,7 +58,11 @@ from signal_core.storage.calendar import (
     TradingCalendar,
     load_anchored_nse_trading_calendar,
 )
-from signal_core.storage.security_master import SecurityMaster, SurveillanceStage
+from signal_core.storage.security_master import (
+    SecurityMaster,
+    SecurityMasterError,
+    SurveillanceStage,
+)
 from signal_core.strategy.base import (
     LookaheadIntentError,
     OrderIntent,
@@ -161,6 +171,28 @@ class DailyExecutionTicket:
     intended_risk: Optional[Decimal] = None
     is_no_trade: bool = False
     no_trade_reason: Optional[str] = None
+
+
+def is_weekly_surveillance_trading_session(
+    session_date: datetime.date,
+    calendar: TradingCalendar,
+) -> bool:
+    """
+    Returns True if session_date is the single permitted weekly trading session
+    under advanced surveillance frameworks (GSM Stage 2+, ESM Stage 2 per AGENTS.md §5.2, Finding N-88).
+    In NSE, weekly call auction trading is restricted to the first trading session of each week
+    (typically Monday, or the next trading session if Monday is a holiday).
+    """
+    if not calendar.is_session(session_date):
+        return False
+    monday = session_date - datetime.timedelta(days=session_date.weekday())
+    first_session_of_week: Optional[datetime.date] = None
+    for day_offset in range(7):
+        cur_day = monday + datetime.timedelta(days=day_offset)
+        if calendar.is_session(cur_day):
+            first_session_of_week = cur_day
+            break
+    return session_date == first_session_of_week
 
 
 class DailyTPlus1OrderRunner:
@@ -320,11 +352,16 @@ class DailyTPlus1OrderRunner:
         """
         target_date = intent.target_date if intent is not None else candidate.signal_date
 
-        # Finding N-84: If intent is None (e.g. quantity == 0), return named no-trade ticket
+        # Finding N-84 & §60.2 Item 3: If intent is None (e.g. quantity == 0), return named no-trade ticket
+        # target_date advances to T+1 session per calendar
         if intent is None or (size_result is not None and size_result.quantity == 0):
+            try:
+                resolved_target_date = self._calendar.advance_sessions(candidate.signal_date, 1)
+            except Exception:
+                resolved_target_date = candidate.signal_date
             return DailyExecutionTicket(
                 candidate=candidate,
-                target_date=target_date,
+                target_date=resolved_target_date,
                 intent=None,
                 order=None,
                 size_result=size_result,
@@ -335,12 +372,18 @@ class DailyTPlus1OrderRunner:
                 no_trade_reason="ZERO_QUANTITY_SIZED",
             )
 
-        # Finding H-83: Price band evidence is mandatory for BUY entries to verify circuit filters (§5.3)
-        if intent.side == OrderSide.BUY and price_band is None:
-            raise OrderRunnerEligibilityError(
-                f"Mandatory price band evidence missing for BUY entry in {intent.instrument_id} on {intent.target_date} "
-                f"(AGENTS.md §5.3, Finding H-83). Circuit filter realism requires verified price band to prevent upper circuit freeze fills."
-            )
+        # Finding H-83 & H-85: Price band evidence is mandatory for BUY entries and SELL exits to verify circuit filters (§5.3)
+        if price_band is None:
+            if intent.side == OrderSide.BUY:
+                raise OrderRunnerEligibilityError(
+                    f"Mandatory price band evidence missing for BUY entry in {intent.instrument_id} on {intent.target_date} "
+                    f"(AGENTS.md §5.3, Finding H-83). Circuit filter realism requires verified price band to prevent upper circuit freeze fills."
+                )
+            else:
+                raise OrderRunnerEligibilityError(
+                    f"Mandatory price band evidence missing for SELL exit in {intent.instrument_id} on {intent.target_date} "
+                    f"(AGENTS.md §5.3, Finding H-85). Circuit filter realism requires verified price band to prevent lower circuit freeze fills."
+                )
 
         # Finding H-82: Require authentic ExchangeSessionObservation or explicit_series. Zero default series synthesis.
         if isinstance(t_plus_1_bar, ExchangeSessionObservation):
@@ -427,13 +470,18 @@ class DailyTPlus1OrderRunner:
         self,
         session_date: datetime.date,
         security_master: SecurityMaster,
+        latest_market_prices: Optional[Mapping[str, Decimal]] = None,
+        latest_market_atrs: Optional[Mapping[str, Decimal]] = None,
+        latest_market_volumes: Optional[Mapping[str, int]] = None,
     ) -> Tuple[DailySignalCandidate, ...]:
         """
         Evaluates active open positions in Portfolio against time-varying surveillance state
-        per AGENTS.md §5.2, §10.8, §13.2 and Audit §59.7 Item 7.
+        per AGENTS.md §5.2, §10.8, §13.2, Audit §59.7 Item 7, and Audit §60.6 Item 7.
 
         Surveillance escalation (e.g. GSM Stage 2+, ESM Stage 2) during a hold is an exit constraint,
         triggering a mandatory exit signal candidate on the first session the constraint permits.
+        In GSM Stage 2+, trading is restricted to weekly call auctions; exit candidates are emitted
+        strictly on permitted weekly trading sessions (Finding N-88).
         """
         exit_candidates: List[DailySignalCandidate] = []
         open_positions = self._portfolio.get_open_positions()
@@ -444,19 +492,54 @@ class DailyTPlus1OrderRunner:
             SurveillanceStage.GSM_STAGE_4,
             SurveillanceStage.ESM_STAGE_2,
         }
+        weekly_auction_stages = {
+            SurveillanceStage.GSM_STAGE_2,
+            SurveillanceStage.GSM_STAGE_3,
+            SurveillanceStage.GSM_STAGE_4,
+        }
 
         for isin, pos in open_positions.items():
+            # Finding H-87: Fail closed if held security lacks authoritative surveillance coverage
+            if not security_master.has_surveillance_coverage(isin, session_date):
+                raise SecurityMasterError(
+                    f"Held security {isin} has no authoritative surveillance coverage as-of {session_date} "
+                    f"(AGENTS.md §5.2, §10.8, Finding H-87). Refuses valuation / exit evaluation of unsurveilled position."
+                )
+
             stages = security_master.resolve_surveillance(isin, session_date)
             for surv in stages:
                 if surv.stage in escalated_stages:
+                    # Finding N-88: Weekly call auction restriction for GSM Stage 2+
+                    if surv.stage in weekly_auction_stages and not is_weekly_surveillance_trading_session(session_date, self._calendar):
+                        continue
+
+                    # Finding N-88: Derive inputs from position and market rather than sentinels
+                    sym_info = security_master.resolve_symbol(isin, session_date)
+                    effective_series = sym_info.series if sym_info else "EQ"
+                    ref_price = (
+                        latest_market_prices.get(isin, pos.average_entry_price)
+                        if latest_market_prices
+                        else pos.average_entry_price
+                    )
+                    atr_val = (
+                        latest_market_atrs.get(isin, pos.average_entry_price * Decimal("0.02"))
+                        if latest_market_atrs
+                        else (pos.average_entry_price * Decimal("0.02"))
+                    )
+                    vol_val = (
+                        latest_market_volumes.get(isin, 1000000)
+                        if latest_market_volumes
+                        else 1000000
+                    )
+
                     exit_cand = DailySignalCandidate(
                         instrument_id=isin,
                         signal_date=session_date,
                         side=OrderSide.SELL,
-                        entry_reference_price=pos.average_entry_price,
-                        atr=Decimal("1.00"),
-                        session_volume=1000000,
-                        series="EQ",
+                        entry_reference_price=ref_price,
+                        atr=atr_val,
+                        session_volume=vol_val,
+                        series=effective_series,
                         metadata={
                             "exit_reason": f"SURVEILLANCE_ESCALATION_EXIT: {isin} escalated to {surv.stage.value} on {session_date} ({surv.framework})"
                         },

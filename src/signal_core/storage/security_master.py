@@ -144,6 +144,7 @@ class SurveillanceInterval:
     stage: SurveillanceStage
     effective_from: datetime.date
     effective_to: Optional[datetime.date] = None
+    circular_ref: Optional[str] = None
 
     def __post_init__(self) -> None:
         _validate_identifier(self.isin, "isin")
@@ -157,6 +158,8 @@ class SurveillanceInterval:
             raise SecurityMasterError(
                 f"effective_from ({self.effective_from}) must precede effective_to ({self.effective_to}) for ISIN {self.isin}"
             )
+        if self.circular_ref is not None:
+            _validate_identifier(self.circular_ref, "circular_ref")
 
     def contains(self, as_of: datetime.date) -> bool:
         """Returns True if as_of falls within [effective_from, effective_to)."""
@@ -604,10 +607,44 @@ class SecurityMaster:
         active = [isin for isin in self.registered_isins if self.is_active(isin, as_of)]
         return tuple(sorted(active))
 
-    def resolve_surveillance(self, isin: str, as_of: datetime.date) -> Tuple[SurveillanceInterval, ...]:
+    def has_surveillance_coverage(self, isin: str, as_of: Optional[datetime.date] = None) -> bool:
+        """
+        Returns True if the security has explicit surveillance coverage per AGENTS.md §5.2, §10.8 (Finding H-87).
+        """
+        _validate_identifier(isin, "isin")
+        if as_of is not None:
+            _validate_date(as_of, "as_of")
+            return any(s.isin == isin for s in self._surveillance_intervals)
+        return any(s.isin == isin for s in self._surveillance_intervals)
+
+    @property
+    def surveillance_coverage_count(self) -> int:
+        """Returns the count of registered universe ISINs that have surveillance coverage (Finding H-87)."""
+        covered = {s.isin for s in self._surveillance_intervals}
+        return len(set(self.registered_isins).intersection(covered))
+
+    def validate_hold_surveillance_coverage(self, isin: str, as_of: datetime.date) -> None:
+        """Fails closed if a held security has no surveillance coverage as-of date T (Finding H-87)."""
+        if not self.has_surveillance_coverage(isin, as_of):
+            raise SecurityMasterError(
+                f"Held security {isin} has no authoritative surveillance coverage as-of {as_of} "
+                f"(AGENTS.md §5.2, §10.8, Finding H-87). Refuses valuation / evaluation of unsurveilled position."
+            )
+
+    def resolve_surveillance(
+        self,
+        isin: str,
+        as_of: datetime.date,
+        require_coverage: bool = False,
+    ) -> Tuple[SurveillanceInterval, ...]:
         """Returns all surveillance stages applicable to ISIN as-of date T."""
         _validate_identifier(isin, "isin")
         _validate_date(as_of, "as_of")
+        if require_coverage and not self.has_surveillance_coverage(isin, as_of):
+            raise SecurityMasterError(
+                f"Security {isin} lacks authoritative surveillance coverage as-of {as_of} "
+                f"(AGENTS.md §5.2, §10.8, Finding H-87)."
+            )
         matches = [s for s in self._surveillance_intervals if s.isin == isin and s.contains(as_of)]
         return tuple(matches)
 
@@ -829,7 +866,8 @@ def load_cash_universe_symbol_intervals(csv_path: Optional[Union[str, Path]] = N
 def load_surveillance_intervals(path: Optional[Union[str, Path]] = None) -> Tuple[SurveillanceInterval, ...]:
     """
     Loads authoritative effective-dated SurveillanceIntervals (ASM/GSM/ESM)
-    from committed reference artifact per AGENTS.md Rule 5.2, 10.5, 10.8 and Audit §59.7 Item 7.
+    from committed reference artifact per AGENTS.md Rule 5.2, 10.5, 10.8 and Audit §59.7 Item 7, §60.6 Item 3.
+    Fails closed (FileNotFoundError) if artifact file is absent.
     """
     if path is None:
         p = Path(__file__).resolve().parent.parent.parent.parent / "data" / "reference" / "surveillance_intervals.jsonl"
@@ -837,7 +875,7 @@ def load_surveillance_intervals(path: Optional[Union[str, Path]] = None) -> Tupl
         p = Path(path)
 
     if not p.is_file():
-        return ()
+        raise FileNotFoundError(f"Surveillance intervals artifact not found at: {p}")
 
     intervals: List[SurveillanceInterval] = []
     with open(p, "r", encoding="utf-8") as f:
@@ -851,6 +889,8 @@ def load_surveillance_intervals(path: Optional[Union[str, Path]] = None) -> Tupl
                 row = json.loads(line_str)
                 ef = datetime.date.fromisoformat(row["effective_from"].strip())
                 et = datetime.date.fromisoformat(row["effective_to"].strip()) if row.get("effective_to") and str(row["effective_to"]).strip() else None
+                circ_ref = row.get("circular_ref")
+                circ_ref_str = str(circ_ref).strip() if circ_ref and str(circ_ref).strip() else None
                 intervals.append(
                     SurveillanceInterval(
                         isin=row["isin"].strip().upper(),
@@ -858,6 +898,7 @@ def load_surveillance_intervals(path: Optional[Union[str, Path]] = None) -> Tupl
                         stage=SurveillanceStage(row["stage"].strip().upper()),
                         effective_from=ef,
                         effective_to=et,
+                        circular_ref=circ_ref_str,
                     )
                 )
             except Exception as exc:
@@ -870,7 +911,8 @@ def load_surveillance_intervals(path: Optional[Union[str, Path]] = None) -> Tupl
 def load_corporate_actions(path: Optional[Union[str, Path]] = None) -> Tuple[CorporateAction, ...]:
     """
     Loads authoritative CorporateAction records (splits, bonuses, dividends)
-    from committed reference artifact per AGENTS.md Rule 5.4, 10.3, 13.2 and Audit §59.7 Item 6.
+    from committed reference artifact per AGENTS.md Rule 5.4, 10.3, 13.2 and Audit §59.7 Item 6, §60.6 Item 4.
+    Fails closed (FileNotFoundError) if artifact file is absent.
     """
     if path is None:
         p = Path(__file__).resolve().parent.parent.parent.parent / "data" / "reference" / "corporate_actions.jsonl"
@@ -878,7 +920,7 @@ def load_corporate_actions(path: Optional[Union[str, Path]] = None) -> Tuple[Cor
         p = Path(path)
 
     if not p.is_file():
-        return ()
+        raise FileNotFoundError(f"Corporate actions artifact not found at: {p}")
 
     actions: List[CorporateAction] = []
     with open(p, "r", encoding="utf-8") as f:
@@ -1021,7 +1063,7 @@ def build_production_security_master(include_cash_universe: bool = True) -> Secu
             action_type=CorporateActionType.BONUS,
             ratio_numerator=Decimal("2"),
             ratio_denominator=Decimal("1"),
-            circular_ref="NSE/CML/2018/BONUS_INFY",
+            circular_ref="UNATTESTED_NSE_CML_2018_BONUS_INFY",
             description="INFY 1:1 Bonus Issue",
         ),
         # RELIANCE 1:1 Bonus ex-date 2017-09-07
@@ -1031,7 +1073,7 @@ def build_production_security_master(include_cash_universe: bool = True) -> Secu
             action_type=CorporateActionType.BONUS,
             ratio_numerator=Decimal("2"),
             ratio_denominator=Decimal("1"),
-            circular_ref="NSE/CML/2017/BONUS_RIL",
+            circular_ref="UNATTESTED_NSE_CML_2017_BONUS_RIL",
             description="RELIANCE 1:1 Bonus Issue",
         ),
         # RELIANCE 1:1 Bonus ex-date 2024-10-28
@@ -1041,7 +1083,7 @@ def build_production_security_master(include_cash_universe: bool = True) -> Secu
             action_type=CorporateActionType.BONUS,
             ratio_numerator=Decimal("2"),
             ratio_denominator=Decimal("1"),
-            circular_ref="NSE/CML/2024/BONUS_RIL2",
+            circular_ref="UNATTESTED_NSE_CML_2024_BONUS_RIL2",
             description="RELIANCE 1:1 Bonus Issue",
         ),
         # COCHINSHIP 2:1 Stock Split (Rs 10 to Rs 5) ex-date 2024-01-10
@@ -1053,7 +1095,7 @@ def build_production_security_master(include_cash_universe: bool = True) -> Secu
             ratio_denominator=Decimal("1"),
             old_isin="INE704P01017",
             new_isin="INE704P01025",
-            circular_ref="NSE/CML/60114",
+            circular_ref="UNATTESTED_NSE_CML_60114",
             description="COCHIN SHIPYARD Sub-Division from Rs 10 to Rs 5",
         ),
     ]
@@ -1073,7 +1115,7 @@ def build_production_security_master(include_cash_universe: bool = True) -> Secu
             new_isin="INE704P01025",
             effective_date=datetime.date(2024, 1, 10),
             reason="STOCK_SPLIT_SUB_DIVISION",
-            circular_ref="NSE/CML/60114",
+            circular_ref="UNATTESTED_NSE_CML_60114",
         )
     ]
 
@@ -1144,12 +1186,20 @@ def build_production_security_master(include_cash_universe: bool = True) -> Secu
     # Discrete daily records must be ingested from verified daily exchange reports (H-44), not hand-authored.
     price_bands: Tuple[PriceBandRecord, ...] = ()
 
-    # Audit §59.7: Load committed surveillance intervals and external corporate actions if available
-    surveillance_intervals = load_surveillance_intervals()
+    # Audit §59.7, §60.6: Load committed surveillance intervals and external corporate actions if available.
+    # Exclude SYNTHETIC_FIXTURE rows from production security master (Finding H-87, Finding H-88).
+    raw_surveillance = load_surveillance_intervals()
+    surveillance_intervals = tuple(
+        s for s in raw_surveillance
+        if not (s.circular_ref and "SYNTHETIC_FIXTURE" in s.circular_ref)
+    )
+
     loaded_corp_actions = load_corporate_actions()
     if loaded_corp_actions:
         existing_ca_keys = {(ca.isin, ca.ex_date) for ca in corporate_actions}
         for ca in loaded_corp_actions:
+            if ca.circular_ref and "SYNTHETIC_FIXTURE" in ca.circular_ref:
+                continue
             if (ca.isin, ca.ex_date) not in existing_ca_keys:
                 corporate_actions.append(ca)
                 existing_ca_keys.add((ca.isin, ca.ex_date))
