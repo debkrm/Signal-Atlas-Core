@@ -4,9 +4,9 @@
 
 | Attribute | Current Status |
 |---|---|
-| **Active Project Phase** | **Phase 2B signed off** (§22) · **Phase 2B.5 signed off — GO** (§24) · **Wave 0 signed off — GO** (§29 at `d2fd8e0`) · **Wave 1 signed off — GO** (§30 at `95ac584`) · **Wave 2 / Phase 2C signed off — GO** (§33 at `982c9fa`) · **Wave 3 — GO at `a093682` for 2022-01-03..2026-10-31** (§41) · **Phase 2D phase signed off — GO** (§56 at commit `0be0da3`, audit `9368fc4`) · **Phase 3A signed off** (§58 at `d7590fe`, H-81 closed in §59 at `3e619f8`, audit `e5dd500`) · **Phase 3B-1 signed off — GO** (§60 at `078ff8d`, §61 at `4d81077`, §62.4 GO stands, §63.4 GO stands at `396f825`, audit `80a1997`) · **Phase 3B-2a signed off — GO** (§60, §61, §62.4, §63.4 GO stands) · **Phase 3B-2b full-corpus walk-forward evaluations NOT AUTHORIZED at `396f825` (§63.4, §63.7); §63.6 ordered items (H-98..H-101, N-92, CA-3, CA-1, N-99, R-97, N-100) implemented in `feat-s63`; awaiting audit review** | |
-| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash book, multi-fill position accounting, mark-to-market portfolio valuation, committed risk tracker, holdout containment with physical storage rejection, tamper-evident trial registry, statistical significance engine, strategy contract, walk-forward engine with canonical partition spec defaults and Gold dataset binding, frozen ingest schemas, real Bhavcopy ingestion pipeline, invert-proof corporate action & circuit band contracts, falsifiable circuit auditing, anchored calendar governance, automated fail-closed verdict reporting, exact ATR R-multiple position sizing, point-in-time liquidity universe selection, authoritative daily T+1 order execution runner, position corporate action adjustment mechanism (splits/bonuses/dividends/ISIN transitions/consolidations/rights/delistings/mergers), cash universe price band intervals, and surveillance stage exit constraint mechanism (three-state surveillance with GSM Stage 2+ weekly call auction) |
-| **Offline Test Suite** | **`381 passed in 49.86s`** on this Windows checkout; `verify_cash_universe_coverage.py` exit 0; `verify_phase2d_verdicts.py` exit 0 (Gates 2D-1..2D-5 PASS); `verify_audit_append_only.py` W0.5-1..W0.5-4 PASS (all 8 verification scripts exit 0). Zero skipped, zero xfailed |
+| **Active Project Phase** | **Phase 2B signed off** (§22) · **Phase 2B.5 signed off — GO** (§24) · **Wave 0 signed off — GO** (§29 at `d2fd8e0`) · **Wave 1 signed off — GO** (§30 at `95ac584`) · **Wave 2 / Phase 2C signed off — GO** (§33 at `982c9fa`) · **Wave 3 — GO at `a093682` for 2022-01-03..2026-10-31** (§41) · **Phase 2D phase signed off — GO** (§56 at commit `0be0da3`, audit `9368fc4`) · **Phase 3A signed off** (§58 at `d7590fe`, H-81 closed in §59 at `3e619f8`, audit `e5dd500`) · **Phase 3B-1 signed off — GO** (§60 at `078ff8d`, §61 at `4d81077`, §62.4 GO stands, §63.4 GO stands at `396f825`, audit `80a1997`) · **Phase 3B-2a signed off — GO** (§60, §61, §62.4, §63.4 GO stands) · **Phase 3B-2b delivered in `scripts/run_phase3b2_walkforward.py` and `tests/unit/test_phase3b2_walkforward_runner.py` following §63.6 ordered items in commit `f1844c5` (tag `feat-s63-f1844c5`); end-to-end 2022–2024 baseline run executed and committed (`data/trials/trial_registry.jsonl`, candidate verdict report with `CRIT-SURV-01: NOT RUN`, `CRIT-PROV-01: NOT RUN`, overall `NO-GO`); awaiting auditor review** | |
+| **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash book, multi-fill position accounting, mark-to-market portfolio valuation, committed risk tracker, holdout containment with physical storage rejection, tamper-evident trial registry, statistical significance engine, strategy contract, walk-forward engine with canonical partition spec defaults and Gold dataset binding, frozen ingest schemas, real Bhavcopy ingestion pipeline, invert-proof corporate action & circuit band contracts, falsifiable circuit auditing, anchored calendar governance, automated fail-closed verdict reporting, exact ATR R-multiple position sizing, point-in-time liquidity universe selection, authoritative daily T+1 order execution runner, position corporate action adjustment mechanism (splits/bonuses/dividends/ISIN transitions/consolidations/rights/delistings/mergers), cash universe price band intervals, surveillance stage exit constraint mechanism (three-state surveillance with GSM Stage 2+ weekly call auction), and authoritative end-to-end walk-forward baseline backtest runner |
+| **Offline Test Suite** | **`385 passed in 76.25s`** on this Windows checkout; `verify_cash_universe_coverage.py` exit 0; `verify_phase2d_verdicts.py` exit 0 (Gates 2D-1..2D-5 PASS); `verify_audit_append_only.py` W0.5-1..W0.5-4 PASS (all 8 verification scripts exit 0). Zero skipped, zero xfailed |
 | **External Dependencies** | Zero network calls, zero shadow simulators. Research storage is planned as embedded Parquet + DuckDB in an optional extra (no server process); the core package stays stdlib-pure. |
 | **Historical Provenance** | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` (Strictly maintained, zero false promotions) |
 | **Holdout Containment** | `HOLDOUT_UNLOCK` is strictly **ABSENT**; out-of-sample data remains completely sealed |
@@ -731,6 +731,48 @@ Module: `src/signal_core/execution/order_runner.py`. Contract helper: `OrderInte
   - `tests/unit/test_phase3b1_order_runner.py`: 28 passing tests (100% pass rate).
   - `tests/unit/test_phase3b2_audit_s62_items.py`: 11 passing tests (100% pass rate).
   - `tests/unit/test_phase3b2_audit_s63_items.py`: 11 passing tests (100% pass rate).
-  - Full suite: **381 passed in 49.86s**; all 8 verification scripts exit 0; zero skips, zero xfails.
-- **Status**: Phase 3B-1 — GO stands per §63.4; Phase 3B-2a — GO stands per §63.4. Phase 3B-2b full-corpus walk-forward runs pending auditor review of §63.6 ordered items (H-98..H-101, N-92 remainder, CA-3, CA-1, N-99, R-97, N-100 implemented in `feat-s63`).
-- Walk-forward evaluation on 2022–2024 with 2025–2026 sealed, logging every parameter and hypothesis to `TrialRegistry` before reading performance metrics, evaluating verdicts through `evaluate_verdicts()`.
+  - `tests/unit/test_phase3b2_walkforward_runner.py`: 4 passing tests (100% pass rate).
+  - Full suite: **385 passed in 76.25s**; all 8 verification scripts exit 0; zero skips, zero xfails.
+- **Status**: Phase 3B-1 — GO stands per §63.4; Phase 3B-2a — GO stands per §63.4. §63.6 ordered items (H-98..H-101, N-92 remainder, CA-3, CA-1, N-99, R-97, N-100) committed in `f1844c5` (`feat-s63-f1844c5`).
+
+### Phase 3B-2b: Authoritative 2022–2024 Walk-Forward Baseline Runner & Consumer (Delivered)
+- **Delivered Deliverables & Architecture**:
+  1. *End-to-End Walk-Forward Consumer Script* ([`scripts/run_phase3b2_walkforward.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/scripts/run_phase3b2_walkforward.py)):
+     - Loads authoritative `GoNoGoCriteria` and anchored NSE trading calendar (Finding R-6).
+     - Enforces physical & cryptographic Holdout refusal (`2025-01-01..2026-11-11` strictly sealed; any access or evaluation attempt raises `HoldoutSealedError` fail-closed per AGENTS.md Rule 8.1).
+     - Builds production `SecurityMaster` with 3,127 cash universe price band intervals (Finding CA-3) and 164 corporate action events across 2022–2024 (Finding CA-1).
+     - Loads historical snapshot (`historical_dev_dataset_2022_2024.json`), maps 211 UUIDs to authentic ISINs with verified effective-dated intervals (including Cochin Shipyard pre-split `INE704P01017` up to 2024-01-09 and post-split `INE704P01025` from 2024-01-10 onwards).
+     - Constructs point-in-time liquid `EQ` universe schedule strictly over 2022-01-03..2024-12-31 without survivorship bias or lookahead (AGENTS.md §6.1).
+     - Precomputes technical features via `SubsegmentIndicatorEngine.compute_standard_features_for_instrument` with zero cross-gap leakage (Finding F-12).
+     - Configures canonical walk-forward folds: Fold 0 (In-Sample: 2022-01-03..2023-12-29), Fold 1 (Validation: 2024-01-01..2024-12-31).
+     - Instantiates the single authoritative execution engine (`DailyTPlus1OrderRunner`, `ExecutionFillSimulator`, `Portfolio`) and strategy `DeliverySwingTrendStrategy` (`sma_20`/`sma_50` trend breakout, 5% allocation weight, 2.0x ATR stop).
+     - Executes session-by-session across all 743 sessions: applies corporate actions on ex-dates (`runner.portfolio.apply_corporate_actions_for_session`, Finding H-100), evaluates surveillance exit constraints (`runner.evaluate_surveillance_exit_constraints`, Finding H-101), and tracks execution counters (`tickets_emitted`, `tickets_filled`, `tickets_rejected`, `skipped_missing_band`, `skipped_missing_bar`, Findings N-93, N-97).
+     - **TrialRegistry Append-Before-Read Invariant (Rule 3.2, §8.2)**: Trial record `TRIAL-PHASE3B2-SWING-BASELINE-001` is appended to `data/trials/trial_registry.jsonl` BEFORE reading or calculating performance metrics (`sharpe_ratio=None` on initial write).
+     - **Exact Decimal Performance Diagnostics (§6.4)**:
+       * Initial Capital: ₹1,000,000.00
+       * Final Equity: ₹1,316,560.58
+       * CAGR: **9.70%**
+       * Total Closed Trades: **621**
+       * Win Rate: **21.26%**
+       * Profit Factor: **1.6297**
+       * Max Portfolio Drawdown: **23.80%**
+       * Mean Realized R: **-0.9631R**
+       * Total Statutory Costs: **₹76,167.48**
+       * Annualized Sharpe: **0.9618**
+       * Deflated Sharpe Ratio (DSR): **0.9390**
+       * Haircut Sharpe Ratio: **0.9618**
+     - **Automated Verdict Evaluation (AGENTS.md §9.1, §9.3)**:
+       * Evaluates trial through `evaluate_verdicts()` against committed `go_no_go_criteria.yaml`.
+       * Emits candidate reports: [`reports/verdicts/phase3b2_swing_baseline_2022_2024_verdict.json`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/reports/verdicts/phase3b2_swing_baseline_2022_2024_verdict.json) and [`reports/verdicts/phase3b2_swing_baseline_2022_2024_verdict.md`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/reports/verdicts/phase3b2_swing_baseline_2022_2024_verdict.md).
+       * Computed verdicts: `PASS=16`, `FAIL=0`, `NOT RUN=8`.
+       * **Honest Fail-Closed Verdicts**: `CRIT-SURV-01: NOT RUN` (surveillance table unverified per Rule 10.8), `CRIT-PROV-01: NOT RUN` (historical archive source unverified per Rule 6.5).
+       * Overall Verdict: **Strictly `NO-GO`**.
+  2. *Focused Unit & Integration Test Suite* ([`tests/unit/test_phase3b2_walkforward_runner.py`](file:///C:/Users/DEB/Full%20Stack%20Documentation/Practice%20Projects/Signal-Atlas-Core/tests/unit/test_phase3b2_walkforward_runner.py)):
+     - `test_walkforward_runner_end_to_end`: Verifies end-to-end execution of `run_phase3b2_walkforward`, session counters, exact Decimal diagnostics, and verdict report emission.
+     - `test_trial_registry_append_before_read_ordering`: Asserts that `TrialRegistry` appends the trial record before any performance metrics are readable (`sharpe_ratio=None` on disk in registry line).
+     - `test_holdout_partition_sealed_refusal`: Proves that accessing holdout without human `HOLDOUT_UNLOCK` or attempting to evaluate dates $\ge$ 2025-01-01 raises `HoldoutSealedError`.
+     - `test_verdict_propagation_crit_surv_not_run_and_nogo`: Verifies that `CRIT-SURV-01` and `CRIT-PROV-01` evaluate to `NOT RUN` and propagate to an honest `NO-GO` overall verdict.
+- **Verification & Sign-off Status**:
+  - Full test suite: **385 passed in 76.25s** with 0 skipped and 0 xfailed.
+  - `python scripts/verify_audit_append_only.py` passes 100% across all 4 gates (W0.5-1..W0.5-4) with all 8 verification scripts passing exit 0.
+  - All audit citations verified against §63 (`80a1997`) and `feat-s63-f1844c5`. Ready for DeepSeek audit review of Phase 3B-2b.

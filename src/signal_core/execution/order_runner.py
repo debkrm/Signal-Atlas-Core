@@ -45,7 +45,7 @@ def _quantize_paise(val: Decimal) -> Decimal:
     return val.quantize(PAISE_PRECISION, rounding=ROUND_HALF_UP)
 
 
-from signal_core.portfolio.portfolio import Portfolio
+from signal_core.portfolio.portfolio import Portfolio, PortfolioRiskLimitError
 from signal_core.portfolio.sizing import (
     PositionSizeResult,
     calculate_atr_r_multiple_position_size,
@@ -467,10 +467,26 @@ class DailyTPlus1OrderRunner:
         intended_risk: Optional[Decimal] = size_result.risk_amount if size_result else None
 
         if fill_result.status in (FillStatus.FILLED, FillStatus.PARTIALLY_FILLED):
-            self._portfolio.process_fill(fill_result)
-            if intent.side == OrderSide.BUY and intent.stop_price is not None and fill_result.executed_price is not None:
-                realised_risk = _quantize_paise(
-                    Decimal(fill_result.filled_quantity) * (fill_result.executed_price - intent.stop_price)
+            try:
+                self._portfolio.process_fill(fill_result)
+                if intent.side == OrderSide.BUY and intent.stop_price is not None and fill_result.executed_price is not None:
+                    realised_risk = _quantize_paise(
+                        Decimal(fill_result.filled_quantity) * (fill_result.executed_price - intent.stop_price)
+                    )
+            except PortfolioRiskLimitError as exc:
+                fill_result = ExecutionFillResult(
+                    order=order,
+                    status=FillStatus.REJECTED_RISK_LIMIT,
+                    fill_date=fill_result.fill_date,
+                    latency_sessions=fill_res.latency_sessions if 'fill_res' in locals() else fill_result.latency_sessions,
+                    filled_quantity=0,
+                    unfilled_quantity=order.quantity,
+                    executed_price=None,
+                    slippage=None,
+                    costs=None,
+                    circuit_evidence_present=fill_result.circuit_evidence_present,
+                    rejection_reason=str(exc),
+                    fill_id=f"REJ_RISK_{order.order_id}_{fill_result.fill_date}" if order.order_id else None,
                 )
 
         return DailyExecutionTicket(

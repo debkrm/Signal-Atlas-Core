@@ -288,7 +288,7 @@ def execute_swing_strategy_session(
             continue
 
         close_val = getattr(inst_features, "close", None)
-        atr_val = getattr(inst_features, "atr", None)
+        atr_val = getattr(inst_features, "atr", None) or getattr(inst_features, "atr_14", None)
         vol_val = getattr(inst_features, "volume", None)
 
         if close_val is None:

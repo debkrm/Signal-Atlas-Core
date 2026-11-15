@@ -68,6 +68,11 @@ class InstrumentTechnicalFeatures:
     rolling_low_50: Optional[Decimal] = None
     relative_strength_50: Optional[Decimal] = None
 
+    @property
+    def atr(self) -> Optional[Decimal]:
+        """Convenience property exposing ATR value for strategy and sizing harness (Finding N-89)."""
+        return self.atr_14
+
 
 class SubsegmentIndicatorEngine:
     """
