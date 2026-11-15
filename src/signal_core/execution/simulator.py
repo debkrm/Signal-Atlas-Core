@@ -27,7 +27,7 @@ Enforces structural realism for Indian equities per AGENTS.md Rule 5 and Rule 7:
 
 from dataclasses import dataclass
 import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, Optional, Sequence, Tuple, Union
 
 from signal_core.contracts.criteria import GoNoGoCriteria, load_go_no_go_criteria
@@ -52,6 +52,19 @@ from signal_core.execution.types import (
 
 BarInput = Union[PriceBar, ExchangeSessionObservation]
 CRORE_MULTIPLIER = Decimal("10000000")
+
+
+def quantize_to_tick_grid(price: Decimal) -> Decimal:
+    """
+    Quantizes an execution price to the Indian cash equity tick grid per AGENTS.md §5, Audit §61.3 N-95.
+    - Prices >= ₹1.00: ₹0.05 tick grid (ROUND_HALF_UP).
+    - Prices < ₹1.00: ₹0.01 tick grid (ROUND_HALF_UP).
+    """
+    if isinstance(price, bool) or not isinstance(price, Decimal) or not price.is_finite():
+        raise ExecutionOrderValidationError(f"Invalid price for tick quantization: {price!r}")
+    tick = Decimal("0.05") if price >= Decimal("1.00") else Decimal("0.01")
+    ticks = (price / tick).to_integral_value(rounding=ROUND_HALF_UP)
+    return (ticks * tick).quantize(Decimal("0.01"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +110,7 @@ class ExecutionFillSimulator:
         slippage_model: Optional[SlippageModel] = None,
         eligibility_policy: SeriesEligibilityPolicy = APPROVED_EQ_ONLY_POLICY,
         trading_calendar: Optional[Sequence[datetime.date]] = None,
+        quantize_to_tick: bool = True,
     ) -> None:
         self._criteria = criteria if criteria is not None else load_go_no_go_criteria()
         self._cost_model = cost_model if cost_model is not None else TransactionCostModel(self._criteria.statutory_costs)
@@ -104,6 +118,7 @@ class ExecutionFillSimulator:
         self._eligibility_policy = eligibility_policy
         self._trading_calendar = tuple(trading_calendar) if trading_calendar is not None else None
         self._cal_index = {d: i for i, d in enumerate(self._trading_calendar)} if self._trading_calendar is not None else None
+        self._quantize_to_tick = quantize_to_tick
         self._order_fill_counters: Dict[Tuple[str, datetime.date], int] = {}
 
     @property
@@ -154,6 +169,7 @@ class ExecutionFillSimulator:
         explicit_series: Optional[ExchangeSeries] = None,
         round_to_paise: bool = False,
         price_band: Optional[PriceBandRecord] = None,
+        quantize_to_tick: Optional[bool] = None,
     ) -> ExecutionFillResult:
         """
         Simulates the execution of an order against an exchange session observation or price bar.
@@ -411,6 +427,13 @@ class ExecutionFillSimulator:
             session_low=min_sell_price,
         )
         executed_price = slippage_result.adjusted_price
+        should_quantize = self._quantize_to_tick if quantize_to_tick is None else quantize_to_tick
+        if should_quantize:
+            executed_price = quantize_to_tick_grid(executed_price)
+            if effective_upper is not None and executed_price > effective_upper:
+                executed_price = effective_upper
+            if effective_lower is not None and executed_price < effective_lower:
+                executed_price = effective_lower
 
         # Check limit boundary after slippage
         if order.order_type == OrderType.LIMIT:

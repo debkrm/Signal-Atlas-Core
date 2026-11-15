@@ -609,12 +609,13 @@ class SecurityMaster:
 
     def has_surveillance_coverage(self, isin: str, as_of: Optional[datetime.date] = None) -> bool:
         """
-        Returns True if the security has explicit surveillance coverage per AGENTS.md §5.2, §10.8 (Finding H-87).
+        Returns True if the security has explicit surveillance coverage per AGENTS.md §5.2, §10.8 (Findings H-87, N-92).
+        If as_of date is provided, verifies that as_of falls within [effective_from, effective_to) of at least one interval.
         """
         _validate_identifier(isin, "isin")
         if as_of is not None:
             _validate_date(as_of, "as_of")
-            return any(s.isin == isin for s in self._surveillance_intervals)
+            return any(s.isin == isin and s.contains(as_of) for s in self._surveillance_intervals)
         return any(s.isin == isin for s in self._surveillance_intervals)
 
     @property

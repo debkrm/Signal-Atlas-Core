@@ -13,6 +13,7 @@ Enforces:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import datetime
 from decimal import Decimal
 from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union, TYPE_CHECKING
@@ -134,6 +135,33 @@ class DeliverySwingTrendStrategy(Strategy):
         return tuple(intents)
 
 
+@dataclass(frozen=True, slots=True)
+class SwingSessionExecutionSummary:
+    """
+    Structured summary of a swing strategy session execution run (Finding N-93).
+    Ensures missing price bands or bars are never silently mistaken for zero signals.
+    """
+    as_of: datetime.date
+    next_session: datetime.date
+    intents_generated: int
+    tickets_executed: int
+    skipped_missing_bar: int
+    skipped_missing_band: int
+    skipped_unheld_sell: int
+    skipped_already_held: int = 0
+    skipped_missing_features: int = 0
+    tickets: Tuple[DailyExecutionTicket, ...] = ()
+
+    def __len__(self) -> int:
+        return len(self.tickets)
+
+    def __getitem__(self, index: int) -> DailyExecutionTicket:
+        return self.tickets[index]
+
+    def __iter__(self):
+        return iter(self.tickets)
+
+
 def execute_swing_strategy_session(
     strategy: DeliverySwingTrendStrategy,
     runner: DailyTPlus1OrderRunner,
@@ -145,15 +173,18 @@ def execute_swing_strategy_session(
     price_bands_next_session: Mapping[str, PriceBandRecord],
     explicit_series: Optional[ExchangeSeries] = ExchangeSeries.EQ,
     latest_market_prices: Optional[Mapping[str, Decimal]] = None,
-) -> Tuple[DailyExecutionTicket, ...]:
+) -> SwingSessionExecutionSummary:
     """
     Authoritative execution harness that routes DeliverySwingTrendStrategy signals through
-    ATR R-multiple sizing into DailyTPlus1OrderRunner (Finding N-89, §60.6 Item 8).
+    ATR R-multiple sizing into DailyTPlus1OrderRunner (Findings N-89, N-93, N-94, §60.6, §61.6).
 
     Enforces:
     - Zero Lookahead: signal date as_of -> next_session execution (Rule 7.1).
     - Cash delivery swing scope: only held positions can emit SELL intents; naked shorting prohibited.
-    - BUY intents are sized with positive integer quantities through ATR R-multiple sizing.
+    - BUY intents are sized with positive integer quantities through ATR R-multiple sizing,
+      capped by strategy allocation_weight and criteria max_single_position_weight (Finding N-94).
+    - Returns structured SwingSessionExecutionSummary recording all generated intents,
+      executed tickets, and explicit skip reasons (Finding N-93).
     - Fills and ledger updates flow strictly through the single authoritative
       ExecutionFillSimulator and Portfolio ledger (Rule 7.4 & 13.5).
     """
@@ -167,6 +198,11 @@ def execute_swing_strategy_session(
     )
 
     tickets: List[DailyExecutionTicket] = []
+    skipped_missing_bar = 0
+    skipped_missing_band = 0
+    skipped_unheld_sell = 0
+    skipped_already_held = 0
+    skipped_missing_features = 0
 
     for intent in raw_intents:
         isin = intent.instrument_id
@@ -175,15 +211,18 @@ def execute_swing_strategy_session(
         # Cash delivery constraint: SELL intent is only permitted if position is currently held
         if intent.side == OrderSide.SELL:
             if pos is None or pos.is_closed or pos.quantity <= 0:
+                skipped_unheld_sell += 1
                 continue
 
         # Avoid redundant BUY if already holding an open position in this security
         if intent.side == OrderSide.BUY:
             if pos is not None and not pos.is_closed and pos.quantity > 0:
+                skipped_already_held += 1
                 continue
 
         inst_features = features.get(isin)
         if inst_features is None:
+            skipped_missing_features += 1
             continue
 
         close_val = getattr(inst_features, "close", None)
@@ -191,10 +230,18 @@ def execute_swing_strategy_session(
         vol_val = getattr(inst_features, "volume", None)
 
         if close_val is None:
+            skipped_missing_features += 1
             continue
         entry_price = Decimal(str(close_val))
         atr_dec = Decimal(str(atr_val)) if atr_val is not None else (entry_price * Decimal("0.02"))
         vol_int = int(vol_val) if vol_val is not None else 1000000
+
+        # Finding N-94: Pass strategy allocation_weight to candidate so sizing enforces declared parameter cap
+        alloc_weight = (
+            getattr(intent, "target_weight", None)
+            or getattr(intent, "allocation_weight", None)
+            or getattr(strategy, "_allocation_weight", None)
+        )
 
         cand = DailySignalCandidate(
             instrument_id=isin,
@@ -204,13 +251,19 @@ def execute_swing_strategy_session(
             atr=atr_dec,
             session_volume=vol_int,
             series="EQ",
+            allocation_weight=alloc_weight,
             metadata={"intent_id": intent.intent_id},
         )
 
         t_plus_1_bar = bars_next_session.get(isin)
         price_band = price_bands_next_session.get(isin)
 
-        if t_plus_1_bar is None or price_band is None:
+        # Finding N-93: Explicitly count missing bar vs missing band skips rather than silent continue
+        if t_plus_1_bar is None:
+            skipped_missing_bar += 1
+            continue
+        if price_band is None:
+            skipped_missing_band += 1
             continue
 
         ticket = runner.run_candidate(
@@ -223,4 +276,15 @@ def execute_swing_strategy_session(
         )
         tickets.append(ticket)
 
-    return tuple(tickets)
+    return SwingSessionExecutionSummary(
+        as_of=as_of,
+        next_session=next_session,
+        intents_generated=len(raw_intents),
+        tickets_executed=len(tickets),
+        skipped_missing_bar=skipped_missing_bar,
+        skipped_missing_band=skipped_missing_band,
+        skipped_unheld_sell=skipped_unheld_sell,
+        skipped_already_held=skipped_already_held,
+        skipped_missing_features=skipped_missing_features,
+        tickets=tuple(tickets),
+    )

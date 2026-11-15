@@ -45,11 +45,7 @@ def _quantize_paise(val: Decimal) -> Decimal:
     return val.quantize(PAISE_PRECISION, rounding=ROUND_HALF_UP)
 
 
-try:
-    from signal_core.portfolio.portfolio import Portfolio
-except ImportError:
-    Portfolio = None  # type: ignore[assignment, misc]
-
+from signal_core.portfolio.portfolio import Portfolio
 from signal_core.portfolio.sizing import (
     PositionSizeResult,
     calculate_atr_r_multiple_position_size,
@@ -63,7 +59,7 @@ from signal_core.storage.security_master import (
     SecurityMasterError,
     SurveillanceStage,
 )
-from signal_core.strategy.base import (
+from signal_core.contracts.order_intent import (
     LookaheadIntentError,
     OrderIntent,
 )
@@ -95,6 +91,7 @@ class DailySignalCandidate:
     atr: Decimal
     session_volume: int
     series: str
+    allocation_weight: Optional[Decimal] = None
     order_type: OrderType = OrderType.MARKET_ON_OPEN
     product: OrderProduct = OrderProduct.DELIVERY
     allow_partial_fill: bool = False
@@ -147,6 +144,18 @@ class DailySignalCandidate:
             or not self.series.strip()
         ):
             raise OrderRunnerError(f"series must be a clean non-empty string, got {self.series!r} (Finding H-82).")
+
+        if self.allocation_weight is not None:
+            if (
+                isinstance(self.allocation_weight, bool)
+                or not isinstance(self.allocation_weight, Decimal)
+                or not self.allocation_weight.is_finite()
+                or self.allocation_weight <= Decimal("0")
+                or self.allocation_weight > Decimal("1.0")
+            ):
+                raise OrderRunnerError(
+                    f"allocation_weight must be a finite Decimal in (0, 1], got {self.allocation_weight!r} (Finding N-94)."
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,6 +291,13 @@ class DailyTPlus1OrderRunner:
             current_equity = self._portfolio.current_total_equity(latest_market_prices)
             available_cash = self._portfolio.current_cash
 
+            # Finding N-94: Thread candidate.allocation_weight into position sizing as a cap
+            effective_max_weight = (
+                min(candidate.allocation_weight, self._criteria.max_single_position_weight)
+                if candidate.allocation_weight is not None
+                else self._criteria.max_single_position_weight
+            )
+
             size_result = calculate_atr_r_multiple_position_size(
                 equity=current_equity,
                 entry_price=candidate.entry_reference_price,
@@ -290,6 +306,7 @@ class DailyTPlus1OrderRunner:
                 criteria=self._criteria,
                 risk_per_trade_pct=self._risk_per_trade_pct,
                 atr_stop_multiple=self._atr_stop_multiple,
+                max_single_position_weight=effective_max_weight,
                 available_cash=available_cash,
             )
 
@@ -473,16 +490,23 @@ class DailyTPlus1OrderRunner:
         latest_market_prices: Optional[Mapping[str, Decimal]] = None,
         latest_market_atrs: Optional[Mapping[str, Decimal]] = None,
         latest_market_volumes: Optional[Mapping[str, int]] = None,
+        require_coverage: bool = False,
     ) -> Tuple[DailySignalCandidate, ...]:
         """
         Evaluates active open positions in Portfolio against time-varying surveillance state
-        per AGENTS.md §5.2, §10.8, §13.2, Audit §59.7 Item 7, and Audit §60.6 Item 7.
+        per AGENTS.md §5.2, §10.8, §13.2, Audit §59.7 Item 7, Audit §60.6 Item 7, and Finding N-92.
 
         Surveillance escalation (e.g. GSM Stage 2+, ESM Stage 2) during a hold is an exit constraint,
         triggering a mandatory exit signal candidate on the first session the constraint permits.
         In GSM Stage 2+, trading is restricted to weekly call auctions; exit candidates are emitted
         strictly on permitted weekly trading sessions (Finding N-88).
         """
+        if require_coverage and security_master.surveillance_coverage_count == 0:
+            raise SecurityMasterError(
+                f"Authoritative surveillance coverage is 0 across registered universe as-of {session_date} "
+                f"(UNVERIFIED_COVERAGE / NOT RUN) per AGENTS.md §5.2, §10.8 (Finding N-92)."
+            )
+
         exit_candidates: List[DailySignalCandidate] = []
         open_positions = self._portfolio.get_open_positions()
 

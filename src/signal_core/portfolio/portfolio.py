@@ -473,12 +473,6 @@ class Portfolio:
         return snapshot
 
 
-# Late-bind Portfolio into order_runner module to guarantee circular import immunity (Finding N-90)
-try:
-    import signal_core.execution.order_runner as _order_runner
-    if getattr(_order_runner, "Portfolio", None) is None:
-        _order_runner.Portfolio = Portfolio
-except Exception:
-    pass
+
 
 
