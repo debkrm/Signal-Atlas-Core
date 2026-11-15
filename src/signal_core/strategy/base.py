@@ -194,6 +194,73 @@ class OrderIntent:
             order_id=resolved_id,
         )
 
+    @classmethod
+    def from_position_size_result(
+        cls,
+        instrument_id: str,
+        signal_date: datetime.date,
+        target_date: datetime.date,
+        side: OrderSide,
+        size_result: Any,
+        order_type: OrderType = OrderType.MARKET_ON_OPEN,
+        product: OrderProduct = OrderProduct.DELIVERY,
+        allow_partial_fill: bool = False,
+        intent_id: Optional[str] = None,
+        additional_metadata: Optional[Mapping[str, Any]] = None,
+    ) -> "OrderIntent":
+        """
+        Constructs an OrderIntent from an ATR R-multiple PositionSizeResult (Phase 3B-1).
+        Populates quantity from size_result.quantity, stop_price from size_result.stop_loss_price,
+        and includes position_weight, risk_amount, stop_distance, and binding_constraint in metadata.
+        """
+        if hasattr(size_result, "quantity"):
+            qty = size_result.quantity
+            stop = getattr(size_result, "stop_loss_price", None)
+            weight = getattr(size_result, "position_weight", None)
+            risk = getattr(size_result, "risk_amount", None)
+            dist = getattr(size_result, "stop_distance", None)
+            binding = getattr(size_result, "binding_constraint", None)
+            entry_p = getattr(size_result, "entry_price", None)
+            atr_val = getattr(size_result, "atr", None)
+        elif isinstance(size_result, dict):
+            qty = size_result["quantity"]
+            stop = size_result.get("stop_loss_price")
+            weight = size_result.get("position_weight")
+            risk = size_result.get("risk_amount")
+            dist = size_result.get("stop_distance")
+            binding = size_result.get("binding_constraint")
+            entry_p = size_result.get("entry_price")
+            atr_val = size_result.get("atr")
+        else:
+            raise OrderIntentValidationError(
+                f"size_result must be a PositionSizeResult or mapping, got {type(size_result).__name__}"
+            )
+
+        meta: dict[str, Any] = {
+            "position_weight": weight,
+            "risk_amount": risk,
+            "stop_distance": dist,
+            "binding_constraint": binding,
+            "entry_reference_price": entry_p,
+            "atr": atr_val,
+        }
+        if additional_metadata:
+            meta.update(additional_metadata)
+
+        return cls(
+            instrument_id=instrument_id,
+            signal_date=signal_date,
+            target_date=target_date,
+            side=side,
+            order_type=order_type,
+            product=product,
+            quantity=qty,
+            stop_price=stop,
+            allow_partial_fill=allow_partial_fill,
+            intent_id=intent_id,
+            metadata=meta,
+        )
+
 
 class Strategy(ABC):
     """

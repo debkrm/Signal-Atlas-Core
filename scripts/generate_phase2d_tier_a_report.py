@@ -129,15 +129,29 @@ def build_tier_a_results_bundle(
     # and execution observation flags (circuit limits, execution latency) are omitted from the bundle
     # until backed by recorded engine execution outputs, honestly evaluating to NOT RUN per §9.1 and §55.8.
 
-    # Runtime guard against boolean/int/float literal injection (Findings H-73, N-63, N-69)
+    validate_results_bundle_types(bundle)
+    return bundle
+
+
+def validate_results_bundle_types(bundle: Mapping[str, Any]) -> None:
+    """
+    Enforces runtime guard asserting zero bool, int, or float values in emitted results bundle
+    (AGENTS.md §6.4, §9.1, Findings H-73, N-63, N-69, N-78).
+    Only Decimal, str, or datetime types are permitted.
+
+    Documented Residual Limitations (Finding N-79):
+    Syntactic AST and runtime type checks do NOT catch:
+    1. Annotated assignment: `K: bool = True; b["k"] = K`
+    2. Tuple-unpack assignment: `K, J = True, 1; b["k"] = K`
+    3. String laundering into Decimal: `k = "1.6850"; b["k"] = Decimal(k)`
+    These patterns are prevented by mandatory human review and commit diff audits (§57.4, §58.3).
+    """
     for k, v in bundle.items():
         if isinstance(v, (bool, int, float)):
             raise TypeError(
-                f"Bundle key {k!r} has forbidden literal type {type(v).__name__} (Finding N-69). "
+                f"Bundle key {k!r} has forbidden literal type {type(v).__name__} (Findings N-69, N-78). "
                 "Only Decimal, str, or datetime types are permitted."
             )
-
-    return bundle
 
 
 def generate_report() -> VerdictReport:

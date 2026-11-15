@@ -366,18 +366,21 @@ def verify_gate_2d4_adversarial_fail_closed() -> bool:
     return True
 
 
-def verify_gate_2d5_tier_a_report_generation() -> bool:
-    """Gate 2D-5: Phase 2D Tier-A Report Generator Execution & Reproducibility (Findings H-73, H-74, N-63)."""
-    print("\n--- Gate 2D-5: Phase 2D Tier-A Report Generator Execution & Reproducibility ---")
-    gen_script = REPO_ROOT / "scripts" / "generate_phase2d_tier_a_report.py"
-    if not gen_script.exists():
-        print(f"[FAIL] Tier-A report generator missing at {gen_script}")
-        return False
+def check_ast_bundle_literals(source_code: str) -> tuple[bool, str]:
+    """
+    Checks AST of generate_phase2d_tier_a_report.py to verify zero boolean, numeric,
+    Decimal, or module/local constant literals assigned to results bundle keys
+    (AGENTS.md §6.4, §9.1, Findings H-73, N-63, N-69, N-79).
 
-    # Structural AST check: zero boolean, numeric, or Decimal/float/int constant literals
-    # assigned to bundle keys (Findings H-73, N-63, §56.3, §56.6 Item 1)
-    gen_source = gen_script.read_text(encoding="utf-8")
-    tree = ast.parse(gen_source, filename=str(gen_script))
+    Residual Limitations (Finding N-79):
+    Syntactic AST checks do NOT catch:
+    1. Annotated assignment: `k: bool = True; b['key'] = k`
+    2. Tuple-unpack assignment: `a, b = True, 1; b['key'] = a`
+    3. String laundering into Decimal: `s = '1.6850'; b['key'] = Decimal(s)`
+    These patterns are prevented by mandatory human review, commit diff audits,
+    and runtime validate_results_bundle_types() checks (§57.4, §58.3).
+    """
+    tree = ast.parse(source_code)
 
     # 1. Discover module-level constant literals
     module_constants: set[str] = set()
@@ -401,8 +404,7 @@ def verify_gate_2d5_tier_a_report_generation() -> bool:
         None,
     )
     if bundle_func is None:
-        print(f"[FAIL] Function build_tier_a_results_bundle not found in {gen_script.name}!")
-        return False
+        return False, "Function build_tier_a_results_bundle not found in AST"
 
     # 1b. Discover local variable assignments of literals within bundle_func (Findings N-63, N-69)
     local_literals: set[str] = set()
@@ -449,22 +451,14 @@ def verify_gate_2d5_tier_a_report_generation() -> bool:
                 key_name = getattr(key, "value", getattr(key, "id", str(key)))
                 bad, reason = is_literal_node(val)
                 if bad:
-                    print(
-                        f"[FAIL] Forbidden literal expression ({reason}) assigned to dict key {key_name!r} "
-                        f"in build_tier_a_results_bundle (Findings H-73, N-63)!"
-                    )
-                    return False
+                    return False, f"Forbidden literal expression ({reason}) assigned to dict key {key_name!r}"
         elif isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Subscript):
                     sub_key = getattr(target.slice, "value", str(target.slice))
                     bad, reason = is_literal_node(node.value)
                     if bad:
-                        print(
-                            f"[FAIL] Forbidden literal expression ({reason}) assigned to subscript {sub_key!r} "
-                            f"in build_tier_a_results_bundle (Findings H-73, N-63)!"
-                        )
-                        return False
+                        return False, f"Forbidden literal expression ({reason}) assigned to subscript {sub_key!r}"
         elif isinstance(node, ast.Call):
             if isinstance(node.func, ast.Attribute) and node.func.attr in ("update", "setdefault"):
                 for arg in node.args:
@@ -473,52 +467,57 @@ def verify_gate_2d5_tier_a_report_generation() -> bool:
                             k_name = getattr(k, "value", getattr(k, "id", str(k)))
                             bad, reason = is_literal_node(v)
                             if bad:
-                                print(
-                                    f"[FAIL] Forbidden literal expression ({reason}) passed in {node.func.attr}() dict for key {k_name!r} "
-                                    f"in build_tier_a_results_bundle (Findings H-73, N-63)!"
-                                )
-                                return False
+                                return False, f"Forbidden literal expression ({reason}) passed in {node.func.attr}() dict for key {k_name!r}"
                     else:
                         bad, reason = is_literal_node(arg)
                         if bad:
-                            print(
-                                f"[FAIL] Forbidden literal expression ({reason}) passed to {node.func.attr}() "
-                                f"in build_tier_a_results_bundle (Findings H-73, N-63)!"
-                            )
-                            return False
+                            return False, f"Forbidden literal expression ({reason}) passed to {node.func.attr}()"
                 for kw in node.keywords:
                     bad, reason = is_literal_node(kw.value)
                     if bad:
-                        print(
-                            f"[FAIL] Forbidden literal expression ({reason}) passed as keyword {kw.arg!r} to {node.func.attr}() "
-                            f"in build_tier_a_results_bundle (Findings H-73, N-63)!"
-                        )
-                        return False
+                        return False, f"Forbidden literal expression ({reason}) passed as keyword {kw.arg!r} to {node.func.attr}()"
 
-    print("[PASS] Verified zero boolean, numeric, Decimal, or module-level constant literals assigned in build_tier_a_results_bundle AST (Findings H-73, N-63, N-69).")
+    return True, ""
 
-    # 2. Runtime type guard check on build_tier_a_results_bundle (Finding N-69)
-    from scripts.generate_phase2d_tier_a_report import build_tier_a_results_bundle
+
+def verify_gate_2d5_tier_a_report_generation() -> bool:
+    """Gate 2D-5: Phase 2D Tier-A Report Generator Execution & Reproducibility (Findings H-73, H-74, N-63, N-78, N-79)."""
+    print("\n--- Gate 2D-5: Phase 2D Tier-A Report Generator Execution & Reproducibility ---")
+    gen_script = REPO_ROOT / "scripts" / "generate_phase2d_tier_a_report.py"
+    if not gen_script.exists():
+        print(f"[FAIL] Tier-A report generator missing at {gen_script}")
+        return False
+
+    # Structural AST check: zero boolean, numeric, or Decimal/float/int constant literals
+    # assigned to bundle keys (Findings H-73, N-63, N-79, §56.3, §56.6 Item 1, §58.3)
+    gen_source = gen_script.read_text(encoding="utf-8")
+    ast_passed, ast_reason = check_ast_bundle_literals(gen_source)
+    if not ast_passed:
+        print(f"[FAIL] {ast_reason} in build_tier_a_results_bundle (Findings H-73, N-63, N-79)!")
+        return False
+
+    print("[PASS] Verified zero boolean, numeric, Decimal, or module-level constant literals assigned in build_tier_a_results_bundle AST (Findings H-73, N-63, N-69, N-79).")
+
+    # 2. Runtime type guard check on build_tier_a_results_bundle (Findings N-69, N-78)
+    from scripts.generate_phase2d_tier_a_report import (
+        build_tier_a_results_bundle,
+        validate_results_bundle_types,
+    )
     live_bundle = build_tier_a_results_bundle()
-    for k, v in live_bundle.items():
-        if isinstance(v, (bool, int, float)):
-            print(f"[FAIL] Live bundle key {k!r} has forbidden literal type {type(v).__name__} (Finding N-69)!")
-            return False
+    validate_results_bundle_types(live_bundle)
 
-    # Proving runtime guard raises on injected forbidden literal types
+    # Proving production runtime guard raises on injected forbidden literal types (Finding N-78)
     for bad_val in (True, 42, 3.14):
         guard_raised = False
         try:
-            for k, v in {"bad_key": bad_val}.items():
-                if isinstance(v, (bool, int, float)):
-                    raise TypeError(f"Bundle key {k!r} has forbidden literal type {type(v).__name__}")
+            validate_results_bundle_types({"bad_key": bad_val})
         except TypeError:
             guard_raised = True
         if not guard_raised:
-            print(f"[FAIL] Runtime bundle guard did not catch forbidden type {type(bad_val).__name__}!")
+            print(f"[FAIL] Production validate_results_bundle_types did not catch forbidden type {type(bad_val).__name__} (Finding N-78)!")
             return False
 
-    print("[PASS] Verified zero boolean, integer, or float literals in emitted results bundle at runtime (Finding N-69).")
+    print("[PASS] Verified zero boolean, integer, or float literals in emitted results bundle at runtime (Findings N-69, N-78).")
 
     json_path = REPO_ROOT / "reports" / "verdicts" / "phase2d_tier_a_2022_2026_verdict.json"
     md_path = REPO_ROOT / "reports" / "verdicts" / "phase2d_tier_a_2022_2026_verdict.md"

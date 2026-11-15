@@ -8,6 +8,8 @@ Enforces AGENTS.md §6.1, §6.4, §7.2, §7.3, §10.4, §10.5, and Audit §56.3 
 import ast
 import datetime
 from decimal import Decimal
+import json
+from pathlib import Path
 import pytest
 
 from signal_core.contracts.criteria import load_go_no_go_criteria
@@ -25,6 +27,8 @@ from signal_core.research.pit_universe import (
     load_cash_equity_symbol_intervals,
 )
 from signal_core.storage.calendar import load_anchored_nse_trading_calendar
+from scripts.generate_phase2d_tier_a_report import validate_results_bundle_types
+from scripts.verify_phase2d_verdicts import check_ast_bundle_literals
 
 
 # =============================================================================
@@ -358,7 +362,7 @@ def test_h78_h79_calendar_lookback_and_fail_closed_missing_history():
         (d3, "INE000000001"): Decimal("100000000"),
     }
 
-    with pytest.raises(UniverseValidationError, match="has no turnover lookback history in daily_turnover_inr"):
+    with pytest.raises(UniverseValidationError, match="incomplete lookback window in daily_turnover_inr"):
         build_point_in_time_universe_schedule(
             sessions=[d1, d2, d3],
             daily_turnover_inr=sparse_turnovers,
@@ -471,13 +475,13 @@ def test_n71_missing_turnover_record_distinguished_and_excluded_with_named_reaso
 
 
 # =============================================================================
-# 3. Hardened N-63 AST Checker & Runtime Guard Probes (§56.3, §57.7 Item 5, Findings N-63, N-69)
+# 3. Hardened N-63 AST Checker & Runtime Guard Probes (§56.3, §57.7 Item 5, Findings N-63, N-69, N-78, N-79)
 # =============================================================================
 
 def test_n63_n69_ast_checker_and_runtime_guard():
     """
-    Audit §56.3, §57.4 / §57.7 Item 5 Acceptance Probe:
-    Verifies that the hardened AST literal analyzer and runtime guard catch:
+    Audit §56.3, §57.4 / §57.7 Item 5, §58.3 / §58.7 Item 3 Acceptance Probe:
+    Verifies that the imported production AST literal analyzer and runtime guard catch:
     1. Direct dict literal
     2. Literal via update()
     3. Literal via subscript
@@ -485,7 +489,7 @@ def test_n63_n69_ast_checker_and_runtime_guard():
     5. Helper call with literal (setdefault)
     6. Numeric Decimal/float/int literal call
     7. Local variable assigned literal (Finding N-69)
-    8. Runtime guard raises TypeError on injected bool/int/float (Finding N-69)
+    8. Production runtime guard validate_results_bundle_types raises TypeError on injected bool/int/float (Findings N-69, N-78, N-79)
     """
     probe_templates = {
         "direct_dict_literal": "def build_tier_a_results_bundle():\n    bundle = {'strict_decimal_accounting': True}\n    return bundle\n",
@@ -497,89 +501,148 @@ def test_n63_n69_ast_checker_and_runtime_guard():
         "local_var_literal": "def build_tier_a_results_bundle():\n    k = True\n    bundle = {'flag': k}\n    return bundle\n",
     }
 
-    def run_ast_check(code_str: str) -> bool:
-        tree = ast.parse(code_str)
-        module_constants: set[str] = set()
-        for stmt in tree.body:
-            if isinstance(stmt, ast.Assign):
-                for t in stmt.targets:
-                    if isinstance(t, ast.Name):
-                        val = stmt.value
-                        if isinstance(val, ast.Constant) and isinstance(val.value, (bool, int, float)):
-                            module_constants.add(t.id)
-                        elif isinstance(val, ast.UnaryOp) and isinstance(val.operand, ast.Constant):
-                            if isinstance(val.operand.value, (int, float)):
-                                module_constants.add(t.id)
-                        elif isinstance(val, ast.Call):
-                            fname = getattr(val.func, "id", getattr(val.func, "attr", None))
-                            if fname in ("Decimal", "float", "int"):
-                                module_constants.add(t.id)
-
-        func = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "build_tier_a_results_bundle")
-        local_literals: set[str] = set()
-        for stmt in func.body:
-            if isinstance(stmt, ast.Assign):
-                for t in stmt.targets:
-                    if isinstance(t, ast.Name):
-                        val = stmt.value
-                        if isinstance(val, ast.Constant) and isinstance(val.value, (bool, int, float)):
-                            local_literals.add(t.id)
-
-        def is_literal_node(node: ast.AST) -> tuple[bool, str]:
-            if isinstance(node, ast.Constant) and isinstance(node.value, (bool, int, float)):
-                return True, f"constant literal {node.value!r}"
-            if isinstance(node, ast.UnaryOp) and isinstance(node.operand, ast.Constant):
-                if isinstance(node.operand.value, (int, float)):
-                    return True, f"unary constant {ast.unparse(node)!r}"
-            if isinstance(node, ast.Name) and (node.id in module_constants or node.id in local_literals):
-                return True, f"constant/local {node.id!r}"
-            if isinstance(node, ast.Call):
-                fname = getattr(node.func, "id", getattr(node.func, "attr", None))
-                if fname in ("Decimal", "float", "int"):
-                    if node.args and isinstance(node.args[0], ast.Constant):
-                        return True, f"call {fname}({node.args[0].value!r})"
-                    if node.args and isinstance(node.args[0], ast.Name) and (node.args[0].id in module_constants or node.args[0].id in local_literals):
-                        return True, f"call {fname}({node.args[0].id!r})"
-            return False, ""
-
-        for node in ast.walk(func):
-            if isinstance(node, ast.Dict):
-                for val in node.values:
-                    bad, _ = is_literal_node(val)
-                    if bad:
-                        return True
-            elif isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if isinstance(target, ast.Subscript):
-                        bad, _ = is_literal_node(node.value)
-                        if bad:
-                            return True
-            elif isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Attribute) and node.func.attr in ("update", "setdefault"):
-                    for arg in node.args:
-                        if isinstance(arg, ast.Dict):
-                            for v in arg.values:
-                                bad, _ = is_literal_node(v)
-                                if bad:
-                                    return True
-                        else:
-                            bad, _ = is_literal_node(arg)
-                            if bad:
-                                return True
-                    for kw in node.keywords:
-                        bad, _ = is_literal_node(kw.value)
-                        if bad:
-                            return True
-        return False
-
+    # Exercise the authoritative gate AST checker (Finding N-79)
     for case_name, code in probe_templates.items():
-        caught = run_ast_check(code)
-        assert caught, f"AST checker failed to catch {case_name} (Finding N-63 / N-69)!"
+        passed, reason = check_ast_bundle_literals(code)
+        assert not passed, f"AST checker failed to catch {case_name} (Finding N-63 / N-69 / N-79): {reason}"
 
-    # Runtime guard test (Finding N-69)
+    # Exercise the production runtime guard directly (Findings N-69, N-78)
     for bad_val in (True, 42, 3.14):
         with pytest.raises(TypeError, match="forbidden literal type"):
-            bundle = {"test_key": bad_val}
-            for k, v in bundle.items():
-                if isinstance(v, (bool, int, float)):
-                    raise TypeError(f"Bundle key {k!r} has forbidden literal type {type(v).__name__} (Finding N-69).")
+            validate_results_bundle_types({"test_key": bad_val})
+
+
+# =============================================================================
+# 4. Parameter Validation & Complete Lookback Window Invariants (§58.3 / §58.7 Items 1–2)
+# =============================================================================
+
+def test_n76_turnover_lookback_sessions_validation():
+    """
+    Audit §58.3 / §58.7 Item 2 (Finding N-76):
+    turnover_lookback_sessions must be a strictly positive integer (>= 1).
+    0, negative values, and booleans must raise UniverseValidationError fail-closed.
+    """
+    d1 = datetime.date(2024, 1, 2)
+    for bad_lookback in (0, -1, -5, True, False, "20"):
+        with pytest.raises(UniverseValidationError, match="turnover_lookback_sessions must be a strictly positive integer"):
+            build_point_in_time_universe_schedule(
+                sessions=[d1],
+                turnover_lookback_sessions=bad_lookback,  # type: ignore
+            )
+
+
+def test_n77_top_liquid_k_validation():
+    """
+    Audit §58.3 / §58.7 Item 2 (Finding N-77):
+    top_liquid_k must be a strictly positive integer (>= 1) if provided.
+    0, negative values, and booleans must raise UniverseValidationError fail-closed.
+    """
+    d1 = datetime.date(2024, 1, 2)
+    for bad_k in (0, -1, -3, True, False, "10"):
+        with pytest.raises(UniverseValidationError, match="top_liquid_k must be a strictly positive integer"):
+            build_point_in_time_universe_schedule(
+                sessions=[d1],
+                top_liquid_k=bad_k,  # type: ignore
+            )
+
+
+def test_h81_incomplete_lookback_window_fails_closed():
+    """
+    Audit §58.3 / §58.7 Item 1 Acceptance Probe (Finding H-81):
+    If any single session in the lookback window is absent from daily_turnover_inr,
+    build_point_in_time_universe_schedule raises UniverseValidationError fail-closed
+    naming the missing session(s), rather than silently emitting an empty cross-section.
+    """
+    cal = load_anchored_nse_trading_calendar()
+    target_session = datetime.date(2024, 1, 10)
+    idx = cal.sessions.index(target_session)
+    prior_5 = cal.sessions[idx - 5 : idx]
+    # Provide turnover for only 4 of the 5 prior sessions (omit prior_5[2])
+    available_sessions = [prior_5[0], prior_5[1], prior_5[3], prior_5[4]]
+    isin = "INE002A01018"
+    turnover_data = {(s, isin): Decimal("100000000.00") for s in available_sessions}
+
+    with pytest.raises(UniverseValidationError) as exc_info:
+        build_point_in_time_universe_schedule(
+            sessions=[target_session],
+            daily_turnover_inr=turnover_data,
+            min_median_daily_turnover_inr=Decimal("50000000.00"),
+            turnover_lookback_sessions=5,
+        )
+
+    msg = str(exc_info.value)
+    assert "incomplete lookback window in daily_turnover_inr" in msg
+    assert prior_5[2].isoformat() in msg
+    assert "Finding H-81" in msg
+
+
+def test_h81_complete_lookback_window_emits_members():
+    """
+    Audit §58.3 / §58.7 Item 1 Acceptance Probe:
+    A complete lookback window where all sessions are present in daily_turnover_inr
+    successfully returns filtered schedule members.
+    """
+    cal = load_anchored_nse_trading_calendar()
+    target_session = datetime.date(2024, 1, 10)
+    idx = cal.sessions.index(target_session)
+    prior_5 = cal.sessions[idx - 5 : idx]
+    isin = "INE002A01018"
+    turnover_data = {(s, isin): Decimal("100000000.00") for s in prior_5}
+
+    sched = build_point_in_time_universe_schedule(
+        sessions=[target_session],
+        daily_turnover_inr=turnover_data,
+        min_median_daily_turnover_inr=Decimal("50000000.00"),
+        turnover_lookback_sessions=5,
+    )
+
+    members = sched.get_universe_for_date(target_session)
+    assert isin in members
+
+
+def test_h81_real_archive_binding_window_zero_silent_empty_cross_sections():
+    """
+    Audit §58.3 / §58.6 / §58.7 Item 1 Acceptance Probe:
+    Over the 1,196 calendar sessions in the binding window (2022-01-03..2026-10-30):
+    - All 40 sessions with incomplete lookback windows in daily_turnover_inr raise UniverseValidationError fail-closed.
+    - Exactly 0 of 1,196 sessions emit an empty cross-section silently.
+    - All 1,156 complete lookback sessions successfully emit members.
+    """
+    cal = load_anchored_nse_trading_calendar()
+    start_d = datetime.date(2022, 1, 3)
+    end_d = datetime.date(2026, 10, 30)
+    binding_sessions = [s for s in cal.sessions if start_d <= s <= end_d]
+    assert len(binding_sessions) == 1196
+
+    manifest_path = Path(__file__).resolve().parent.parent.parent / "data" / "reference" / "bhavcopy_archive_manifest.jsonl"
+    with open(manifest_path, encoding="utf-8") as f:
+        archived_dates = {datetime.date.fromisoformat(json.loads(line)["session_date"]) for line in f if line.strip()}
+
+    turnover_map = {(d, "INE002A01018"): Decimal("100000000.00") for d in archived_dates}
+
+    raised_count = 0
+    empty_count = 0
+    success_count = 0
+
+    intervals = load_cash_equity_symbol_intervals()
+
+    for s in binding_sessions:
+        try:
+            sched = build_point_in_time_universe_schedule(
+                sessions=[s],
+                intervals=intervals,
+                calendar=cal,
+                daily_turnover_inr=turnover_map,
+                min_median_daily_turnover_inr=Decimal("50000000.00"),
+                turnover_lookback_sessions=20,
+            )
+            if len(sched.get_universe_for_date(s)) == 0:
+                empty_count += 1
+            else:
+                success_count += 1
+        except UniverseValidationError:
+            raised_count += 1
+
+    assert raised_count == 40, f"Expected exactly 40 incomplete sessions to raise, got {raised_count}"
+    assert empty_count == 0, f"Expected 0 sessions to silently emit empty cross-section, got {empty_count}"
+    assert success_count == 1156, f"Expected 1,156 sessions to successfully emit members, got {success_count}"

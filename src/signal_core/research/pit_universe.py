@@ -2,7 +2,7 @@
 Point-in-Time Liquid Cash Equity Universe Selection Engine.
 Enforces AGENTS.md §6.1 (Zero Survivorship Bias), §6.2 (Date-Aware Continuity vs Strategy Eligibility),
 §10.4 (Identity Is ISIN, Never Symbol), §10.5 (Time-Varying Facts Are Interval Tables),
-and Audit §56.5, §57.3 / §57.7 Items 3–5 (Findings H-78, H-79, N-71, N-72, N-73).
+and Audit §56.5, §57.3 / §57.7 Items 3–5, §58.3 / §58.7 Items 1–2 (Findings H-78, H-79, H-81, N-71, N-72, N-73, N-76, N-77).
 
 Reconstructs universe constituents strictly as of session T using information
 observable strictly prior to session T open. Static constituent lists and forward-filled
@@ -164,6 +164,26 @@ def build_point_in_time_universe_schedule(
     if not sessions:
         raise UniverseValidationError("sessions sequence cannot be empty")
 
+    # Validate parameters fail-closed (Findings N-76, N-77)
+    if (
+        isinstance(turnover_lookback_sessions, bool)
+        or not isinstance(turnover_lookback_sessions, int)
+        or turnover_lookback_sessions < 1
+    ):
+        raise UniverseValidationError(
+            f"turnover_lookback_sessions must be a strictly positive integer (>= 1), got {turnover_lookback_sessions!r} (Finding N-76)."
+        )
+
+    if top_liquid_k is not None:
+        if (
+            isinstance(top_liquid_k, bool)
+            or not isinstance(top_liquid_k, int)
+            or top_liquid_k < 1
+        ):
+            raise UniverseValidationError(
+                f"top_liquid_k must be a strictly positive integer (>= 1) if provided, got {top_liquid_k!r} (Finding N-77)."
+            )
+
     active_calendar = calendar or load_anchored_nse_trading_calendar()
 
     # Reject sessions absent from the authoritative calendar fail-closed (Finding H-79)
@@ -186,6 +206,10 @@ def build_point_in_time_universe_schedule(
         min_median_daily_turnover_inr is not None or top_liquid_k is not None
     )
 
+    available_turnover_sessions: Set[datetime.date] = set()
+    if daily_turnover_inr is not None:
+        available_turnover_sessions = {k[0] for k in daily_turnover_inr.keys()}
+
     for s in sorted_sessions:
         # Base PIT membership from authoritative interval table
         candidate_isins = list(get_point_in_time_active_equities(s, loaded_intervals, series=series))
@@ -204,15 +228,18 @@ def build_point_in_time_universe_schedule(
                 )
 
             lookback_window = prior_cal_sessions[-turnover_lookback_sessions:]
-            lookback_set = set(lookback_window)
 
-            # Fail closed with explicit refusal if daily_turnover_inr lacks lookback history (Finding H-78 / H-79)
-            has_any_lookback = any(k[0] in lookback_set for k in daily_turnover_inr.keys())
-            if not has_any_lookback:
+            # Fail closed if any session in the lookback window is absent from daily_turnover_inr (Finding H-81)
+            missing_lookback_sessions = [
+                prior_s for prior_s in lookback_window if prior_s not in available_turnover_sessions
+            ]
+            if missing_lookback_sessions:
+                missing_str = ", ".join(ms.isoformat() for ms in missing_lookback_sessions[:3])
                 raise UniverseValidationError(
-                    f"Session {s.isoformat()} has no turnover lookback history in daily_turnover_inr "
-                    f"(requires {turnover_lookback_sessions} calendar sessions strictly prior to {s.isoformat()}) "
-                    f"(Finding H-78 / H-79)."
+                    f"Session {s.isoformat()} has incomplete lookback window in daily_turnover_inr: "
+                    f"missing {len(missing_lookback_sessions)} of {turnover_lookback_sessions} calendar sessions "
+                    f"(e.g. {missing_str}) (Finding H-81). "
+                    "Callers must declare incomplete lookback sessions as warm-up rather than emitting empty cross-sections."
                 )
 
             liquid_scores: List[Tuple[str, Decimal]] = []

@@ -19,6 +19,10 @@ from typing import Optional
 
 from signal_core.contracts.criteria import GoNoGoCriteria, load_go_no_go_criteria
 
+# Conservative modelling tick floor for position sizing and stop placement (Finding N-80).
+# Note: While NSE's statutory cash-equity tick size is Re 0.01 for scrips below ₹100,
+# ₹0.05 is enforced as a fail-closed conservative modelling floor to prevent penny-stock
+# arithmetic distortion and ensure positive stop distances (Audit §58.3 Finding N-80).
 MIN_TICK_SIZE = Decimal("0.05")
 
 
