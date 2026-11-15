@@ -5088,3 +5088,179 @@ The Phase 3A sign-off is falsified if any of the §58.2 numbers above is contrad
 5. **N-81.** Correct the CSOW references: "implemented in `feat-s57`; verdict pending §58 (§57 at `acb6b1d`)", and mark Phase 3A as signed off for §57.7 **with H-81 open** — quoting §58.5 rather than paraphrasing it upward.
 6. **Phase 3B-1 (may run in parallel with 1–5).** Feed `PositionSizeResult` into `OrderIntent`: `quantity` from the sizer, `position_weight` retained for the weight path. Build the daily T+1 runner: signal at `T` close, fill at `T+1` open through `ExecutionFillSimulator` and the single statutory cost model, no second fill or cost path. *Accept:* a higher-ATR name receives a smaller quantity/weight at equal equity; a `T`-close fill raises; a `T+1` attempt into an upper-circuit session is rejected (§5.3).
 7. **Phase 3B-2 (after H-81 measures closed).** Hypothesis-driven EQ swing strategies, walk-forward over 2022–2024, 2025–2026 physically sealed, every parameter written to `TrialRegistry` before its metric is read. *Accept:* a fold touching a sealed date fails closed; the trial count is reported beside the best result; the verdict engine returns `NO-GO` while `CRIT-PROV-01` is `NOT RUN`.
+## §59 — Commit `3e619f8` (tag `feat-s58-3e619f8`)
+
+### 59.1 Baseline, measured before any finding
+
+Worktree clean at `3e619f8`; `git log` confirms `f0343fe` (§58) → `3e619f8`.
+
+```
+python -m pytest -q                 -> 337 passed in 28.16s   exit 0   (325 at f0343fe, +12 tests)
+python -m pytest -q -rs             -> 337 passed, zero skipped, zero xfailed
+scripts/verify_audit_append_only.py -> ALL REPOSITORY FOUNDATION GATES PASSED   exit 0
+scripts/verify_cash_universe_coverage.py, verify_historical_snapshot.py,
+verify_phase2a_containment_and_trials.py, verify_phase2b_significance.py,
+verify_phase2b5_storage.py, verify_phase2c_walkforward.py,
+verify_phase2d_verdicts.py, verify_wave1_thin_slice.py   -> all exit 0 (nine of nine)
+```
+
+Scope of the commit: `pit_universe.py`, `sizing.py` (docstring only), `strategy/base.py` (`from_position_size_result`), new `execution/order_runner.py`, `execution/__init__.py`, both Phase-2D scripts, one new test file and additions to the Phase-3A test file. `configs/` and `data/` are untouched: `git diff --name-only f0343fe 3e619f8 -- configs data` is empty, so no threshold, calendar or archive byte moved. Tier-A still computes `3 PASS / 0 FAIL / 20 NOT RUN → NO-GO`. **Wave 3 — GO stands** and **Phase 2D phase — GO stands**, both unchanged from §56.5/§57.6/§58.5.
+
+One cost observation, not a finding: `test_h81_real_archive_binding_window_zero_silent_empty_cross_sections` is 12.69 s of the 28 s suite because it rebuilds a universe for all 1,196 binding sessions against the real archive manifest. That is the right trade — it is the only test that measures the property over real data rather than a hand-built map — but the suite has doubled in wall-clock time and future per-session data-pinned loops should be expected to do the same.
+
+### 59.2 §58.7 items, measured
+
+**Item 1 — H-81 CLOSED, on the falsifier in §58.6.** I rebuilt the turnover coverage independently from `data/reference/bhavcopy_archive_manifest.jsonl` (1,195 archived sessions) and replayed all 1,196 binding calendar sessions:
+
+```
+binding window 2022-01-03..2026-10-30
+sessions=1196   raised=40   silent_empty=0   members_emitted=1156
+```
+
+§58.6 required "every one of the 39 sessions either raises or is declared warm-up — **0 of 1,196** binding sessions emit an empty cross-section". Measured: 0. The 39 previously-silent sessions now raise, the 1 that already raised still does, and 1,156 complete sessions emit members exactly as before (2022-05-02 → 5 members unchanged). The check is per session (`available_turnover_sessions = {k[0] …}`, `missing_lookback_sessions` over the whole window) rather than the former global `any()`, and the error names the missing dates. The delivered test pins the same 40/0/1,156 counts against the real manifest, so the fix is measured by the gate and not only by me.
+
+**Item 2 — N-76 / N-77 CLOSED.** Nine parameter edges, all refusing:
+
+```
+turnover_lookback_sessions in {0, -1, True, 1.5, "20"}  -> UniverseValidationError, each
+top_liquid_k            in {0, -3, True, 1.5}           -> UniverseValidationError, each
+```
+
+The bool check precedes the int check, so `True` is caught as a bool rather than accepted as `1`; the message names the finding. `prior[-0:]` can no longer be reached.
+
+**Item 3 — N-78 / N-79 CLOSED.** The guard is no longer inline: `validate_results_bundle_types(bundle)` is a named production function called from `build_tier_a_results_bundle`, and both the gate (`verify_gate_2d5`) and the test call it with injected values, so deleting the guard body now fails the gate instead of leaving a tautology green. The AST checker is likewise a module-level `check_ast_bundle_literals(source_code)` and the N-63 test imports it instead of copying it — the copy that had already drifted is gone. I ran the checker on the real generator: `(True, '')`, i.e. the live file passes, and on the eight synthetic shapes it rejects all of them.
+
+**Item 4 — N-80 CLOSED as documentation.** `MIN_TICK_SIZE` now carries the provenance paragraph §58.7 item 4 asked for: it states the NSE cash-equity tick is Re 0.01, that ₹0.05 is enforced as a conservative floor, and why (sub-tick stop distances). The direction is unchanged and still fail-closed.
+
+**Item 5 — N-81 CLOSED.** CSOW now cites `§58 at d7590fe (tag feat-s57-d7590fe, audit f0343fe)`, quotes §58.5's scoped sign-off verbatim rather than paraphrasing upward, and the stale "verdict pending §57" is gone. The new status line for this commit, however, overreaches — see N-86.
+
+Regression check: `UniverseSchedule`'s signature and `OrderIntent`'s existing fields are unchanged; `325 → 337` with no skip, xfail or widened tolerance, and no criteria file touched.
+
+### 59.3 New findings
+
+**H-82 — the runner fabricates exchange-series evidence, defeating the simulator's E-2 fail-closed rule.** `execute_ticket` does this:
+
+```
+if effective_series is None and isinstance(t_plus_1_bar, PriceBar):
+    if candidate.series.upper() == "EQ":
+        effective_series = ExchangeSeries.EQ
+```
+
+`candidate.series` is a caller-typed string with the default `"EQ"`. So a bare `PriceBar` — the object that exists precisely because it carries no series evidence — is relabelled EQ by the runner on the strength of a string, and then fills:
+
+```
+bare PriceBar, candidate.series defaulted        -> FILLED, 50 shares
+same bar straight to ExecutionFillSimulator      -> REJECTED_INELIGIBLE_SERIES
+ExchangeSessionObservation series=BE             -> REJECTED_INELIGIBLE_SERIES
+```
+
+The third line shows the engine is correct; the first shows the only production caller defeats it. A Bhavcopy `BE`/`BZ` session expressed as a `PriceBar` and entered as `DailySignalCandidate(series="EQ")` — or entered with no `series` at all, since it defaults — fills at a price §5.1 forbids entry on. The module docstring claims "Rule 5.1 & 13.1: Strict NSE EQ rolling cash delivery scope"; the wiring makes that claim unenforced. Fix: require series evidence rather than synthesise it — accept `ExchangeSessionObservation` only, or require an explicit `ExchangeSeries` argument that the caller must supply from the security master, and remove the `"EQ"` default from `DailySignalCandidate.series`.
+
+**H-83 — a BUY fills at the upper circuit when `price_band` is omitted, and the runner omits it by default.** `run_candidate`/`execute_ticket` take `price_band: Optional[PriceBandRecord] = None`, and the simulator can only detect a circuit when it is given the limit:
+
+```
+open == upper circuit 2750, price_band omitted       -> FILLED at 2750.00
+open == upper circuit 2750, price_band 2250/2750     -> REJECTED_UPPER_CIRCUIT
+```
+
+Both at ₹10,00,000 and ₹1,00,00,000 capital, so the result is not a sizing artefact. This is the exact fill §5.3 forbids ("Never simulate a BUY fill at the High if the High equals the Upper Circuit limit"), produced by the default call of the one runner B-1 delivers, while its own docstring asserts "Rule 5.3: Circuit filter realism: BUY fills into Upper Circuit freeze are rejected". A session-wide lock (`O=H=L=C`) is caught by the simulator independently of the band, so the hole is the open-at-circuit-with-trade case — which is the common one. Fix: make `price_band` mandatory for BUY (raise `OrderRunnerEligibilityError` when absent), or make the runner resolve the band from the committed band publication before simulating.
+
+**H-84 — realised risk is never recorded; `risk_amount` is the T-close intention.** Sizing uses `candidate.entry_reference_price` (T close), the fill happens at the T+1 open plus slippage, and no field carries the difference:
+
+```
+intent qty=50 weight_at_reference=0.05 intended_risk=10000.000
+fill=1100.89785054  realised_risk = 50 x (1100.8978 - 800.00) = 15044.8925  ratio 1.504
+```
+
+A 10% overnight gap turns a 1R position into 1.5R of risk, one-directionally — gaps that help reduce risk, gaps that hurt increase it — so any R-multiple, expectance or DSR computed from `size_result.risk_amount` overstates edge by the gap distribution. The `OrderIntent.metadata["risk_amount"]` copies the intended value, so a strategy reading its own intents inherits the bias. This is a Phase-3B-2 measurement-integrity finding, not a B-1 acceptance failure: the fix is to compute `realised_risk = quantity × (executed_price − stop_price)` on the ticket and let every R statistic use it (optionally re-capping quantity at the fill price so the budget is honoured too).
+
+**N-82 — a lookback session that covers no candidate still yields a silent empty cross-section.** The H-81 check is session-level presence; per-name absence is then handled by exclusion (N-71), so a window where every candidate is missing the record on one session produces `0` members with no error:
+
+```
+prior[0] and prior[2] have INE002A01018, prior[1] has only INE999999999
+-> emitted members: 0, no raise
+```
+
+Reachable only from an internally inconsistent turnover map — a partially promoted partition, which §10.7's atomic promotion should make impossible, or a truncated archive parse. The distinction the code still lacks is the one §57 named: an empty result because nothing qualifies (legitimate, report `BELOW_MIN_MEDIAN_TURNOVER`) versus an empty result because nothing could be computed (`MISSING_TURNOVER_RECORD` for the whole candidate set) — the latter should raise.
+
+**N-83 — two annotation names are undefined.** `GoNoGoCriteria` is used in `DailyTPlus1OrderRunner.__init__`/`criteria` but never imported, and `Portfolio` is imported only under `TYPE_CHECKING`. Postponed evaluation hides both until something resolves them:
+
+```
+typing.get_type_hints(DailyTPlus1OrderRunner.__init__)
+-> NameError: name 'Portfolio' is not defined
+```
+
+No runtime failure today, but any introspection, doc generation or runtime type validation on this class breaks, and `GoNoGoCriteria` would be a `NameError` the moment the annotation is evaluated.
+
+**N-84 — a zero-size result surfaces as a strategy-contract error.** When the sizer returns `quantity=0` (binding `RISK_BUDGET` on tiny equity), the runner forwards it into `OrderIntent` and gets `OrderIntentValidationError: quantity must be a positive integer, got 0` — not an `OrderRunnerError`, and not a "no trade" outcome. A strategy driving the runner cannot distinguish "sizing said do nothing" from "the intent was malformed" without catching and string-matching. Returning `(None, size_result)` or raising a named `OrderRunnerError` would keep the fail-closed direction and give the caller a decision.
+
+**N-85 — both guard docstrings claim a limitation the runtime layer does not have.** `validate_results_bundle_types`'s docstring says AST and runtime "do NOT catch" annotated assignment and tuple-unpack. The runtime layer inspects values, not syntax, so it catches both — measured: `{"k": True}` via an annotated local raises, `{"k": 42}` via a tuple-unpack raises. Only string-laundered `Decimal` truly escapes. Under-claiming is safer than over-claiming, but a false limitation in a committed docstring is still a false statement about what the gate does. Related: the AST checker also misses a user helper returning a literal (`def helper(): return True; bundle["k"] = helper()` → passes the AST check), which the residual list does not mention; the runtime guard catches the resulting value, so the layering holds.
+
+**N-86 — CSOW claims a Phase 3B-1 verdict that §58.5 never gave.** The Phase 3B-1 section header reads "**(Implemented; Phase 3B-1 GO per §58.5)**". §58.5 said "Phase 3B-1 — GO now", which authorised the *work to begin*; it granted no verdict on the delivered module, and §59 is the section that would. The Phase 3A header likewise says "H-81 Remediated in `feat-s58`" before any verdict cites `3e619f8` — §58.6's falsifier is met, but the section that says so is §59. Both are the §11.3 shape: a status word with a citation that does not contain it.
+
+### 59.4 What Phase 3B-2 would rest on, measured
+
+B-2 is a delivery swing walk-forward: positions held across sessions. Sixteen sections of the standing rules describe what a multi-session hold must survive, and three of those inputs do not exist in this repository.
+
+```
+corporate-action table in data/reference/                 -> ABSENT
+Position adjustment API (adjust/split/bonus)              -> NONE
+Portfolio corporate-action API                            -> NONE
+CashEntryType.DIVIDEND_INFLOW                             -> declared, zero callers
+surveillance (ASM/GSM/ESM) interval data                  -> ABSENT (enum exists in storage/security_master.py)
+```
+
+Measured consequence of the first two, on a position the B-1 runner opened:
+
+```
+buy 50 @ 1000 (fill 1000.8162) -> cash 949,876.00, equity marked at 1000 = 999,876.00
+1:2 split inside the hold: quantity should become 100 at 500
+equity engine marks the unchanged 50 shares at 500 -> 974,876.00
+true value (100 x 500 + cash)                     -> 999,876.00
+fabricated loss: 25,000.00 INR = 2.50% of capital, on one 5%-weight position, one split
+```
+
+There is no code path that could correct it: the loss is produced by the mark, not by the trade, and `Position`/`Portfolio` expose nothing to adjust. §13.2 states the requirement exactly — "Corporate actions and dividends that fall *inside* the holding window are applied to the open position, not only to the historical series. An ex-dividend gap on a held position is a cash inflow, never a loss. A corporate-action table without dividend rows makes every held-position ledger wrong." Across 2,172 live `EQ` names and two years, splits, bonuses and dividends landing inside a hold are routine, and every one of them is booked as a loss or as nothing.
+
+The second input is §10.8's gating requirement: "A GO/NO-GO verdict may only be computed on sessions in which every required input exists: authoritative calendar, verified security identity, and **surveillance state**." The enum exists; the interval table does not, and §5.2 makes escalation during a hold an exit constraint. Without it a strategy models an exit it could not have taken — which is the same structurally-optimistic fill §5.3 forbids, one level up.
+
+`evaluate_verdicts()` and `TrialRegistry` are both present and usable (`evaluate_verdicts(results_bundle, criteria, criteria_path, calendar, …)`; `TrialRegistry.append_trial`/`total_trial_count`/`get_trial_sharpes`), so the evaluation machinery is not the blocker. The data is.
+
+### 59.5 Verdict
+
+**Wave 3 — GO stands, unchanged.** **Phase 2D phase — GO stands, unchanged.**
+
+**H-81 (and N-76, N-77, N-78, N-79, N-80, N-81) CLOSED on measurement.** The universe builder now refuses an incomplete lookback window, 0 of 1,196 binding sessions emit an empty cross-section, and the archive-derived property is asserted by a committed test rather than by prose.
+
+**Phase 3B-1 — NO-GO.** The commit does what B-1 was asked to structurally: the sizer's quantity reaches `OrderIntent`, `from_position_size_result` keeps the weight and stop, the fill goes through `ExecutionFillSimulator` and `Portfolio.process_fill` with the one statutory cost model, same-session execution raises, and `BE`/`BZ` observations are rejected. Three defects block sign-off, and the first two are on B-1's own acceptance list:
+
+- **H-83** fails the §58.7 item 6 criterion I published — "a `T+1` attempt into an upper-circuit session is rejected (§5.3)". It is rejected only when the caller passes `price_band`; the default call fills at the circuit price. A circuit guarantee that depends on an optional argument is not a guarantee, and the module docstring says otherwise.
+- **H-82** fails the same item's "single authoritative engine" intent: the runner relabels a bare `PriceBar` as `EQ` from a defaulted string, so the entry-eligibility gate §5.1 requires is decided by the caller's label, not by evidence.
+- **N-84** and **N-83** are minor but should be fixed in the same pass, because both are in the constructor path a strategy will use first.
+
+**Phase 3B-2 — NOT AUTHORIZED.** Not because the machinery is missing, but because two of its inputs are: an open-position corporate-action path (§13.2) and a surveillance interval table (§10.8, §5.2). A walk-forward over 2022–2024 built on today's repository would book every split inside a hold as a loss — 2.50% of capital on the single 1:2 split I measured on a 5%-weight position — and would model exits from escalations it cannot see. That is not a strategy result; it is an accounting artefact with a Sharpe ratio. The remedy is data plus a small amount of engine, not a redesign.
+
+What may start before B-2: the strategy contract, the trial-registry wiring and the verdict plumbing, exercised against a synthetic fixture (§59.7 item 6). What may not: any walk-forward, any metric, any `evaluate_verdicts()` call on real 2022–2024 prices.
+
+**The provenance condition is unchanged and unmet.** `CRIT-PROV-01` remains `NOT RUN` (`CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED`), so even with every item below closed, a B-2 report evaluates to `NO-GO` by construction. Nothing in B-2 can move that; only attested source provenance can.
+
+### 59.6 What would falsify the remaining verdicts
+
+Phase 3B-1 closes when, measured on a clean tree: a `DailySignalCandidate` for a `BE`/`BZ` session expressed as a bare `PriceBar` **cannot** produce a fill — the runner refuses it or requires evidence the caller must obtain from the security master (H-82); a BUY whose open equals the upper circuit is rejected **without** the caller supplying `price_band`, i.e. the default path refuses (H-83); and a zero-size result returns a named no-trade outcome rather than an `OrderIntentValidationError` (N-84), with `typing.get_type_hints(DailyTPlus1OrderRunner.__init__)` resolving (N-83).
+
+Phase 3B-2 opens when: a split, bonus and cash dividend applied to an open position each leave `total_equity` unchanged (split/bonus) or increase cash (dividend) with the position's quantity and cost basis restated, measured on the real 5%-weight position above instead of a synthetic snapshot; an ASM/GSM interval table exists with at least one sourced escalation date and the runner enforces it as an exit constraint on a held position; and H-84's `realised_risk` is recorded on the ticket, so the R denominator is the fill's risk rather than the close's intention.
+
+The Phase-3A/3B-1 verdicts are falsified if any number in §59.2 is contradicted by a rerun at `3e619f8` on a clean tree.
+
+### 59.7 Work order
+
+1. **H-83 (blocks B-1).** Make the band mandatory for entry: `run_candidate` on a BUY with `price_band is None` raises `OrderRunnerEligibilityError`, or the runner resolves the band from the committed publication before simulating. Delete the docstring claim unless the code enforces it. *Accept:* open == upper circuit, no band argument → no fill.
+2. **H-82 (blocks B-1).** Stop synthesising series evidence. Accept `ExchangeSessionObservation` only for entry, or require an explicit `ExchangeSeries` the caller must pass; remove `series: str = "EQ"` as a default so an omitted series cannot mean EQ. *Accept:* a `BE` session expressed as a `PriceBar` cannot fill; an omitted series refuses.
+3. **N-83 / N-84 (same pass).** Import `GoNoGoCriteria` at module scope (and stop hiding `Portfolio` behind `TYPE_CHECKING` if annotations must resolve); return a named no-trade outcome for `quantity == 0`. *Accept:* `get_type_hints` resolves; zero size is not an `OrderIntentValidationError` leaking through the runner.
+4. **H-84 (before any B-2 metric).** Record `realised_risk = quantity × (executed_price − stop_price)` on `DailyExecutionTicket`, and state in the docstring that `risk_amount` is the T-close intention. *Accept:* the 10% gap case reports 15,044.89 rather than 10,000.00, and an R statistic built on the ticket uses the realised figure.
+5. **N-82.** Raise when the emitted cross-section is empty *and* every candidate was excluded for `MISSING_TURNOVER_RECORD`, keeping a genuinely empty-but-computed session as a zero-member result with reasons. *Accept:* the P8 window raises; an all-illiquid window still returns 0 members with `BELOW_MIN_MEDIAN_TURNOVER`.
+6. **Corporate actions for open positions (§13.2).** Commit a corporate-action interval table (ex-date, ratio/amount, verified source) and an `apply_corporate_action(session)` path on `Portfolio`/`Position`: split/bonus restate quantity and average cost with `total_equity` invariant; dividend credits `CashEntryType.DIVIDEND_INFLOW`. *Accept:* the measured 1:2 split leaves equity at₹9,99,876.00 instead of ₹9,74,876.00; a ₹5/share dividend on 50 shares adds ₹250.00 to cash.
+7. **Surveillance intervals (§5.2, §10.8).** Commit an ASM/GSM/ESM half-open interval table with sourced effective dates and join it as-of the hold date; escalate-to-exit becomes an exit constraint on the open position, not an entry filter. *Accept:* a position held into a stage-2 GSM date is exited on the first session the constraint permits and the report says so.
+8. **Phase 3B-2a (may start after 1–3).** Strategy contract + `TrialRegistry.append_trial` before any metric is read + `evaluate_verdicts()` plumbing, exercised on a synthetic fixture. *Accept:* a trial is appended before its Sharpe is readable; a fixture bundle evaluates; a sealed 2025–2026 date fails closed.
+9. **Phase 3B-2b (after 1–7).** Hypothesis-driven EQ swing strategies, walk-forward 2022–2024, 2025–2026 physically sealed, every parameter logged, verdict through `evaluate_verdicts()` returning `NO-GO` while `CRIT-PROV-01` is `NOT RUN`. *Accept:* the fold refuses a sealed date; the trial count is reported beside the best result; the overall verdict is `NO-GO` for provenance, and says so.
+10. **N-85 / N-86 (documentation).** Correct both guard docstrings to name only the limitation that exists (string-laundered `Decimal`, helper indirection at the AST layer), and rewrite the CSOW Phase 3B-1 header to "implemented in `feat-s58`; verdict §59 — NO-GO on H-82/H-83" rather than claiming a GO §58.5 does not contain.
