@@ -5644,3 +5644,186 @@ Phase 3B-2b opens when, measured on a clean tree:
 7. **N-94.** Thread `allocation_weight` into sizing as a position cap, or remove it from `parameters`. *Accept:* the registered weight changes the executed quantity, or the parameter no longer appears in the trial record.
 8. **N-95.** Quantize `executed_price` to the tick grid (₹0.05, ₹0.01 below ₹1) before the fill is posted. *Accept:* every fill price in a fixture run lies on the grid and the circuit comparison uses the same rounding.
 9. **Phase 3B-2b, after 1–5.** Hypothesis-driven EQ swing walk-forwards on 2022–2024, 2025–2026 physically sealed, every parameter and hypothesis in `TrialRegistry` before its metric is read, verdict through `evaluate_verdicts()` returning `NO-GO` while `CRIT-PROV-01` is `NOT RUN`. *Accept:* the fold refuses a sealed date; the trial count is printed beside the best result; the overall verdict is `NO-GO` for provenance and says so.
+---
+
+## §62 — Commit `e66f2aa` (tag `feat-s61-e66f2aa`): Phase 3B-1 defect closure H-89…N-95
+
+**Reviewer:** external auditor (independent of the implementer).
+**Commit under review:** `e66f2aa`, tag `feat-s61-e66f2aa`, on `main`, one commit after `b4a3baf` (§61).
+**Scope audited:** the eight work-order items §61.6.1–§61.6.8. Item 9 (Phase 3B-2b) is a *phase*, not a defect; it is adjudicated in §62.4.
+
+### 62.1 Baseline, re-measured at `e66f2aa` before any finding was tested
+
+| Probe | Command | Result |
+|---|---|---|
+| Tree state | `git status --porcelain` | empty (clean) before probing; tree left clean after probing (§62.10) |
+| HEAD / tag | `git log -1 --format=%H`, `git tag --points-at HEAD` | `e66f2aa…`, `feat-s61-e66f2aa` |
+| Commit size | `git diff --stat b4a3baf..e66f2aa` | **12 files, +1028 / −295** |
+| Audit report untouched by implementer | `git diff --name-only b4a3baf..e66f2aa` | no `reports/audit/*`, no `configs/*`, no `data/*` |
+| Full suite | `python -m pytest -q` | **359 passed, exit 0**, ~42 s |
+| Skips / xfails | `python -m pytest -q -rs` | **zero** (baseline at `4d81077` was 353 passed; +6 tests) |
+| Gate scripts | nine `scripts/verify_*.py` | **all exit 0**: `audit_append_only`, `cash_universe_coverage`, `historical_snapshot`, `phase2a`, `phase2b`, `phase2b5`, `phase2c`, `phase2d`, `wave1_thin_slice` |
+| Tier-A report unchanged | `reports/verdicts/phase2d_tier_a_2022_2026_verdict.{md,json}` | `PASS=3 / FAIL=0 / NOT RUN=20`, `overall_verdict = NO-GO`, `criteria_version 1.1.0` |
+| Holdout still physically sealed | `SilverStorage.partition_exists(2025-01-01)`, `(2026-03-02)` | `HoldoutPartitionIsolationError`; `(2024-12-31)` → `False`. `HOLDOUT_UNLOCK` absent from the tree. `check_partition_access(spec, HOLDOUT)` raises `HoldoutSealedError` with no unlock file, with an absent path, and with a garbage path. |
+
+The gate is genuinely green: the suite grew by six tests, no `skip`/`xfail` was added, no `pytest.ini` exclusion, and `verify_audit_append_only.py` (the §11.1 check) passes with the audit report byte-unchanged by this commit. Baseline is accepted as sound **except** for the two assertion widenings measured in N-98 (§62.3).
+
+### 62.2 Status of each §61.6 item, by measurement
+
+Every item was reproduced from the committed artifact or a live probe against `e66f2aa`, never from the implementer's prose. Probes ran in the repository interpreter; where a probe needed a mutated tree, it ran against a **scratch copy** (`.tmp_s62/src`, deleted afterwards) so the measured tree stayed the committed one.
+
+**Item 1 — H-89: ISIN transition with share ratio. `CLOSED`.**
+Probe (committed `data/reference/corporate_actions.jsonl`, `load_corporate_actions()` → Cochin row `ISIN_TRANSITION`, ratio 2:1, `UNATTESTED_NSE_CML_60114`):
+
+```
+before: qty 25  avg 1605.6000  cost 40140.00  equity 999928.61
+after : qty 50  avg  802.8000  cost 40140.00  equity@802.80 999928.61
+old ISIN -> None ; position under INE704P01025 ; sellable
+```
+
+Equity is continuous to the paisa, quantity is restated by the ratio, cost basis is preserved exactly, and the position is re-keyed so it remains sellable. The §60.3 failure (a position stranded under a dead ISIN) is closed **for the `ISIN_TRANSITION` action type**. It is *not* closed for the adjacent action types — see H-96.
+
+**Item 2 — H-90: import-cycle hygiene. `CLOSED` on its stated acceptance; residual R-90a (§62.3).**
+Fresh-interpreter first imports, each in its own process: `signal_core.strategy.swing`, `signal_core.strategy.base`, `signal_core.strategy`, `signal_core.execution`, `signal_core.execution.order_runner`, `signal_core.portfolio.portfolio`, `signal_core.contracts.order_intent` — **all exit 0**. The `except ImportError: Portfolio = None` block and the bottom-of-module monkey-patch in `portfolio.py` are gone (grep). `strategy.base.OrderIntent is contracts.order_intent.OrderIntent` → `True`, so there is one class, not two. `dir(signal_core.execution)` still contains the runner names. Acceptance clause met.
+Residual measured, not blocking: the cycle is *masked*, not removed (R-90a).
+
+**Item 3 — N-92: surveillance coverage bound to the session date. `PARTIAL`.**
+Measured: `has_surveillance_coverage(isin, as_of)` is date-bounded — `2024-01-14 → False`, `2024-01-15 → True`, `2024-06-29 → True`, `2024-06-30 → False`, `2024-07-01 → False`; a held name whose coverage ends mid-hold raises `SecurityMasterError` at `2024-07-01`; `coverage_count = 0` on the production master.
+Not delivered: the register still cannot express **"known and not under surveillance"**. The real, unsurveilled `INE002A01018` reports `covered = False` on every date, so `evaluate_surveillance_exit_constraints(..., require_coverage=True)` raises on an ordinary hold and any strategy must pass `require_coverage=False` — i.e. the exit constraint either fails or is silently disabled. Neither `NOT_SURVEILLED` interval semantics nor `coverage_from`/`coverage_to` exists. The item asked for *either* a `NOT SURVEILLED` interval class *or* explicit fail-closed on missing state; what landed is a date-bounded point-in-time lookup over a corpus that reports nothing, which is the second half of the first alternative only. Consequence for B-2b is in §62.7.
+
+**Item 4 — corporate-action corpus for the traded universe. `NOT DELIVERED`.**
+`data/` is untouched by this commit (`git diff --name-only`). `data/reference/corporate_actions.jsonl` is still **6 rows over 3 ISINs, every row `UNATTESTED_…`**. The traded universe is `data/reference/cash_equity_symbol_intervals.csv` → **4,510 ISINs / 7,430 symbol-interval rows**; `data/raw/{2022,2023,2024}` holds **743 bhavcopy archives**. Six action rows cannot cover 743 sessions of a 4,500-name universe. Under §8.1 and §13.2 every held position across a split, bonus or ex-dividend inside the hold is therefore still unaccounted.
+
+**Item 5 — surveillance corpus (ASM / GSM / ESM). `NOT DELIVERED`.**
+`data/reference/surveillance_intervals.jsonl` is unchanged: **3 intervals, all `SYNTHETIC_FIXTURE`**; production `surveillance_coverage = 0` over 4,244 ISINs, and the synthetic rows are excluded from the production master by design. Combined with item 3 this means the surveillance exit constraint (§13.2, §5.2) is unexecutable on real data, and `evaluate_verdicts()` has no sourced input for it.
+
+**Item 6 — N-93: silently skipped candidates. `CLOSED` on acceptance; new minor N-97 (§62.3).**
+Measured: no bar → `intents_generated=1, tickets_executed=0, skipped_missing_bar=1`; bar without band → `skipped_missing_band=1`. The silent `continue` now names its own cause in the summary. Acceptance met.
+Side effect found and recorded as N-97: the same summary's `tickets_executed` counts a ticket whose status is `REJECTED_UPPER_CIRCUIT` as an execution (`tickets_executed=1`), so the field name overstates fills in exactly the freeze case §5.3 cares about.
+
+**Item 7 — N-94: `allocation_weight` reaches sizing. `CLOSED`.**
+Measured on a 1,000,000 portfolio at ₹1,300 with ATR ₹100: weight `0.02 / 0.04 / 0.08 / 0.10` → **15 / 30 / 61 / 76 shares**, statuses `FILLED`, prices `1300.90 / 1301.00 / 1301.15 / 1301.20`. `parameters["allocation_weight"]` and the emitted `target_weight` are the same `_allocation_weight` value (no second, unused copy). Acceptance met: the registered weight now changes the executed quantity, and the risk-based size still caps it.
+
+**Item 8 — N-95: tick-grid quantization. `CLOSED` on its stated acceptance; introduced H-97 (§62.3).**
+Measured: fills `1300.90, 1301.00, 1301.15, 1301.20` are all on the ₹0.05 grid; `quantize_to_tick_grid(999.2763932022500210303590826) = 999.30`, `(0.874) = 0.87`, `(0.995) = 1.00` (₹0.01 grid below ₹1); `quantize_to_tick` defaults `True` in both `__init__` and `simulate_order`, and no caller in `src/` or the tests passes `False`, so there is no unguarded path beside the guarded one. The acceptance clause as written ("every fill price in a fixture run lies on the grid") is met.
+It is met by a step that can violate a stronger invariant, measured in §62.3 H-97: the rounding is applied *after* the session-range clamp, so the grid price is not guaranteed to lie inside `[low, high]`.
+### 62.3 New findings raised by this commit
+
+**H-96 (HIGH) — a `SPLIT` / `BONUS` / `CONSOLIDATION` row that carries `new_isin` does not re-key the position; the §60.3 stranded-ISIN defect is still reachable.**
+The re-key exists only in the `ISIN_TRANSITION` branch of `Position.apply_corporate_action` and of `Portfolio.apply_corporate_action`. A corporate-action row whose `action_type` is `SPLIT` but which carries `new_isin` is accepted by the contract, restates quantity by the ratio, and leaves the position keyed under the dead ISIN:
+
+```
+row action_type=SPLIT  ratio=2:1  new_isin=INE704P01025
+before: INE704P01017 qty 25
+after : INE704P01017 qty 50   ; position under INE704P01025 -> None  (position unsellable)
+```
+
+This is the same failure §61.6.1 was written to close, one branch over, and it is the branch item 4's corpus will actually hit: a real NSE corporate-action file records a face-value split with both a restated ISIN and a new share count, and nothing in the loader forces the incoming row into the `ISIN_TRANSITION` shape. `§14.4`'s additive-fix pattern: a guarded branch added next to the unguarded one, no validation that says which one the row belongs to.
+*Accept:* a row of either action type carrying `new_isin` either re-keys (one position, under the new ISIN, quantity restated) or raises, and the test asserts the *absence* of a position under the old ISIN. Probe that must fail closed: the snippet above, run before the fix, must show the stranded position; after the fix, `portfolio.get_position(old_isin) is None` **and** `portfolio.get_position(new_isin).quantity == 50`.
+
+**H-97 (HIGH) — quantization and the new circuit clamp can post a fill at a price the session never traded, and a band/bar inconsistency is turned into a filled trade instead of a rejection.**
+Item 8's fix rounds `executed_price` to the tick grid **after** clamping to `[low, high]`/circuits, and item 6/8's re-bounding against the effective circuits now *rewrites* an out-of-band price to the band limit. A/B measurement of the same two sessions against the parent tree (`b4a3baf`, scratch worktree, `git worktree add .tmp_wt b4a3baf`):
+
+| session | at `b4a3baf` | at `e66f2aa` |
+|---|---|---|
+| BUY, open 100.03, high 100.03, low 99.50, band 120/80 | `FILLED 100.03` (inside range) | **`FILLED 100.05` — above the session high** |
+| BUY, open 100.04, high 100.04, low 99.50, band 120/80 | `FILLED 100.04` | **`FILLED 100.05` — above the session high** |
+| BUY, open 99.99, high 100.02, low 99.50, band 1560/1040 | `FILLED 100.02` | **`FILLED 1040.00` — 10.4× the printed high** |
+
+The symmetric case exists on the sell side: `SELL` at open 100.00, high 100.50, **low 99.97** → `FILLED 99.95`, below the session low. Magnitude is half a tick in the ordinary case — small, but it is a price the exchange did not print, manufactured by the single authoritative engine (§7.4) and booked into the ledger (§6.4). In the inconsistent-band case the magnitude is unbounded, and the direction of the fix is wrong: §5.3 and §6.3 require a band/bar inconsistency to **fail closed**, not to be satisfied by moving the fill price to the limit. A ₹1040 fill against a ₹100 bar is a fabricated trade, and it is exactly the phantom-band condition §38.2 measured in the real 2024-01-10 fixture (20% / 802.80 / 535.20).
+*Accept:* (a) every `executed_price` satisfies `low ≤ price ≤ high` and lies on the tick grid, for a randomized sweep of opens that fall between grid points; (b) when the band contradicts the bar (open outside `[lower, upper]`, or `upper < high` / `lower > low` by more than a tick), the order is `REJECTED_*` with the reason named, and no fill is posted; (c) a test pins both, using exact Decimals, not a tolerance.
+
+**N-97 (MINOR) — `tickets_executed` counts rejected tickets.**
+`SwingSessionExecutionSummary.tickets_executed = len(tickets)`. Measured: upper-freeze session → `tickets_executed = 1` with `ticket.status = REJECTED_UPPER_CIRCUIT`; no-trade tickets are counted the same way. A corpus report read at face value overstates executions, and under §5.3 the freeze case is precisely where an overstatement is most expensive.
+*Accept:* the summary reports tickets and fills as separate counts (`tickets_emitted`, `tickets_filled`, `tickets_rejected`), and a rejected ticket moves only the rejected counter.
+
+**N-98 (MINOR, §12.4) — two assertions were widened to reach green.**
+`tests/unit/test_phase3b1_order_runner.py`:
+
+```
+ 533: assert ticket.realised_risk in (Decimal("15044.89"), Decimal("15045.00"))
+ 700: assert pos.total_cost_basis in (Decimal("50040.00"), Decimal("50040.81"))
+```
+
+Measured actuals at `e66f2aa`: `realised_risk = 15045.00` and `total_cost_basis = 50040.00` (fill price `1000.80`, qty 50, `average_entry_price 1000.8000`). In both lines one branch is dead, and the disjunction is what §12.4 forbids: an invariant that would pass under a regression is not an invariant. Line 700 is worse than line 533 — a disjunctive assertion *is* the cost-basis check there, whereas line 533 has an exact computed assertion immediately above it. The split test also docstrings `999,876.00` while asserting `999,876.81`.
+*Accept:* both lines assert the single measured value; the docstring matches the assertion.
+
+**R-90a (RESIDUAL, non-blocking) — the import cycle is masked, not removed.**
+Forcing an eager runner import in the `execution/__init__.py` of a scratch copy reproduces the cycle one module deeper:
+
+```
+$ PYTHONPATH=.tmp_s62/src python -c "import signal_core.strategy.swing"
+  File ".../execution/order_runner.py", line 62, in <module>
+    from signal_core.contracts.order_intent import (...
+ImportError: cannot import name 'LookaheadIntentError' from partially initialized module
+             'signal_core.contracts.order_intent' (most likely due to a circular import)
+```
+
+`import signal_core.execution` alone succeeds eagerly; the cycle is
+`contracts.order_intent → execution.types → execution/__init__ → order_runner → contracts.order_intent`, and only PEP 562 laziness in `execution/__init__.py` breaks it. The contract extraction genuinely removed the `execution → strategy` direction, and the lazy export is documented, so the stated acceptance of item 2 is met and there is exactly one mechanism — but a `contracts/` module now depends on the `execution/` package, which is a layering inversion. Recorded because §14.4 asks whether a guarded path sits beside an unguarded one; here it sits beside a *fragile* one. Not a B-2b blocker.
+*Accept (when taken):* `contracts.order_intent` imports nothing from `signal_core.execution` (`OrderSide`/`OrderProduct`/`OrderType` live in `contracts`, re-exported by `execution.types`), and the eager-import attack above exits 0.
+
+### 62.4 Verdict
+
+| Phase | §61 verdict | Verdict at `e66f2aa` | Basis |
+|---|---|---|---|
+| Phase 2D Tier-A gating | NO-GO | **NO-GO** (unchanged, no regression) | report unchanged: `3 PASS / 0 FAIL / 20 NOT RUN`; `CRIT-PROV-01` `NOT RUN` |
+| Phase 3B-1 (T+1 runner, band mandates, exit path) | GO | **GO stands** | the eight runner behaviours re-measured at this commit; items 6, 7, 8 met; H-97 and N-97 are defects *inside* the single engine, named and ordered, and do not un-sign the eligibility contract §61 verified |
+| Phase 3B-2a (swing wiring) | GO | **GO stands** | `execute_swing_strategy_session` wiring unchanged in contract; item 7 cap measured live; no new path bypasses the runner |
+| Phase 3B-2b (2022–2024 walk-forward evaluations) | not authorized | **NOT AUTHORIZED** | H-96 and H-97 open; §61.6.4 and §61.6.5 **not delivered**; N-92 partial, so the surveillance exit constraint has no executable, honest form; `CRIT-PROV-01` `NOT RUN`, so any verdict it could produce is `NO-GO` by construction |
+
+Item score: **5 of 8 closed** (1, 2, 6, 7, 8 — three of them with a named side effect), **1 partial** (3), **2 not delivered** (4, 5). The commit is honest work delivered quickly against an eight-item order; it is not a phase completion, and the two undelivered corpora are the whole reason B-2b cannot start.
+
+### 62.5 What would falsify this verdict
+
+- If a `SPLIT` row with `new_isin` were rejected at construction by a validator I did not exercise, H-96 would be wrong: falsified by constructing `CorporateAction(action_type=SPLIT, ratio=…, new_isin=…)` and observing a raise.
+- If some caller in `src/` or `scripts/` passed `quantize_to_tick=False`, or clamped *before* rounding and re-clamped after, H-97's first limb would be narrower than stated: falsified by a grep of every `simulate_order` call site plus a sweep where the rounded price crosses the range boundary.
+- If `data/reference/corporate_actions.jsonl` had grown to cover 2022–2024 for the traded universe in a commit between `b4a3baf` and `e66f2aa`, item 4 would be delivered: falsified by `git diff --stat b4a3baf..e66f2aa -- data/` being empty.
+- If `has_surveillance_coverage` returned a third state for a name with no interval but a verified "not under surveillance" record, N-92 would be CLOSED: falsified by the `INE002A01018` probe returning `False` on every date.
+### 62.6 Work order — ordered by what it unblocks
+
+Each item names the probe that must fail closed before the item is closed. Nothing in this list may be satisfied by a guarded path added beside an unguarded one (§14.4).
+
+1. **H-96.** Make re-key unconditional: any corporate-action row carrying `new_isin` re-keys the position (and the portfolio map), or the row is rejected at construction with a named error. *Probe:* the stranded-ISIN snippet in §62.3, asserting `get_position(old_isin) is None` and `get_position(new_isin).quantity == 50` for both `SPLIT` and `ISIN_TRANSITION`. *Serves:* Phase 3B-2b (corpus application), item 4.
+2. **H-97.** Round to the grid *then* clamp, and reject — never rewrite — when the band contradicts the bar. *Probe:* (a) randomized opens between grid points, asserting `low ≤ price ≤ high` and grid membership; (b) `open=99.99, high=100.02, band 1560/1040` must yield a `REJECTED_*` status and `executed_price is None`. *Serves:* Phase 3B-2b (every booked fill).
+3. **N-92 remainder.** Give the register a third state — a `NOT_SURVEILLED` interval class or `coverage_from`/`coverage_to` — so a name with verified "not under surveillance" evidence reports covered-and-clear instead of unknown. *Probe:* `has_surveillance_coverage('INE002A01018', d)` is `True`-with-NORMAL for a date inside a verified not-surveilled interval, `False` outside it, and `evaluate_surveillance_exit_constraints(require_coverage=True)` returns a non-empty verdict on an ordinary hold instead of raising. *Serves:* Phase 3B-2b (exit constraint), item 5.
+4. **§61.6.4 corporate-action corpus.** Deliver 2022-01-03…2024-12-31 actions, as specified in §62.7 (CA-1). *Probe:* ten sampled events, one per action type, applied mid-hold, equity continuous to the paisa; a name with no event distinguishable from a name with no row. *Serves:* Phase 3B-2b.
+5. **§61.6.5 surveillance corpus, or the explicit `NOT RUN` path.** Deliver sourced ASM/GSM/ESM intervals for the run window, **or** a driver-level `NOT RUN` marker that `evaluate_verdicts()` reads and propagates to the overall verdict (CA-2). *Probe:* with unverified surveillance, the report prints the constraint as `NOT RUN` and the verdict is `NO-GO` citing it; it is never a silently empty exit set. *Serves:* Phase 3B-2b gating honesty.
+6. **N-97.** Split tickets from fills in the summary. *Probe:* upper-freeze fixture → `tickets_filled == 0`, `tickets_rejected == 1`, `tickets_emitted == 1`. *Serves:* Phase 3B-2b reporting.
+7. **N-98.** Restore exact assertions at lines 533 and 700 and fix the split-test docstring. *Probe:* `pytest -q` green with a single-value assertion at each line; a deliberate one-paisa perturbation mutates the assertion and the test fails. *Serves:* §12.4.
+8. **R-90a (non-blocking).** Move `OrderSide` / `OrderProduct` / `OrderType` into `contracts` so no `contracts` module imports `execution`, then delete the PEP 562 shim. *Probe:* the eager-import attack in §62.3 exits 0. *Serves:* maintainability; do it in a commit of its own, not bundled with a defect fix.
+9. **Phase 3B-2b, only after 1–5.** As specified in §62.7.
+
+### 62.7 Phase 3B-2b: authorization boundary and exact corpus steps
+
+**What is authorized today, with no further verdict:** analyses over **2022-01-03 … 2024-12-31** only, on NSE `EQ` delivery swing, with every hypothesis and parameter combination pre-registered in `TrialRegistry` before any metric is read, and every resulting report computing its overall verdict through `evaluate_verdicts()`.
+
+**What is not authorized, and cannot be authorized by an agent:**
+- Any read, ingest, partition query or fold that touches **2025-01-01 … 2026-11-11**. The boundary is physical, not advisory: `SilverStorage.partition_exists(2025-01-01)` and `(2026-03-02)` raise `HoldoutPartitionIsolationError` (§62.1), and `check_partition_access(spec, HOLDOUT)` raises `HoldoutSealedError` without a human-created `HOLDOUT_UNLOCK`, which is absent. Raw Bronze archives under `data/raw/2025` and `data/raw/2026` are retrieval artifacts, not research partitions; they must never be promoted to Silver or Gold. No agent creates, mocks or bypasses `HOLDOUT_UNLOCK` (§8.1).
+- Any statement that a metric is a GO. While `CRIT-PROV-01` is `NOT RUN` (`CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED`), `evaluate_verdicts()` must return **`NO-GO`**, and that output is the *expected, correct* result of the phase — not a failure to be worked around, and not a reason to relax a criterion in `configs/go_no_go_criteria.yaml`.
+
+**CA-1 — corporate-action corpus (blocks every held-position metric).**
+Scope: every action with an ex-date in `2022-01-03 … 2024-12-31` for every ISIN appearing in `data/reference/cash_equity_symbol_intervals.csv` (4,510 ISINs / 7,430 symbol-interval rows) and observed trading in the 743 bhavcopy archives of 2022 (248) / 2023 (246) / 2024 (249).
+Rows: one per event, `{isin, symbol, ex_date, action_type ∈ {SPLIT, BONUS, CONSOLIDATION, DIVIDEND, RIGHTS, ISIN_TRANSITION}, ratio, dividend_per_share, new_isin, circular_ref, provenance}`. Dividends are mandatory — a table without dividend rows makes every held-position ledger wrong (§13.2). `ratio` must be the exact exchange ratio, never a derived price factor. A merger or delisting prunes the name on its exact effective date (§5.4).
+Provenance: `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` unless backed by an archived circular; every row keeps its `circular_ref` real or explicitly `UNATTESTED_…`. This is a *content* repair, not a *provenance* promotion: CA-1 does not move `CRIT-PROV-01`.
+*Accept:* ten sampled events, at least one per action type, applied to an open position with the quantity restated, cost basis preserved, equity continuous to the paisa, and no position left under a dead ISIN (H-96 fixed). A name with no event is distinguishable in the store from a name with no row.
+
+**CA-2 — surveillance (blocks the exit constraint, not entry).**
+Preferred: sourced ASM / GSM / ESM intervals per ISIN, effective-dated, for the run window, with the stage recorded so GSM Stage 2+ weekly trading and 100% margin are modelled rather than assumed (§5.2). If sourcing is not possible offline, the acceptable fallback is explicit: `evaluate_surveillance_exit_constraints` reports `NOT RUN` for the window, the report prints it as `NOT RUN` (§9.3), and `evaluate_verdicts()` reads it and keeps the overall verdict at `NO-GO`. What is not acceptable is the current state, where the constraint either raises on an ordinary hold or is disabled by `require_coverage=False` while the report says nothing.
+
+**CA-3 — price bands for the run window.**
+`build_production_security_master()` currently yields `price_bands = 0` over 4,244 ISINs, so every candidate in a corpus run is `skipped_missing_band` (now counted, item 6). Deliver the band publications for the run window, or the run honestly reports zero fills. H-97 must be closed first, because the inconsistent-band path is the one that fabricates a fill.
+*Accept:* a 2024 fixture scrip with real bands executes with `skipped_missing_band == 0`; the phantom 20% / 802.80 / 535.20 band on 2024-01-10 (§38.2) is rejected, not traded.
+
+**Run protocol.**
+- Window: in-sample `2022-01-03 … 2023-12-31`; validation `2024-01-01 … 2024-12-31`; holdout refused by the partition spec.
+- Signals at session-`T` close, earliest fill at `T+1` open; no same-session fill (§7.1).
+- Costs through the committed statutory schedule, per completed round trip, never flat and never zero (§7.2).
+- Every trial logged with rationale *before* its metric is read; the best result is never reported without the total trial count `N`; DSR / Haircut Sharpe computed with `N` (§8.2).
+- Verdict through `evaluate_verdicts()`; expected output for this phase: **`NO-GO`**, with `CRIT-PROV-01` `NOT RUN` named as the reason.
+
+### 62.8 Probe hygiene
+
+All probes ran as inline snippets against `e66f2aa` in the repository interpreter, except two that required a mutated tree, which ran against a scratch copy (`.tmp_s62/src`) and a scratch worktree at `b4a3baf` (`.tmp_wt`); both were deleted, and the auditor left no file in the tree except this section. `git status --porcelain` is empty apart from this report.
+
+**Not measured, and therefore not claimed:** no 2022–2024 corpus run was executed (CA-1/CA-2/CA-3 are absent by design); no claim is made about the correctness of any strategy edge; the surveillance exit constraint was exercised only on synthetic intervals; H-96 was measured on the portfolio API, not through a full session driver.
