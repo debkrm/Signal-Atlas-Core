@@ -4805,3 +4805,145 @@ What would falsify this verdict: a regenerated report containing a `PASS` whose 
    - **Universe layer** — the point-in-time membership interval table described above; until it exists, the universe is the traded `EQ` set and every artefact says so. *Accept:* as-of `T` selection returns the members effective `[from, to)` at `T`, and a security added in 2025 is absent from a 2023 cross-section.
    - **Daily T+1 order generation** — signals at `T` close, orders filled at `T+1` open through the existing simulator, one authoritative cost schedule (§7.2). *Accept:* the same no-lookahead falsifier already used at Wave 3 — a `T`-close fill attempt raises, and a `T+1` open fill on a band-limited session is rejected at the upper circuit.
 6. **Do not compute a strategy `GO` this wave.** With `CRIT-PROV-01` `NOT RUN`, the verdict engine will hold `NO-GO`, which is the correct answer, and it is the answer Phase 3 must be built to display rather than to avoid.
+### 57.1 Baseline at `98c6f4c` (tag `feat-s56-98c6f4c`)
+
+Measured on this checkout:
+
+- `python -m pytest -q` → `320 passed in 20.42s`, exit 0 (310 → 320: the ten new Phase 3A tests).
+- All nine `scripts/verify_*.py` exit 0. `verify_audit_append_only.py` exit 0 after §56 was appended (re-run below).
+- `configs/go_no_go_criteria.yaml` is untouched by this commit; the criteria and calendar pins are unchanged. The Tier-A report artifacts changed only in the evidence strings and still read **3 PASS / 0 FAIL / 20 NOT RUN**, `NO-GO`, window `2022-01-03..2026-10-30`.
+- No `data/` file changed. `data/reference/cash_equity_symbol_intervals.csv` was last touched at `95f4af2` and is manifest-registered (`active`, 4,510 records, `scripts/derive_cash_universe_intervals.py`).
+- Ten files, +957/−41: two new modules, one new test file, gate/test/evidence edits, both verdict artifacts, and `CURRENT_STAGE_OF_WORK.md`.
+
+### 57.2 What Phase 3A got right, measured
+
+I tested the interval machinery against the real table rather than reading it:
+
+```
+load_cash_equity_symbol_intervals() -> 4510 intervals, 4244 distinct ISINs
+overlapping [from,to) pairs for any ISIN -> 0            (table is genuinely interval-keyed)
+3IINFO-RE (INE748C20012) BE [2025-10-07,2025-10-21) on 2025-10-08 -> in EQ set: False
+4THDIM    (INE382T01030) BE [2023-01-23,2023-07-31) on 2023-01-24 -> in EQ set: False
+```
+
+Half-open semantics are correct (`is_active` tests `as_of >= effective_to`), identity is ISIN, and a `BE` name is excluded from the `EQ` set on exactly its `BE` dates while its `EQ` history stays intact — §6.2's continuity/eligibility split, done properly. The `NIFTY` label refusal is real and is the right response to §56.5 precondition 2: the module refuses to fake a membership history rather than back-filling today's list. 1,894 of 3,634 `EQ` rows carry `effective_from = 2022-01-03` — honest left-censoring at the dataset start, not a fabricated listing date.
+
+The sizer is Decimal-pure and rejects `float`, `bool` and `str` inputs (`PositionSizingValidationError` measured on `1.0` and `"100"`), and the two §56.6 acceptance probes hold: a higher-ATR name gets a smaller quantity for equal risk, and the weight cap binds before the risk budget.
+
+The N-66 / N-67 / N-68 dispositions are mostly real: the report counts are printed rather than pinned, the PASS set is derived (with a fourth-PASS acceptance probe), `assert report.evaluations` replaced the `== 23` literal, and four of the five new evidence pointers name a file that does test the property. One does not — N-70.
+
+### 57.3 Defects in the delivered modules
+
+All measured with live probes against the committed code.
+
+**H-77 — the sizer reports a stop price and a risk amount that disagree, and can place the stop above the entry.**
+
+```
+entry=0.10  atr=0.50  k=2  equity=10000  risk=1%
+  stop_loss_price = 0.05   (floored at the tick)
+  stop_distance   = 1.00   (k*ATR, computed before the floor)
+  quantity        = 10000
+  risk_amount     = 10000.00
+  actual loss if the reported stop is hit = 10000 * (0.10 - 0.05) = 500.00
+  ratio risk_amount / actual loss = 20
+```
+
+The stop price is floored but the distance is not re-derived from it, so `risk_amount` and `stop_loss_price` describe loss magnitudes 20× apart. Whichever number a later report cites, one of the two in the same immutable result object is wrong. The same floor is unvalidated against the entry:
+
+```
+entry=0.03  atr=0.01  k=2  ->  stop_loss_price = 0.05, stop_above_entry = True
+entry=0.05  atr=0.01  k=2  ->  stop_loss_price = 0.05, quantity = 50000, risk = 0
+```
+
+A long with its stop above its entry, and a 50,000-share position with zero risk, both accepted. `stop_distance` must be `entry - stop_price` *after* the floor, and an entry `<= minimum tick + tick` must fail closed.
+
+**H-78 — the liquidity filter is silently skipped on the first session, so the first cross-section is the whole exchange.**
+
+```
+sessions = [2024-01-02, 01-03, 01-04], min median turnover 5 crore, top_liquid_k=2
+  2024-01-02: 2172 members   (no prior session -> filter bypassed, entire active EQ set)
+  2024-01-03:    2 members
+  2024-01-04:    2 members
+```
+
+`if prior_sessions:` guards the filter, so a session with no lookback window is emitted unfiltered rather than excluded. A walk-forward whose first fold starts at the first session would trade 2,172 names in one rebalance, each sized at 10% of equity. This is fail-open on the one input the phase exists to constrain.
+
+**H-79 — the lookback is measured in caller-supplied list entries, not trading sessions, and nothing validates the session list.**
+
+```
+5-element session list spanning 729 days, turnover_lookback_sessions=20
+  -> prior window used: 4 entries spanning 729 days
+2024-01-06 (Saturday) accepted as a session -> schedule built, 2172 members
+```
+
+`prior_sessions = sorted_sessions[start_idx:cur_idx]` slices whatever sequence the caller passed. Pass quarterly rebalance dates and "20 sessions" silently becomes five years of median turnover; pass a sparse or gappy list and the median is computed across an interval the §6.3 rules say a feature engine must not bridge. `configs/trading_calendar_nse.json` is never consulted, so a non-session is accepted as a session key. The window must be derived from the authoritative calendar, and sessions absent from it must be rejected.
+
+**H-80 — the sizer ignores the committed criteria, and its defaults contradict the committed participation cap.**
+
+`configs/go_no_go_criteria.yaml` commits `max_single_position_weight: "0.10"` and `max_volume_participation_cap: "0.03"`. The module hardcodes `Decimal("0.10")` as a default and leaves `max_volume_participation=None`:
+
+```
+equity=1000000, entry=100, atr=2, no session_volume passed
+  -> quantity=1000, position_value=100000, binding=MAX_POSITION_WEIGHT, no volume cap applied
+```
+
+Called with defaults, the delivered sizer imposes no participation bound at all, while the criteria commit one at 3%. This is the defect class `strategy/base.py` already fixed under §31/H-32 by deriving its default from `load_go_no_go_criteria()`; the new module reintroduces a threshold literal beside a committed one. Either the cap is required from criteria or the function refuses to size without a volume input.
+
+### 57.4 N-63 remainder, and three new minors
+
+**N-69 — N-63 is not closed.** I ran the new gate logic verbatim over ten bypass shapes:
+
+```
+direct dict literal              CAUGHT      Decimal(str) literal            CAUGHT
+module-level constant            CAUGHT      setdefault literal              CAUGHT
+AugAssign dict merge             CAUGHT      (helper: any dict value literal is walked)
+LOCAL variable indirection       MISSED      k = True; b["k"] = k
+LOCAL var -> Decimal(...)        MISSED      k = "1.6850"; b["k"] = Decimal(k)
+helper call literal              MISSED      b["k"] = flag(True)
+AnnAssign module constant        MISSED      K: bool = True
+tuple-unpack module constant     MISSED      K, J = True, 1
+```
+
+4 of my 6 §56.3 cases are now caught, so the item's stated acceptance half-holds; but the most natural reintroduction — assign to a local, then to the bundle — passes. The eight known keys remain protected by the test's explicit absence list, so nothing false ships today; the guard is still narrower than the class it names. §56.6 asked for a class-complete check; the durable answer is not more AST patterns but a runtime assertion over the emitted dict (`no value is bool/int/float`) combined with the syntactic `Decimal("…")`-construction check, and an explicit statement that string laundering is caught by review rather than by the gate.
+
+**N-70 — one new evidence pointer names files that do not prove the property.** The `fail_closed_on_unexplained_gaps` evidence now reads "proven by `scripts/verify_cash_universe_coverage.py` and `tests/unit/test_calendar_reconciliation.py`". Neither file contains such an assertion (`grep -c gap` → 1 and 2 incidental mentions, no test). The property *is* proven, in `tests/unit/test_storage.py:213` (`NonContiguousDatasetError … has unexplained missing record on session`), `tests/unit/test_bhavcopy_reconciliation.py:384` (subsegments split around a missing session) and Gate G2B.5-4 of `scripts/verify_phase2b5_storage.py` — which the other evidence strings cite correctly. Separately, the `statutory_costs_enforced` pointer proves the cost *calculator* but omits `tests/unit/test_portfolio.py:314`, the test that proves the charges reach a trade's net PnL. Status is correct (`NOT RUN`); the citation is not.
+
+**N-71 — a missing turnover record is silently ranked as `Decimal("0.0")`.** `daily_turnover_inr.get((prior_s, isin), Decimal("0.0"))` cannot distinguish "traded nothing that day" from "no record". Measured: a name absent from the map for every lookback session scores a median of 0 and drops out of a 5-crore universe; with `top_liquid_k=5` the ranking among zeros is decided by ISIN order. A data gap therefore silently reshapes the universe. §6.3's prohibition on fabricating zeros applies to prices; the same reasoning applies to a liquidity score that decides eligibility. Missing records should exclude the name with a named reason, not synthesize a zero.
+
+**N-72 — the index guard checks a label, not data.** `requested_index_name=None` (the default) and `"CNX 500"` are accepted; only strings containing `NIFTY` are refused. The module never loads index data, so nothing false can be selected — the guard is a deliberate tripwire rather than a control. Worth one line in the docstring so a future caller does not read it as authorization.
+
+**N-73 — housekeeping.** `ExchangeSeries` and `Iterable` are imported and unused; the `final_binding` ternary has an unreachable `min_qty > 0` branch given the default `min_trade_quantity=1`.
+
+### 57.5 Two status claims in `CURRENT_STAGE_OF_WORK.md`
+
+Both are measurement claims, not sign-offs, and both are wrong as written (§9.1).
+
+**N-74** — "Strictly bounded by `criteria.max_single_position_weight` (10%), settled cash with statutory cost buffer, and session volume participation cap (2.5% to 5.0% per AGENTS.md §7.3)". Measured: the module never reads the criteria file, and the participation cap is absent by default (H-80). The sentence describes the intended design, not the delivered code, and it is the sentence a reviewer would use to decide whether §7.3 was met.
+
+**N-75** — "N-63 remainder, N-66, N-67, N-68 closed in `feat-s56`". N-63 is not closed (N-69) and N-67 is only partly closed (N-70), and in any case "closed" is a word §11.3 reserves for a cited audit verdict; §56.5 wrote that these items *must be* closed in this commit, which is an obligation, not a finding. The honest form is "implemented; verdict pending §57", as the same document correctly did for the Tier-A report at `0be0da3`.
+
+### 57.6 Verdict
+
+**Wave 3 — GO stands, unchanged.** No execution, cost, portfolio-ledger or calendar file is modified; the Tier-A report still evaluates to the same computed `3 PASS / 0 FAIL / 20 NOT RUN`.
+
+**Phase 2D phase — GO stands, unchanged** (§56.5). Nothing in this commit moves the report's substance.
+
+**Phase 3A — NO-GO.** Not because the acceptance probes I named in §56.6 failed — the ATR monotonicity and weight-cap probes pass, and the interval table is well-formed on every measurement I could make. It is because the two modules fail open on the inputs that decide what may be traded: a first session emitting 2,172 unfiltered names (H-78), a lookback measured in caller list entries and a Saturday accepted as a session (H-79), and a sizer that imposes no participation bound unless asked and contradicts the committed 3% cap when called with defaults (H-80). Those are the §6.1/§6.3/§7.3 failure modes this phase exists to remove, and a Phase 3B walk-forward built on them would produce a first fold that trades the entire exchange at 10% weight each — a result no later gate could repair.
+
+The defects are small and bounded: four items, none requiring a design change. Phase 3B should follow them rather than run beside them, because its first fold consumes this universe.
+
+What would falsify this verdict and let Phase 3A close: every one of the following, measured — a session with no lookback window either raises or is excluded rather than emitted unfiltered; a session absent from `configs/trading_calendar_nse.json` is rejected and the lookback is counted in calendar sessions; `stop_distance == entry - stop_loss_price` for the floored case and an entry at or below the tick fails closed; and a default call either reads `max_single_position_weight` and `max_volume_participation_cap` from `load_go_no_go_criteria()` or refuses to size without a session volume. Phase 3B's own results would falsify the concern directly if the first fold's cross-section were plausible — but that is the thing under test, not evidence for it.
+
+### 57.7 Work order
+
+1. **H-77.** Floor the stop price first, then set `stop_distance = entry - stop_loss_price` and derive quantity from it; raise when `entry - stop_loss_price` is not strictly positive. *Accept:* the 0.10/0.50/2 case reports `risk_amount == 500.00` matching the reported stop, and `entry=0.03` raises.
+2. **H-80.** Require `max_single_position_weight` and `max_volume_participation_cap` from `load_go_no_go_criteria()` as defaults (no literals), and require `session_volume` whenever a cap is in force. *Accept:* a default call is bounded by 0.10 and 0.03 and reports `VOLUME_PARTICIPATION` when volume binds; a call without `session_volume` raises rather than sizing unbounded.
+3. **H-78 / H-79.** Derive the lookback window from the authoritative calendar, not from the caller's list; reject sessions absent from the calendar; raise when no lookback window exists instead of emitting an unfiltered session. *Accept:* the three-session probe returns 2 members on all three sessions or raises on the first; a Saturday raises; a sparse 5-date list spanning 729 days yields a 20-calendar-session window or an explicit refusal.
+4. **N-71.** Distinguish a missing turnover record from a zero, and exclude the name with a named reason. *Accept:* a name with no records is absent from the schedule and the reason is recorded, not silently ranked at 0.
+5. **N-69 / N-70 / N-73.** Add the runtime no-bool/int/float assertion over the emitted bundle beside the AST check; repoint the `fail_closed_on_unexplained_gaps` evidence at `test_storage.py` / `test_bhavcopy_reconciliation.py` / Gate G2B.5-4 and add `test_portfolio.py` to the costs pointer; drop the unused imports and the dead branch. *Accept:* a bundle literal assigned through a local variable fails the gate; every evidence string names a file that contains the assertion.
+6. **N-74 / N-75.** Restate the two status claims as measurement: what the sizer is bounded by today, and "implemented; verdict pending §57".
+7. **Then open Phase 3B**, in this order, all inside the single engine (§7.4, §13.5):
+   - **Wire the sizer.** `OrderIntent` carries `target_weight`, not a share count; until the sizer's `position_weight` feeds that field (or `OrderIntent` gains a typed quantity), no strategy may claim ATR R-multiple sizing. *Accept:* a strategy test where a higher-ATR name receives a smaller `target_weight` than a lower-ATR name at equal equity.
+   - **Daily T+1 order runner.** Signals at `T` close, fills at `T+1` open through `ExecutionFillSimulator` and the one cost model. *Accept:* a `T`-close fill raises; a `T+1` fill on a session at its upper band is rejected (§5.3).
+   - **Hypothesis-driven EQ swing strategies** evaluated walk-forward on 2022–2024 with 2025–2026 sealed by the existing containment. *Accept:* a run whose fold touches a sealed date fails closed, and every parameter touched is written to `TrialRegistry` before the metric is read.
+   - **Report `NO-GO`.** `CRIT-PROV-01` remains `NOT RUN`; a strategy wave that claims `GO` from this data is wrong by construction, and the verdict engine will say so.
