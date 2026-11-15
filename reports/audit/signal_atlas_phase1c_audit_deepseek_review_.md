@@ -5827,3 +5827,217 @@ Preferred: sourced ASM / GSM / ESM intervals per ISIN, effective-dated, for the 
 All probes ran as inline snippets against `e66f2aa` in the repository interpreter, except two that required a mutated tree, which ran against a scratch copy (`.tmp_s62/src`) and a scratch worktree at `b4a3baf` (`.tmp_wt`); both were deleted, and the auditor left no file in the tree except this section. `git status --porcelain` is empty apart from this report.
 
 **Not measured, and therefore not claimed:** no 2022–2024 corpus run was executed (CA-1/CA-2/CA-3 are absent by design); no claim is made about the correctness of any strategy edge; the surveillance exit constraint was exercised only on synthetic intervals; H-96 was measured on the portfolio API, not through a full session driver.
+---
+
+## §63 — Commit `396f825` (tag `feat-s62-396f825`): §62 work-order remediation
+
+**Reviewer:** external auditor (independent of the implementer).
+**Commit under review:** `396f825`, tag `feat-s62-396f825`, one commit after `605ed7c` (§62).
+**Scope audited:** the eight §62.6 work-order items — H-96, H-97, N-92 (remainder), CA-1, CA-2, N-97, N-98, R-90a — plus the §62.8/§62.7 conditions for authorizing Phase 3B-2b.
+
+### 63.1 Baseline, re-measured at `396f825` before any finding was tested
+
+| Probe | Command | Result |
+|---|---|---|
+| Tree state | `git status --porcelain` | empty before and after probing (§63.8) |
+| HEAD / tag | `git log -1`, `git tag --points-at HEAD` | `396f825`, `feat-s62-396f825` |
+| Commit size | `git diff --stat 605ed7c..396f825` | **20 files, +1236 / −245** (new `contracts/order_types.py` +152, new `tests/unit/test_phase3b2_audit_s62_items.py` +750) |
+| Audit report untouched by implementer | `git diff --name-only 605ed7c..396f825` | no `reports/audit/*` |
+| Full suite | `python -m pytest -q` | **370 passed, exit 0**, ~44 s (+11 tests over `e66f2aa`'s 359) |
+| Skips / xfails | `python -m pytest -q -rs` | **zero** |
+| Gate scripts | nine `scripts/verify_*.py` | **all exit 0**, including `verify_audit_append_only.py` and `verify_phase2d_verdicts.py` |
+| Criteria pin | compute `sha256(data/reference/manifest.jsonl)` and compare to the pinned value | **match**: `MAN-FPR-V1-bc99ab5d…` for 35,690 bytes, derived from content, not typed |
+| Criteria thresholds | `git diff 605ed7c..396f825 -- configs/go_no_go_criteria.yaml` | **only the manifest pin changed**; no threshold, no comparator, zero post-hoc tuning |
+| Tier-A report | `reports/verdicts/phase2d_tier_a_2022_2026_verdict.{md,json}` | counts unchanged (`PASS=3 / FAIL=0 / NOT RUN=20`), `overall_verdict = NO-GO`; only the criteria fingerprint line moved, because the manifest content grew |
+| Holdout | `SilverStorage.partition_exists(2025-01-01)`, `check_partition_access(spec, HOLDOUT)` | still physically sealed; `HOLDOUT_UNLOCK` absent; no `research/` or `storage/silver.py` file is touched by this commit |
+
+The gate is genuinely green: +11 tests, no `skip`/`xfail`, no `pytest.ini` exclusion, no coverage threshold introduced, and the audit report is byte-unchanged by the implementer's commit. The criteria-pin update is legitimate work, not a goalpost move: the pin is a content hash of the manifest, the manifest legitimately grew when the corporate-action table grew, and I reproduced the new hash from the file rather than reading the claim. Nothing that was `PASS` became `FAIL` or the reverse.
+
+### 63.2 Status of each §62.6 item, by measurement
+
+**Item 1 — H-96 (unconditional re-key). `CLOSED`.**
+Reproduced the exact acceptance clause: `SPLIT` row carrying `new_isin="INE704P01025"` on a held 25-share position at ₹1,605.60 →
+
+```
+old key (INE704P01017)  -> None
+new key (INE704P01025)  -> quantity 50, total_cost_basis 40,140.00
+```
+
+The old key is gone, the new key holds the restated quantity with the cost basis preserved, and `CorporateAction.__post_init__` now rejects `new_isin == isin`. On the committed corpus the TATASTEEL 10:1 split with a new ISIN re-keys (`INE081A01012` → `INE081A01020`, qty 10 → 100) and NESTLE's 10:1 split without one does not. The §60.3/§62.3 stranded-ISIN defect is closed for the restatement branch. What the item did *not* touch — merger consideration — is H-98.
+
+**Item 2 — H-97 (round then clamp, refuse contradictions). `CLOSED` on the fabrication limb; residual R-97 (§63.3).**
+Limb (b) is properly closed. Measured against live simulator calls:
+
+```
+open 99.99 high 100.02 low 99.50  band 1560/1040  -> REJECTED_PRICE_LIMIT, executed_price=None
+open 100.00 high 101.00 low 99.00 band 802.80/535.20 -> REJECTED_PRICE_LIMIT, executed_price=None
+```
+
+The ₹1,040-for-a-₹100-bar fabrication is gone: a contradictory band/bar pair now produces a named rejection with no fill, which is what §5.3/§6.3 require. Limb (a) is closed for the case that was measured in §62: no fill lands above the session high or below the session low (BUY at `open 100.03/high 100.03` now fills at `100.03`, inside range; SELL at `open 100.00/low 99.97` fills at `99.97`, inside range). The grid half of the acceptance is met for on-grid bars and fails only where the clamp binds to an off-grid boundary — R-97.
+
+**Item 3 — N-92 remainder (three-state coverage). `PARTIAL`.**
+Delivered and measured: `SurveillanceStage.NORMAL` exists; an explicit NORMAL interval makes `has_surveillance_coverage(ISIN, date) = True`; with the held name registered and NORMAL-dated, `evaluate_surveillance_exit_constraints(require_coverage=True)` returns a `SurveillanceExitResult` with `status="RUN"`, `coverage_complete=True`, zero exit candidates — the ordinary hold no longer raises. Genuine closure of the stated failure.
+Not delivered: the run-level gate is still a **universe-wide count**, not a statement about the held names. Four constructions measured:
+
+| configuration | result |
+|---|---|
+| A. held name has an explicit NORMAL interval; master registers no symbol intervals | `SecurityMasterError: Authoritative surveillance coverage is 0 across registered universe as-of 2022-06-01` — **raises although the held name is covered** |
+| B. held name NORMAL and registered | `RUN`, `coverage_complete=True`, 0 exits ✔ |
+| C. held name uncovered, a *different* registered name covered | per-ISIN guard fires: `Held security INE002A01018 has no authoritative surveillance coverage` ✔ (fail-closed preserved) |
+| D. production master (4,244 registered, coverage 0) | raises ✔ (fail-closed) |
+
+So the per-ISIN guard is intact, but (i) a master built per-ISIN — the natural form for a corpus run — cannot evaluate even when the held name is covered, and (ii) `coverage_complete=True` is a whole-universe claim derived from one covered name.
+
+**Item 4 — CA-1 (corporate-action corpus). `PARTIAL` — representative fixture delivered, corpus not.**
+`data/reference/corporate_actions.jsonl` grew from 6 to **21 rows over 12 ISINs**, all seven action types present, every `circular_ref` still `UNATTESTED_…`, every row `CONTENT_IDENTIFIED_ONLY`. The §62.7 CA-1 scope was the actions with ex-dates in 2022-01-03…2024-12-31 for the traded universe: **4,510 ISINs / 7,430 symbol-interval rows / 743 bhavcopy archives**. 21 rows over 12 ISINs is a fixture, not that corpus, and the CSOW phrasing "Corporate Actions Corpus Covering All Action Types" renames scope rather than meeting it.
+Two of the 21 rows are also economically wrong when applied, measured end-to-end through `Portfolio.apply_corporate_action` (H-98, H-99 below), and nothing in the execution path applies any of them (H-100). The `require_registration` mechanism added to `get_corporate_actions` distinguishes *registered in the symbol master* from *unknown ISIN*; it cannot detect a missing event row for a registered name, which is the failure §13.2 is about.
+
+**Item 5 — CA-2 (explicit NOT RUN path into the verdict). `NOT DELIVERED`.**
+`evaluate_verdicts()` gained a `CRIT-SURV-01` branch reading `surveillance_constraint_status` / `surveillance_exit_constraints_enforced` from the results bundle. Measured: **no production module writes either key** — `grep` finds them only in `reporting/verdicts.py` (the reader) and in one test that hand-builds the bundle. `SurveillanceExitResult` and `DailyTPlus1OrderRunner.last_surveillance_result` are likewise read by nothing in `src/`. The chain is therefore open at both ends: the runner classifies a status that nobody consumes, and the verdict reads a key that nobody produces. The acceptance clause — "with unverified surveillance, the report prints the constraint as `NOT RUN` and the verdict is `NO-GO` citing it" — is satisfied only by a test that constructs the bundle itself; a real run cannot reach it.
+
+**Item 6 — N-97 (tickets vs fills). `CLOSED` at the producer; the test that claims to prove it is a tautology (N-99).**
+Measured through the real producer, `execute_swing_strategy_session`, on an upper-freeze T+1 bar:
+
+```
+emitted=1  filled=0  rejected=1  executed=0  no_trade=0  ticket.status=REJECTED_UPPER_CIRCUIT
+```
+
+The counters are correct. The committed test does not establish this: `test_n97_summary_ticket_counts_separation_on_circuit_freeze` constructs `SwingSessionExecutionSummary(tickets_filled=0, tickets_rejected=1, …)` by hand and then asserts the values it just passed in. It would pass with the production counting logic deleted. Also note `tickets_executed` was silently re-pointed at `tickets_filled` — a semantic change to an existing field, caught only by one updated assertion in `test_phase3b1`.
+
+**Item 7 — N-98 (restore exact assertions). `CLOSED`.**
+`assert ticket.realised_risk == Decimal("15045.00")` and `assert pos.total_cost_basis == Decimal("50040.00")`, single values, matching the measured actuals; the split-test docstring now reads ₹9,99,876.81, which is what the test asserts. No disjunctive tolerance remains in either file.
+
+**Item 8 — R-90a (clean layering, eager exports). `CLOSED`.**
+`src/signal_core/contracts/order_types.py` holds the order/fill types; `contracts` imports nothing from `execution` (verified by reading both modules). Nine fresh-interpreter first imports — `strategy.swing`, `strategy.base`, `strategy`, `execution`, `execution.order_runner`, `portfolio.portfolio`, `contracts.order_intent`, `contracts.order_types`, `execution.types` — all exit 0, the PEP 562 shim is gone (`def __getattr__` absent from `execution/__init__.py`), and the eager-import attack that failed in §62.3 now passes. One cost of the move is recorded as N-100.
+### 63.3 New findings
+
+**H-98 (HIGH) — merger and delisting consideration is not modelled; a held position either loses its value outright or keeps it at the wrong share count.**
+Both limbs measured through the committed corpus rows and the public portfolio API.
+
+*Deletion limb* — a `DELISTING` row without `new_isin` removes the position from the map and posts nothing:
+
+```
+held INE001A01036: 10 shares @ 2,800.00, cost basis 28,043.02
+apply DELISTING (no new_isin) -> ledger_entry = None
+equity 999,943.02 -> 971,943.02   (drop 28,000.00, exactly the market value)
+open positions 0    realised PnL: no entry recorded
+```
+
+No cash, no realised PnL, no suspension flag: ₹28,000 of equity evaporates between two valuations. That is fabricated PnL in the authoritative ledger (§6.4) and a silent value loss on a hold (§13.2, §5.4).
+
+*Re-key limb* — the committed HDFC row (`DELISTING`, `ratio 1:1`, `new_isin=INE040A01034`) is applied as a pure identity change:
+
+```
+held INE001A01036: 25 shares, basis 70,000.00
+apply DELISTING -> qty 25, key INE040A01034, basis 70,000.00
+true consideration: 42 HDFCBANK per 25 HDFC
+```
+
+25 shares of HDFC became 25 shares of HDFC Bank. The real merger gave 42 shares — a 68% under-credit — so the position's market value and every subsequent PnL number are wrong. The CA-1 test asserts only that the new key exists (`assert port_delist.get_position("INE040A01034") is not None`) with no quantity or value assertion, which is why the fabricated number passes CI. §62.7 CA-1 said delistings and mergers prune "on their exact effective date" with the event modelled; a merger modelled at parity is worse than a prune, because it looks like an applied adjustment.
+*Accept:* a merger row carries explicit consideration (ratio of shares, cash component, or settlement price), and applying it to 25 HDFC shares yields 42 HDFCBANK shares with basis preserved (or a cash-in-lieu entry for the 0.6 residual); a delisting without consideration books proceeds or a realisation at the delisting price and leaves equity unchanged at that price. Probe that must fail closed: the two snippets above, asserting `equity_after == equity_before` (delisting) and `quantity == 42` (merger), both with exact Decimals.
+
+**H-99 (HIGH) — non-terminating ratios fail valid restatements, and a `RIGHTS` row is applied as a free bonus.**
+The restatement multiplier is computed as `Decimal(num) / Decimal(den)` and multiplied, so any ratio whose denominator has a prime factor other than 2 or 5 produces a repeating 28-digit expansion and trips the N-87 non-integral guard even when the holding is exactly entitled:
+
+```
+held BHARTIARTL 14 shares, corpus row RIGHTS 15:14 (ex 2022-08-01)
+-> CorporateActionError: Non-integral restatement ... 14 shares × 15/14 = 14.99999999999999999999999999
+```
+
+Mathematically 14 × 15/14 = 15 exactly. A held BHARTIARTL on 2022-08-01 therefore aborts the session — in a corpus run, the run — and every 7-denominator or third-denominator ratio in a future corpus row does the same.
+The second limb is semantic: `RIGHTS` was added to the restatement branch, so a rights entitlement is booked as free shares. Rights give an existing holder the *right to subscribe* at a fixed price; the quantity must not increase without the subscription cash leaving the ledger. The row itself encodes `15:14`, a price-adjustment factor, which is exactly the encoding §62.7 CA-1 forbade ("the exact exchange ratio, never a derived price factor"). The CA-1 test docstring asserts "RIGHTS (BHARTIARTL 15:14): shares restated, cost basis preserved" and no assertion of the kind exists in the file.
+*Accept:* (a) restatement uses exact integer arithmetic — `qty * num % den == 0`, else fail closed — and 14 × 15/14 = 15; (b) a `RIGHTS` action does not change quantity, or does so only against a recorded subscription payment; (c) the corpus encodes rights as an entitlement with strike price, or as a conversion row, not as a share factor; (d) the test asserts both, and the docstring matches.
+
+**H-100 (MEDIUM) — nothing in the execution path applies corporate actions.**
+`Portfolio.apply_corporate_actions_for_session` has **no caller** in `src/` or `scripts/` (grep, excluding its own definition). The swing harness and the daily runner never invoke it, and no driver step applies actions by ex-date. A 2022-2024 corpus run therefore holds through every split and ex-dividend date without restating a share count or crediting a rupee — precisely the §13.2 failure the CA-1 corpus was commissioned to prevent. The corpus is currently both unreachable and, where reachable, wrong (H-98, H-99).
+*Accept:* the session driver used by a walk-forward applies `apply_corporate_actions_for_session(session_date, actions)` before pricing the session, and a full-session test shows a held name's dividend reaching `CashLedger` and a split restating quantity, with equity continuous across the ex-date.
+
+**H-101 (HIGH) — the surveillance NOT RUN verdict path is unread and unwritten.**
+Measured: `surveillance_exit_constraints_enforced`, `surveillance_constraint_status` and `surveillance_not_run_reason` appear only in the reader (`reporting/verdicts.py`) and in one test that builds the bundle by hand. `SurveillanceExitResult` and `last_surveillance_result` have no consumer in `src/`. So `CRIT-SURV-01` is unreachable from any real run, and the section of §62.6 item 5 that mattered — the constraint appearing in the verdict as `NOT RUN` rather than silently absent — is not implemented. This is the §14.4 additive-fix pattern in its exact form: a criterion added beside the pipeline rather than inside it.
+*Accept:* the runner (or the driver that calls `evaluate_surveillance_exit_constraints`) writes the surveillance status into the results bundle it hands to `evaluate_verdicts()`, and a corpus-style run without verified intervals prints `CRIT-SURV-01 NOT RUN` and returns `NO-GO` citing it — demonstrated by running the driver, not by constructing a dict in a test.
+
+**N-99 (MINOR) — a test that proves nothing, and a docstring that claims an absent assertion.**
+`test_n97_summary_ticket_counts_separation_on_circuit_freeze` assembles `SwingSessionExecutionSummary(...)` with the expected counts and asserts those same counts; it never calls `execute_swing_strategy_session`. Likewise the CA-1 docstring line for RIGHTS has no assertion behind it. Both are §9.1/§12.4 issues: the report may not cite a test as proof of a behaviour the test does not exercise. (The N-97 *behaviour* is correct — measured at the producer, §63.2 item 6 — so the remedy is to make the test drive the producer.)
+
+**N-100 (MINOR) — order contract typing loosened in the R-90a extraction.**
+`contracts/order_types.py` declares `slippage: Optional[Any]` and `costs: Optional[Any]` (previously `Optional[SlippageResult]` / `Optional[TransactionCostBreakdown]`). Runtime still rejects a fill without a cost breakdown, so no invariant is lost at the ledger, but the structural guarantee that a posted fill carries the statutory schedule (§7.2) is now enforced only dynamically, and a caller can pass any object whose blank fields happen to satisfy the ledger. Use `Protocol`s or a `TYPE_CHECKING` import to keep contracts stdlib-pure without erasing the type.
+
+**R-97 (RESIDUAL) — the clamp can still land off the tick grid when the bar boundary is off-grid.**
+The fix quantizes first and clamps second, so a clamp to a boundary that is not a multiple of ₹0.05 yields an off-grid fill:
+
+```
+BUY  open 100.03 high 100.03 low 99.50   -> FILLED 100.03  (on_grid=False)
+BUY  open 100.04 high 100.04 low 99.50   -> FILLED 100.04  (on_grid=False)
+SELL open 100.00 high 100.50 low 99.97   -> FILLED  99.97  (on_grid=False)
+```
+
+NSE bhavcopy prices are multiples of ₹0.05, so this is unreachable on real bars — it is reachable with a synthetic bar, or below ₹1.00 where the grid is ₹0.01. Rounding toward the interior (floor for BUY, ceil for SELL) satisfies both invariants unconditionally. Not a blocker; recorded so the next engine change does not reintroduce it.
+
+**Observation on `CURRENT_STAGE_OF_WORK.md` (not edited; §11.3/§14.6).**
+Two claims in the implementer's notes are broader than the measurement: "`evaluate_surveillance_exit_constraints(..., require_coverage=True)` returns a `SurveillanceExitResult` on an ordinary hold rather than raising" is true only when the master registers a covered name (configuration A raises, §63.2 item 3), and "Finding CA-1 (Corporate Actions Corpus…)" names a 21-row fixture as a corpus. Both should be reworded to what was measured; the implementer owns that edit.
+
+### 63.4 Verdict
+
+| Phase | §62 verdict | Verdict at `396f825` | Basis |
+|---|---|---|---|
+| Phase 2D Tier-A gating | NO-GO | **NO-GO** (unchanged) | report counts unchanged `3 / 0 / 20`; criteria pin recomputed and correct; `CRIT-PROV-01` `NOT RUN` |
+| Phase 3B-1 | GO | **GO stands** | H-97's fabrication limb closed and measured; no regression in the runner's eligibility, freeze or band behaviour; suite green with no weakened assertion |
+| Phase 3B-2a | GO | **GO stands** | wiring unchanged in contract; N-97 counters now correct at the producer |
+| Phase 3B-2b full-corpus walk-forwards | NOT AUTHORIZED | **NOT AUTHORIZED** | see §63.7: no band corpus (5 of 4,244 names), corporate actions wrong where applied and unapplied everywhere, surveillance NOT RUN not wired |
+
+Item score: **5 of 8 closed** (H-96, H-97-on-the-accepted-clause, N-97, N-98, R-90a), **2 partial** (N-92, CA-1), **1 not delivered** (CA-2). This is the third round in which the same pattern appears: the mechanism that the item asked for is built, the consumer that would make it real is not. H-97 is the counter-example and shows the fix works when the acceptance is measured at the consumer — the simulator's own fill.
+
+### 63.5 What would falsify this verdict
+
+- If a `MERGER`-style action type existed and carried consideration that the DELISTING branch applied, H-98's re-key limb would be wrong: falsified by `CorporateActionType` having a merger member that `Portfolio.apply_corporate_action` handles with a ratio of 42/25.
+- If any driver in `scripts/` or `src/` called `apply_corporate_actions_for_session`, H-100 would be wrong: falsified by a grep hit outside its definition.
+- If `execute_swing_strategy_session` or the runner wrote the verdict bundle keys, H-101 would be wrong: falsified by one production write site for `surveillance_constraint_status`.
+- If `Decimal(14) * (Decimal(15)/Decimal(14))` were exactly 15 under the configured context, H-99's first limb would be wrong: falsified by evaluating that expression and getting `15` rather than `14.99999999999999999999999999`.
+- If the production master returned a band for a name outside the five interval ISINs, the zero-tradable-names finding in §63.7 would be wrong: falsified by `get_price_band(<any of the other 4,239 registered ISINs>, d, prev_close)` returning a record.
+### 63.6 Work order — ordered by what it unblocks
+
+Each item names the probe that must fail closed before it is closed. Nothing here may be satisfied by a mechanism added beside the consumer (§14.4); the acceptance is measured at the thing that reads it.
+
+1. **H-98.** Model merger and delisting consideration. A merger row carries the exchange ratio (and any cash component) and restates quantity; a delisting books proceeds or a realisation, never a silent delete. *Probe:* 25 HDFC → 42 HDFCBANK with basis preserved; a delisting leaves `equity_after == equity_before` at the delisting price; the CA-1 test asserts quantity and equity, not just key presence. *Serves:* B-2b (any hold crossing an ex-date).
+2. **H-99.** Exact integer restatement (`(qty * num) % den == 0`) and correct rights semantics. *Probe:* 14 shares × 15/14 = 15 with no error; a `RIGHTS` row with no subscription payment leaves quantity unchanged. *Serves:* B-2b (the corpus itself, and any 7- or 3-denominator ratio).
+3. **H-100.** Apply corporate actions inside the session driver before valuation, for every session in the window. *Probe:* a full-session run in which a held name's dividend reaches `CashLedger` and a split restates quantity, with equity continuous across the ex-date. *Serves:* B-2b.
+4. **H-101.** Write the surveillance status into the results bundle from the runner/driver, and delete the unused `last_surveillance_result` if it stays unread. *Probe:* run the driver without verified intervals and show `CRIT-SURV-01 NOT RUN` in its report with overall `NO-GO` citing it. *Serves:* B-2b gating honesty.
+5. **N-92 remainder.** Gate on the held names, not on a universe-wide count: evaluate when every held ISIN has coverage, and derive `coverage_complete` from those names. *Probe:* configuration A (explicit NORMAL, no registered universe) evaluates; configuration C (held name uncovered) still raises. *Serves:* B-2b exit constraint.
+6. **CA-3 price bands (raised in §62.7, still open).** `build_production_security_master()` yields **0 discrete band records and 5 band-interval ISINs** (`INE001A01036`, `INE002A01018`, `INE009A01021`, `INE704P01017`, `INE704P01025`); every other one of the 4,244 registered ISINs returns `None` from `get_price_band`. Deliver band publications for 2022-2024 for the traded set, and keep the `is_unconstrained` F&O intervals scoped to names actually listed in `NSE/FAOP/60350`. *Probe:* a banded execution on real band data for a name outside the five; `skipped_missing_band` accounted per session. *Serves:* B-2b — without it a "corpus run" is at most five tradable names.
+7. **CA-1 corpus completion.** Rows for all actions with ex-dates in 2022-01-03…2024-12-31 across the 4,510-ISIN traded universe, dividends mandatory, ratios exact exchange ratios, each row's provenance honest. *Probe:* a sampled event per type per year, plus a count of covered ISIN-days against the universe. *Serves:* B-2b.
+8. **N-99.** Make the N-97 test drive `execute_swing_strategy_session`; drop or correct the CA-1 docstring's RIGHTS claim; add the RIGHTS assertion once item 2 lands. *Serves:* §9.1.
+9. **R-97.** Round toward the interior so the clamp never leaves the tick grid. *Probe:* off-grid boundary bars (`high=100.03`) yield `100.00` for BUY and `99.95`/`100.00`-style interior values for SELL, still inside `[low, high]`. *Serves:* engine invariants; non-blocking.
+10. **N-100.** Restore typed `slippage`/`costs` on the fill contract without reintroducing a `contracts → execution` import. *Serves:* §7.2 structural guarantee; non-blocking.
+11. **Phase 3B-2b**, only after 1–7, under the protocol in §63.7.
+
+### 63.7 Phase 3B-2b: authorization decision at `396f825`
+
+**Decision: NOT AUTHORIZED for full-corpus 2022–2024 walk-forward evaluations.**
+
+This is not a formality and not a request for more polish. A full-corpus run launched on this commit would not measure the strategy; it would measure the fixtures. The three measured reasons:
+
+1. **It would trade at most five names.** The production security master has 0 discrete price bands and 5 band-interval ISINs out of 4,244 registered. The runner requires a band per candidate, so every other name is `skipped_missing_band` (counted since N-93, which is why this is visible at all). A run whose entire tradable set is the fixture list produces a fill count near zero for reasons that have nothing to do with the strategy — and under §8.2 it burns a registry entry to learn that.
+2. **Held positions would be booked wrong or not adjusted at all.** Corporate actions are applied by no driver (H-100). Where they are applied, a merger under-credits 68% (H-98) and a rights row either aborts the session (H-99) or gifts shares. Any PnL that crosses a corporate-action date in 2022-2024 is therefore uninterpretable, and the corpus reading would be dominated by a handful of events rather than by the signal.
+3. **The report could not say what it did not do.** With CA-2 unwired (H-101), a run with no verified surveillance input produces no `CRIT-SURV-01` line at all: the exit constraint is neither enforced nor declared `NOT RUN`. §9.3 and §10.8 make the second the only acceptable alternative.
+
+**What is authorized now, with no further verdict:** analyses restricted to 2022-01-03…2024-12-31 that are explicitly labelled fixture-scope; defect work from §63.6; and dry runs that exercise the harness end to end without producing a performance metric that could be mistaken for a corpus result.
+
+**What remains forbidden, and cannot be authorized by an agent:** any read, ingest, partition query or fold touching 2025-01-01…2026-11-11. The boundary is physical, re-measured at this commit: `SilverStorage.partition_exists(2025-01-01)` and `(2026-03-02)` raise `HoldoutPartitionIsolationError`, `check_partition_access(spec, HOLDOUT)` raises `HoldoutSealedError` without a human-created `HOLDOUT_UNLOCK`, which is absent. Raw Bronze archives under `data/raw/2025` and `data/raw/2026` remain retrieval artifacts and are never promoted to Silver or Gold. No agent creates, mocks or bypasses `HOLDOUT_UNLOCK` (§8.1).
+
+**Conditions that will make authorization the correct verdict next round** — all seven measured, in one commit, not asserted:
+
+1. A band corpus for 2022-2024 such that a sampled session holds a band for every ISIN in that session's candidate set (CA-3).
+2. Corporate actions applied inside the session driver (H-100), with a full-session demonstration.
+3. Merger/delisting consideration correct (H-98) and rights/rational arithmetic correct (H-99), each with the probe in §63.6.
+4. A corporate-action corpus covering the traded universe (CA-1), with covered-ISIN-day counts printed.
+5. `CRIT-SURV-01` produced by a real run, `NOT RUN`, with the overall verdict `NO-GO` citing it (H-101).
+6. Surveillance coverage gated per held name (N-92 remainder).
+7. `assert`-level evidence from a driver, not a hand-built dataclass or dict (N-99).
+
+**Protocol once authorized** (unchanged from §62.7): in-sample `2022-01-03…2023-12-31`, validation `2024-01-01…2024-12-31`, holdout refused by the partition spec; T-close signal → earliest T+1 open fill; statutory costs through the single committed schedule, per completed round trip; every hypothesis and parameter combination registered in `TrialRegistry` with its rationale *before* its metric is read; the total trial count `N` printed beside any best result, with DSR/Haircut computed from `N`; verdict through `evaluate_verdicts()`, whose expected output remains **`NO-GO`** while `CRIT-PROV-01` is `NOT RUN`. A run that reports `GO` today is reporting a defect.
+
+### 63.8 Probe hygiene
+
+Probes ran as inline snippets against `396f825` in the repository interpreter, using only public constructors plus the documented `Portfolio.process_fill` API; the only private access used was reading `Portfolio._positions` to place a synthetic holding and `SecurityMaster._band_intervals_by_isin` to count band intervals, both read-only. No scratch copy, worktree or mutated tree was needed this round; every temp file (`.p_*.py`, `.tmp_s63_p*.md`) was deleted, and the auditor left nothing in the tree except this section.
+
+**Not measured, and therefore not claimed:** no walk-forward or corpus run was executed; no claim is made about any strategy's edge; the surveillance exit constraint was exercised only on synthetic intervals; dividends were exercised on the committed RELIANCE/INFY/TCS rows only; the CA-1 corpus was not compared against NSE's published action history, so its factual accuracy on the 19 rows I did not sample is unverified — only that each is honestly marked unverified.
