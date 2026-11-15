@@ -372,13 +372,13 @@ def check_ast_bundle_literals(source_code: str) -> tuple[bool, str]:
     Decimal, or module/local constant literals assigned to results bundle keys
     (AGENTS.md §6.4, §9.1, Findings H-73, N-63, N-69, N-79).
 
-    Residual Limitations (Finding N-79):
-    Syntactic AST checks do NOT catch:
-    1. Annotated assignment: `k: bool = True; b['key'] = k`
-    2. Tuple-unpack assignment: `a, b = True, 1; b['key'] = a`
-    3. String laundering into Decimal: `s = '1.6850'; b['key'] = Decimal(s)`
-    These patterns are prevented by mandatory human review, commit diff audits,
-    and runtime validate_results_bundle_types() checks (§57.4, §58.3).
+    Residual Limitations (Findings N-79, N-85):
+    Syntactic AST checks inspect syntax patterns within the module, so they do NOT catch:
+    1. User helper function indirection returning a literal: `def helper(): return True; b['key'] = helper()`
+    2. String laundering into Decimal: `s = '1.6850'; b['key'] = Decimal(s)`
+    Annotated assignments and tuple unpacking are caught at runtime by validate_results_bundle_types(),
+    which inspects instantiated values directly. String-laundered Decimals are prevented by mandatory
+    code review, commit diff audits, and verification assertions (§57.4, §58.3).
     """
     tree = ast.parse(source_code)
 

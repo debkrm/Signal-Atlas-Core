@@ -139,6 +139,39 @@ class CashLedger:
             metadata=None,
         )
 
+    def record_dividend(
+        self,
+        trade_date: datetime.date,
+        instrument_id: str,
+        amount: Decimal,
+        description: Optional[str] = None,
+        reference_id: Optional[str] = None,
+    ) -> CashLedgerEntry:
+        """
+        Posts cash dividend inflow into the ledger per AGENTS.md §13.2 and CashEntryType.DIVIDEND_INFLOW.
+        """
+        if type(trade_date) is not datetime.date:
+            raise LedgerValidationError(f"trade_date must be exact datetime.date, got {type(trade_date).__name__}")
+        paise_amount = _quantize_paise(amount)
+        if paise_amount <= Decimal("0.00"):
+            raise LedgerValidationError(f"Dividend amount must be positive, got {amount!r}")
+
+        desc = description or f"Cash Dividend for {instrument_id}: ₹{paise_amount}"
+        meta_items: Tuple[Tuple[str, str], ...] = (
+            ("instrument_id", instrument_id),
+            ("dividend_amount", str(paise_amount)),
+        )
+        return self._post_entry(
+            trade_date=trade_date,
+            entry_type=CashEntryType.DIVIDEND_INFLOW,
+            amount=paise_amount,
+            description=desc,
+            reference_id=reference_id,
+            circuit_evidence_present=True,
+            metadata=meta_items,
+            seq_prefix=f"DIV_{instrument_id}",
+        )
+
     def record_fill(
         self,
         fill: ExecutionFillResult,

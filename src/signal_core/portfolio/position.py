@@ -16,6 +16,7 @@ from signal_core.portfolio.types import (
     LedgerValidationError,
     PositionSnapshot,
 )
+from signal_core.storage.security_master import CorporateAction, CorporateActionType
 
 PAISE_PRECISION = Decimal("0.01")
 PRICE_PRECISION = Decimal("0.0001")
@@ -195,6 +196,52 @@ class Position:
 
         else:
             raise LedgerValidationError(f"Unsupported OrderSide: {fill.order.side}")
+
+    def apply_corporate_action(self, action: CorporateAction) -> None:
+        """
+        Applies a mid-hold corporate action to an open position per AGENTS.md §13.2 and Audit §59.4, §59.7.
+
+        Invariants:
+        - For SPLIT, BONUS, and ISIN_TRANSITION:
+          * Share quantity is multiplied by ratio (ratio_numerator / ratio_denominator).
+          * Average entry price is divided by ratio (restated proportionally).
+          * Total cost basis and unallocated buy charges remain STRICTLY constant.
+          * Mark-to-market equity at post-event price remains 100% INVARIANT (zero fabricated MTM loss).
+        - For CONSOLIDATION (reverse split):
+          * Share quantity is reduced by ratio.
+          * Average entry price is increased proportionally.
+          * Total cost basis remains constant.
+        - For DIVIDEND:
+          * Share quantity and cost basis remain unchanged; cash inflow is credited at Portfolio level.
+        """
+        if not isinstance(action, CorporateAction):
+            raise LedgerValidationError(f"Expected CorporateAction, got {type(action)}")
+        if action.isin != self._instrument_id:
+            raise LedgerValidationError(
+                f"Corporate action ISIN '{action.isin}' does not match position '{self._instrument_id}'."
+            )
+        if self._quantity <= 0:
+            return
+
+        if action.action_type in (
+            CorporateActionType.SPLIT,
+            CorporateActionType.BONUS,
+            CorporateActionType.ISIN_TRANSITION,
+            CorporateActionType.CONSOLIDATION,
+        ):
+            multiplier = action.ratio_numerator / action.ratio_denominator
+            new_qty_dec = Decimal(self._quantity) * multiplier
+            new_qty = int(new_qty_dec)
+            if new_qty <= 0:
+                raise LedgerValidationError(
+                    f"Corporate action {action.action_type.value} resulted in non-positive quantity {new_qty} "
+                    f"from initial {self._quantity} shares."
+                )
+            self._quantity = new_qty
+            self._average_entry_price = (
+                self._total_cost_basis / Decimal(self._quantity)
+            ).quantize(PRICE_PRECISION, rounding=ROUND_HALF_UP)
+            # Total cost basis and unallocated buy charges remain strictly unchanged
 
     def snapshot(self, market_price: Optional[Decimal] = None) -> PositionSnapshot:
         """

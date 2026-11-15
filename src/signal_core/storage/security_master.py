@@ -17,6 +17,7 @@ import datetime
 from decimal import Decimal
 from enum import Enum
 import hashlib
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
@@ -94,6 +95,7 @@ class CorporateActionType(str, Enum):
     DELISTING = "DELISTING"
     ISIN_TRANSITION = "ISIN_TRANSITION"
     CONSOLIDATION = "CONSOLIDATION"
+    DIVIDEND = "DIVIDEND"
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,8 +190,9 @@ class CorporateAction:
     isin: str
     ex_date: datetime.date
     action_type: CorporateActionType
-    ratio_numerator: Decimal
-    ratio_denominator: Decimal
+    ratio_numerator: Decimal = Decimal("1")
+    ratio_denominator: Decimal = Decimal("1")
+    dividend_amount: Optional[Decimal] = None
     old_isin: Optional[str] = None
     new_isin: Optional[str] = None
     circular_ref: Optional[str] = None
@@ -235,6 +238,20 @@ class CorporateAction:
                     f"yielding adjustment_factor=10.0. Received ratio_numerator={self.ratio_numerator}, ratio_denominator={self.ratio_denominator}."
                 )
 
+        if self.action_type == CorporateActionType.DIVIDEND:
+            if self.dividend_amount is None:
+                raise SecurityMasterError(f"DIVIDEND requires positive finite Decimal dividend_amount for ISIN {self.isin}")
+            if (
+                isinstance(self.dividend_amount, bool)
+                or not isinstance(self.dividend_amount, Decimal)
+                or not self.dividend_amount.is_finite()
+                or self.dividend_amount <= Decimal("0.00")
+            ):
+                raise SecurityMasterError(f"dividend_amount must be positive finite Decimal, got {self.dividend_amount!r}")
+        else:
+            if self.dividend_amount is not None:
+                raise SecurityMasterError(f"dividend_amount is only permitted for action_type DIVIDEND, got {self.action_type.value}")
+
         if self.action_type == CorporateActionType.ISIN_TRANSITION:
             if not self.old_isin or not self.new_isin:
                 raise SecurityMasterError("ISIN_TRANSITION requires both old_isin and new_isin.")
@@ -265,6 +282,8 @@ class CorporateAction:
             "ratio_numerator": str(self.ratio_numerator),
             "ratio_denominator": str(self.ratio_denominator),
         }
+        if self.dividend_amount is not None:
+            d["dividend_amount"] = str(self.dividend_amount)
         if self.old_isin is not None:
             d["old_isin"] = self.old_isin
         if self.new_isin is not None:
@@ -281,12 +300,14 @@ class CorporateAction:
     def from_dict(cls, data: Mapping[str, Any]) -> "CorporateAction":
         """Deserializes CorporateAction from mapping."""
         rec_d = datetime.date.fromisoformat(data["record_date"]) if data.get("record_date") else None
+        div_amt = Decimal(str(data["dividend_amount"])) if data.get("dividend_amount") else None
         return cls(
             isin=str(data["isin"]),
             ex_date=datetime.date.fromisoformat(data["ex_date"]),
             action_type=CorporateActionType(str(data["action_type"])),
-            ratio_numerator=Decimal(str(data["ratio_numerator"])),
-            ratio_denominator=Decimal(str(data["ratio_denominator"])),
+            ratio_numerator=Decimal(str(data.get("ratio_numerator", "1"))),
+            ratio_denominator=Decimal(str(data.get("ratio_denominator", "1"))),
+            dividend_amount=div_amt,
             old_isin=str(data["old_isin"]) if data.get("old_isin") else None,
             new_isin=str(data["new_isin"]) if data.get("new_isin") else None,
             circular_ref=str(data["circular_ref"]) if data.get("circular_ref") else None,
@@ -805,6 +826,78 @@ def load_cash_universe_symbol_intervals(csv_path: Optional[Union[str, Path]] = N
     return tuple(intervals)
 
 
+def load_surveillance_intervals(path: Optional[Union[str, Path]] = None) -> Tuple[SurveillanceInterval, ...]:
+    """
+    Loads authoritative effective-dated SurveillanceIntervals (ASM/GSM/ESM)
+    from committed reference artifact per AGENTS.md Rule 5.2, 10.5, 10.8 and Audit §59.7 Item 7.
+    """
+    if path is None:
+        p = Path(__file__).resolve().parent.parent.parent.parent / "data" / "reference" / "surveillance_intervals.jsonl"
+    else:
+        p = Path(path)
+
+    if not p.is_file():
+        return ()
+
+    intervals: List[SurveillanceInterval] = []
+    with open(p, "r", encoding="utf-8") as f:
+        line_no = 0
+        for line in f:
+            line_no += 1
+            line_str = line.strip()
+            if not line_str:
+                continue
+            try:
+                row = json.loads(line_str)
+                ef = datetime.date.fromisoformat(row["effective_from"].strip())
+                et = datetime.date.fromisoformat(row["effective_to"].strip()) if row.get("effective_to") and str(row["effective_to"]).strip() else None
+                intervals.append(
+                    SurveillanceInterval(
+                        isin=row["isin"].strip().upper(),
+                        framework=row["framework"].strip().upper(),
+                        stage=SurveillanceStage(row["stage"].strip().upper()),
+                        effective_from=ef,
+                        effective_to=et,
+                    )
+                )
+            except Exception as exc:
+                raise SecurityMasterError(
+                    f"Corrupt row {line_no} in surveillance intervals artifact '{p.name}': {exc}"
+                ) from exc
+    return tuple(intervals)
+
+
+def load_corporate_actions(path: Optional[Union[str, Path]] = None) -> Tuple[CorporateAction, ...]:
+    """
+    Loads authoritative CorporateAction records (splits, bonuses, dividends)
+    from committed reference artifact per AGENTS.md Rule 5.4, 10.3, 13.2 and Audit §59.7 Item 6.
+    """
+    if path is None:
+        p = Path(__file__).resolve().parent.parent.parent.parent / "data" / "reference" / "corporate_actions.jsonl"
+    else:
+        p = Path(path)
+
+    if not p.is_file():
+        return ()
+
+    actions: List[CorporateAction] = []
+    with open(p, "r", encoding="utf-8") as f:
+        line_no = 0
+        for line in f:
+            line_no += 1
+            line_str = line.strip()
+            if not line_str:
+                continue
+            try:
+                row = json.loads(line_str)
+                actions.append(CorporateAction.from_dict(row))
+            except Exception as exc:
+                raise SecurityMasterError(
+                    f"Corrupt row {line_no} in corporate actions artifact '{p.name}': {exc}"
+                ) from exc
+    return tuple(actions)
+
+
 def build_production_security_master(include_cash_universe: bool = True) -> SecurityMaster:
     """
     Builds the production reference Security Master seeded with initial instruments:
@@ -1051,8 +1144,19 @@ def build_production_security_master(include_cash_universe: bool = True) -> Secu
     # Discrete daily records must be ingested from verified daily exchange reports (H-44), not hand-authored.
     price_bands: Tuple[PriceBandRecord, ...] = ()
 
+    # Audit §59.7: Load committed surveillance intervals and external corporate actions if available
+    surveillance_intervals = load_surveillance_intervals()
+    loaded_corp_actions = load_corporate_actions()
+    if loaded_corp_actions:
+        existing_ca_keys = {(ca.isin, ca.ex_date) for ca in corporate_actions}
+        for ca in loaded_corp_actions:
+            if (ca.isin, ca.ex_date) not in existing_ca_keys:
+                corporate_actions.append(ca)
+                existing_ca_keys.add((ca.isin, ca.ex_date))
+
     return SecurityMaster(
         symbol_intervals=symbol_intervals,
+        surveillance_intervals=surveillance_intervals,
         corporate_actions=corporate_actions,
         delisting_events=delisting_events,
         isin_transitions=isin_transitions,

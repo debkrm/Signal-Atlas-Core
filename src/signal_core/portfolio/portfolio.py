@@ -24,6 +24,7 @@ from signal_core.portfolio.types import (
     PortfolioSnapshot,
     PositionSnapshot,
 )
+from signal_core.storage.security_master import CorporateAction, CorporateActionType
 
 DRAWDOWN_PRECISION = Decimal("0.0001")
 
@@ -142,6 +143,64 @@ class Portfolio:
         # entry.amount is negative
         self._peak_portfolio_value = max(Decimal("0.00"), self._peak_portfolio_value + entry.amount)
         return entry
+
+    def apply_corporate_action(self, action: CorporateAction) -> Optional[CashLedgerEntry]:
+        """
+        Applies a mid-hold corporate action across open portfolio positions per AGENTS.md §13.2 and Audit §59.4, §59.7.
+        - For SPLIT, BONUS, ISIN_TRANSITION: restates position shares and average cost basis, keeping equity invariant.
+        - For DIVIDEND: posts cash dividend inflow to CashLedger via CashEntryType.DIVIDEND_INFLOW.
+        """
+        if not isinstance(action, CorporateAction):
+            raise LedgerValidationError(f"Expected CorporateAction, got {type(action)}")
+
+        pos = self.get_position(action.isin)
+        if pos is None or pos.is_closed or pos.quantity <= 0:
+            return None
+
+        if action.action_type in (
+            CorporateActionType.SPLIT,
+            CorporateActionType.BONUS,
+            CorporateActionType.ISIN_TRANSITION,
+            CorporateActionType.CONSOLIDATION,
+        ):
+            pos.apply_corporate_action(action)
+            return None
+
+        elif action.action_type == CorporateActionType.DIVIDEND:
+            div_per_share = (
+                action.dividend_amount
+                if action.dividend_amount is not None
+                else (action.ratio_numerator / action.ratio_denominator)
+            )
+            total_dividend = _quantize_paise(Decimal(pos.quantity) * div_per_share)
+            entry = self._ledger.record_dividend(
+                trade_date=action.ex_date,
+                instrument_id=action.isin,
+                amount=total_dividend,
+                description=f"Cash Dividend for {action.isin} ({pos.quantity} shares @ ₹{div_per_share})",
+                reference_id=f"DIV_{action.isin}_{action.ex_date.isoformat()}",
+            )
+            self._peak_portfolio_value = max(self._peak_portfolio_value, self.current_total_equity())
+            return entry
+        else:
+            return None
+
+    def apply_corporate_actions_for_session(
+        self,
+        session_date: datetime.date,
+        corporate_actions: Sequence[CorporateAction],
+    ) -> Sequence[CashLedgerEntry]:
+        """
+        Applies all corporate actions whose ex-date matches session_date to currently open held positions.
+        Returns any cash ledger entries generated (e.g. dividend inflows).
+        """
+        entries: List[CashLedgerEntry] = []
+        for ca in corporate_actions:
+            if ca.ex_date == session_date:
+                entry = self.apply_corporate_action(ca)
+                if entry is not None:
+                    entries.append(entry)
+        return tuple(entries)
 
     def current_total_equity(
         self,

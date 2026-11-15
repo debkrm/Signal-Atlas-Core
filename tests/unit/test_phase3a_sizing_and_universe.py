@@ -27,6 +27,7 @@ from signal_core.research.pit_universe import (
     load_cash_equity_symbol_intervals,
 )
 from signal_core.storage.calendar import load_anchored_nse_trading_calendar
+from signal_core.storage.security_master import SymbolInterval
 from scripts.generate_phase2d_tier_a_report import validate_results_bundle_types
 from scripts.verify_phase2d_verdicts import check_ast_bundle_literals
 
@@ -646,3 +647,54 @@ def test_h81_real_archive_binding_window_zero_silent_empty_cross_sections():
     assert raised_count == 40, f"Expected exactly 40 incomplete sessions to raise, got {raised_count}"
     assert empty_count == 0, f"Expected 0 sessions to silently emit empty cross-section, got {empty_count}"
     assert success_count == 1156, f"Expected 1,156 sessions to successfully emit members, got {success_count}"
+
+
+def test_n82_empty_cross_section_distinction():
+    """
+    Finding N-82 Acceptance Probe (§59.7 Item 5):
+    - When all active candidates are excluded for MISSING_TURNOVER_RECORD (e.g. internal data gap),
+      raise UniverseValidationError fail-closed.
+    - When candidates have complete turnover records but fail the liquidity threshold (BELOW_MIN_MEDIAN_TURNOVER),
+      return a valid 0-member cross-section with recorded exclusion reasons.
+    """
+    cal = load_anchored_nse_trading_calendar()
+    s = datetime.date(2024, 1, 31)
+    s_idx = cal.sessions.index(s)
+    lookback = cal.sessions[s_idx - 20 : s_idx]
+
+    intervals = (
+        CashEquityInterval(
+            isin="INE002A01018",
+            symbol="RELIANCE",
+            series="EQ",
+            effective_from=datetime.date(2020, 1, 1),
+            effective_to=None,
+        ),
+    )
+
+    # Case 1: Candidate exists on all lookback sessions, but turnover is below threshold (INR 10 vs required INR 100)
+    low_turnover_map = {(d, "INE002A01018"): Decimal("10.00") for d in lookback}
+    sched_low = build_point_in_time_universe_schedule(
+        sessions=[s],
+        intervals=intervals,
+        calendar=cal,
+        daily_turnover_inr=low_turnover_map,
+        min_median_daily_turnover_inr=Decimal("100.00"),
+        turnover_lookback_sessions=20,
+    )
+    # Legitimate empty cross-section: 0 members emitted, reasons recorded
+    assert sched_low.get_universe_for_date(s) == ()
+    assert (s, "INE002A01018") in sched_low.exclusion_reasons
+    assert "BELOW_MIN_MEDIAN_TURNOVER" in sched_low.exclusion_reasons[(s, "INE002A01018")]
+
+    # Case 2: Candidate is missing from daily_turnover_inr (e.g. INE999A01019 in turnover_map has records, but INE002A01018 does not)
+    missing_cand_turnover_map = {(d, "INE999999999"): Decimal("1000.00") for d in lookback}
+    with pytest.raises(UniverseValidationError, match="MISSING_TURNOVER_RECORD"):
+        build_point_in_time_universe_schedule(
+            sessions=[s],
+            intervals=intervals,
+            calendar=cal,
+            daily_turnover_inr=missing_cand_turnover_map,
+            min_median_daily_turnover_inr=Decimal("100.00"),
+            turnover_lookback_sessions=20,
+        )

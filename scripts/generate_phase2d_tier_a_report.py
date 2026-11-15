@@ -139,12 +139,13 @@ def validate_results_bundle_types(bundle: Mapping[str, Any]) -> None:
     (AGENTS.md §6.4, §9.1, Findings H-73, N-63, N-69, N-78).
     Only Decimal, str, or datetime types are permitted.
 
-    Documented Residual Limitations (Finding N-79):
-    Syntactic AST and runtime type checks do NOT catch:
-    1. Annotated assignment: `K: bool = True; b["k"] = K`
-    2. Tuple-unpack assignment: `K, J = True, 1; b["k"] = K`
-    3. String laundering into Decimal: `k = "1.6850"; b["k"] = Decimal(k)`
-    These patterns are prevented by mandatory human review and commit diff audits (§57.4, §58.3).
+    Runtime vs AST Layering and Residual Limitations (Findings N-79, N-85):
+    - Runtime validation inspects instantiated dictionary values directly, so it reliably
+      catches bool, int, or float values regardless of syntactic origin (including annotated
+      assignments, tuple unpacking, and helper return values).
+    - True residual limitation escaping runtime type checks:
+      String laundering into Decimal: `k = "1.6850"; b["k"] = Decimal(k)`.
+    This pattern is prevented by committed diff reviews, verification assertions, and human audit (§57.4, §58.3).
     """
     for k, v in bundle.items():
         if isinstance(v, (bool, int, float)):

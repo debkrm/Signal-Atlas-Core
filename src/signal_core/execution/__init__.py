@@ -6,13 +6,6 @@ from signal_core.execution.costs import (
     TransactionCostBreakdown,
     TransactionCostModel,
 )
-from signal_core.execution.order_runner import (
-    DailyExecutionTicket,
-    DailySignalCandidate,
-    DailyTPlus1OrderRunner,
-    OrderRunnerEligibilityError,
-    OrderRunnerError,
-)
 from signal_core.execution.simulator import ExecutionFillResult, ExecutionFillSimulator
 from signal_core.execution.slippage import (
     SlippageCalculationError,
@@ -55,4 +48,18 @@ __all__ = [
     "OrderRunnerError",
     "OrderRunnerEligibilityError",
 ]
+
+
+def __getattr__(name: str):
+    if name in (
+        "DailySignalCandidate",
+        "DailyExecutionTicket",
+        "DailyTPlus1OrderRunner",
+        "OrderRunnerError",
+        "OrderRunnerEligibilityError",
+    ):
+        import signal_core.execution.order_runner as _order_runner
+        return getattr(_order_runner, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 

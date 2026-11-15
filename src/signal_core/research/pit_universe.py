@@ -213,6 +213,7 @@ def build_point_in_time_universe_schedule(
     for s in sorted_sessions:
         # Base PIT membership from authoritative interval table
         candidate_isins = list(get_point_in_time_active_equities(s, loaded_intervals, series=series))
+        base_candidates = list(candidate_isins)
 
         # Liquidity filter using data strictly prior to session s (zero-lookahead, calendar-derived window)
         if filter_liquidity:
@@ -284,6 +285,21 @@ def build_point_in_time_universe_schedule(
                 candidate_isins = selected_isins
             else:
                 candidate_isins = [x[0] for x in liquid_scores]
+
+            # Finding N-82: Differentiate genuine empty universe from internal data omissions.
+            # If emitted cross-section is empty and every active candidate was excluded for MISSING_TURNOVER_RECORD,
+            # fail closed with UniverseValidationError rather than silently emitting 0 members.
+            if not candidate_isins and base_candidates:
+                all_missing_records = all(
+                    exclusion_reasons.get((s, isin), "").startswith("MISSING_TURNOVER_RECORD")
+                    for isin in base_candidates
+                )
+                if all_missing_records:
+                    raise UniverseValidationError(
+                        f"Session {s.isoformat()} emitted 0 members and all {len(base_candidates)} active candidate(s) "
+                        f"lacked turnover lookback history (MISSING_TURNOVER_RECORD) (Finding N-82). "
+                        "Internally inconsistent or unaligned turnover partitions must fail closed."
+                    )
 
         schedule_map[s] = tuple(sorted(candidate_isins))
 

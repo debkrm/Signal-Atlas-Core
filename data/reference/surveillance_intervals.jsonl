@@ -1,0 +1,3 @@
+{"isin": "INE999A01019", "framework": "GSM", "stage": "GSM_STAGE_2", "effective_from": "2024-01-15", "effective_to": "2024-06-30", "circular_ref": "NSE/SURV/59800", "description": "GSM Stage 2 weekly call auction restriction"}
+{"isin": "INE888B01020", "framework": "ASM", "stage": "ASM_LONG_TERM_STAGE_1", "effective_from": "2024-02-01", "effective_to": "2024-08-01", "circular_ref": "NSE/SURV/60120", "description": "Long Term ASM Stage 1 100 percent upfront margin"}
+{"isin": "INE777C01030", "framework": "ESM", "stage": "ESM_STAGE_2", "effective_from": "2024-03-01", "effective_to": null, "circular_ref": "NSE/SURV/60850", "description": "Enhanced Surveillance Measure Stage 2 periodic auction"}

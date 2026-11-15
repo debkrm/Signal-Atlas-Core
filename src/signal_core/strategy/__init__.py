@@ -9,8 +9,10 @@ from signal_core.strategy.base import (
     Strategy,
     TechnicalCrossStrategy,
 )
+from signal_core.strategy.swing import DeliverySwingTrendStrategy
 
 __all__ = [
+    "DeliverySwingTrendStrategy",
     "LookaheadIntentError",
     "OrderIntent",
     "OrderIntentValidationError",

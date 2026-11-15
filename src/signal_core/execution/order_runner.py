@@ -4,23 +4,23 @@ Daily T+1 Open Order Runner for Indian Cash Equities.
 Enforces structural realism for delivery swing trading on NSE EQ per AGENTS.md:
 - Rule 1 & 2: Simplicity and explicit assumptions.
 - Rule 5.1 & 13.1: Strict NSE EQ rolling cash delivery scope (zero intraday squaring off, zero F&O, zero BE/BZ entry).
+- Rule 5.2 & 13.2: Surveillance escalation (ASM/GSM/ESM) during a hold is an exit constraint.
 - Rule 5.3: Circuit filter realism: BUY fills into Upper Circuit freeze are rejected (zero ask depth).
 - Rule 6.4: Exact Decimal accounting.
 - Rule 7.1: Next-session execution and zero lookahead (signal at T close -> execute at earliest T+1 open).
 - Rule 7.4 & 13.5: Single authoritative engine: routes all fills and costs strictly through
   ExecutionFillSimulator and Portfolio ledger. No secondary or shadow simulation paths.
-- Phase 3B-1 specifications (Audit §58.5, §58.7 Item 6).
+- Audit §58.5, §58.7 Item 6, §59.3, §59.7 (Findings H-82, H-83, H-84, N-83, N-84).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 import datetime
-from decimal import Decimal
-from typing import Any, Mapping, Optional, Tuple, TYPE_CHECKING, Union
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union
 
-if TYPE_CHECKING:
-    from signal_core.portfolio.portfolio import Portfolio
+from signal_core.contracts.criteria import GoNoGoCriteria, load_go_no_go_criteria
 from signal_core.contracts.exchange_series import (
     APPROVED_EQ_ONLY_POLICY,
     ExchangeSeries,
@@ -37,6 +37,13 @@ from signal_core.execution.types import (
     OrderSide,
     OrderType,
 )
+PAISE_PRECISION = Decimal("0.01")
+
+
+def _quantize_paise(val: Decimal) -> Decimal:
+    """Quantizes a Decimal monetary quantity to exact paise (0.01 INR) via ROUND_HALF_UP."""
+    return val.quantize(PAISE_PRECISION, rounding=ROUND_HALF_UP)
+from signal_core.portfolio.portfolio import Portfolio
 from signal_core.portfolio.sizing import (
     PositionSizeResult,
     calculate_atr_r_multiple_position_size,
@@ -45,6 +52,7 @@ from signal_core.storage.calendar import (
     TradingCalendar,
     load_anchored_nse_trading_calendar,
 )
+from signal_core.storage.security_master import SecurityMaster, SurveillanceStage
 from signal_core.strategy.base import (
     LookaheadIntentError,
     OrderIntent,
@@ -65,6 +73,10 @@ class OrderRunnerEligibilityError(OrderRunnerError):
 class DailySignalCandidate:
     """
     Immutable specification of a trade candidate formulated at session T close.
+
+    Series Invariant (Finding H-82, Audit §59.3, §59.7 Item 2):
+    - series must be explicitly supplied by caller (no default string fabrication).
+    - Under cash delivery swing scope, only 'EQ' rolling series is entry-eligible.
     """
     instrument_id: str
     signal_date: datetime.date
@@ -72,7 +84,7 @@ class DailySignalCandidate:
     entry_reference_price: Decimal
     atr: Decimal
     session_volume: int
-    series: str = "EQ"
+    series: str
     order_type: OrderType = OrderType.MARKET_ON_OPEN
     product: OrderProduct = OrderProduct.DELIVERY
     allow_partial_fill: bool = False
@@ -119,18 +131,36 @@ class DailySignalCandidate:
         if isinstance(self.session_volume, bool) or not isinstance(self.session_volume, int) or self.session_volume <= 0:
             raise OrderRunnerError(f"session_volume must be positive integer, got {self.session_volume!r}")
 
+        if (
+            isinstance(self.series, bool)
+            or not isinstance(self.series, str)
+            or not self.series.strip()
+        ):
+            raise OrderRunnerError(f"series must be a clean non-empty string, got {self.series!r} (Finding H-82).")
+
 
 @dataclass(frozen=True, slots=True)
 class DailyExecutionTicket:
     """
     Complete lifecycle ticket tracking a candidate through intent, order, sizing, and fill result.
+
+    Risk Semantics (Finding H-84, Audit §59.3, §59.7 Item 4):
+    - intended_risk: Planned risk formulated at session T close from candidate.entry_reference_price
+      and stop-loss distance (size_result.risk_amount).
+    - realised_risk: Actual financial risk evaluated on the executed T+1 open fill:
+      quantity × (executed_price - stop_price). Accurately captures overnight gap open and slippage
+      (e.g., a 10% gap yields 1.504R of true risk rather than masking it as 1.0R).
     """
     candidate: DailySignalCandidate
     target_date: datetime.date
-    intent: OrderIntent
-    order: ExecutionOrder
-    size_result: Optional[PositionSizeResult]
-    fill_result: Optional[ExecutionFillResult]
+    intent: Optional[OrderIntent] = None
+    order: Optional[ExecutionOrder] = None
+    size_result: Optional[PositionSizeResult] = None
+    fill_result: Optional[ExecutionFillResult] = None
+    realised_risk: Optional[Decimal] = None
+    intended_risk: Optional[Decimal] = None
+    is_no_trade: bool = False
+    no_trade_reason: Optional[str] = None
 
 
 class DailyTPlus1OrderRunner:
@@ -180,13 +210,13 @@ class DailyTPlus1OrderRunner:
         candidate: DailySignalCandidate,
         target_date: Optional[datetime.date] = None,
         latest_market_prices: Optional[Mapping[str, Decimal]] = None,
-    ) -> Tuple[OrderIntent, Optional[PositionSizeResult]]:
+    ) -> Tuple[Optional[OrderIntent], Optional[PositionSizeResult]]:
         """
         Generates an authoritative OrderIntent from a DailySignalCandidate.
         Enforces:
         1. Series eligibility (EQ only; BE/BZ entry rejected fail-closed per Rule 5.1, 13.1).
         2. T+1 calendar session determination (Zero Lookahead Rule 7.1).
-        3. ATR R-multiple sizing for BUY orders.
+        3. ATR R-multiple sizing for BUY orders (quantity == 0 yields named no-trade outcome).
         4. Open-quantity resolution for SELL orders (no naked short sales).
         """
         # Validate series under cash delivery swing scope
@@ -231,6 +261,11 @@ class DailyTPlus1OrderRunner:
                 available_cash=available_cash,
             )
 
+            # Finding N-84: Sizing returning quantity == 0 is a valid no-trade decision,
+            # not an OrderIntentValidationError. Return (None, size_result) so runner produces a no-trade ticket.
+            if size_result.quantity == 0:
+                return None, size_result
+
             intent = OrderIntent.from_position_size_result(
                 instrument_id=candidate.instrument_id,
                 signal_date=candidate.signal_date,
@@ -271,7 +306,7 @@ class DailyTPlus1OrderRunner:
 
     def execute_ticket(
         self,
-        intent: OrderIntent,
+        intent: Optional[OrderIntent],
         candidate: DailySignalCandidate,
         t_plus_1_bar: Union[PriceBar, ExchangeSessionObservation],
         size_result: Optional[PositionSizeResult] = None,
@@ -283,13 +318,49 @@ class DailyTPlus1OrderRunner:
         Executes an OrderIntent via the authoritative ExecutionFillSimulator and posts
         any resulting fill to the Portfolio cash ledger and position book.
         """
-        order = intent.to_execution_order()
+        target_date = intent.target_date if intent is not None else candidate.signal_date
 
-        # Enforce series on observation if PriceBar provided without explicit_series
-        effective_series = explicit_series
-        if effective_series is None and isinstance(t_plus_1_bar, PriceBar):
-            if candidate.series.upper() == "EQ":
-                effective_series = ExchangeSeries.EQ
+        # Finding N-84: If intent is None (e.g. quantity == 0), return named no-trade ticket
+        if intent is None or (size_result is not None and size_result.quantity == 0):
+            return DailyExecutionTicket(
+                candidate=candidate,
+                target_date=target_date,
+                intent=None,
+                order=None,
+                size_result=size_result,
+                fill_result=None,
+                realised_risk=None,
+                intended_risk=size_result.risk_amount if size_result else None,
+                is_no_trade=True,
+                no_trade_reason="ZERO_QUANTITY_SIZED",
+            )
+
+        # Finding H-83: Price band evidence is mandatory for BUY entries to verify circuit filters (§5.3)
+        if intent.side == OrderSide.BUY and price_band is None:
+            raise OrderRunnerEligibilityError(
+                f"Mandatory price band evidence missing for BUY entry in {intent.instrument_id} on {intent.target_date} "
+                f"(AGENTS.md §5.3, Finding H-83). Circuit filter realism requires verified price band to prevent upper circuit freeze fills."
+            )
+
+        # Finding H-82: Require authentic ExchangeSessionObservation or explicit_series. Zero default series synthesis.
+        if isinstance(t_plus_1_bar, ExchangeSessionObservation):
+            effective_series = t_plus_1_bar.series
+        elif explicit_series is not None:
+            effective_series = explicit_series
+        else:
+            raise OrderRunnerEligibilityError(
+                f"Bare PriceBar provided for {intent.instrument_id} on {intent.target_date} without verified exchange series evidence "
+                f"(AGENTS.md §5.1, §13.1, Finding H-82). Supply an ExchangeSessionObservation or explicit_series from security master."
+            )
+
+        if effective_series != ExchangeSeries.EQ:
+            raise OrderRunnerEligibilityError(
+                f"Candidate {candidate.instrument_id} execution series '{effective_series.value}' is ineligible "
+                f"for cash delivery swing entry (AGENTS.md §5.1, §13.1: only EQ rolling series is entry-eligible; "
+                f"Trade-to-Trade BE/BZ is strictly prohibited)."
+            )
+
+        order = intent.to_execution_order()
 
         fill_result = self._simulator.simulate_order(
             order=order,
@@ -299,8 +370,15 @@ class DailyTPlus1OrderRunner:
             average_daily_turnover=average_daily_turnover,
         )
 
+        realised_risk: Optional[Decimal] = None
+        intended_risk: Optional[Decimal] = size_result.risk_amount if size_result else None
+
         if fill_result.status in (FillStatus.FILLED, FillStatus.PARTIALLY_FILLED):
             self._portfolio.process_fill(fill_result)
+            if intent.side == OrderSide.BUY and intent.stop_price is not None and fill_result.executed_price is not None:
+                realised_risk = _quantize_paise(
+                    Decimal(fill_result.filled_quantity) * (fill_result.executed_price - intent.stop_price)
+                )
 
         return DailyExecutionTicket(
             candidate=candidate,
@@ -309,6 +387,10 @@ class DailyTPlus1OrderRunner:
             order=order,
             size_result=size_result,
             fill_result=fill_result,
+            realised_risk=realised_risk,
+            intended_risk=intended_risk,
+            is_no_trade=False,
+            no_trade_reason=None,
         )
 
     def run_candidate(
@@ -340,3 +422,46 @@ class DailyTPlus1OrderRunner:
             explicit_series=explicit_series,
             average_daily_turnover=average_daily_turnover,
         )
+
+    def evaluate_surveillance_exit_constraints(
+        self,
+        session_date: datetime.date,
+        security_master: SecurityMaster,
+    ) -> Tuple[DailySignalCandidate, ...]:
+        """
+        Evaluates active open positions in Portfolio against time-varying surveillance state
+        per AGENTS.md §5.2, §10.8, §13.2 and Audit §59.7 Item 7.
+
+        Surveillance escalation (e.g. GSM Stage 2+, ESM Stage 2) during a hold is an exit constraint,
+        triggering a mandatory exit signal candidate on the first session the constraint permits.
+        """
+        exit_candidates: List[DailySignalCandidate] = []
+        open_positions = self._portfolio.get_open_positions()
+
+        escalated_stages = {
+            SurveillanceStage.GSM_STAGE_2,
+            SurveillanceStage.GSM_STAGE_3,
+            SurveillanceStage.GSM_STAGE_4,
+            SurveillanceStage.ESM_STAGE_2,
+        }
+
+        for isin, pos in open_positions.items():
+            stages = security_master.resolve_surveillance(isin, session_date)
+            for surv in stages:
+                if surv.stage in escalated_stages:
+                    exit_cand = DailySignalCandidate(
+                        instrument_id=isin,
+                        signal_date=session_date,
+                        side=OrderSide.SELL,
+                        entry_reference_price=pos.average_entry_price,
+                        atr=Decimal("1.00"),
+                        session_volume=1000000,
+                        series="EQ",
+                        metadata={
+                            "exit_reason": f"SURVEILLANCE_ESCALATION_EXIT: {isin} escalated to {surv.stage.value} on {session_date} ({surv.framework})"
+                        },
+                    )
+                    exit_candidates.append(exit_cand)
+                    break
+
+        return tuple(exit_candidates)
