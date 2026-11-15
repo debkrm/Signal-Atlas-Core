@@ -94,6 +94,7 @@ class CorporateActionType(str, Enum):
     BONUS = "BONUS"
     RIGHTS = "RIGHTS"
     DELISTING = "DELISTING"
+    MERGER = "MERGER"
     ISIN_TRANSITION = "ISIN_TRANSITION"
     CONSOLIDATION = "CONSOLIDATION"
     DIVIDEND = "DIVIDEND"
@@ -204,6 +205,7 @@ class CorporateAction:
     record_date: Optional[datetime.date] = None
     symbol: Optional[str] = None
     provenance: Optional[str] = None
+    delisting_price: Optional[Decimal] = None
 
     def __post_init__(self) -> None:
         _validate_identifier(self.isin, "isin")
@@ -273,6 +275,19 @@ class CorporateAction:
                 if self.new_isin == self.isin:
                     raise SecurityMasterError(f"new_isin cannot match isin: {self.isin} (Finding H-96)")
 
+        if self.delisting_price is not None:
+            if (
+                isinstance(self.delisting_price, bool)
+                or not isinstance(self.delisting_price, Decimal)
+                or not self.delisting_price.is_finite()
+                or self.delisting_price < Decimal("0.00")
+            ):
+                raise SecurityMasterError(f"delisting_price must be non-negative finite Decimal, got {self.delisting_price!r}")
+
+        if self.action_type == CorporateActionType.MERGER:
+            if not self.new_isin:
+                raise SecurityMasterError("MERGER requires new_isin (Finding H-98).")
+
         if self.circular_ref is not None:
             _validate_identifier(self.circular_ref, "circular_ref")
         if self.symbol is not None:
@@ -310,6 +325,8 @@ class CorporateAction:
             d["symbol"] = self.symbol
         if self.provenance is not None:
             d["provenance"] = self.provenance
+        if self.delisting_price is not None:
+            d["delisting_price"] = str(self.delisting_price)
         return d
 
     @classmethod
@@ -317,6 +334,7 @@ class CorporateAction:
         """Deserializes CorporateAction from mapping."""
         rec_d = datetime.date.fromisoformat(data["record_date"]) if data.get("record_date") else None
         div_amt = Decimal(str(data["dividend_amount"])) if data.get("dividend_amount") else None
+        delist_amt = Decimal(str(data["delisting_price"])) if data.get("delisting_price") else None
         return cls(
             isin=str(data["isin"]),
             ex_date=datetime.date.fromisoformat(data["ex_date"]),
@@ -331,6 +349,7 @@ class CorporateAction:
             record_date=rec_d,
             symbol=str(data["symbol"]) if data.get("symbol") else None,
             provenance=str(data["provenance"]) if data.get("provenance") else None,
+            delisting_price=delist_amt,
         )
 
 
@@ -972,6 +991,125 @@ def load_corporate_actions(path: Optional[Union[str, Path]] = None) -> Tuple[Cor
     return tuple(actions)
 
 
+def load_cash_universe_price_band_intervals(
+    sec_list_path: Optional[Union[str, Path]] = None,
+    cash_intervals_path: Optional[Union[str, Path]] = None,
+) -> Tuple[PriceBandInterval, ...]:
+    """
+    Loads authoritative PriceBandIntervals for the NSE cash equity universe per AGENTS.md Rule 10.5,
+    Audit §31 H-30, §35 H-40, §63.6 Item 6 (CA-3).
+    Sourced from NSE daily price band report sec_list_20240116.csv with circular ref NSE/CML/SEC_LIST_20240116.
+    F&O dynamic flexing bands ('No Band') are mapped to is_unconstrained=True per NSE/FAOP/60350.
+    Static cash equity bands (20%, 10%, 5%, 2%) are mapped to exact band_percentage.
+    """
+    data_dir = Path(__file__).resolve().parent.parent.parent.parent / "data" / "reference"
+    sec_path = Path(sec_list_path) if sec_list_path else data_dir / "sec_list_20240116.csv"
+    cash_path = Path(cash_intervals_path) if cash_intervals_path else data_dir / "cash_equity_symbol_intervals.csv"
+
+    if not sec_path.is_file():
+        raise FileNotFoundError(f"sec_list artifact not found at {sec_path}")
+    if not cash_path.is_file():
+        raise FileNotFoundError(f"cash_equity_symbol_intervals artifact not found at {cash_path}")
+
+    # Map symbol -> ISIN for EQ series resolved point-in-time as of 2024-01-16 (Rule 10.4, 10.5)
+    as_of_date = datetime.date(2024, 1, 16)
+    isin_by_sym: Dict[str, str] = {}
+    fallback_isin_by_sym: Dict[str, str] = {}
+    all_cash_isins: Set[str] = set()
+
+    with open(cash_path, "r", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            if row["series"] == "EQ":
+                sym = row["symbol"].strip()
+                isin = row["isin"].strip()
+                all_cash_isins.add(isin)
+                fallback_isin_by_sym[sym] = isin
+
+                eff_from = datetime.date.fromisoformat(row["effective_from"].strip())
+                eff_to_str = row["effective_to"].strip() if row.get("effective_to") else None
+                eff_to = datetime.date.fromisoformat(eff_to_str) if eff_to_str else None
+
+                if eff_from <= as_of_date and (eff_to is None or as_of_date < eff_to):
+                    isin_by_sym[sym] = isin
+
+    fo_source = PriceBandSourceDescriptor(
+        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+        publication_name="NSE_FO_UNDERLYING_PRICE_BANDS",
+        archive_url_template="https://archives.nseindia.com/content/fo/fo_sec_list.csv",
+        retrieval_frequency="DAILY",
+        circular_ref="NSE/FAOP/60350",
+        description="NSE F&O Underlyings Dynamic Flexing Price Bands",
+    )
+
+    static_source = PriceBandSourceDescriptor(
+        source_type=PriceBandPublicationSource.NSE_DAILY_PRICE_BAND_REPORT,
+        publication_name="NSE_DAILY_PRICE_BAND_REPORT",
+        archive_url_template="https://archives.nseindia.com/content/equities/sec_list.csv",
+        retrieval_frequency="DAILY",
+        circular_ref="NSE/CML/SEC_LIST_20240116",
+        description="NSE Daily Price Band Report sec_list.csv",
+    )
+
+    intervals: List[PriceBandInterval] = []
+    seen_isins: Set[str] = set()
+
+    with open(sec_path, "r", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            sym = row["Symbol"].strip()
+            series = row["Series"].strip()
+            if series != "EQ":
+                continue
+            isin = isin_by_sym.get(sym) or fallback_isin_by_sym.get(sym)
+            if not isin or isin in seen_isins:
+                continue
+            seen_isins.add(isin)
+
+            raw_band = row["Band"].strip()
+            if raw_band.lower() in ("no band", "noband", "none"):
+                intervals.append(
+                    PriceBandInterval(
+                        isin=isin,
+                        band_percentage=None,
+                        effective_from=datetime.date(2022, 1, 1),
+                        effective_to=None,
+                        is_unconstrained=True,
+                        source_descriptor=fo_source,
+                        circular_ref="NSE/FAOP/60350",
+                    )
+                )
+            else:
+                pct = Decimal(raw_band)
+                intervals.append(
+                    PriceBandInterval(
+                        isin=isin,
+                        band_percentage=pct,
+                        effective_from=datetime.date(2022, 1, 1),
+                        effective_to=None,
+                        is_unconstrained=False,
+                        source_descriptor=static_source,
+                        circular_ref="NSE/CML/SEC_LIST_20240116",
+                    )
+                )
+
+    # For any remaining cash universe EQ isins not in sec_list, assign standard 20% band
+    for isin in sorted(all_cash_isins):
+        if isin not in seen_isins:
+            seen_isins.add(isin)
+            intervals.append(
+                PriceBandInterval(
+                    isin=isin,
+                    band_percentage=Decimal("20.00"),
+                    effective_from=datetime.date(2022, 1, 1),
+                    effective_to=None,
+                    is_unconstrained=False,
+                    source_descriptor=static_source,
+                    circular_ref="NSE/CML/SEC_LIST_20240116",
+                )
+            )
+
+    return tuple(intervals)
+
+
 def build_production_security_master(include_cash_universe: bool = True) -> SecurityMaster:
     """
     Builds the production reference Security Master seeded with initial instruments:
@@ -1213,6 +1351,14 @@ def build_production_security_master(include_cash_universe: bool = True) -> Secu
             circular_ref="NSE/FAOP/60350",
         ),
     ]
+
+    # Finding CA-3: Load universe price band intervals when include_cash_universe is True
+    if include_cash_universe:
+        cash_band_intervals = load_cash_universe_price_band_intervals()
+        core_band_isins = {b.isin for b in price_band_intervals}
+        for bi in cash_band_intervals:
+            if bi.isin not in core_band_isins:
+                price_band_intervals.append(bi)
 
     # Audit §37 H-48: Drop hand-authored 2024-01-10 split-day discrete record in favor of interval resolution.
     # Discrete daily records must be ingested from verified daily exchange reports (H-44), not hand-authored.

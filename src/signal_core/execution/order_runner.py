@@ -534,14 +534,21 @@ class DailyTPlus1OrderRunner:
         In GSM Stage 2+, trading is restricted to weekly call auctions; exit candidates are emitted
         strictly on permitted weekly trading sessions (Finding N-88).
         """
-        if require_coverage and security_master.surveillance_coverage_count == 0:
+        open_positions = self._portfolio.get_open_positions()
+
+        # Finding N-92 remainder: Gate on held names, not on a universe-wide count (§63.6 Item 5)
+        uncovered_held: List[str] = [
+            isin for isin in open_positions
+            if not security_master.has_surveillance_coverage(isin, session_date)
+        ]
+        if require_coverage and uncovered_held:
             raise SecurityMasterError(
-                f"Authoritative surveillance coverage is 0 across registered universe as-of {session_date} "
-                f"(UNVERIFIED_COVERAGE / NOT RUN) per AGENTS.md §5.2, §10.8 (Finding N-92)."
+                f"Held security {uncovered_held[0]} has no authoritative surveillance coverage as-of {session_date} "
+                f"(Authoritative surveillance coverage is 0 for held positions per AGENTS.md §5.2, §10.8, Finding H-87, N-92 remainder). "
+                f"Refuses valuation / exit evaluation of unsurveilled position."
             )
 
         exit_candidates: List[DailySignalCandidate] = []
-        open_positions = self._portfolio.get_open_positions()
 
         escalated_stages = {
             SurveillanceStage.GSM_STAGE_2,
@@ -604,12 +611,37 @@ class DailyTPlus1OrderRunner:
                     exit_candidates.append(exit_cand)
                     break
 
+        # Finding N-92 remainder: derive coverage_complete from held positions (or master if no positions)
+        is_covered = len(uncovered_held) == 0 if open_positions else (security_master.surveillance_coverage_count > 0)
         res = SurveillanceExitResult(
             candidates=exit_candidates,
             session_date=session_date,
-            status="RUN" if security_master.surveillance_coverage_count > 0 else "NOT_RUN",
-            coverage_complete=security_master.surveillance_coverage_count > 0,
-            reason=None if security_master.surveillance_coverage_count > 0 else "Surveillance coverage unverified / 0 across registered universe",
+            status="RUN" if is_covered else "NOT_RUN",
+            coverage_complete=is_covered,
+            reason=None if is_covered else (
+                f"Authoritative surveillance coverage absent for held securities: {uncovered_held}"
+                if open_positions
+                else "Surveillance coverage unverified / 0 across registered universe"
+            ),
         )
         self.last_surveillance_result = res
         return res
+
+    def populate_surveillance_verdict_bundle(self, bundle: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Writes authoritative surveillance constraint evaluation results into the verdict results bundle (Finding H-101).
+        Ensures CRIT-SURV-01 is produced from real driver executions rather than synthetic fixtures.
+        """
+        if self.last_surveillance_result is not None:
+            bundle["surveillance_exit_constraints_enforced"] = (
+                self.last_surveillance_result.coverage_complete
+                and self.last_surveillance_result.status == "RUN"
+            )
+            bundle["surveillance_constraint_status"] = self.last_surveillance_result.status
+            if self.last_surveillance_result.reason:
+                bundle["surveillance_not_run_reason"] = self.last_surveillance_result.reason
+        else:
+            bundle["surveillance_exit_constraints_enforced"] = False
+            bundle["surveillance_constraint_status"] = "NOT_RUN"
+            bundle["surveillance_not_run_reason"] = "Surveillance framework exit constraints not evaluated"
+        return bundle

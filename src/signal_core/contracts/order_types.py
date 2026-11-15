@@ -11,7 +11,47 @@ from dataclasses import dataclass
 import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Optional, Protocol, Tuple, runtime_checkable
+
+
+@runtime_checkable
+class SlippageResultProtocol(Protocol):
+    """Protocol matching SlippageResult interface for execution fills (Finding N-100)."""
+    reference_price: Decimal
+    order_value: Decimal
+    turnover_base: Decimal
+    participation_ratio: Decimal
+    half_spread_rate: Decimal
+    impact_rate: Decimal
+    slippage_rate: Decimal
+    slippage_per_share: Decimal
+    adjusted_price: Decimal
+
+
+@runtime_checkable
+class TransactionCostBreakdownProtocol(Protocol):
+    """Protocol matching TransactionCostBreakdown interface for statutory cost reconciliation (Finding N-100)."""
+    trade_date: datetime.date
+    side: OrderSide
+    product: OrderProduct
+    quantity: int
+    price: Decimal
+    gross_amount: Decimal
+    brokerage: Decimal
+    stt: Decimal
+    exchange_turnover_fee: Decimal
+    ipft: Decimal
+    sebi_turnover_fee: Decimal
+    stamp_duty: Decimal
+    gst: Decimal
+    total_statutory_taxes: Decimal
+    total_charges: Decimal
+    net_cash_flow: Decimal
+    effective_cost_bps: Decimal
+    circular_ref: str
+    disclosures: Tuple[str, ...]
+
+    def to_paise(self) -> Any: ...
 
 
 class OrderSide(str, Enum):
@@ -132,8 +172,8 @@ class ExecutionFillResult:
     filled_quantity: int
     unfilled_quantity: int
     executed_price: Optional[Decimal]
-    slippage: Optional[Any]
-    costs: Optional[Any]
+    slippage: Optional[SlippageResultProtocol]
+    costs: Optional[TransactionCostBreakdownProtocol]
     circuit_evidence_present: bool
     rejection_reason: Optional[str]
     fill_id: Optional[str] = None

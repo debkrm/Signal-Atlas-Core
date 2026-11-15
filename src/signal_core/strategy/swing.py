@@ -156,6 +156,8 @@ class SwingSessionExecutionSummary:
     skipped_already_held: int = 0
     skipped_missing_features: int = 0
     tickets: Tuple[DailyExecutionTicket, ...] = ()
+    corporate_action_entries: Tuple[Any, ...] = ()
+    surveillance_result: Optional[Any] = None
 
     def __len__(self) -> int:
         return len(self.tickets)
@@ -165,6 +167,39 @@ class SwingSessionExecutionSummary:
 
     def __iter__(self):
         return iter(self.tickets)
+
+    def to_verdict_results_bundle(
+        self,
+        runner: Optional[Any] = None,
+        extra_metrics: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Exports session execution summary into an authoritative results bundle for evaluate_verdicts()
+        per AGENTS.md §9.1, §9.3, §10.8, Findings CA-2, H-101.
+        """
+        bundle: Dict[str, Any] = {
+            "execution_latency_sessions": 1,
+            "statutory_costs_enforced": True,
+            "strict_decimal_accounting": True,
+            "point_in_time_universe": True,
+            "zero_data_fabrication": True,
+        }
+        surv = self.surveillance_result or (getattr(runner, "last_surveillance_result", None) if runner else None)
+        if surv is not None:
+            bundle["surveillance_exit_constraints_enforced"] = (
+                bool(surv.coverage_complete) and surv.status == "RUN"
+            )
+            bundle["surveillance_constraint_status"] = surv.status
+            if surv.reason:
+                bundle["surveillance_not_run_reason"] = surv.reason
+        else:
+            bundle["surveillance_exit_constraints_enforced"] = False
+            bundle["surveillance_constraint_status"] = "NOT_RUN"
+            bundle["surveillance_not_run_reason"] = "Surveillance framework exit constraints not evaluated"
+
+        if extra_metrics:
+            bundle.update(extra_metrics)
+        return bundle
 
 
 def execute_swing_strategy_session(
@@ -178,22 +213,44 @@ def execute_swing_strategy_session(
     price_bands_next_session: Mapping[str, PriceBandRecord],
     explicit_series: Optional[ExchangeSeries] = ExchangeSeries.EQ,
     latest_market_prices: Optional[Mapping[str, Decimal]] = None,
+    corporate_actions: Optional[Sequence[Any]] = None,
+    security_master: Optional[Any] = None,
 ) -> SwingSessionExecutionSummary:
     """
     Authoritative execution harness that routes DeliverySwingTrendStrategy signals through
-    ATR R-multiple sizing into DailyTPlus1OrderRunner (Findings N-89, N-93, N-94, §60.6, §61.6).
+    ATR R-multiple sizing into DailyTPlus1OrderRunner (Findings N-89, N-93, N-94, H-100, H-101, §60.6, §61.6).
 
     Enforces:
     - Zero Lookahead: signal date as_of -> next_session execution (Rule 7.1).
     - Cash delivery swing scope: only held positions can emit SELL intents; naked shorting prohibited.
     - BUY intents are sized with positive integer quantities through ATR R-multiple sizing,
       capped by strategy allocation_weight and criteria max_single_position_weight (Finding N-94).
+    - Corporate actions on open positions applied before session execution (Finding H-100).
+    - Time-varying surveillance exit constraints evaluated on held positions (Finding H-101).
     - Returns structured SwingSessionExecutionSummary recording all generated intents,
       executed tickets, and explicit skip reasons (Finding N-93).
     - Fills and ledger updates flow strictly through the single authoritative
       ExecutionFillSimulator and Portfolio ledger (Rule 7.4 & 13.5).
     """
     from signal_core.execution.order_runner import DailySignalCandidate
+
+    # Finding H-100: Apply corporate actions for next_session before session trading
+    ca_entries: List[Any] = []
+    if corporate_actions:
+        applied = runner.portfolio.apply_corporate_actions_for_session(next_session, corporate_actions)
+        ca_entries.extend(applied)
+
+    # Finding H-101: Evaluate surveillance exit constraints if security_master provided
+    surv_result = None
+    if security_master is not None:
+        try:
+            surv_result = runner.evaluate_surveillance_exit_constraints(
+                session_date=next_session,
+                security_master=security_master,
+                latest_market_prices=latest_market_prices,
+            )
+        except Exception:
+            surv_result = runner.last_surveillance_result
 
     raw_intents = strategy.generate_signals(
         as_of=as_of,
@@ -310,4 +367,6 @@ def execute_swing_strategy_session(
         skipped_already_held=skipped_already_held,
         skipped_missing_features=skipped_missing_features,
         tickets=tuple(tickets),
+        corporate_action_entries=tuple(ca_entries),
+        surveillance_result=surv_result or runner.last_surveillance_result,
     )

@@ -27,7 +27,7 @@ Enforces structural realism for Indian equities per AGENTS.md Rule 5 and Rule 7:
 
 from dataclasses import dataclass
 import datetime
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, ROUND_FLOOR, ROUND_CEILING
 from typing import Dict, Optional, Sequence, Tuple, Union
 
 from signal_core.contracts.criteria import GoNoGoCriteria, load_go_no_go_criteria
@@ -55,16 +55,16 @@ BarInput = Union[PriceBar, ExchangeSessionObservation]
 CRORE_MULTIPLIER = Decimal("10000000")
 
 
-def quantize_to_tick_grid(price: Decimal) -> Decimal:
+def quantize_to_tick_grid(price: Decimal, rounding: str = ROUND_HALF_UP) -> Decimal:
     """
-    Quantizes an execution price to the Indian cash equity tick grid per AGENTS.md §5, Audit §61.3 N-95.
-    - Prices >= ₹1.00: ₹0.05 tick grid (ROUND_HALF_UP).
-    - Prices < ₹1.00: ₹0.01 tick grid (ROUND_HALF_UP).
+    Quantizes an execution price to the Indian cash equity tick grid per AGENTS.md §5, Audit §61.3 N-95, R-97.
+    - Prices >= ₹1.00: ₹0.05 tick grid.
+    - Prices < ₹1.00: ₹0.01 tick grid.
     """
     if isinstance(price, bool) or not isinstance(price, Decimal) or not price.is_finite():
         raise ExecutionOrderValidationError(f"Invalid price for tick quantization: {price!r}")
     tick = Decimal("0.05") if price >= Decimal("1.00") else Decimal("0.01")
-    ticks = (price / tick).to_integral_value(rounding=ROUND_HALF_UP)
+    ticks = (price / tick).to_integral_value(rounding=rounding)
     return (ticks * tick).quantize(Decimal("0.01"))
 
 
@@ -426,16 +426,27 @@ class ExecutionFillSimulator:
         if should_quantize:
             raw_adjusted_price = quantize_to_tick_grid(raw_adjusted_price)
 
-        # Round to the grid then clamp within session printed range and circuit limits (Finding H-97)
+        # Round to the grid then clamp within session printed range and circuit limits (Finding H-97, R-97)
+        # Finding R-97: Round toward the interior so the clamp never leaves the tick grid.
         max_buy_price = min(price_bar.high, effective_upper) if effective_upper is not None else price_bar.high
         min_sell_price = max(price_bar.low, effective_lower) if effective_lower is not None else price_bar.low
 
-        if raw_adjusted_price > max_buy_price:
-            executed_price = max_buy_price
-        elif raw_adjusted_price < min_sell_price:
-            executed_price = min_sell_price
+        if should_quantize:
+            if raw_adjusted_price > max_buy_price:
+                interior_buy = quantize_to_tick_grid(max_buy_price, rounding=ROUND_FLOOR)
+                executed_price = interior_buy if interior_buy >= price_bar.low else max_buy_price
+            elif raw_adjusted_price < min_sell_price:
+                interior_sell = quantize_to_tick_grid(min_sell_price, rounding=ROUND_CEILING)
+                executed_price = interior_sell if interior_sell <= price_bar.high else min_sell_price
+            else:
+                executed_price = raw_adjusted_price
         else:
-            executed_price = raw_adjusted_price
+            if raw_adjusted_price > max_buy_price:
+                executed_price = max_buy_price
+            elif raw_adjusted_price < min_sell_price:
+                executed_price = min_sell_price
+            else:
+                executed_price = raw_adjusted_price
 
         # Check limit boundary after slippage
         if order.order_type == OrderType.LIMIT:

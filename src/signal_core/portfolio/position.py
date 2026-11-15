@@ -223,56 +223,44 @@ class Position:
         if self._quantity <= 0:
             return
 
-        # Finding H-86 & H-89: ISIN_TRANSITION represents continuity change of identity.
-        # If the event carries a share ratio (e.g. 2:1 split + ISIN change), apply the
-        # multiplier and restate average price, then re-key instrument_id to action.new_isin.
-        if action.action_type == CorporateActionType.ISIN_TRANSITION:
-            if not action.new_isin:
-                raise CorporateActionError(
-                    f"ISIN_TRANSITION requires new_isin for {self._instrument_id} (Finding H-86)."
-                )
-            multiplier = action.ratio_numerator / action.ratio_denominator
-            if multiplier != Decimal("1"):
-                new_qty_dec = Decimal(self._quantity) * multiplier
-                # Finding N-87: Fractional entitlement cannot be silently truncated. Fail closed!
-                if new_qty_dec != Decimal(int(new_qty_dec)):
-                    raise CorporateActionError(
-                        f"Non-integral restatement from corporate action {action.action_type.value} on {self._instrument_id}: "
-                        f"{self._quantity} shares × {action.ratio_numerator}/{action.ratio_denominator} = {new_qty_dec} shares. "
-                        f"Fractional entitlements cannot be silently truncated (Finding N-87)."
-                    )
-                new_qty = int(new_qty_dec)
-                if new_qty <= 0:
-                    raise LedgerValidationError(
-                        f"Corporate action {action.action_type.value} resulted in non-positive quantity {new_qty} "
-                        f"from initial {self._quantity} shares."
-                    )
-                self._quantity = new_qty
-                self._average_entry_price = (
-                    self._total_cost_basis / Decimal(self._quantity)
-                ).quantize(PRICE_PRECISION, rounding=ROUND_HALF_UP)
-
-            self._instrument_id = action.new_isin
+        # Finding H-99: Rights entitlement grants the right to subscribe; it does not fabricate free shares without cash outflow.
+        # Holding through rights ex-date leaves position quantity and cost basis unchanged.
+        if action.action_type == CorporateActionType.RIGHTS:
             return
 
+        # Finding H-86, H-89, H-96, H-98, H-99:
+        # Exact rational integer restatement for SPLIT, BONUS, CONSOLIDATION, ISIN_TRANSITION, MERGER
+        # and DELISTING carrying new_isin consideration.
         if action.action_type in (
+            CorporateActionType.ISIN_TRANSITION,
             CorporateActionType.SPLIT,
             CorporateActionType.BONUS,
             CorporateActionType.CONSOLIDATION,
-            CorporateActionType.RIGHTS,
-            CorporateActionType.DELISTING,
+            CorporateActionType.MERGER,
+        ) or (
+            action.action_type == CorporateActionType.DELISTING and action.new_isin and action.new_isin != self._instrument_id
         ):
-            multiplier = action.ratio_numerator / action.ratio_denominator
-            if multiplier != Decimal("1"):
-                new_qty_dec = Decimal(self._quantity) * multiplier
-                # Finding N-87: Fractional entitlement cannot be silently truncated. Fail closed!
-                if new_qty_dec != Decimal(int(new_qty_dec)):
+            if action.action_type == CorporateActionType.ISIN_TRANSITION and not action.new_isin:
+                raise CorporateActionError(
+                    f"ISIN_TRANSITION requires new_isin for {self._instrument_id} (Finding H-86)."
+                )
+
+            num = int(action.ratio_numerator)
+            den = int(action.ratio_denominator)
+
+            if num != den:
+                # Finding H-99: Exact integer divisibility check.
+                # Avoids floating/repeating decimal expansion errors like 14 * (15/14) = 14.99999...
+                rem = (self._quantity * num) % den
+                if rem != 0:
+                    fractional_shares = Decimal(self._quantity * num) / Decimal(den)
                     raise CorporateActionError(
                         f"Non-integral restatement from corporate action {action.action_type.value} on {self._instrument_id}: "
-                        f"{self._quantity} shares × {action.ratio_numerator}/{action.ratio_denominator} = {new_qty_dec} shares. "
-                        f"Fractional entitlements cannot be silently truncated (Finding N-87)."
+                        f"{self._quantity} shares × {action.ratio_numerator}/{action.ratio_denominator} = {fractional_shares} shares "
+                        f"(remainder {rem}/{den}). "
+                        f"Fractional entitlements cannot be silently truncated (Finding N-87, H-99)."
                     )
-                new_qty = int(new_qty_dec)
+                new_qty = (self._quantity * num) // den
                 if new_qty <= 0:
                     raise LedgerValidationError(
                         f"Corporate action {action.action_type.value} resulted in non-positive quantity {new_qty} "
@@ -282,10 +270,33 @@ class Position:
                 self._average_entry_price = (
                     self._total_cost_basis / Decimal(self._quantity)
                 ).quantize(PRICE_PRECISION, rounding=ROUND_HALF_UP)
-            # Finding H-96: Re-key position unconditionally if corporate action specifies new_isin
+
+            # Finding H-96 & H-98: Re-key position unconditionally if corporate action specifies new_isin
             if action.new_isin:
                 self._instrument_id = action.new_isin
             return
+
+    def close_delisting(self, delisting_price: Decimal) -> Tuple[Decimal, Decimal]:
+        """
+        Closes an open position upon delisting/settlement at delisting_price (Finding H-98).
+        Calculates realized gross and net PnL, zeros out remaining shares, and preserves equity.
+        Returns (proceeds, net_pnl).
+        """
+        if self._quantity <= 0:
+            return Decimal("0.00"), Decimal("0.00")
+
+        proceeds = _quantize_paise(Decimal(self._quantity) * delisting_price)
+        gross_cost = _quantize_paise(Decimal(self._quantity) * self._average_entry_price)
+        gross_pnl = _quantize_paise(proceeds - gross_cost)
+        net_pnl = _quantize_paise(proceeds - self._total_cost_basis)
+
+        self._realized_gross_pnl += gross_pnl
+        self._realized_net_pnl += net_pnl
+        self._quantity = 0
+        self._average_entry_price = Decimal("0.0000")
+        self._total_cost_basis = Decimal("0.00")
+
+        return proceeds, net_pnl
 
     def snapshot(self, market_price: Optional[Decimal] = None) -> PositionSnapshot:
         """

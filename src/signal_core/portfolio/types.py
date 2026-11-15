@@ -18,6 +18,7 @@ class CashEntryType(str, Enum):
     TRADE_BUY_OUTFLOW = "TRADE_BUY_OUTFLOW"      # Trade purchase outflow (gross + charges)
     TRADE_SELL_INFLOW = "TRADE_SELL_INFLOW"      # Trade proceeds inflow (gross - charges)
     DIVIDEND_INFLOW = "DIVIDEND_INFLOW"          # Corporate action cash dividend
+    DELISTING_SETTLEMENT = "DELISTING_SETTLEMENT"# Corporate action cash delisting settlement
     FEE_DEBIT = "FEE_DEBIT"                      # Miscellaneous / custodial fee debit
 
 

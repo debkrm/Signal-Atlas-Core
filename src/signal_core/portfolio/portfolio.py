@@ -182,9 +182,10 @@ class Portfolio:
             CorporateActionType.BONUS,
             CorporateActionType.CONSOLIDATION,
             CorporateActionType.RIGHTS,
+            CorporateActionType.MERGER,
         ):
             pos.apply_corporate_action(action)
-            # Finding H-96: If SPLIT/BONUS/CONSOLIDATION/RIGHTS carries new_isin, re-key the portfolio position mapping
+            # Finding H-96 & H-98: If SPLIT/BONUS/CONSOLIDATION/RIGHTS/MERGER carries new_isin, re-key the portfolio position mapping
             if action.new_isin and action.new_isin != action.isin:
                 old_isin = action.isin
                 new_isin = action.new_isin
@@ -193,7 +194,7 @@ class Portfolio:
                     if not existing_target.is_closed and existing_target.quantity > 0:
                         raise CorporateActionError(
                             f"Cannot re-key {old_isin} to {new_isin} on {action.action_type.value}: "
-                            f"target ISIN already has active open position (Finding H-96)."
+                            f"target ISIN already has active open position (Finding H-96, H-98)."
                         )
                 del self._positions[old_isin]
                 self._positions[new_isin] = pos
@@ -208,14 +209,32 @@ class Portfolio:
                     if not existing_target.is_closed and existing_target.quantity > 0:
                         raise CorporateActionError(
                             f"Cannot re-key {old_isin} to {new_isin} on {action.action_type.value}: "
-                            f"target ISIN already has active open position (Finding H-96)."
+                            f"target ISIN already has active open position (Finding H-96, H-98)."
                         )
                 pos.apply_corporate_action(action)
                 del self._positions[old_isin]
                 self._positions[new_isin] = pos
+                return None
             else:
+                # Finding H-98: Delisting without new_isin must settle proceeds into CashLedger
+                # at delisting_price (or average_entry_price), realizing PnL and leaving equity unchanged!
+                delist_price = (
+                    action.delisting_price
+                    if getattr(action, "delisting_price", None) is not None
+                    else pos.average_entry_price
+                )
+                settled_qty = pos.quantity
+                proceeds, net_pnl = pos.close_delisting(delist_price)
+                entry = self._ledger.record_delisting_settlement(
+                    trade_date=action.ex_date,
+                    instrument_id=action.isin,
+                    amount=proceeds,
+                    description=f"Delisting settlement proceeds for {action.isin} ({settled_qty} shares @ ₹{delist_price})",
+                    reference_id=f"DELIST_{action.isin}_{action.ex_date.isoformat()}",
+                )
                 del self._positions[action.isin]
-            return None
+                self._peak_portfolio_value = max(self._peak_portfolio_value, self.current_total_equity())
+                return entry
 
         elif action.action_type == CorporateActionType.DIVIDEND:
             div_per_share = (

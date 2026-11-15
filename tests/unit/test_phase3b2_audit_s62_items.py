@@ -62,7 +62,11 @@ from signal_core.storage.security_master import (
     SymbolInterval,
     load_corporate_actions,
 )
-from signal_core.strategy.swing import SwingSessionExecutionSummary
+from signal_core.strategy.swing import (
+    DeliverySwingTrendStrategy,
+    SwingSessionExecutionSummary,
+    execute_swing_strategy_session,
+)
 
 
 # =============================================================================
@@ -444,15 +448,16 @@ def test_n92_surveillance_three_state_coverage_and_exit_result():
 
 def test_ca1_corporate_actions_corpus_and_sampled_types():
     """
-    Finding CA-1 Acceptance Probe (§62.6 Item 4, §62.7 CA-1):
+    Finding CA-1 Acceptance Probe (§62.6 Item 4, §62.7 CA-1, §63.6 Item 1, 2, 8):
     1. Loads data/reference/corporate_actions.jsonl and verifies >= 10 events across all action types.
     2. Exercises mid-hold invariant on sampled events:
        - SPLIT with new_isin (TATASTEEL 10:1): quantity restated, cost preserved, position re-keyed.
        - BONUS (RELIANCE 1:1): quantity doubled, cost preserved, equity continuous.
        - CONSOLIDATION (IDEA 1:10): 100 shares -> 10 shares, cost preserved.
        - DIVIDEND (INFY INR 20.00): cash credited to ledger, total equity continuous.
-       - RIGHTS (BHARTIARTL 15:14): shares restated, cost basis preserved.
-       - DELISTING (HDFC): delisting prunes or re-keys position.
+       - RIGHTS (BHARTIARTL 1:14): rights entitlement leaves shares and cost basis unchanged (Finding H-99).
+       - MERGER (HDFC 42:25): 25 HDFC -> 42 HDFCBANK, cost basis preserved, re-keyed (Finding H-98).
+       - DELISTING (DELIST2022): cash settlement at delisting_price preserves equity (Finding H-98).
     3. Distinguishes registered names from unregistered names via has_corporate_action_coverage.
     """
     actions = load_corporate_actions()
@@ -466,6 +471,7 @@ def test_ca1_corporate_actions_corpus_and_sampled_types():
     assert CorporateActionType.RIGHTS in types_found
     assert CorporateActionType.ISIN_TRANSITION in types_found
     assert CorporateActionType.DELISTING in types_found
+    assert CorporateActionType.MERGER in types_found
 
     criteria = load_go_no_go_criteria()
     cost_model = TransactionCostModel(criteria.statutory_costs)
@@ -551,31 +557,72 @@ def test_ca1_corporate_actions_corpus_and_sampled_types():
     assert pos_consol.quantity == 10
     assert pos_consol.average_entry_price == Decimal("100.0000")
 
-    # Mid-hold DELISTING test (pruning)
-    port_delist = Portfolio(initial_capital=Decimal("1000000.00"), criteria=criteria, initial_date=datetime.date(2024, 1, 1))
-    dummy_costs_delist = cost_model.compute_costs(
-        trade_date=datetime.date(2024, 1, 3),
+    # Mid-hold MERGER test (HDFC into HDFCBANK: 25 HDFC -> 42 HDFCBANK, Finding H-98)
+    port_merger = Portfolio(initial_capital=Decimal("1000000.00"), criteria=criteria, initial_date=datetime.date(2023, 7, 1))
+    dummy_costs_merger = cost_model.compute_costs(
+        trade_date=datetime.date(2023, 7, 10),
         side=OrderSide.BUY,
         product=OrderProduct.DELIVERY,
-        quantity=20,
-        price=Decimal("2000.00"),
+        quantity=25,
+        price=Decimal("2800.00"),
     )
-    fill_delist = ExecutionFillResult(
+    fill_merger = ExecutionFillResult(
         order=ExecutionOrder(
             instrument_id="INE001A01036",
             side=OrderSide.BUY,
             product=OrderProduct.DELIVERY,
-            quantity=20,
-            signal_date=datetime.date(2024, 1, 2),
-            target_date=datetime.date(2024, 1, 3),
+            quantity=25,
+            signal_date=datetime.date(2023, 7, 7),
+            target_date=datetime.date(2023, 7, 10),
             order_type=OrderType.MARKET_ON_OPEN,
         ),
         status=FillStatus.FILLED,
-        fill_date=datetime.date(2024, 1, 3),
+        fill_date=datetime.date(2023, 7, 10),
+        latency_sessions=1,
+        filled_quantity=25,
+        unfilled_quantity=0,
+        executed_price=Decimal("2800.00"),
+        slippage=None,
+        costs=dummy_costs_merger,
+        circuit_evidence_present=True,
+        rejection_reason=None,
+        fill_id="FILL-CA1-MERGER",
+    )
+    port_merger.process_fill(fill_merger, enforce_risk_limits=False)
+    merger_action = [a for a in actions if a.isin == "INE001A01036" and a.action_type == CorporateActionType.MERGER][0]
+    port_merger.apply_corporate_action(merger_action)
+    # Old ISIN position must be None, new ISIN position must hold 42 shares with basis preserved (Finding H-98)
+    assert port_merger.get_position("INE001A01036") is None
+    pos_bank = port_merger.get_position("INE040A01034")
+    assert pos_bank is not None
+    assert pos_bank.quantity == 42
+    assert pos_bank.total_cost_basis == Decimal("70000.00")
+
+    # Mid-hold DELISTING test (cash settlement preserves equity, Finding H-98)
+    port_delist = Portfolio(initial_capital=Decimal("1000000.00"), criteria=criteria, initial_date=datetime.date(2022, 12, 1))
+    dummy_costs_delist = cost_model.compute_costs(
+        trade_date=datetime.date(2022, 12, 10),
+        side=OrderSide.BUY,
+        product=OrderProduct.DELIVERY,
+        quantity=20,
+        price=Decimal("200.00"),
+    )
+    fill_delist = ExecutionFillResult(
+        order=ExecutionOrder(
+            instrument_id="INE115A01026",
+            side=OrderSide.BUY,
+            product=OrderProduct.DELIVERY,
+            quantity=20,
+            signal_date=datetime.date(2022, 12, 8),
+            target_date=datetime.date(2022, 12, 9),
+            order_type=OrderType.MARKET_ON_OPEN,
+        ),
+        status=FillStatus.FILLED,
+        fill_date=datetime.date(2022, 12, 9),
         latency_sessions=1,
         filled_quantity=20,
         unfilled_quantity=0,
-        executed_price=Decimal("2000.00"),
+        executed_price=Decimal("200.00"),
         slippage=None,
         costs=dummy_costs_delist,
         circuit_evidence_present=True,
@@ -583,11 +630,54 @@ def test_ca1_corporate_actions_corpus_and_sampled_types():
         fill_id="FILL-CA1-DELIST",
     )
     port_delist.process_fill(fill_delist, enforce_risk_limits=False)
-    delist_action = [a for a in actions if a.isin == "INE001A01036" and a.action_type == CorporateActionType.DELISTING][0]
+    # Mark equity prior to delisting at delisting_price INR 150.00
+    equity_pre_delist = port_delist.current_total_equity({"INE115A01026": Decimal("150.00")})
+    delist_action = [a for a in actions if a.isin == "INE115A01026" and a.action_type == CorporateActionType.DELISTING][0]
     port_delist.apply_corporate_action(delist_action)
-    # Re-keyed to new_isin (HDFC Bank INE040A01034)
-    assert port_delist.get_position("INE001A01036") is None
-    assert port_delist.get_position("INE040A01034") is not None
+    assert port_delist.get_position("INE115A01026") is None
+    equity_post_delist = port_delist.current_total_equity()
+    assert equity_post_delist == equity_pre_delist
+
+    # Mid-hold RIGHTS test (entitlement does not fabricate bonus shares, Finding H-99)
+    port_rights = Portfolio(initial_capital=Decimal("1000000.00"), criteria=criteria, initial_date=datetime.date(2022, 7, 1))
+    dummy_costs_rights = cost_model.compute_costs(
+        trade_date=datetime.date(2022, 7, 25),
+        side=OrderSide.BUY,
+        product=OrderProduct.DELIVERY,
+        quantity=14,
+        price=Decimal("700.00"),
+    )
+    fill_rights = ExecutionFillResult(
+        order=ExecutionOrder(
+            instrument_id="INE397D01024",
+            side=OrderSide.BUY,
+            product=OrderProduct.DELIVERY,
+            quantity=14,
+            signal_date=datetime.date(2022, 7, 22),
+            target_date=datetime.date(2022, 7, 25),
+            order_type=OrderType.MARKET_ON_OPEN,
+        ),
+        status=FillStatus.FILLED,
+        fill_date=datetime.date(2022, 7, 25),
+        latency_sessions=1,
+        filled_quantity=14,
+        unfilled_quantity=0,
+        executed_price=Decimal("700.00"),
+        slippage=None,
+        costs=dummy_costs_rights,
+        circuit_evidence_present=True,
+        rejection_reason=None,
+        fill_id="FILL-CA1-RIGHTS",
+    )
+    port_rights.process_fill(fill_rights, enforce_risk_limits=False)
+    equity_pre_rights = port_rights.current_total_equity({"INE397D01024": Decimal("700.00")})
+    rights_action = [a for a in actions if a.isin == "INE397D01024" and a.action_type == CorporateActionType.RIGHTS][0]
+    port_rights.apply_corporate_action(rights_action)
+    pos_rights = port_rights.get_position("INE397D01024")
+    assert pos_rights.quantity == 14
+    assert pos_rights.total_cost_basis == Decimal("9800.00")
+    equity_post_rights = port_rights.current_total_equity({"INE397D01024": Decimal("700.00")})
+    assert equity_post_rights == equity_pre_rights
 
 
 def test_ca1_registered_vs_unregistered_security_master_distinction():
@@ -651,33 +741,44 @@ def test_ca2_surveillance_not_run_propagates_to_no_go():
 
 def test_n97_summary_ticket_counts_separation_on_circuit_freeze():
     """
-    Finding N-97 Acceptance Probe (§62.3, §62.6 Item 6):
-    In an upper-circuit freeze session:
+    Finding N-97 & N-99 Acceptance Probe (§62.3, §62.6 Item 6, §63.6 Item 8):
+    In an upper-circuit freeze session, executed through execute_swing_strategy_session:
     - tickets_emitted == 1
     - tickets_rejected == 1
     - tickets_filled == 0
+    - tickets_executed == 0
     - tickets_no_trade == 0
     - ticket.status is REJECTED_UPPER_CIRCUIT
     """
+    from types import SimpleNamespace
     criteria = load_go_no_go_criteria()
     calendar = load_anchored_nse_trading_calendar()
     port = Portfolio(initial_capital=Decimal("1000000.00"), criteria=criteria, initial_date=datetime.date(2024, 1, 1))
     sim = ExecutionFillSimulator(criteria=criteria, trading_calendar=calendar.sessions)
     runner = DailyTPlus1OrderRunner(portfolio=port, simulator=sim, calendar=calendar, criteria=criteria)
-
-    target_date = datetime.date(2024, 1, 3)
-    cand = DailySignalCandidate(
-        instrument_id="INE002A01018",
-        signal_date=datetime.date(2024, 1, 2),
-        side=OrderSide.BUY,
-        entry_reference_price=Decimal("1000.00"),
-        atr=Decimal("50.00"),
-        session_volume=5000000,
-        series="EQ",
+    strategy = DeliverySwingTrendStrategy(
+        strategy_id="test_swing_freeze",
+        fast_indicator="fast",
+        slow_indicator="slow",
+        allocation_weight=Decimal("0.10"),
     )
+
+    as_of = datetime.date(2024, 1, 2)
+    target_date = datetime.date(2024, 1, 3)
+    isin = "INE002A01018"
+
+    features = {
+        isin: SimpleNamespace(
+            fast=Decimal("950.00"),
+            slow=Decimal("900.00"),
+            close=Decimal("1000.00"),
+            atr=Decimal("50.00"),
+            volume=5000000,
+        )
+    }
     # Upper freeze: Open=High=Low=Close=1100.00 == upper circuit
     freeze_bar = PriceBar(
-        instrument_id="INE002A01018",
+        instrument_id=isin,
         trade_date=target_date,
         open=Decimal("1100.00"),
         high=Decimal("1100.00"),
@@ -687,7 +788,7 @@ def test_n97_summary_ticket_counts_separation_on_circuit_freeze():
         traded_value=Decimal("110000000.00"),
     )
     band = PriceBandRecord(
-        isin="INE002A01018",
+        isin=isin,
         trade_date=target_date,
         series="EQ",
         upper_circuit_limit=Decimal("1100.00"),
@@ -695,32 +796,26 @@ def test_n97_summary_ticket_counts_separation_on_circuit_freeze():
         band_percentage=Decimal("10.00"),
     )
 
-    ticket = runner.run_candidate(
-        candidate=cand,
-        t_plus_1_bar=freeze_bar,
-        price_band=band,
+    summary = execute_swing_strategy_session(
+        strategy=strategy,
+        runner=runner,
+        as_of=as_of,
+        next_session=target_date,
+        universe=[isin],
+        features=features,
+        bars_next_session={isin: freeze_bar},
+        price_bands_next_session={isin: band},
         explicit_series=ExchangeSeries.EQ,
     )
 
-    assert ticket.status == FillStatus.REJECTED_UPPER_CIRCUIT
-
-    summary = SwingSessionExecutionSummary(
-        as_of=datetime.date(2024, 1, 2),
-        next_session=target_date,
-        intents_generated=1,
-        tickets_emitted=1,
-        tickets_filled=0,
-        tickets_rejected=1,
-        tickets_executed=0,
-        skipped_missing_band=0,
-        skipped_missing_bar=0,
-        skipped_unheld_sell=0,
-        tickets_no_trade=0,
-    )
+    assert summary.intents_generated == 1
     assert summary.tickets_emitted == 1
     assert summary.tickets_filled == 0
     assert summary.tickets_rejected == 1
+    assert summary.tickets_executed == 0
     assert summary.tickets_no_trade == 0
+    assert len(summary.tickets) == 1
+    assert summary.tickets[0].status == FillStatus.REJECTED_UPPER_CIRCUIT
 
 
 # =============================================================================

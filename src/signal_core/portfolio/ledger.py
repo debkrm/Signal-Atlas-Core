@@ -171,6 +171,39 @@ class CashLedger:
             seq_prefix=f"DIV_{instrument_id}",
         )
 
+    def record_delisting_settlement(
+        self,
+        trade_date: datetime.date,
+        instrument_id: str,
+        amount: Decimal,
+        description: Optional[str] = None,
+        reference_id: Optional[str] = None,
+    ) -> CashLedgerEntry:
+        """
+        Posts cash delisting settlement proceeds into the ledger per AGENTS.md §5.4, §13.2 and Finding H-98.
+        """
+        if type(trade_date) is not datetime.date:
+            raise LedgerValidationError(f"trade_date must be exact datetime.date, got {type(trade_date).__name__}")
+        paise_amount = _quantize_paise(amount)
+        if paise_amount < Decimal("0.00"):
+            raise LedgerValidationError(f"Delisting settlement amount must be non-negative, got {amount!r}")
+
+        desc = description or f"Delisting settlement for {instrument_id}: ₹{paise_amount}"
+        meta_items: Tuple[Tuple[str, str], ...] = (
+            ("instrument_id", instrument_id),
+            ("delisting_proceeds", str(paise_amount)),
+        )
+        return self._post_entry(
+            trade_date=trade_date,
+            entry_type=CashEntryType.DELISTING_SETTLEMENT,
+            amount=paise_amount,
+            description=desc,
+            reference_id=reference_id,
+            circuit_evidence_present=True,
+            metadata=meta_items,
+            seq_prefix=f"DELIST_{instrument_id}",
+        )
+
     def record_fill(
         self,
         fill: ExecutionFillResult,
