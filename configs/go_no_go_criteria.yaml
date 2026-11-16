@@ -4,9 +4,11 @@
 # Never modify thresholds post-hoc after inspecting backtest results.
 
 metadata:
-  # 1.1.1 (2026-11-16): no threshold changed. Version bumped only to record the manifest pin move
-  # that follows the corporate_actions.jsonl restatement under Audit §68.6 item 3 (H-115, N-112).
-  version: "1.1.1"
+  # 1.1.2 (2026-11-16): no threshold changed. Version bumped only to add the trials-manifest pin
+  # required by Audit §72 finding N-128, so the evaluation-head witness has a root outside the
+  # registry manifest itself. 1.1.1 recorded the manifest pin move that followed the
+  # corporate_actions.jsonl restatement under Audit §68.6 item 3 (H-115, N-112).
+  version: "1.1.2"
   effective_date: "2026-11-16"
   market: "NSE_CASH_EQUITY"
   currency: "INR"
@@ -127,6 +129,13 @@ market_data_and_accounting_invariants:
   # Finding H-72: Authoritative reference manifest fingerprint pinned as criteria anchor (Audit §54.5, §54.10, §60.6 Item 4, §62.6 Item 4)
   # MAN-FPR-V1 covers data/reference/manifest.jsonl content (36,007 bytes, SHA-256 444e9a64aa5fbccb943dfc6994c7daca042d2ee446d971a09d2211645cc725c1)
   expected_manifest_fingerprint: "MAN-FPR-V1-444e9a64aa5fbccb943dfc6994c7daca042d2ee446d971a09d2211645cc725c1"
+
+  # Finding N-128 (Audit §72.3, §72.5 item 3): the trial-registry manifest witnesses
+  # {evaluation_count, head_eval_hash} outside the (sidecar, anchor) pair. Pinning its SHA-256 here
+  # gives that witness a root no append path writes: removing the witness keys, editing a witnessed
+  # value, or appending a trial without re-pinning this anchor fails G2A-6.8. Hash of
+  # data/trials/trial_registry.jsonl.manifest with LF line endings (327 bytes).
+  expected_trial_registry_manifest_sha256: "0290d02bfc893809fa441a8a21940f218c28eba3317170c7944572c83cda6b36"
 
   # Authoritative Calendar and Session Reconciliation Invariants (AGENTS.md §6.3, §9.2, Findings H-56, H-61, H-62, H-64)
   # H-64: Calendar identity anchor — computed from session_records (dates, session_types, open/close times) at load time

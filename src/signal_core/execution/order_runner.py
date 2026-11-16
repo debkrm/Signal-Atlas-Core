@@ -83,6 +83,10 @@ class DailySignalCandidate:
     Series Invariant (Finding H-82, Audit §59.3, §59.7 Item 2):
     - series must be explicitly supplied by caller (no default string fabrication).
     - Under cash delivery swing scope, only 'EQ' rolling series is entry-eligible.
+
+    Protective Stop (Audit §72 Ruling 1): a SELL candidate may carry
+    `order_type=OrderType.STOP_LOSS` with the persisted `stop_price`; the fill is then decided
+    by ExecutionFillSimulator's stop path (gap -> open, else stop price) under §5.3 circuit rules.
     """
     instrument_id: str
     signal_date: datetime.date
@@ -97,6 +101,7 @@ class DailySignalCandidate:
     allow_partial_fill: bool = False
     metadata: Optional[Mapping[str, Any]] = None
     sell_quantity: Optional[int] = None
+    stop_price: Optional[Decimal] = None
 
     def __post_init__(self) -> None:
         if (
@@ -157,6 +162,21 @@ class DailySignalCandidate:
                 raise OrderRunnerError(
                     f"allocation_weight must be a finite Decimal in (0, 1], got {self.allocation_weight!r} (Finding N-94)."
                 )
+
+        if self.stop_price is not None:
+            if (
+                isinstance(self.stop_price, bool)
+                or not isinstance(self.stop_price, Decimal)
+                or not self.stop_price.is_finite()
+                or self.stop_price <= Decimal("0")
+            ):
+                raise OrderRunnerError(
+                    f"stop_price must be a positive finite Decimal, got {self.stop_price!r} (Audit §72 Ruling 1)."
+                )
+        if self.order_type == OrderType.STOP_LOSS and self.stop_price is None:
+            raise OrderRunnerError(
+                "STOP_LOSS candidate requires an explicit stop_price (Audit §72 Ruling 1)."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,6 +257,57 @@ class SurveillanceExitResult(tuple):
         return instance
 
 
+@dataclass(frozen=True, slots=True)
+class ProtectiveStopOrder:
+    """
+    Persisted protective stop for one open long (Audit §72 Ruling 1, AGENTS.md §13.2).
+
+    The stop price is fixed at entry: `entry_reference - k * ATR(14)` as of the signal session's
+    close, floored at the minimum tick by the sizing engine, and never recomputed from a later
+    close. Its quantity is the filled entry quantity, capped at the held quantity at evaluation.
+    """
+    instrument_id: str
+    stop_price: Decimal
+    quantity: int
+    signal_date: datetime.date
+    armed_session: datetime.date
+    atr: Decimal
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.instrument_id, str) or not self.instrument_id.strip():
+            raise OrderRunnerError(f"protective stop instrument_id must be a clean string, got {self.instrument_id!r}")
+        for name, val in (("stop_price", self.stop_price), ("atr", self.atr)):
+            if (
+                isinstance(val, bool)
+                or not isinstance(val, Decimal)
+                or not val.is_finite()
+                or val <= Decimal("0")
+            ):
+                raise OrderRunnerError(f"protective stop {name} must be positive finite Decimal, got {val!r}")
+        if isinstance(self.quantity, bool) or not isinstance(self.quantity, int) or self.quantity <= 0:
+            raise OrderRunnerError(f"protective stop quantity must be a positive integer, got {self.quantity!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class ProtectiveStopExitResult:
+    """
+    Session outcome of evaluating every active protective stop (Audit §72 Ruling 1, §5.3).
+
+    A stop the session could not fill because the bid side was frozen (lower circuit / locked
+    session / zero liquidity) stays PENDING: it is counted as a deferred exit, never filled, and
+    retried on the next session.
+    """
+    session_date: datetime.date
+    tickets: Tuple["DailyExecutionTicket", ...] = ()
+    filled_count: int = 0
+    deferred_count: int = 0
+    circuit_deferred_count: int = 0
+    untriggered_count: int = 0
+    skipped_no_bar_count: int = 0
+    active_stop_count: int = 0
+    deferrals: Tuple[Tuple[str, str], ...] = ()
+
+
 class DailyTPlus1OrderRunner:
     """
     Authoritative Daily T+1 Order Runner for Indian Cash Delivery Swing Strategies.
@@ -263,10 +334,22 @@ class DailyTPlus1OrderRunner:
         self._atr_stop_multiple = atr_stop_multiple
         self._eligibility_policy = eligibility_policy
         self.last_surveillance_result: Optional[SurveillanceExitResult] = None
+        # Audit §72 Ruling 1: one persisted protective stop per open long, armed at the T+1 fill.
+        self._protective_stops: dict[str, ProtectiveStopOrder] = {}
 
     @property
     def portfolio(self) -> Portfolio:
         return self._portfolio
+
+    @property
+    def atr_stop_multiple(self) -> Decimal:
+        """The single k that governs sizing, the protective stop distance and the 1R denominator."""
+        return self._atr_stop_multiple
+
+    @property
+    def protective_stops(self) -> Mapping[str, ProtectiveStopOrder]:
+        """Active protective stops, keyed by instrument_id (read-only view)."""
+        return dict(self._protective_stops)
 
     @property
     def simulator(self) -> ExecutionFillSimulator:
@@ -394,6 +477,7 @@ class DailyTPlus1OrderRunner:
                 quantity=sell_qty,
                 allow_partial_fill=candidate.allow_partial_fill,
                 metadata=candidate.metadata,
+                stop_price=candidate.stop_price,
             )
             return intent, None
 
@@ -490,6 +574,24 @@ class DailyTPlus1OrderRunner:
                     realised_risk = _quantize_paise(
                         Decimal(fill_result.filled_quantity) * (fill_result.executed_price - intent.stop_price)
                     )
+                if intent.side == OrderSide.BUY and fill_result.filled_quantity > 0:
+                    # Audit §72 Ruling 1: persist the protective stop the sizing engine already priced,
+                    # so the reported 1R (quantity x stop distance) is an order, not an artefact.
+                    stop_px = intent.stop_price if intent.stop_price is not None else (
+                        size_result.stop_loss_price if size_result is not None else None
+                    )
+                    if stop_px is not None:
+                        self.arm_protective_stop(
+                            instrument_id=intent.instrument_id,
+                            stop_price=stop_px,
+                            quantity=fill_result.filled_quantity,
+                            signal_date=intent.signal_date,
+                            armed_session=intent.target_date,
+                            atr=candidate.atr,
+                        )
+                elif intent.side == OrderSide.SELL:
+                    # Any completed exit (signal, trim or the stop itself) retires the protective order.
+                    self.cancel_protective_stop(intent.instrument_id)
             except PortfolioRiskLimitError as exc:
                 fill_result = ExecutionFillResult(
                     order=order,
@@ -519,6 +621,160 @@ class DailyTPlus1OrderRunner:
             intended_risk=intended_risk,
             is_no_trade=False,
             no_trade_reason=None,
+        )
+
+    def arm_protective_stop(
+        self,
+        instrument_id: str,
+        stop_price: Decimal,
+        quantity: int,
+        signal_date: datetime.date,
+        armed_session: datetime.date,
+        atr: Decimal,
+    ) -> ProtectiveStopOrder:
+        """
+        Persists the T+1 protective stop for an open long (Audit §72 Ruling 1).
+
+        The price is the sizing engine's `stop_loss_price` (entry reference - k * ATR(14) at the
+        signal close, floored at the minimum tick), so the intended 1R distance is the distance the
+        order actually carries. It is never recomputed from a later close.
+        """
+        stop = ProtectiveStopOrder(
+            instrument_id=instrument_id,
+            stop_price=stop_price,
+            quantity=quantity,
+            signal_date=signal_date,
+            armed_session=armed_session,
+            atr=atr,
+        )
+        self._protective_stops[instrument_id] = stop
+        return stop
+
+    def cancel_protective_stop(self, instrument_id: str) -> bool:
+        """Retires a protective stop after the position is exited by any other path."""
+        return self._protective_stops.pop(instrument_id, None) is not None
+
+    def adjust_protective_stop_for_split(
+        self, instrument_id: str, ratio_numerator: int, ratio_denominator: int
+    ) -> bool:
+        """
+        Re-scales a pending stop for a split / bonus / consolidation (AGENTS.md §5.4, §13.2).
+
+        A stop price is denominated in the pre-action price scale; leaving it unchanged after a
+        1:10 split would place it ten times above the market and manufacture an instant fill.
+        """
+        stop = self._protective_stops.get(instrument_id)
+        if stop is None:
+            return False
+        if ratio_numerator <= 0 or ratio_denominator <= 0:
+            raise OrderRunnerError(
+                f"corporate action ratio must be positive, got {ratio_numerator}:{ratio_denominator}"
+            )
+        adjusted_quantity = (stop.quantity * ratio_numerator) // ratio_denominator
+        if adjusted_quantity <= 0:
+            # A reverse split can annihilate the stop quantity; the position's own slice is then
+            # settled for cash, so the stop is retired rather than re-armed at zero quantity.
+            self.cancel_protective_stop(instrument_id)
+            return True
+        self._protective_stops[instrument_id] = ProtectiveStopOrder(
+            instrument_id=instrument_id,
+            stop_price=(stop.stop_price * Decimal(ratio_denominator) / Decimal(ratio_numerator)).quantize(
+                Decimal("0.0001")
+            ),
+            quantity=adjusted_quantity,
+            signal_date=stop.signal_date,
+            armed_session=stop.armed_session,
+            atr=(stop.atr * Decimal(ratio_denominator) / Decimal(ratio_numerator)).quantize(Decimal("0.0001")),
+        )
+        return True
+
+    def evaluate_protective_stops(
+        self,
+        session_date: datetime.date,
+        bars: Mapping[str, Union[PriceBar, ExchangeSessionObservation]],
+        price_bands: Mapping[str, PriceBandRecord],
+        explicit_series: Optional[ExchangeSeries] = ExchangeSeries.EQ,
+        prev_closes: Optional[Mapping[str, Decimal]] = None,
+        latest_market_prices: Optional[Mapping[str, Decimal]] = None,
+    ) -> ProtectiveStopExitResult:
+        """
+        Tests every active protective stop against one session's bar (Audit §72 Ruling 1, §5.3).
+
+        Fills are decided solely by ExecutionFillSimulator's STOP_LOSS path: a gap through the stop
+        fills at that session's open, an intraday breach fills at the stop price. A session whose
+        bid side is frozen (fill reference at/below the lower circuit limit, or a locked 0-range
+        session) does NOT fill the stop: the order stays pending and the deferral is counted, so a
+        backtest can never assume an exit the market did not offer. Bars and price bands are
+        mandatory; a held name without either is left pending and counted as skipped.
+        """
+        tickets: List[DailyExecutionTicket] = []
+        deferrals: List[Tuple[str, str]] = []
+        filled = deferred = circuit_deferred = untriggered = skipped_no_bar = 0
+
+        for isin in sorted(self._protective_stops):
+            stop = self._protective_stops[isin]
+            pos = self._portfolio.get_position(isin)
+            if pos is None or pos.is_closed or pos.quantity <= 0:
+                self.cancel_protective_stop(isin)
+                continue
+
+            bar = bars.get(isin)
+            band = price_bands.get(isin)
+            if bar is None or band is None:
+                skipped_no_bar += 1
+                deferrals.append((isin, "NO_BAR_OR_BAND"))
+                continue
+
+            quantity = min(stop.quantity, pos.quantity)
+            prev_close = (prev_closes or {}).get(isin)
+            candidate = DailySignalCandidate(
+                instrument_id=isin,
+                signal_date=stop.signal_date,
+                side=OrderSide.SELL,
+                entry_reference_price=prev_close if prev_close is not None else stop.stop_price,
+                atr=stop.atr,
+                session_volume=bar.volume if isinstance(bar, PriceBar) else bar.price_bar.volume,
+                series="EQ",
+                order_type=OrderType.STOP_LOSS,
+                stop_price=stop.stop_price,
+                sell_quantity=quantity,
+                metadata={"exit_reason": "STOP_LOSS", "protective_stop_session": session_date.isoformat()},
+            )
+            ticket = self.run_candidate(
+                candidate=candidate,
+                t_plus_1_bar=bar,
+                target_date=session_date,
+                price_band=band,
+                explicit_series=explicit_series,
+                latest_market_prices=latest_market_prices,
+            )
+            tickets.append(ticket)
+
+            status = ticket.status
+            if status in (FillStatus.FILLED, FillStatus.PARTIALLY_FILLED):
+                filled += 1
+                self.cancel_protective_stop(isin)
+            elif status == FillStatus.UNTRIGGERED:
+                untriggered += 1
+            else:
+                # §5.3: a frozen bid (lower circuit, locked session or zero liquidity) delays the
+                # exit instead of filling it. The order stays pending for the next session.
+                reason = str(ticket.fill_result.rejection_reason if ticket.fill_result else None)
+                deferred += 1
+                if status in (FillStatus.REJECTED_LOWER_CIRCUIT, FillStatus.REJECTED_ZERO_LIQUIDITY):
+                    circuit_deferred += 1
+                deferrals.append((isin, reason))
+
+        return ProtectiveStopExitResult(
+            session_date=session_date,
+            tickets=tuple(tickets),
+            filled_count=filled,
+            deferred_count=deferred,
+            circuit_deferred_count=circuit_deferred,
+            untriggered_count=untriggered,
+            skipped_no_bar_count=skipped_no_bar,
+            active_stop_count=len(self._protective_stops),
+            deferrals=tuple(deferrals),
         )
 
     def run_candidate(

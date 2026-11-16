@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import datetime
 from decimal import Decimal, ROUND_CEILING
-from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union, TYPE_CHECKING
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union, TYPE_CHECKING
 
 from signal_core.contracts.criteria import load_go_no_go_criteria
 from signal_core.contracts.dataset import PriceConvention
@@ -230,6 +230,14 @@ class SwingSessionExecutionSummary:
     tickets: Tuple[DailyExecutionTicket, ...] = ()
     corporate_action_entries: Tuple[Any, ...] = ()
     surveillance_result: Optional[Any] = None
+    # Audit §72 Ruling 1: protective stop orders are reported separately from strategy tickets so
+    # intent counters keep meaning "orders the strategy asked for", while the exits they produce
+    # still flow through the same authoritative fill, cost and ledger path.
+    protective_stop_tickets: Tuple[DailyExecutionTicket, ...] = ()
+    protective_stop_fills: int = 0
+    protective_stop_deferrals: int = 0
+    protective_stop_circuit_deferrals: int = 0
+    active_protective_stops: int = 0
 
     def __len__(self) -> int:
         return len(self.tickets)
@@ -377,6 +385,16 @@ def execute_swing_strategy_session(
             or getattr(strategy, "_allocation_weight", None)
         )
 
+        cand_metadata: Dict[str, Any] = {"intent_id": intent.intent_id}
+        if intent.side == OrderSide.SELL:
+            # Audit §72 / N-129: every exit states why it happened, so the committed trade ledger
+            # can distinguish a stop-loss exit from a moving-average signal exit or a trim.
+            cand_metadata["exit_reason"] = (
+                "MAX_POSITION_WEIGHT_TRIM"
+                if (intent.metadata or {}).get("trim_reason")
+                else "SIGNAL_EXIT"
+            )
+
         cand = DailySignalCandidate(
             instrument_id=isin,
             signal_date=as_of,
@@ -386,7 +404,7 @@ def execute_swing_strategy_session(
             session_volume=vol_int,
             series="EQ",
             allocation_weight=alloc_weight,
-            metadata={"intent_id": intent.intent_id},
+            metadata=cand_metadata,
             sell_quantity=intent.quantity if intent.side == OrderSide.SELL else None,
         )
 
@@ -410,6 +428,22 @@ def execute_swing_strategy_session(
             latest_market_prices=latest_market_prices,
         )
         tickets.append(ticket)
+
+    # Audit §72 Ruling 1: armed protective stops are tested against this session's bar too, after
+    # entries fill, so an entry-session breach is not silently ignored. Simulator decides the fill.
+    prev_closes: Dict[str, Decimal] = {}
+    for isin in runner.portfolio.get_open_positions():
+        feat_close = getattr(features.get(isin), "close", None)
+        if feat_close is not None:
+            prev_closes[isin] = Decimal(str(feat_close))
+    stop_result = runner.evaluate_protective_stops(
+        session_date=next_session,
+        bars=bars_next_session,
+        price_bands=price_bands_next_session,
+        explicit_series=explicit_series,
+        prev_closes=prev_closes,
+        latest_market_prices=latest_market_prices,
+    )
 
     tickets_emitted = len(tickets)
     tickets_filled = sum(
@@ -442,4 +476,9 @@ def execute_swing_strategy_session(
         tickets=tuple(tickets),
         corporate_action_entries=tuple(ca_entries),
         surveillance_result=surv_result or runner.last_surveillance_result,
+        protective_stop_tickets=stop_result.tickets,
+        protective_stop_fills=stop_result.filled_count,
+        protective_stop_deferrals=stop_result.deferred_count,
+        protective_stop_circuit_deferrals=stop_result.circuit_deferred_count,
+        active_protective_stops=stop_result.active_stop_count,
     )

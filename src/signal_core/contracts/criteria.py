@@ -133,6 +133,10 @@ class GoNoGoCriteria:
     min_traded_eq_resolution_pct: Decimal = Decimal("100.0")
     # H-72: Authoritative reference manifest fingerprint pinned as human criteria anchor
     expected_manifest_fingerprint: str = ""
+    # N-128: the trial-registry manifest (which witnesses the evaluation head outside the
+    # sidecar/anchor pair) pinned as a human criteria anchor, so removing the witness or editing it
+    # without re-pinning the criteria fails closed.
+    expected_trial_registry_manifest_sha256: str = ""
     # H-64: calendar fingerprint pinned as human anchor independent of the calendar file (Finding H-64)
     # CAL-FPR-V1 covers dates, session_types, open/close times of all 2,935 sessions — recomputed from
     # session_records at load time and compared against this pin; a date swap passes counting but not identity.
@@ -264,6 +268,18 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
             f"expected_manifest_fingerprint must be a MAN-FPR-V1-... string, got {raw_manifest_fingerprint!r} (Finding H-72)"
         )
 
+    # N-128: the trials-manifest pin is mandatory and must be a bare SHA-256 hex digest.
+    raw_trials_pin = _require_mda("expected_trial_registry_manifest_sha256")
+    if (
+        not isinstance(raw_trials_pin, str)
+        or len(raw_trials_pin) != 64
+        or any(c not in "0123456789abcdef" for c in raw_trials_pin)
+    ):
+        raise CriteriaValidationError(
+            f"expected_trial_registry_manifest_sha256 must be a 64-character lowercase SHA-256 "
+            f"hex digest, got {raw_trials_pin!r} (Finding N-128)"
+        )
+
     return GoNoGoCriteria(
         version=str(meta.get("version", "1.0.0")),
         effective_date=datetime.date.fromisoformat(str(meta.get("effective_date", "2026-11-11"))),
@@ -298,6 +314,7 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         ),
         # H-72: pinned manifest fingerprint
         expected_manifest_fingerprint=raw_manifest_fingerprint,
+        expected_trial_registry_manifest_sha256=raw_trials_pin,
         # H-64 / N-51: mandatory human-authored identity anchors — no defaults
         expected_calendar_fingerprint=raw_fingerprint,
         expected_sourced_window_calendar_fingerprint=raw_sourced_fingerprint,

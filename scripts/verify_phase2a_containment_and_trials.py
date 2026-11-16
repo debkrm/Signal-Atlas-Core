@@ -29,6 +29,7 @@ from signal_core.research.containment import (
     filter_partition_observations,
     generate_walk_forward_folds,
 )
+from signal_core.contracts.criteria import load_go_no_go_criteria
 from signal_core.research.trials import (
     DuplicateTrialError,
     GENESIS_PREV_HASH,
@@ -687,6 +688,76 @@ def run_phase_2a_verification() -> bool:
                 f"naming a post-sidecar trial has a ledger row."
             )
             all_passed = all_passed and agreement_ok
+
+            # ------------------------------------------------------------------
+            # N-128: the registry-manifest witness is rooted in committed criteria
+            # ------------------------------------------------------------------
+            trials_dir = REPO_ROOT / "data" / "trials"
+            committed_manifest = trials_dir / "trial_registry.jsonl.manifest"
+            criteria = load_go_no_go_criteria()
+            manifest_digest = hashlib.sha256(
+                committed_manifest.read_bytes().replace(b"\r\n", b"\n")
+            ).hexdigest()
+            pin_ok = manifest_digest == criteria.expected_trial_registry_manifest_sha256
+            print(
+                f"[{'PASS' if pin_ok else 'FAIL'}] G2A-6.8a (N-128): committed trials manifest sha256 "
+                f"{manifest_digest[:16]}... equals the criteria pin "
+                f"{criteria.expected_trial_registry_manifest_sha256[:16]}..."
+            )
+            all_passed = all_passed and pin_ok
+
+            # Probe: strip the witness keys from a throwaway copy. Removal must be refused, and the
+            # digest of the edited copy must differ from the pin (so the pin would fail too).
+            witness_dir = temp_dir / "n128_trials"
+            shutil.copytree(trials_dir, witness_dir)
+            witness_manifest = witness_dir / "trial_registry.jsonl.manifest"
+            stripped = json.loads(witness_manifest.read_text(encoding="utf-8"))
+            stripped.pop("evaluation_count", None)
+            stripped.pop("head_eval_hash", None)
+            witness_manifest.write_text(json.dumps(stripped), encoding="utf-8")
+            witness_rejected = False
+            try:
+                TrialRegistry(witness_dir / "trial_registry.jsonl")
+            except RegistryTamperedError as exc:
+                witness_rejected = "evaluation witness" in str(exc)
+            stripped_digest = hashlib.sha256(
+                witness_manifest.read_bytes().replace(b"\r\n", b"\n")
+            ).hexdigest()
+            witness_ok = witness_rejected and stripped_digest != criteria.expected_trial_registry_manifest_sha256
+            print(
+                f"[{'PASS' if witness_ok else 'FAIL'}] G2A-6.8b (N-128): removing the witness keys "
+                f"from the manifest is refused by TrialRegistry()={witness_rejected} and changes the "
+                f"pinned digest={stripped_digest != criteria.expected_trial_registry_manifest_sha256}."
+            )
+            all_passed = all_passed and witness_ok
+
+            # Probe: null the scored artifact's Sharpe on a throwaway copy of the real artifacts.
+            # The reverse direction must refuse instead of skipping a null score (N-128 seam).
+            artifact_copy = temp_dir / "n128_artifacts"
+            shutil.copytree(REPO_ROOT / "reports" / "verdicts", artifact_copy)
+            nulled = 0
+            for candidate in sorted(artifact_copy.rglob("*.json")):
+                try:
+                    payload = json.loads(candidate.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if isinstance(payload, dict) and payload.get("trial_id") == "TRIAL-PHASE3B2-SWING-ATR3-005":
+                    payload["annualized_sharpe"] = None
+                    candidate.write_text(json.dumps(payload), encoding="utf-8")
+                    nulled += 1
+                    break
+            null_refused = False
+            try:
+                verify_evaluation_artifact_agreement(repo_reg, artifact_copy)
+            except TrialEvaluationError as exc:
+                null_refused = "annualized_sharpe" in str(exc)
+            null_ok = nulled > 0 and null_refused
+            print(
+                f"[{'PASS' if null_ok else 'FAIL'}] G2A-6.8c (N-128): a post-sidecar artifact with a "
+                f"nulled annualized_sharpe is refused rather than skipped (artifact edited={nulled > 0}, "
+                f"refused={null_refused})."
+            )
+            all_passed = all_passed and null_ok
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

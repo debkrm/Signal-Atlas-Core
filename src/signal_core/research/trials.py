@@ -94,7 +94,7 @@ def verify_evaluation_artifact_agreement(
             if not isinstance(data, dict):
                 continue
             artifact_trial_id = data.get("trial_id")
-            if not artifact_trial_id or data.get("annualized_sharpe") is None:
+            if not artifact_trial_id:
                 continue
             row = rows.get(str(artifact_trial_id))
             if row is None:
@@ -113,6 +113,15 @@ def verify_evaluation_artifact_agreement(
                     f"{data.get('annualized_sharpe')!r} for trial '{artifact_trial_id}' (seq {row.seq}), "
                     f"but the evaluation ledger holds no row for it: artifact->ledger direction is "
                     f"unattested (Finding H-122)."
+                )
+            if data.get("annualized_sharpe") is None:
+                # N-128: nulling the artifact's score used to exempt it from this check, so an erased
+                # ledger with a doctored artifact passed every gate. A post-sidecar artifact that
+                # names its trial must carry the score its ledger row holds.
+                raise TrialEvaluationError(
+                    f"Verdict artifact {candidate.name} carries no 'annualized_sharpe' for trial "
+                    f"'{artifact_trial_id}' (seq {row.seq}) while the ledger holds "
+                    f"{evaluation.sharpe_ratio}; the figure cannot be tied to its report (Finding N-128)."
                 )
             if Decimal(str(data["annualized_sharpe"])) != evaluation.sharpe_ratio:
                 raise TrialEvaluationError(
@@ -484,10 +493,11 @@ class TrialRegistry:
             payload["evaluation_count"] = evaluation_count
             payload["head_eval_hash"] = head_eval_hash
         else:
+            # N-128: the witness is written on every manifest rewrite, including an explicit
+            # `evaluation_count: 0`. A key that is simply absent must never be read as "no ledger".
             existing = self._load_manifest() or {}
-            for key in ("evaluation_count", "head_eval_hash"):
-                if key in existing:
-                    payload[key] = existing[key]
+            payload["evaluation_count"] = existing.get("evaluation_count", 0)
+            payload["head_eval_hash"] = existing.get("head_eval_hash", GENESIS_PREV_HASH)
         manifest_json = json.dumps(payload, indent=2) + "\n"
         self._manifest_path.parent.mkdir(parents=True, exist_ok=True)
         temp_manifest = self._manifest_path.with_name(
@@ -675,6 +685,16 @@ class TrialRegistry:
         registry_manifest = self._load_manifest() or {}
         witness_count = registry_manifest.get("evaluation_count")
         witness_head = registry_manifest.get("head_eval_hash")
+        if self._manifest_path.exists():
+            # N-128: removal of the witness is itself an attack, so an absent key fails closed rather
+            # than restoring the pre-H-122 bypass. An explicit 0 is a witnessed zero.
+            missing = [k for k in ("evaluation_count", "head_eval_hash") if k not in registry_manifest]
+            if missing:
+                raise RegistryTamperedError(
+                    f"Registry manifest {self._manifest_path} carries no evaluation witness "
+                    f"({', '.join(missing)} absent); the evaluation head cannot be attested outside "
+                    f"the (sidecar, anchor) pair it is meant to witness (Finding N-128)."
+                )
         if not self._evaluation_path.exists():
             if anchor is not None:
                 raise RegistryTamperedError(
@@ -682,7 +702,7 @@ class TrialRegistry:
                     f"{self._evaluation_manifest_path} attests "
                     f"{anchor.get('evaluation_count')!r} row(s): whole-file deletion detected (Finding H-121)."
                 )
-            if witness_count:
+            if witness_count is not None and witness_count != 0:
                 raise RegistryTamperedError(
                     f"Evaluation ledger {self._evaluation_path} and its head anchor are both absent, "
                     f"but {self._manifest_path} witnesses {witness_count!r} evaluation row(s) with head "

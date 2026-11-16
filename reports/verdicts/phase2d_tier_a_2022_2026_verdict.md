@@ -3,8 +3,8 @@
 - **Overall Decision:** `NO-GO`
 - **Evaluated At (UTC):** `2026-11-16T10:00:00+00:00`
 - **Evaluation Window:** `2022-01-03` to `2026-10-30`
-- **Criteria Version:** `1.1.1`
-- **Criteria Fingerprint:** `CRIT-FPR-V1-28f7e7ad7418ca079b4154e08c29e8d89b2d096b464179aabafd3040f9e3c523`
+- **Criteria Version:** `1.1.2`
+- **Criteria Fingerprint:** `CRIT-FPR-V1-1cce20a007294bd37aef5b8e75d459df4f1ce6fedefad6320759a70597ab0bae`
 - **Calendar Fingerprint:** `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad`
 - **Summary Counts:** `PASS=3`, `FAIL=0`, `NOT RUN=20` (Total=23)
 
@@ -36,5 +36,5 @@
 | CRIT-OVERFIT-03 | Walk-Forward Stability | Positive Out-of-Sample Folds Ratio | `>= 0.80` | `—` | **NOT RUN** | YES | Metric 'walk_forward_positive_fold_ratio' not provided in results bundle. |
 | CRIT-INFO-01 | Execution Accounting | Circuit-Verified PnL Accounting | `True` | `—` | **NOT RUN** | NO | Informational metric 'circuit_verified_pnl' not provided in results bundle (pending historical circuit band verification across all fills). |
 
-> **Restatement:** Restatement 2026-11-16 (Audit §68.6 item 3, H-115): supersedes the 2026-11-14T16:45:00+00:00 artifact, which no longer matched the criteria file. Criteria version 1.1.1 changes no threshold; it records the manifest pin move to MAN-FPR-V1-444e9a64aa5fbccb943dfc6994c7daca042d2ee446d971a09d2211645cc725c1 after data/reference/corporate_actions.jsonl gained modelled merger consideration prices (HDFC 1641.10, MINDTREE 4742.05, IDFC 74.19). Provenance remains CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and Tier-A gating is unchanged.
+> **Restatement:** Restatement 2026-11-16 (Audit §72 N-128): supersedes the 1.1.1 restatement recorded under Audit §68.6 item 3 (H-115) and the 2026-11-14T16:45:00+00:00 artifact before it. Criteria version 1.1.2 changes no threshold; it adds the mandatory expected_trial_registry_manifest_sha256 pin so the registry manifest that witnesses the evaluation head has a root outside itself, and that addition moves the criteria fingerprint. Provenance remains CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and every Tier-A verdict is unchanged.
 

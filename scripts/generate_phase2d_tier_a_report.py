@@ -119,16 +119,17 @@ def build_tier_a_results_bundle(
         "data_provenance_status": prov_status,
         "provenance_attestation_reference": str(bhavcopy_manifest_file),
 
-        # Audit §68.6 item 3 (H-115): the 2026-11-14T16:45:00 artifact was rewritten in place after the
-        # reference corpus changed. This artifact is a restatement, not that snapshot: new evaluated-at
-        # timestamp, criteria version 1.1.1, and the manifest pin move named here.
+        # Audit §72 N-128: criteria version 1.1.2 adds the mandatory trials-manifest pin, which moves
+        # the criteria fingerprint, so the committed artifact is restated rather than silently stale.
+        # This supersedes the 1.1.1 restatement recorded under Audit §68.6 item 3 (H-115).
         "restatement_note": (
-            "Restatement 2026-11-16 (Audit §68.6 item 3, H-115): supersedes the 2026-11-14T16:45:00+00:00 "
-            "artifact, which no longer matched the criteria file. Criteria version 1.1.1 changes no "
-            "threshold; it records the manifest pin move to MAN-FPR-V1-444e9a64aa5fbccb943dfc6994c7daca042d2ee446d971a09d2211645cc725c1 "
-            "after data/reference/corporate_actions.jsonl gained modelled merger consideration prices "
-            "(HDFC 1641.10, MINDTREE 4742.05, IDFC 74.19). Provenance remains CONTENT_IDENTIFIED_ONLY / "
-            "SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and Tier-A gating is unchanged."
+            "Restatement 2026-11-16 (Audit §72 N-128): supersedes the 1.1.1 restatement recorded under "
+            "Audit §68.6 item 3 (H-115) and the 2026-11-14T16:45:00+00:00 artifact before it. Criteria "
+            "version 1.1.2 changes no threshold; it adds the mandatory "
+            "expected_trial_registry_manifest_sha256 pin so the registry manifest that witnesses the "
+            "evaluation head has a root outside itself, and that addition moves the criteria "
+            "fingerprint. Provenance remains CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so "
+            "CRIT-PROV-01 is still NOT RUN and every Tier-A verdict is unchanged."
         ),
     }
 

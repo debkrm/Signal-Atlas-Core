@@ -149,6 +149,36 @@ class Phase3B2WalkForwardRunResult:
     coverage_diagnostics: Optional[Dict[str, Any]] = None
     registry_evaluated_trial_count: int = 0
     trial_sharpe_variance: Optional[Decimal] = None
+    # Audit §72 N-129 / Ruling 1 diagnostics.
+    mean_net_expectancy: Optional[Decimal] = None
+    protective_stop_exits: int = 0
+    protective_stop_circuit_deferrals: int = 0
+
+
+def build_authoritative_runner(
+    portfolio: Portfolio,
+    simulator: ExecutionFillSimulator,
+    calendar: Any,
+    criteria: GoNoGoCriteria,
+    atr_stop_multiple: Decimal,
+) -> DailyTPlus1OrderRunner:
+    """
+    Single construction point for the authoritative order runner (Audit §72 H-124).
+
+    The k passed here is the only one that matters: the runner sizes from it, prices the
+    protective stop from it, and therefore owns the 1R denominator the trade ledger reports.
+    Recording `canonical_params` from the strategy object instead described a configuration the
+    engine never received.
+    """
+    return DailyTPlus1OrderRunner(
+        portfolio=portfolio,
+        simulator=simulator,
+        calendar=calendar,
+        criteria=criteria,
+        risk_per_trade_pct=Decimal("0.01"),
+        atr_stop_multiple=atr_stop_multiple,
+        eligibility_policy=APPROVED_EQ_ONLY_POLICY,
+    )
 
 
 def build_historical_dataset_from_raw_bhavcopy(
@@ -534,12 +564,12 @@ def run_phase3b2_walkforward(
         criteria=criteria,
         trading_calendar=cal.sessions,
     )
-    runner = DailyTPlus1OrderRunner(
+    runner = build_authoritative_runner(
         portfolio=portfolio,
         simulator=simulator,
         calendar=cal,
         criteria=criteria,
-        eligibility_policy=APPROVED_EQ_ONLY_POLICY,
+        atr_stop_multiple=atr_stop_multiple,
     )
     strategy = DeliverySwingTrendStrategy(
         strategy_id=strategy_id,
@@ -565,6 +595,11 @@ def run_phase3b2_walkforward(
     total_rejected = 0
     total_skipped_missing_band = 0
     total_skipped_missing_bar = 0
+    # Audit §72 Ruling 1 / §5.3: protective stop executions and the exits the frozen bid deferred.
+    total_protective_stop_exits = 0
+    total_protective_stop_deferrals = 0
+    total_protective_stop_circuit_deferrals = 0
+    total_protective_stop_untriggered = 0
 
     num_sessions = len(sessions_to_run)
     for i in range(num_sessions - 1):
@@ -597,6 +632,19 @@ def run_phase3b2_walkforward(
             if band is not None:
                 bands_next[isin] = band
 
+        # Audit §72 Ruling 1: a held name that dropped out of the point-in-time universe still needs
+        # its bar and band, or its protective stop could never be tested (§13.2).
+        for isin in sorted(portfolio.get_open_positions()):
+            if isin not in bars_next and (isin, next_session) in bars_by_isin_date:
+                bars_next[isin] = bars_by_isin_date[(isin, next_session)]
+            if isin not in bands_next:
+                prev_bar = bars_by_isin_date.get((isin, as_of))
+                band = sec_master.get_price_band(
+                    isin, next_session, prev_close=prev_bar.close if prev_bar else None
+                )
+                if band is not None:
+                    bands_next[isin] = band
+
         # Corporate actions effective on next_session ex-date (Finding H-100, H-107)
         actions_today = [
             ca for ca in sec_master._corporate_actions
@@ -612,7 +660,13 @@ def run_phase3b2_walkforward(
                 )
                 for lot in open_lots[ca.isin]:
                     lot["dividends"] = lot.get("dividends", Decimal("0.00")) + (div_per_share * Decimal(lot["quantity"]))
-            elif ca.action_type == CorporateActionType.MERGER and ca.isin in open_lots and ca.new_isin:
+            elif ca.action_type in (CorporateActionType.SPLIT, CorporateActionType.BONUS, CorporateActionType.CONSOLIDATION):
+                # Audit §72 Ruling 1: a pending stop is denominated in the pre-action price scale.
+                runner.adjust_protective_stop_for_split(
+                    ca.isin, int(ca.ratio_numerator), int(ca.ratio_denominator)
+                )
+
+            if ca.action_type == CorporateActionType.MERGER and ca.isin in open_lots and ca.new_isin:
                 num = int(ca.ratio_numerator)
                 den = int(ca.ratio_denominator)
                 old_lots = open_lots.pop(ca.isin, [])
@@ -642,10 +696,19 @@ def run_phase3b2_walkforward(
                     lot["quantity"] = (lot["quantity"] * num) // den
                     lot["original_quantity"] = (lot["original_quantity"] * num) // den
                     lot["entry_price"] = (lot["entry_price"] * Decimal(den) / Decimal(num)).quantize(Decimal("0.0001"))
+                    if lot.get("stop_price") is not None:
+                        lot["stop_price"] = (
+                            lot["stop_price"] * Decimal(den) / Decimal(num)
+                        ).quantize(Decimal("0.0001"))
                     open_lots[target_isin].append(lot)
             elif ca.action_type == CorporateActionType.ISIN_TRANSITION and ca.isin in open_lots and ca.new_isin:
                 old_lots = open_lots.pop(ca.isin, [])
                 open_lots[ca.new_isin].extend(old_lots)
+
+            if ca.action_type in (CorporateActionType.MERGER, CorporateActionType.ISIN_TRANSITION):
+                # A new security identity carries a new price scale and no ATR history of its own,
+                # so the old stop is retired rather than left pointing at the wrong instrument.
+                runner.cancel_protective_stop(ca.isin)
 
         # Current market prices as of as_of session (Finding H-102)
         cur_market_prices = {
@@ -677,9 +740,16 @@ def run_phase3b2_walkforward(
         total_rejected += summary.tickets_rejected
         total_skipped_missing_band += summary.skipped_missing_band
         total_skipped_missing_bar += summary.skipped_missing_bar
+        total_protective_stop_exits += summary.protective_stop_fills
+        total_protective_stop_deferrals += summary.protective_stop_deferrals
+        total_protective_stop_circuit_deferrals += summary.protective_stop_circuit_deferrals
+        total_protective_stop_untriggered += (
+            len(summary.protective_stop_tickets) - summary.protective_stop_fills - summary.protective_stop_deferrals
+        )
 
-        # Match trades and track exact Decimal realized PnL and R-multiples (H-107, N-101)
-        for ticket in summary.tickets:
+        # Match trades and track exact Decimal realized PnL and R-multiples (H-107, N-101).
+        # Protective stop fills are exits through the same simulator, so they close lots here too.
+        for ticket in list(summary.tickets) + list(summary.protective_stop_tickets):
             if ticket.fill_result and ticket.fill_result.filled_quantity > 0:
                 fill = ticket.fill_result
                 all_fills.append(fill)
@@ -693,6 +763,7 @@ def run_phase3b2_walkforward(
                         "quantity": fill.filled_quantity,
                         "original_quantity": fill.filled_quantity,
                         "intended_risk": intended_r,
+                        "stop_price": fill.order.stop_price,
                         "costs": fill.costs.total_charges if fill.costs else Decimal("0.00"),
                         "dividends": Decimal("0.00"),
                     })
@@ -718,6 +789,7 @@ def run_phase3b2_walkforward(
                             prop_intended_risk = None
                             r_mult = None
 
+                        exit_reason = (ticket.candidate.metadata or {}).get("exit_reason", "SIGNAL_EXIT")
                         closed_trades.append({
                             "isin": isin,
                             "entry_date": lot["entry_date"],
@@ -725,12 +797,14 @@ def run_phase3b2_walkforward(
                             "quantity": matched_qty,
                             "entry_price": lot["entry_price"],
                             "exit_price": sell_price,
+                            "stop_price": lot.get("stop_price"),
                             "gross_pnl": gross_pnl,
                             "net_pnl": net_pnl,
                             "dividends": prop_dividends,
                             "total_costs": prop_entry_cost + prop_sell_cost,
                             "intended_risk": prop_intended_risk,
                             "realized_r": r_mult,
+                            "exit_reason": exit_reason,
                         })
                         lot["quantity"] -= matched_qty
                         sell_qty -= matched_qty
@@ -802,6 +876,15 @@ def run_phase3b2_walkforward(
 
     trial_params = dict(strategy.parameters)
     trial_params["security_master_fingerprint"] = sec_master.fingerprint
+    # Audit §72 H-124: the row must describe the configuration the engine received. The strategy
+    # object's copy of k never reached sizing, so the row records the runner's and refuses to
+    # proceed if the two disagree — a divergence is a wiring defect, not a reportable parameter.
+    if str(strategy.parameters.get("atr_stop_multiple")) != str(runner.atr_stop_multiple):
+        raise ValueError(
+            f"atr_stop_multiple mismatch: strategy holds {strategy.parameters.get('atr_stop_multiple')} "
+            f"but the authoritative runner sizes from {runner.atr_stop_multiple} (Audit §72 H-124)."
+        )
+    trial_params["atr_stop_multiple"] = str(runner.atr_stop_multiple)
 
     if record_trial:
         trial_record = registry.append_trial(
@@ -862,6 +945,38 @@ def run_phase3b2_walkforward(
     total_statutory_costs = sum(
         f.costs.total_charges for f in all_fills if f.costs
     )
+
+    # Audit §72 N-129: the figures a gate decision rests on must be recomputable from committed
+    # bytes. This ledger is the artifact's own trade record, and the two reported aggregates below
+    # are derived from it, not from a separate in-process tally.
+    closed_trade_ledger: List[Dict[str, Any]] = []
+    for t in closed_trades:
+        closed_trade_ledger.append({
+            "isin": t["isin"],
+            "entry_date": t["entry_date"].isoformat(),
+            "exit_date": t["exit_date"].isoformat(),
+            "quantity": t["quantity"],
+            "entry_price": str(t["entry_price"]),
+            "exit_price": str(t["exit_price"]),
+            "stop_price": str(t["stop_price"]) if t.get("stop_price") is not None else None,
+            "risk_per_share": str(t["intended_risk"] / Decimal(t["quantity"])) if t.get("intended_risk") else None,
+            "gross_pnl": str(t["gross_pnl"]),
+            "statutory_costs": str(t["total_costs"]),
+            "dividends": str(t["dividends"]),
+            "net_pnl": str(t["net_pnl"]),
+            "realized_r": str(t["realized_r"]) if t.get("realized_r") is not None else None,
+            "exit_reason": t["exit_reason"],
+        })
+    ledger_net_expectancy = (
+        sum((Decimal(row["net_pnl"]) for row in closed_trade_ledger), Decimal("0.00"))
+        / Decimal(len(closed_trade_ledger))
+    ) if closed_trade_ledger else None
+    ledger_statutory_costs = sum(
+        (Decimal(row["statutory_costs"]) for row in closed_trade_ledger), Decimal("0.00")
+    )
+    ledger_exit_reasons: Dict[str, int] = {}
+    for row in closed_trade_ledger:
+        ledger_exit_reasons[row["exit_reason"]] = ledger_exit_reasons.get(row["exit_reason"], 0) + 1
 
     # Compute daily returns from mark-to-market snapshots for statistical significance
     daily_returns: List[Decimal] = []
@@ -1253,6 +1368,17 @@ def run_phase3b2_walkforward(
         "execution_latency_sessions": min_latency_observed,
         "valuation_basis": "MARK_TO_MARKET",
         "coverage_diagnostics": coverage_diagnostics,
+        # Audit §72 N-129 / Ruling 1: ledger-derived aggregates and protective-stop diagnostics.
+        "mean_net_expectancy": ledger_net_expectancy,
+        "mean_realized_r": mean_realized_r,
+        "closed_ledger_statutory_costs": ledger_statutory_costs,
+        "closed_trade_count": len(closed_trade_ledger),
+        "closed_trade_exit_reasons": ledger_exit_reasons,
+        "atr_stop_multiple": str(runner.atr_stop_multiple),
+        "protective_stop_exits": total_protective_stop_exits,
+        "protective_stop_deferrals": total_protective_stop_deferrals,
+        "protective_stop_circuit_deferrals": total_protective_stop_circuit_deferrals,
+        "protective_stop_untriggered": total_protective_stop_untriggered,
     }
     if circuit_band_coverage_note is not None:
         extra_m["circuit_band_coverage_note"] = circuit_band_coverage_note
@@ -1333,6 +1459,20 @@ def run_phase3b2_walkforward(
         report_dict["evaluated_trial_count"] = registry.evaluated_trial_count
         report_dict["unsourced_band_sessions"] = len(unsourced_band_sessions)
         report_dict["circuit_band_coverage_note"] = circuit_band_coverage_note
+        # Audit §72 N-129: per-trade ledger beside the artifact, and the two Gate-A inputs derived
+        # from it rather than from an in-process tally no reader can see.
+        report_dict["closed_trades"] = closed_trade_ledger
+        report_dict["mean_net_expectancy"] = (
+            str(ledger_net_expectancy) if ledger_net_expectancy is not None else None
+        )
+        report_dict["mean_realized_r"] = str(mean_realized_r) if mean_realized_r is not None else None
+        report_dict["total_statutory_costs"] = str(ledger_statutory_costs)
+        report_dict["total_statutory_costs_all_fills"] = str(total_statutory_costs)
+        report_dict["closed_trade_exit_reasons"] = ledger_exit_reasons
+        report_dict["atr_stop_multiple"] = str(runner.atr_stop_multiple)
+        report_dict["protective_stop_exits"] = total_protective_stop_exits
+        report_dict["protective_stop_deferrals"] = total_protective_stop_deferrals
+        report_dict["protective_stop_circuit_deferrals"] = total_protective_stop_circuit_deferrals
 
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(report_dict, f, indent=2)
@@ -1407,6 +1547,25 @@ def run_phase3b2_walkforward(
                 "> [!WARNING]",
                 f"> **Price Band Sourcing (CA-3(c))**: {circuit_band_coverage_note}",
             ])
+
+        exit_reason_text = ", ".join(
+            f"{k}={v}" for k, v in sorted(ledger_exit_reasons.items())
+        ) if ledger_exit_reasons else "none"
+        extra_md.extend([
+            "",
+            "## Closed-Trade Ledger (Audit §72 N-129)",
+            "",
+            f"> {len(closed_trade_ledger)} closed round trip(s); mean net expectancy "
+            f"{ledger_net_expectancy if ledger_net_expectancy is not None else 'NOT RUN'}; "
+            f"statutory costs attributable to closed trades ₹{ledger_statutory_costs:,.2f} "
+            f"(₹{total_statutory_costs:,.2f} across every fill, including entries still open).",
+            f"> Exit reasons: {exit_reason_text}. Protective stop exits "
+            f"{total_protective_stop_exits}; exits deferred by a frozen bid (§5.3) "
+            f"{total_protective_stop_circuit_deferrals} of {total_protective_stop_deferrals} deferral(s).",
+            "> Every row is in `closed_trades` in the JSON artifact, and the two aggregates above "
+            "are computed from that array.",
+            "",
+        ])
         extra_md.append("")
 
         with open(md_path, "w", encoding="utf-8") as f:
@@ -1444,6 +1603,9 @@ def run_phase3b2_walkforward(
         coverage_diagnostics=coverage_diagnostics,
         registry_evaluated_trial_count=registry.evaluated_trial_count,
         trial_sharpe_variance=registry.compute_trial_sharpe_variance(),
+        mean_net_expectancy=ledger_net_expectancy,
+        protective_stop_exits=total_protective_stop_exits,
+        protective_stop_circuit_deferrals=total_protective_stop_circuit_deferrals,
     )
 
 
@@ -1490,19 +1652,22 @@ def main() -> int:
         "--fast-indicator",
         type=str,
         default="sma_20",
-        help="Fast indicator leg for the entry rule (plumbing only; passed to DeliverySwingTrendStrategy)",
+        help="Fast indicator leg for the entry rule (passed to DeliverySwingTrendStrategy)",
     )
     parser.add_argument(
         "--slow-indicator",
         type=str,
         default="sma_50",
-        help="Slow indicator leg for the entry/exit rule (plumbing only)",
+        help="Slow indicator leg for the entry/exit rule (passed to DeliverySwingTrendStrategy)",
     )
     parser.add_argument(
         "--atr-stop-multiple",
         type=Decimal,
         default=Decimal("2.0"),
-        help="Initial stop distance as a multiple of ATR(14) (plumbing only)",
+        help=(
+            "Protective stop distance as a multiple of ATR(14). One value governs position sizing, "
+            "the persisted T+1 stop order and the 1R denominator (Audit §72 H-124)"
+        ),
     )
     parser.add_argument("--hypothesis", type=str, default=None, help="TrialRegistry hypothesis (required for a new trial)")
     parser.add_argument("--rationale", type=str, default=None, help="TrialRegistry rationale naming the parameter change")
@@ -1557,6 +1722,9 @@ def main() -> int:
     print(f"Tickets Rejected:        {res.total_tickets_rejected}")
     print(f"Skipped (Missing Band):  {res.total_skipped_missing_band}")
     print(f"Skipped (Missing Bar):   {res.total_skipped_missing_bar}")
+    print(f"Protective Stop Exits:   {res.protective_stop_exits} (deferred by frozen bid §5.3: {res.protective_stop_circuit_deferrals})")
+    print(f"Active Stops at End:     {len(res.runner.protective_stops)}")
+    print(f"Stops use ATR multiple:  {res.runner.atr_stop_multiple}")
     print(f"Open Positions at End:   {len(res.portfolio.get_open_positions())}")
 
     print("\n--- 3. EXACT DECIMAL PERFORMANCE DIAGNOSTICS (§6.4, §13.2, Finding H-103) ---")
@@ -1568,6 +1736,8 @@ def main() -> int:
     print(f"Win Rate:                {res.win_rate * 100:.2f}%")
     print(f"Profit Factor:           {res.profit_factor:.4f}")
     print(f"Max Drawdown:            {res.max_drawdown * 100:.2f}%")
+    if res.mean_net_expectancy is not None:
+        print(f"Mean Net Expectancy:     ₹{res.mean_net_expectancy:,.2f} per closed round trip (committed ledger)")
     if res.mean_realized_r is not None:
         print(f"Mean Realized R:         {res.mean_realized_r:.4f}R (ATR stop distance)")
     else:
