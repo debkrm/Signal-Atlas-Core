@@ -670,25 +670,23 @@ def run_phase_2a_verification() -> bool:
                 f"sidecar_present={repo_reg.evaluation_path.exists()}."
             )
             all_passed = all_passed and g2a6_5_ok
-            if repo_reg.evaluated_trial_count:
-                agreement_ok = False
-                try:
-                    n_checked, _ = verify_evaluation_artifact_agreement(
-                        repo_reg, REPO_ROOT / "reports" / "verdicts"
-                    )
-                    agreement_ok = n_checked == repo_reg.evaluated_trial_count
-                except TrialEvaluationError as exc:
-                    print(f"[FAIL] G2A-6.7 (N-125): {exc}")
-                print(
-                    f"[{'PASS' if agreement_ok else 'FAIL'}] G2A-6.7 (N-125): Committed sidecar figures "
-                    f"agree with their verdict artifacts."
+            # H-122: run the agreement in both directions even at N_eval = 0, so a committed
+            # artifact that claims a scored trial the ledger does not hold fails the gate.
+            agreement_ok = False
+            n_checked = 0
+            try:
+                n_checked, _ = verify_evaluation_artifact_agreement(
+                    repo_reg, REPO_ROOT / "reports" / "verdicts"
                 )
-                all_passed = all_passed and agreement_ok
-            else:
-                print(
-                    "[N/A] G2A-6.7 (N-125): 0 scored trials in the committed registry; artifact "
-                    "agreement is NOT APPLICABLE (no sidecar figure exists to attest)."
-                )
+                agreement_ok = n_checked == repo_reg.evaluated_trial_count
+            except TrialEvaluationError as exc:
+                print(f"[FAIL] G2A-6.7 (H-122/N-125): {exc}")
+            print(
+                f"[{'PASS' if agreement_ok else 'FAIL'}] G2A-6.7 (H-122/N-125): {n_checked if agreement_ok else 0} "
+                f"scored trial(s) agree with their verdict artifacts, and every committed artifact "
+                f"naming a post-sidecar trial has a ledger row."
+            )
+            all_passed = all_passed and agreement_ok
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

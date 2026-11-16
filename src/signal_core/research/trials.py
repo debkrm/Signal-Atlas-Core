@@ -33,6 +33,11 @@ from signal_core.research.containment import (
 GENESIS_PREV_HASH = "0" * 64
 
 
+# Trials 1-4 were registered before the evaluation sidecar existed (Finding N-125), so their
+# verdict artifacts legitimately carry an `annualized_sharpe` with no ledger row to match.
+_PRE_SIDECAR_TRIAL_SEQ_MAX = 4
+
+
 def verify_evaluation_artifact_agreement(
     registry: "TrialRegistry", artifact_root: Union[str, Path]
 ) -> Tuple[int, Tuple[str, ...]]:
@@ -75,6 +80,46 @@ def verify_evaluation_artifact_agreement(
             )
         checked += 1
         messages.append(f"{trial_id}: sharpe {evaluation.sharpe_ratio} matches artifact")
+
+    # H-122, reverse direction: an artifact that *claims* a scored trial must have a ledger row.
+    # Without this, erasing the ledger leaves every verdict figure unattested and unchecked, because
+    # the loop above iterates evaluations and never artifacts (Finding H-122).
+    if root.is_dir():
+        rows = {r.trial_id: r for r in registry.get_trials()}
+        for candidate in sorted(root.rglob("*.json")):
+            try:
+                data = json.loads(candidate.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            artifact_trial_id = data.get("trial_id")
+            if not artifact_trial_id or data.get("annualized_sharpe") is None:
+                continue
+            row = rows.get(str(artifact_trial_id))
+            if row is None:
+                raise TrialEvaluationError(
+                    f"Verdict artifact {candidate.name} names trial '{artifact_trial_id}', which is not "
+                    f"in the registry; a scored figure must be registered (Finding H-122)."
+                )
+            if row.seq <= _PRE_SIDECAR_TRIAL_SEQ_MAX:
+                # Trials 1-4 were registered before the evaluation sidecar existed (N-125); their
+                # artifacts carry a Sharpe that no ledger row can legitimately record.
+                continue
+            evaluation = registry.get_evaluation(str(artifact_trial_id))
+            if evaluation is None:
+                raise TrialEvaluationError(
+                    f"Verdict artifact {candidate.name} reports annualized_sharpe "
+                    f"{data.get('annualized_sharpe')!r} for trial '{artifact_trial_id}' (seq {row.seq}), "
+                    f"but the evaluation ledger holds no row for it: artifact->ledger direction is "
+                    f"unattested (Finding H-122)."
+                )
+            if Decimal(str(data["annualized_sharpe"])) != evaluation.sharpe_ratio:
+                raise TrialEvaluationError(
+                    f"Trial '{artifact_trial_id}': artifact annualized_sharpe "
+                    f"{data['annualized_sharpe']!r} does not equal the ledger's {evaluation.sharpe_ratio} "
+                    f"(Finding N-125 / H-122)."
+                )
     return checked, tuple(messages)
 
 
@@ -417,7 +462,15 @@ class TrialRegistry:
         except Exception as e:
             raise RegistryTamperedError(f"Malformed external head manifest at {self._manifest_path}: {e}") from e
 
-    def _write_manifest(self, total_trials: int, head_hash: str, last_trial_id: str, timestamp_utc: str) -> None:
+    def _write_manifest(
+        self,
+        total_trials: int,
+        head_hash: str,
+        last_trial_id: str,
+        timestamp_utc: str,
+        evaluation_count: Optional[int] = None,
+        head_eval_hash: Optional[str] = None,
+    ) -> None:
         """Writes the external authoritative head manifest atomically via temp-file replace with fsync (B-3)."""
         payload = {
             "total_trials": total_trials,
@@ -425,6 +478,16 @@ class TrialRegistry:
             "last_trial_id": last_trial_id,
             "timestamp_utc": timestamp_utc,
         }
+        if evaluation_count is not None:
+            # H-122: the evaluation head is witnessed here, outside the (sidecar, anchor) pair, so
+            # deleting or re-anchoring both ledger files cannot lower N_eval unnoticed.
+            payload["evaluation_count"] = evaluation_count
+            payload["head_eval_hash"] = head_eval_hash
+        else:
+            existing = self._load_manifest() or {}
+            for key in ("evaluation_count", "head_eval_hash"):
+                if key in existing:
+                    payload[key] = existing[key]
         manifest_json = json.dumps(payload, indent=2) + "\n"
         self._manifest_path.parent.mkdir(parents=True, exist_ok=True)
         temp_manifest = self._manifest_path.with_name(
@@ -607,12 +670,23 @@ class TrialRegistry:
         """Loads and verifies the append-only post-evaluation sidecar (Findings H-119, H-121)."""
         parsed: Dict[str, TrialEvaluation] = {}
         anchor = self._load_evaluation_anchor()
+        # H-122: the registry manifest is the witness outside the writeable (sidecar, anchor) pair.
+        # When it exists and carries the evaluation head, the ledger must reproduce it exactly.
+        registry_manifest = self._load_manifest() or {}
+        witness_count = registry_manifest.get("evaluation_count")
+        witness_head = registry_manifest.get("head_eval_hash")
         if not self._evaluation_path.exists():
             if anchor is not None:
                 raise RegistryTamperedError(
                     f"Evaluation ledger {self._evaluation_path} is absent, but its head anchor "
                     f"{self._evaluation_manifest_path} attests "
                     f"{anchor.get('evaluation_count')!r} row(s): whole-file deletion detected (Finding H-121)."
+                )
+            if witness_count:
+                raise RegistryTamperedError(
+                    f"Evaluation ledger {self._evaluation_path} and its head anchor are both absent, "
+                    f"but {self._manifest_path} witnesses {witness_count!r} evaluation row(s) with head "
+                    f"{witness_head!r}: dual-file erasure detected (Finding H-122)."
                 )
             self._evaluations = parsed
             return
@@ -725,6 +799,17 @@ class TrialRegistry:
             raise RegistryTamperedError(
                 f"Evaluation ledger parsed {len(parsed)} unique trial(s) from {disk_count} line(s) "
                 f"but the anchor attests {anchor.get('evaluation_count')!r} (Finding H-121)."
+            )
+        if witness_count is not None and witness_count != disk_count:
+            raise RegistryTamperedError(
+                f"Registry manifest witnesses {witness_count!r} evaluation row(s) but the ledger "
+                f"holds {disk_count}; truncation with a recomputed anchor is not a valid ledger "
+                f"(Finding H-122)."
+            )
+        if witness_head is not None and witness_head != head_eval_hash:
+            raise RegistryTamperedError(
+                f"Registry manifest witnesses evaluation head {witness_head!r} but the ledger's last "
+                f"row hashes to {head_eval_hash!r} (Finding H-122)."
             )
 
         self._evaluations = parsed
@@ -1055,12 +1140,24 @@ class TrialRegistry:
             os.fsync(f.fileno())
 
         persisted = self._evaluation_path.read_bytes()
+        evaluation_count = len(self._evaluations) + 1
         self._write_evaluation_anchor(
-            evaluation_count=len(self._evaluations) + 1,
+            evaluation_count=evaluation_count,
             head_eval_hash=eval_hash,
             byte_count=len(persisted),
             sha256=hashlib.sha256(persisted).hexdigest(),
         )
+        # H-122: witness the evaluation head in the registry manifest too, so erasing the
+        # sidecar/anchor pair is detectable from a file neither append writes to as a pair.
+        if self._records:
+            self._write_manifest(
+                total_trials=len(self._records),
+                head_hash=self._records[-1].record_hash,
+                last_trial_id=self._records[-1].trial_id,
+                timestamp_utc=evaluated_at_utc,
+                evaluation_count=evaluation_count,
+                head_eval_hash=eval_hash,
+            )
 
         self._evaluations[trial_id] = record
         return record

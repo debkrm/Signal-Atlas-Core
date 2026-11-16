@@ -272,7 +272,9 @@ def evaluate_verdicts(
 
     if start_d is not None and end_d is not None:
         min_start = active_criteria.min_binding_evaluation_start_date
-        cal_sessions = active_cal.session_count_between(start_d, end_d)
+        # A reversed window cannot be counted; the calendar refuses it. H-123 wants NOT RUN with
+        # the defect named rather than an exception out of the verdict engine.
+        cal_sessions = 0 if start_d > end_d else active_cal.session_count_between(start_d, end_d)
         max_concurrent_positions = int(Decimal("1") / active_criteria.max_single_position_weight)
         max_plausible_trades = cal_sessions * max_concurrent_positions * 10 if cal_sessions >= 2 else 0
 
@@ -583,26 +585,59 @@ def evaluate_verdicts(
     # producer-supplied string. Any session without a sourced price-band report makes circuit
     # compliance unassertable for the whole window. The bundle note, when present, becomes
     # supporting evidence only — it can no longer select the branch (§5.3, §9.1, §14.4).
+    # H-123: a window that cannot be walked is not a compliant one. A missing, empty, unparseable,
+    # reversed or session-less window previously fell through to the counts branch, so a producer
+    # that simply omitted the dates obtained PASS on an unsourced corpus. Such a bundle is now
+    # NOT RUN with the defect named; the counts branch is reachable only from a session-bearing
+    # window whose every session is band-sourced (§5.3, §9.1, §14.4).
     band_window_note: Optional[str] = None
-    if start_d is not None and end_d is not None and start_d <= end_d:
+    band_window_defect: Optional[str] = None
+    if not isinstance(eval_start_raw, str) or not eval_start_raw.strip() or not isinstance(eval_end_raw, str) or not eval_end_raw.strip():
+        band_window_defect = (
+            "'evaluation_start_date' and 'evaluation_end_date' must both be supplied as non-empty "
+            f"ISO dates to decide band eligibility (got {eval_start_raw!r} and {eval_end_raw!r})"
+        )
+    elif start_d is None or end_d is None:
+        band_window_defect = (
+            f"the window {eval_start_raw!r}..{eval_end_raw!r} is not parseable as ISO dates"
+        )
+    elif start_d > end_d:
+        band_window_defect = (
+            f"the window is reversed ({start_d.isoformat()} > {end_d.isoformat()})"
+        )
+    else:
         window_sessions = active_cal.session_records_in_range(start_d, end_d)
-        unsourced_dates = [r.date for r in window_sessions if not is_price_band_sourced(r.date)]
-        if unsourced_dates:
-            band_window_note = (
-                f"{len(unsourced_dates)} of {len(window_sessions)} evaluated session(s) "
-                f"({unsourced_dates[0].isoformat()}..{unsourced_dates[-1].isoformat()}) in the window "
-                f"{start_d.isoformat()}..{end_d.isoformat()} have no sourced NSE price-band report "
-                f"(earliest attested snapshot {SOURCED_PRICE_BAND_START.isoformat()}); circuit-prohibition "
-                f"compliance cannot be asserted, so this criterion is NOT RUN (§5.3, §9.1, Finding H-120)."
+        if not window_sessions:
+            band_window_defect = (
+                f"the window {start_d.isoformat()}..{end_d.isoformat()} contains 0 calendar sessions"
             )
+        else:
+            unsourced_dates = [r.date for r in window_sessions if not is_price_band_sourced(r.date)]
+            if unsourced_dates:
+                band_window_note = (
+                    f"{len(unsourced_dates)} of {len(window_sessions)} evaluated session(s) "
+                    f"({unsourced_dates[0].isoformat()}..{unsourced_dates[-1].isoformat()}) in the window "
+                    f"{start_d.isoformat()}..{end_d.isoformat()} have no sourced NSE price-band report "
+                    f"(earliest attested snapshot {SOURCED_PRICE_BAND_START.isoformat()}); circuit-prohibition "
+                    f"compliance cannot be asserted, so this criterion is NOT RUN (§5.3, §9.1, Finding H-120)."
+                )
     bundle_band_note = results_bundle.get("circuit_band_coverage_note")
     bundle_band_note = bundle_band_note.strip() if isinstance(bundle_band_note, str) else ""
-    band_block_reason: Optional[str] = band_window_note or (bundle_band_note or None)
     band_block_evidence: Optional[str] = None
-    if band_block_reason is not None:
-        band_block_evidence = band_block_reason
-        if bundle_band_note and bundle_band_note != band_block_reason:
-            band_block_evidence = f"{band_block_reason} Producer note: {bundle_band_note}"
+    if band_window_defect is not None:
+        band_block_evidence = (
+            f"Band eligibility cannot be evaluated: {band_window_defect}. Circuit-prohibition "
+            f"compliance is unassertable without a session-bearing evaluation window, so this "
+            f"criterion is NOT RUN rather than PASS on caller-supplied counts (§5.3, §9.1, Finding H-123)."
+        )
+        if bundle_band_note:
+            band_block_evidence = f"{band_block_evidence} Producer note: {bundle_band_note}"
+    else:
+        band_block_reason: Optional[str] = band_window_note or (bundle_band_note or None)
+        if band_block_reason is not None:
+            band_block_evidence = band_block_reason
+            if bundle_band_note and bundle_band_note != band_block_reason:
+                band_block_evidence = f"{band_block_reason} Producer note: {bundle_band_note}"
 
     # B3: Circuit Filter BUY Prohibition (prohibit_buy_at_upper_circuit)
     # Finding N-118: evidence is always the computed fill-count sentence. A caller that supplies the

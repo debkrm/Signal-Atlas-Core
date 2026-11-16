@@ -1486,6 +1486,24 @@ def main() -> int:
         default=None,
         help="Enable automated winner trim when a position's close weight exceeds this fraction (e.g. 0.095)",
     )
+    parser.add_argument(
+        "--fast-indicator",
+        type=str,
+        default="sma_20",
+        help="Fast indicator leg for the entry rule (plumbing only; passed to DeliverySwingTrendStrategy)",
+    )
+    parser.add_argument(
+        "--slow-indicator",
+        type=str,
+        default="sma_50",
+        help="Slow indicator leg for the entry/exit rule (plumbing only)",
+    )
+    parser.add_argument(
+        "--atr-stop-multiple",
+        type=Decimal,
+        default=Decimal("2.0"),
+        help="Initial stop distance as a multiple of ATR(14) (plumbing only)",
+    )
     parser.add_argument("--hypothesis", type=str, default=None, help="TrialRegistry hypothesis (required for a new trial)")
     parser.add_argument("--rationale", type=str, default=None, help="TrialRegistry rationale naming the parameter change")
     args = parser.parse_args()
@@ -1517,6 +1535,9 @@ def main() -> int:
         record_trial=not args.no_record_trial,
         in_sample_only=args.in_sample_only,
         max_position_weight_trim_threshold=args.trim_threshold,
+        fast_indicator=args.fast_indicator,
+        slow_indicator=args.slow_indicator,
+        atr_stop_multiple=args.atr_stop_multiple,
         **run_kwargs,
     )
 

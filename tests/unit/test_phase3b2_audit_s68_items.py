@@ -168,8 +168,14 @@ def test_n112_unpriced_fractional_merger_fails_closed():
 def test_n118_circuit_evidence_is_numeric_only():
     """N-118: no counts -> NOT RUN; counts -> the computed numeric sentence."""
     criteria = load_go_no_go_criteria()
+    # H-123: a sourced, session-bearing window is required before counts decide anything.
+    window = {
+        "evaluation_start_date": "2024-01-16",
+        "evaluation_end_date": "2024-03-31",
+    }
     bare = evaluate_verdicts(
         results_bundle={
+            **window,
             "prohibit_buy_at_upper_circuit": True,
             "prohibit_sell_at_lower_circuit": True,
         },
@@ -180,10 +186,11 @@ def test_n118_circuit_evidence_is_numeric_only():
     for ev in (exec3, exec4):
         assert ev.status == VerdictStatus.NOT_RUN
         assert "Simulator strictly enforces" not in ev.evidence
-        assert "judged" in ev.evidence
+        assert "not provided in results bundle" in ev.evidence
 
     numeric = evaluate_verdicts(
         results_bundle={
+            **window,
             "prohibit_buy_at_upper_circuit": True,
             "prohibit_sell_at_lower_circuit": True,
             "upper_circuit_buy_judged_fills": 17,

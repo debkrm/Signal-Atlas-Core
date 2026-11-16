@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import datetime
 from decimal import Decimal, ROUND_FLOOR, ROUND_CEILING
 from enum import Enum
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -48,24 +49,43 @@ _SEC_LIST_ARTIFACT_RE = re.compile(r"sec_list_(\d{8})\.csv$")
 
 
 def derive_sourced_price_band_start(manifest_path: Optional[Union[str, Path]] = None) -> datetime.date:
-    """Earliest attested `sec_list_<date>.csv` snapshot date in the reference manifest (N-126)."""
+    """
+    Earliest verifiable `sec_list_<date>.csv` snapshot date in the reference manifest (N-126, N-127).
+
+    A row contributes only when it is current, its artifact exists beside the manifest, and the
+    artifact's byte count and SHA-256 match the row. A filename alone is not evidence: a fabricated
+    row naming an earlier date would otherwise move the boundary backwards and make unsourced
+    sessions band-judged (Finding N-127). A malformed manifest line raises rather than silently
+    collapsing to the fallback date, so corpus corruption is not hidden from the gate.
+    """
     path = Path(manifest_path) if manifest_path else _MANIFEST_PATH
-    try:
-        if not path.is_file():
-            return _FALLBACK_SOURCED_PRICE_BAND_START
-        dates = []
-        with path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                if not line.strip():
-                    continue
-                row = json.loads(line)
-                if not isinstance(row, dict) or row.get("is_current") is not True:
-                    continue
-                match = _SEC_LIST_ARTIFACT_RE.search(str(row.get("artifact", "")))
-                if match:
-                    dates.append(datetime.datetime.strptime(match.group(1), "%Y%m%d").date())
-    except Exception:
+    if not path.is_file():
         return _FALLBACK_SOURCED_PRICE_BAND_START
+    dates = []
+    with path.open("r", encoding="utf-8") as fh:
+        for line_no, line in enumerate(fh, start=1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except Exception as e:
+                raise PriceBandValidationError(
+                    f"Malformed reference manifest line {line_no} at {path}: {e}"
+                ) from e
+            if not isinstance(row, dict) or row.get("is_current") is not True:
+                continue
+            match = _SEC_LIST_ARTIFACT_RE.search(str(row.get("artifact", "")))
+            if not match:
+                continue
+            artifact = path.parent / str(row.get("artifact"))
+            if not artifact.is_file():
+                continue
+            raw = artifact.read_bytes()
+            if row.get("byte_count") != len(raw):
+                continue
+            if row.get("sha256") != hashlib.sha256(raw).hexdigest():
+                continue
+            dates.append(datetime.datetime.strptime(match.group(1), "%Y%m%d").date())
     return min(dates) if dates else _FALLBACK_SOURCED_PRICE_BAND_START
 
 
