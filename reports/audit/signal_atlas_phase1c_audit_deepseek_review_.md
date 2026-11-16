@@ -7622,3 +7622,155 @@ would spend N on 3 names and prove nothing.
 Eight probe scripts (`probe_stops.py`, `probe_n128.py`, `probe_n128_p8.py`, `probe_n129.py`, `probe_h124_guard.py`, plus the two diagnostic runs) executed from `%TEMP%\s73`, outside the repository; two artifacts were written to `run_k2`/`run_k3` there and are not committed. `git status` was empty at the start and end of the round; the registry (`0a64ad3c…`, 7,994 B), its manifest (`0290d02b…`), sidecar and anchor were read and re-hashed, never written, and no trial row was appended. Tampering was done on `tempfile` copies only. The `5176bc5` reproduction used a detached `git worktree` outside the repository tree, removed after measurement. No holdout partition was read. `CURRENT_STAGE_OF_WORK.md` was not edited.
 
 **Not measured, and not claimed:** whether H-125 is reachable in the committed 2022–2023 tape (no trim was enabled and no merger touched a held name in either diagnostic; the defect is reachable by flag and by data, not demonstrated on the committed run); whether a stop charged against the 2.5–5 % volume cap would strand a position to the end of the window (0 volume-cap rejections in both runs); whether the pin should live in the registry load path (P8 shows it does not today); and any DSR at `N_eval ≥ 2`, which remains NOT RUN until 73.9 item 3 is committed.
+---
+
+## §74 — Audit of `9171464..4eb5c58` (H-125, N-130, restatement, seq 6/7, criteria 1.1.3)
+
+**Scope audited:** `4eb5c58` ("Keep the stop armed for the shares a partial sale leaves behind"), diff `9171464..4eb5c58`, 21 files, +2,364 / −46 (194 of those lines are my own §73). Tree clean, `HEAD = 4eb5c58`, tag `feat-s73-4eb5c58`. Holdout `2025-01-01..2026-11-11` not read; 2024 fold not evaluated (`validation_folds_count = 0` on both new artifacts; window `2022-01-03..2023-12-29`).
+
+### 74.1 Baseline re-measured at `4eb5c58`
+
+| Item | Measurement |
+|---|---|
+| `scripts/verify_audit_append_only.py` | exit **0**, `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| W0.5-1 | `[PASS] 0 deleted lines` working tree and `0 deleted lines` across commits since `a3a40f1` |
+| W0.5-2 | `[PASS] All 8 verification scripts passed exit 0` (each with its own timing; 9 exist, the gate excludes itself) |
+| W0.5-3 | **473 passed in 111.51 s, 0 skipped, 0 xfailed** |
+| W0.5-5 | `[PASS] 46 current artifact(s) … 19 superseded` |
+| G2A-6.1 | external head anchor verifies |
+| G2A-6.6 | `N=7, N_eval=3, sidecar_present=True` |
+| G2A-6.7 | `3 scored trial(s) agree with their verdict artifacts`, every post-sidecar artifact has a ledger row |
+| G2A-6.8a | `committed trials manifest sha256 7cb9ed224c336bc7… equals the criteria pin 7cb9ed224c336bc7…` |
+| G2A-6.8b/c | witness-key removal refused and changes the pinned digest; nulled-artifact Sharpes refused |
+
+Registry bytes: `trial_registry.jsonl` 7 rows sha256 `9b9a69b3…`; manifest 330 B sha256 `7cb9ed22…` (the file the pin names); evaluations sidecar 3 rows; both unchanged by every probe below. `configs/go_no_go_criteria.yaml` `1.1.2 → 1.1.3`: the diff contains the pin and the version comment and **no numeric change**; `phase2d` regenerated with a 1.1.3 restatement note and `PASS=3 / FAIL=0 / NOT RUN=20` unchanged.
+
+### 74.2 H-125 — two of three branches **CLOSED**, the third is not (H-126)
+
+The re-arm site is `order_runner.py:591-598`: on a filled SELL the runner reads the residual position and either `rearm_protective_stop(residual)` or `cancel_protective_stop()`. Measured at my own hands, not from the tests:
+
+| Probe | Expected | Measured |
+|---|---|---|
+| Trim 5 of 20, then a gap through 900 | residual stop 15, fills 15 | stop re-armed `(900.000, 15)`; next session `FILLED 15 @ ₹849.45`, position flat, stop retired |
+| Partial stop fill (₹30 M book, 2,700 held, 3 % cap binds at 1,800) | stop survives at the residual | `PARTIALLY_FILLED 1,800 of 2,700`; position 900; stop re-armed `(980.000, 900)` at the entry-fixed price |
+| Merger carry 42:25 (HDFC→HDFCBANK arithmetic) | qty ×42/25, price ×25/42 | `(900.000, 20, ATR 50) → (535.7143, 33, ATR 29.7619)` — matches the lot restatement at `:706-719` exactly |
+| Successor already carries a stop | `False`, old retired | `False`; the successor's own `(100.00, 5)` survives |
+| Carry with no successor identity | `False` | **raises** `OrderRunnerError` *after* the old stop was cancelled — see N-133 |
+
+The trim and partial-fill defects named in §73.4 are fixed, and fixed at the consumer: the trimmed stop is exercised through `evaluate_protective_stops`, not merely through the arming helper.
+
+### 74.3 H-126 (HIGH) — the corporate-action carry is inert, and it carries to an identity the portfolio does not hold
+
+**Measured, one probe, three steps.** Buy 20 on `INE081A01012` (stop 900). `transfer_protective_stop(OLD, NEW, 1, 1)` → `{'INE081A01020': ('900.0000', 20)}`. Then the next session's bar for the successor gaps to 850:
+
+```
+portfolio keys: ['INE081A01012']          # the position was never re-keyed
+next session on successor: tickets=0 filled=0 stops_left=[]
+```
+
+`evaluate_protective_stops` reads `self._portfolio.get_position(isin)`, finds no open position under `INE081A01020`, and **cancels the stop it just carried**. The held lot is then unprotected for the rest of its life, and `unprotected_corporate_action_positions` stays **0** — because that counter is incremented only when `transfer_protective_stop` returns `False`, and here it returned `True`.
+
+Why it cannot work as built: `Portfolio.apply_corporate_action` / `apply_corporate_actions_for_session` exist and re-key positions (`portfolio.py:195-282`), but **no script calls them** (`grep '\.apply_corporate_action(' scripts/` → no matches; the only call sites are inside `portfolio.py` itself and its unit tests). The harness maintains a private `open_lots` book and moves lots there; the `Portfolio` is moved only by fills. So after any merger or ISIN transition the lot book and the portfolio disagree about which ISIN the position is in, and every runner-level check that consults the portfolio — the new stop evaluation included — sees an empty successor.
+
+Second, independent defect in the same branch: `run_phase3b2_walkforward.py:735-737` treats an `ISIN_TRANSITION` as a pure rename (`old_lots → new_lots`, no rescale), but the three committed transition rows are **10:1, 2:1 and 2:1** (`TATASTEEL` 2022-07-28, `VBL` 2023-06-15, `COCHINSHIP` 2024-01-10 — all face-value sub-divisions recorded as transitions, none 1:1). The new stop carry *does* rescale by that ratio: measured `(900.000, 20, ATR 50) → (90.0000, 200, ATR 5.0000)`. So on every transition row that exists in this corpus, the stop quantity is 10× or 2× the lot quantity, and the lot's entry price is left on a price scale that the successor's bars do not use. The implementer's own test (`test_h125_isin_transition_carries_the_stop_at_the_same_price_scale`) constructs a transition **with no ratio**, which is the one case the corpus does not contain.
+
+Consequence for the verdict: H-125's third branch changed from "protection deliberately retired" to "protection carried, then discarded one session later by the position guard". The outcome for a held name crossing a merger or transition is unchanged, and the new counter reports zero for exactly the event it was added to disclose. `CRIT-EXEC-03/04` remain NOT RUN either way, so no committed verdict moves — but §13.2's holding-period requirement is still unmet.
+
+### 74.4 N-130 — **CLOSED** at all three declared probes
+
+| Probe | Result |
+|---|---|
+| `--no-record-trial --atr-stop-multiple 1.5 --trial-id …STOP-K2-006` | exit **1**, `differing: atr_stop_multiple='1.5' (registered '2.0')` |
+| `--no-record-trial --atr-stop-multiple 3.0 --trial-id …ATR3-005` | exit **1**, `recomputes annualized_sharpe -0.67547251… but the ledger holds -0.69958621…` |
+| `--no-record-trial --atr-stop-multiple 2.0 --trial-id …STOP-K2-006` (matching) | exit **0**, artifact carries `"recorded": false`, registry unchanged at 7 rows |
+
+The second probe is stronger than it looks: the same parameters cannot reproduce Trial #5's own Sharpe at `HEAD`, so a re-render of the old row is now impossible by construction, and the H-124 residual cannot be papered over by re-running at `2.0` under the `005` id.
+
+The permitted re-render also validates reproducibility (§9.1): my run at `k=2.0` under `006` reproduced the committed artifact exactly — `annualized_sharpe -0.6268098818883796449002601507`, `returns_digest RET-V1-f7923f67…`, `mean_net_expectancy -1929.206094265468125`, `total_statutory_costs 3502.0475082474900`, `protective_stop_exits 5`, `unsourced_band_sessions 494`. One field differs and is meant to: `recorded` `False` vs `True`.
+
+Residual, named: the guard compares `trial_params` to `canonical_params` **string-for-string over the whole dict**, so any future added parameter makes every historical re-render fail closed. That is the safe direction, and it is recorded rather than corrected.
+
+### 74.5 Trial #5 restatement and criteria 1.1.3
+
+`data/trials/trial_restatements.jsonl` carries `RESTATE-TRIAL-005-001`: `field: canonical_params.atr_stop_multiple`, `recorded_value: 3.0`, `corrected_value: 2.0`, `effective_date 2026-11-16`, `reference_commit 05806ae`, `producing_commit 5176bc5`, and evidence citing §72 H-124 and §73.2. `seq 5` is untouched in the registry (still `k=3.0`, `sharpe_ratio: null`, append-before-read intact) and no figure was re-scored — which is the correct reading of §10.1: the row is a record of what was believed, and the restatement is a record of what was true.
+
+Named residual (not a finding): **nothing reads the restatement file.** It is not hash-chained, not pinned, not surfaced in any artifact or verify script, and `TrialRecord` has no field for it; its only consumer is a human reading `CURRENT_STAGE_OF_WORK.md`. A machine reader of the registry still sees `3.0` with no pointer.
+
+Criteria `1.1.3`: pin `7cb9ed224c336bc7e091c2d917bf6d35faf78e8e5429e287dea43bbcf9985e4d` equals the 330-byte manifest's SHA-256 as I recomputed it; `G2A-6.8a` re-derives and passes; no threshold in the diff.
+
+### 74.6 seq 6 and seq 7 — recorded post hoc, and their artifacts agree with the ledger
+
+| | seq 6 `…STOP-K2-006` | seq 7 `…STOP-K3-007` |
+|---|---|---|
+| `canonical_params` | `sma_20/sma_50`, `w 0.0800`, `k 2.0`, trim `None`, `APPROVED_EQ_ONLY_POLICY` | identical except `k 3.0` |
+| row Sharpe / digest | `null` at append, sidecar `-0.62680988…` / `RET-V1-f7923f67…` | `null` at append, sidecar `-0.67547251…` / `RET-V1-3424a503…` |
+| artifact | `"recorded": true`, Sharpe and digest equal the sidecar, 16 ledger rows, `mean_net_expectancy -1929.206094265468125` | same, 15 rows, `-2194.130204710324133333333333` |
+| disclosure | present verbatim in `rationale` | present verbatim |
+
+The disclosure is the §73.10 sentence with one added clause saying the committed artifact is a *re-execution* at the same parameters after H-125/N-130 — true (measured: identical digest and Sharpe) and it does not upgrade the evidence. `N=7, N_eval=3` now hold in the registry, the sidecar, `G2A-6.6` and `G2A-6.7`.
+
+Two disclosure nits, measured, neither a finding:
+
+- A scored trial's own artifact records `evaluated_trial_count` **as of before its own evaluation was appended**: `006`'s says `2`, mine says `3`. Under append-before-read this is unavoidable at write time; the field should be labelled as "prior" or written after the row.
+- Artifacts `006`/`007` say `criteria_version 1.1.2` while the repo now pins `1.1.3`. Truthful — they were produced before the re-pin — but a reader comparing artifact and criteria will see a mismatch that no note explains inside the artifact.
+
+### 74.7 Erratum E-4 and N-132 (MEDIUM)
+
+**E-4 (my error).** §73.10 Ruling C predicted that appending seq 6/7 would move `CRIT-OVERFIT-02` from NOT RUN to **FAIL**. It did not, and the implementer is right about why: `evaluate_strategy_significance(returns, registry, criteria)` (`significance.py:540`) consumes a strategy's **daily return series** to derive `t_obs`, skewness and kurtosis; the registry stores `skewness: null`/`kurtosis: null`, the sidecar stores `{sharpe_ratio, max_drawdown, returns_digest, observation_count}`, and the artifact stores a digest rather than the series. Three of the DSR's inputs (N, N_eval variance, Sharpe) now exist; the return moments do not. My prediction was wrong about the mechanism, and typing FAIL without the series would violate §9.1.
+
+**N-132 (MEDIUM) — the DSR input is not persisted, so `CRIT-OVERFIT-02` cannot be computed from committed bytes, ever.** This is the same class as N-129: the number is computed in-process and only a digest of its input is committed. The consequence is sharper now than at `N_eval = 1`, because the project has just spent two trials to make `N_eval = 3` — and the criterion those trials were meant to inform still cannot be evaluated offline. Probe to close it: recompute the DSR from committed bytes alone and match the in-process value to the last decimal; that requires the 493-element daily return series (or its four moments plus `T`) to be written into the artifact beside the digest.
+
+### 74.8 Verdicts for the phases this commit touches
+
+| Phase | Verdict | Basis |
+|---|---|---|
+| 3B-2c stop lifecycle, trim and partial fill | **PASS at the declared probes** | trim re-arm 15/20 and gap fill 15; partial stop 1,800/2,700 with residual re-armed at the entry price |
+| 3B-2c holding-period realism (§13.2) | **FAIL (H-126)** | carried stop cancelled on the next session because the portfolio holds the old ISIN; counter reads 0; transition rows rescaled on one side only |
+| Phase 2A trial accountability (§8.2) | **PARTIAL → CLOSED for the sweep path, N-132 open** | N-130 closed by three measured refusals; the DSR's input series is still not committed |
+| Phase 3B-2b strategy verdict | **NO-GO, unchanged** | seq 6/7 both negative; no gate input moved |
+| 2024 fold / holdout | **SEALED, unspent** | `validation_folds_count = 0`; no artifact past 2023-12-29 |
+
+### 74.9 Ordered work order
+
+1. **Close H-126 — carry the position, not just the order.** Re-key the `Portfolio` position on `MERGER`/`ISIN_TRANSITION` (or stop reading the portfolio for stop validity and read the lot book), so the successor ISIN holds the quantity the stop is denominated in. Probe that must fail closed first: buy 20 on the old ISIN, apply a 42:25 merger, then a next-session gap through the carried stop must produce **one fill of 33 shares**, and a 10:1 transition must leave `stop.quantity == position.quantity == 200`. Serves §13.2.
+2. **Close the transition ratio asymmetry.** Either record face-value sub-divisions as `SPLIT` with `new_isin` (the branch at `:721-734` rescales lots correctly) or rescale the lot at `:735-737`. Probe: after a 10:1 transition the lot's `quantity × entry_price` is invariant to the paise, and the stop agrees with it. Serves §5.4.
+3. **Persist the DSR input (N-132).** Write the daily return series, or `{t_obs, skew, kurt}` with their digest, into each scored artifact; recompute `CRIT-OVERFIT-02` from committed bytes. Serves §9.1 and §8.2.
+4. **N-133 (LOW) — refuse before destroying.** `transfer_protective_stop(old, "", …)` cancels the old stop and then raises from `ProtectiveStopOrder.__post_init__`; validate `new_isin` before the cancel, and make the blank case return `False` so the caller's counter catches it. Probe: blank successor leaves the old stop **armed** and returns `False`.
+5. **Label the artifact's trial count.** `evaluated_trial_count` in a scored trial's own artifact is the pre-append value (`2` for a trial that makes it `3`); rename it or write it after the evaluation row. Serves §9.1.
+6. **Surface the restatement to a machine**, or state in the criteria that it is a human-readable annex. Serves §10.1.
+7. **CA-3 / seq 8 — see 74.10.** No trial may be registered before that decision is committed.
+
+### 74.10 Ruling — CA-3 is not a sourcing task, and the band veto is the thing to narrow
+
+The question was whether an attested band source can be sourced or the window scoped to band-covered sessions. Measured first, because the answer depends on it:
+
+| Fact | Measurement |
+|---|---|
+| Band-covered names, 2022 | **3** (`HDFC`, `INFY`, `RELIANCE`) — dynamic-flexing anchors with ±10 % derived limits |
+| Band-covered names, 2023 | **3**, same three |
+| Sessions with an unsourced band | **494 of 494** |
+| Fills, 2022 / 2023 | 19 / 10 (29 total, 15–16 closed round trips) |
+| Continuous `EQ` instruments available | **179** of 196 valid ISINs |
+| Entries refused for a missing band | `OrderRunnerEligibilityError: Mandatory price band evidence missing for BUY entry … (H-83)` |
+| Attested band artifacts in the repo | **one** — `sec_list_20240116.csv`, `source_url https://archives.nseindia.com/content/equities/sec_list.csv` |
+
+That `source_url` is the decisive fact. NSE publishes the band **code** inside `sec_list.csv`, a single rolling file that is overwritten in place, not a per-session archive; the bhavcopy carries no band column, and circulars announce *revisions*, not the daily state. So:
+
+1. **There is no attested 2022–2023 band history to source.** Not "not yet sourced" — not published, at daily granularity, by the exchange whose bands the rule requires. Reconstruction from circulars would be an event-driven guess, and reconstructing from the bars themselves is circular (a band is observable only when a scrip hits it). Recommending a sourcing sprint would be recommending unbounded work with no artefact at the end.
+2. **Scoping the window to band-covered sessions leaves one session.** The only attested snapshot is 2024-01-16, and even that is used today by carrying it statically across 2024 — an assumption the code itself labels unverified (N-126). Scoping to band-covered sessions is therefore not a shorter honest window; it is no window, and it would also move the IS into the 2024 validation fold, spending the last clean partition before Gate B.
+3. **What the band veto actually buys is already NOT RUN.** `CRIT-EXEC-03/04` are NOT RUN on 494 of 494 in-sample sessions today. The veto costs 176 of 179 instruments and returns a criterion that has never been computed. That is the worst trade in the project: it is paid in breadth, the one input §13.4 says binds.
+
+So the ruling is to **narrow the requirement, not the window**:
+
+- **Replace "no band → refuse entry" (H-83) with a frozen-bar veto for unbanded sessions.** A fill is refused when the session is locked (`high == low`) and, for a BUY, when the fill reference equals that locked price; a SELL is refused at a locked bar for the same reason (§5.3's bid is frozen). Everything else fills at the usual T+1 open plus the existing slippage model. §5.3's actual failure mode — filling into a book with zero depth — is exactly a locked session, and it remains closed. What is given up is the ability to say whether a *non-locked* open sat at a limit; that becomes a named NOT RUN, as it already is.
+- **Record the assumption in the criteria file, with a version bump and no threshold change:** "for sessions without an attested band, an order fills unless the session bar is locked; `CRIT-EXEC-03/04` are NOT RUN on those sessions." It must be pre-registered before `seq 8`, because it changes what a fill means.
+- **Then `seq 8` becomes registrable on up to 179 names** instead of 3, with `band_policy: LOCKED_BAR_REFUSAL_ONLY`, the `§73.10` preamble otherwise unchanged (`k` frozen at `2.0`, no second change inside the trial, trim `None`, same cost and slippage schedule), and one added reporting requirement: the artifact must print `band_covered_isins`, `unbanded_isins` and `locked_bar_refusals` per year, so the reader can see what the broadening actually admitted.
+- **The counterfactual, stated plainly:** if the maintainer keeps H-83 as written, then this corpus admits 3 names and 29 fills over two years, `CRIT-STAT-01` cannot be met, and the family should be closed **NO-GO on coverage** — not on expectancy. That is a legitimate decision. It is not legitimate to keep spending trials on a tape that cannot carry them, and it is not legitimate to re-pin the criteria each round while the binding constraint goes unaddressed.
+
+**What would falsify this ruling.** A committed, byte-attested 2022–2023 band archive from an authoritative source (a dated `sec_list` capture set with manifest rows, or an exchange band-history product) — then the veto would not need narrowing, and Ruling D's premise was wrong. Or a `LOCKED_BAR_REFUSAL_ONLY` run on 179 names that produces fewer than 100 closed round trips — then breadth was never the band veto's fault, the constraint is the entry signal's scarcity, and this ruling addressed the wrong term.
+
+### 74.11 Probe hygiene and what was not measured
+
+Five probe scripts (`probe_h125.py`, `probe_partial.py`, `probe_noband.py`, plus the three CLI re-render probes) ran from `%TEMP%\s74`, outside the repository; three walk-forward runs wrote artifacts only under `%TEMP%\s74\run_{k2,bad,t5}` and none under `reports/`. `git status` was empty at the start and end of the round; the registry, manifest, sidecar, criteria file and corpus were read and re-hashed, never written; no trial row was appended and no verdict artifact was regenerated. No holdout partition was read. `CURRENT_STAGE_OF_WORK.md` was not edited.
+
+**Not measured, and not claimed:** whether H-126 fires on the committed 2022–2023 corpus (no merger or transition touched a held name — `unprotected_corporate_action_positions = 0` in both artifacts; the defect is reachable by data and demonstrated on a fixture); how many names a `LOCKED_BAR_REFUSAL_ONLY` universe would actually enter, since the ADTV floor, the EMA filter and the subsegment partitioning have not been run without the band veto; whether a locked-bar veto would ever reject a fill in this corpus (no stop was deferred by a frozen bid in either diagnostic run — 0 deferrals — so the veto path is unexercised on the tape); and any DSR at `N_eval = 3`, which remains NOT RUN for the reason recorded in 74.7.
