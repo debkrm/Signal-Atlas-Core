@@ -6813,3 +6813,174 @@ Probes ran as `.p_s68a.py`, `.p_s68b.py` and two runner invocations against `ef4
 **Note to the implementer (§11.3):** the new phase section is correctly hedged ("implemented; measured locally; not audited") and correctly cites §67 — that part of the discipline now holds. The two sentences that need correction are the "down from the Trial #3 baseline breach of 0.1130" attribution (H-117) and "Preserves cash and portfolio equity continuity", which is gone and replaced by an accurate description of N-112. I have not edited that file.
 
 **Not measured, and not claimed:** whether NSE's cash-in-lieu rate for HDFC fractions was near 1641.10 (no circular ingested); whether the 2024 fold would have triggered the trim — the code path was never executed by a run, only by a unit test; per-name attribution inside 2024; the ±10% flexing band against NSE's 2022–2023 framework; and nothing behind the holdout was read. `CRIT-OVERFIT-02`, `CRIT-OVERFIT-03`, `CRIT-SURV-01`, `CRIT-PROV-01` and `CRIT-INFO-01` remain `NOT RUN` for the reasons they state.
+---
+
+## §69 — Commit `5cee179` (tag `feat-s68-5cee179`): §68 remediation, and the corpus that nothing verifies
+
+### 69.1 Baseline re-measured at `5cee179`
+
+| Gate | Result |
+|---|---|
+| `python -m pytest -q` | **418 passed**, exit 0, 0 skipped, 0 xfailed (76.03 s) |
+| All 9 `scripts/verify_*.py` | **exit 0**, one by one: `audit_append_only`, `cash_universe_coverage`, `historical_snapshot`, `phase2a_containment_and_trials`, `phase2b_significance`, `phase2b5_storage`, `phase2c_walkforward`, `phase2d_verdicts`, `wave1_thin_slice` |
+| `verify_audit_append_only.py` | exit 0; zero deleted lines in §1–§68 |
+| Working tree | clean at `5cee179` before this section |
+| Range | `ef43e70..5cee179` = 2 commits (`e265ff5` my §68, `5cee179` theirs); 22 files, **+599 / −87**, of which 149 lines are my audit section → their change is 21 files, +450 / −87 |
+| Trial registry | **4 rows, hashes unchanged**: seq 4 `03dcf82861a4` ← `3e3a2bd6055c`, no re-append, no rewrite. N stays 4 as required |
+| Holdout | sealed and unread: both live runs loaded a dataset whose max date is `2024-12-31`, emitted no 2025+ session, `validation_folds_count = 0` |
+
+Two full runner invocations were made from HEAD for this section, into a scratch registry copy, with `--no-record-trial`:
+
+| | `total_valid_isins` | `continuous_instruments_passed` | `unexplained_gap_refusals` | verdict |
+|---|---|---|---|---|
+| full window `2022-01-03..2024-12-31` | **196** | 176 | 20 | `17 PASS / 2 FAIL / 5 NOT RUN` → NO-GO |
+| `--in-sample-only` `2022-01-03..2023-12-29` | **196** | 179 | 17 | `17 PASS / 2 FAIL / 5 NOT RUN` → NO-GO |
+
+`total_valid_isins` is now **identical under both window modes**, which is the §68 acceptance for H-116 stated as a number. The remaining difference in the other two counters is a property of gap detection, not of identity validation, and is explained in 69.2 item 1.
+
+**No measured result moved.** The in-sample fold at `5cee179` — full-window run, `--in-sample-only` run, the committed Trial #4 artifact and the certified baseline artifact — reports the same fifteen trades, end equity `975192.29`, CAGR `-0.0126578513783100833588337349`, max drawdown `0.04115480800453974531801802628`, PF `0.2146402927805285752276267302`. Pricing the MINDTREE and IDFC mergers therefore changed no realised PnL: no position was held through either ex-date. That is the single most important negative control in this round — the H-115 remediation did not quietly restate the baseline.
+
+### 69.2 §68 work order, item by item
+
+**1. H-116 — transition refusal over the dataset span. CLOSED.** `run_phase3b2_walkforward` now resolves each snapshot symbol at `min(trading_dates)` and `max(trading_dates)`. Reproducing the exact refusal loop with the committed helpers:
+
+```
+dataset span 2022-01-03 .. 2024-12-31
+NESTLEIND  INE239A01016 -> INE239A01024   refused_new=True   refused at old in-sample end=False
+PERSISTENT INE262H01013 -> INE262H01021   refused_new=True   refused at old in-sample end=False
+BDL        INE171Z01018 -> INE171Z01026   refused_new=True   refused at old in-sample end=False
+MAZDOCK    INE249Z01012 -> INE249Z01020   refused_new=True   refused at old in-sample end=False
+CANBK      INE476A01014 -> INE476A01022   refused_new=True   refused at old in-sample end=False
+COCHINSHIP INE704P01017 -> INE704P01025   refused_new=True   refused at old in-sample end=False
+DRREDDY    INE089A01023 -> INE089A01031   refused_new=True   refused at old in-sample end=False
+refused transition UUIDs: 15
+symbols: BAJAJFINSV, BDL, CANBK, COCHINSHIP, DRREDDY, HAL, IRB, JUBLFOOD, MAZDOCK,
+         NESTLEIND, PERSISTENT, TATASTEEL, VBL, VTL
+```
+
+The fourth and fifth columns are the §68 breach and its absence: at the old `eval_start`/`eval_end` pair these seven names resolved to the *same* ISIN and were admitted; at the dataset span they resolve to different ISINs and are refused. `--in-sample-only` no longer touches this computation at all, and the two runs above prove it end-to-end (`total_valid_isins` 196 both).
+
+The retained symbol-resolution fallback is legitimate, and I checked the specific case the implementer cited: `MCDOWELL-N` resolves to `INE854D01024` at `2022-01-03` and `None` at `2024-12-31`, while `UNITDSPR` resolves `None` at the start and `INE854D01024` at the end. Both labels carry **the same ISIN**, so this is a symbol rename, not an ISIN transition; refusing it would be wrong and resolving it through the span anchor is correct. The §68 wording "the fallback is dead" described a state that no longer holds once the refusal moves to the span, and the implementer's refusal to delete it was right.
+
+**2. H-117 / N-119 — retraction and snapshot state. CLOSED.** The `CURRENT_STAGE_OF_WORK.md` sentence is replaced by an explicit retraction naming the window difference, Trial #4 is titled `NOT EXERCISED / NULL EXPERIMENT` with the zero-ticket count and the digit-for-digit equality to the baseline, and the baseline artifacts are described as a record captured at N = 3 under `CRIT-FPR-V1-b3f35df9…` with the live registry at N = 4. Trial #4's rendered markdown now carries `CRIT-STAT-03 … 0.0918` with no causal claim attached. Also worth recording: the certified baseline JSON is **byte-identical** to `ef43e70` (0 of 292 leaves differ) — the artifact edited in this commit is Trial #4's copy, not the certified one.
+
+**3. N-112 residual — three mergers priced, no silent fallback. CLOSED.** All three rows carry a price and each description now says the price is a modelled ex-date close from the committed Bhavcopy corpus, not a registrar settlement rate — the honesty defect §68 raised. Live probe on an unpaired, unpriced fractional merger:
+
+```
+POSITION  raised CorporateActionError: MERGER on INE043D01016 yields fractional shares 1/20
+          but carries no consideration price; cash-in-lieu cannot be silently settled at book value
+          qty still 31 · equity unchanged True
+PORTFOLIO raised CorporateActionError (same) · qty still 31 · new_isin position None
+PRICED    settlement 3.71 · new qty 48
+```
+
+The guard is correctly scoped: it sits inside `num != den` and `rem != 0`, so an integral merger needs no price and is not refused. The unpriced path mutates nothing before raising, and the priced path still settles `0.05 × 74.19 = ₹3.71`, matching the IDFC row. `test_phase3b2_audit_s66_items.py` was edited to assert `equity_after == equity_before − basis_removed + cash` **and** `equity_after != equity_before`; that is a strengthening of a test whose old expectation encoded the N-112 defect, not a weakening.
+
+**4. H-115 — provenance mechanism. PARTIAL.** Four of the five limbs now hold, measured:
+
+```
+manifest bytes 36,007 · sha256 444e9a64…5cc725c1  == expected_manifest_fingerprint   (match)
+corporate_actions sha256 c4706736…45aa2676 · manifest timestamp 2026-11-16T10:00:00  (fresh)
+criteria metadata.version 1.1.1 · no threshold value changed in the diff
+Phase 2D artifact: criteria_fingerprint 28f7e7ad… == compute_criteria_fingerprint(current)
+                   evaluated_at_utc 2026-11-16T10:00:00 · restatement note present
+```
+
+Version and fingerprint are now consistent, the artifact's declared timestamp describes the bytes it ships with, and the restatement is recorded in the manifest's `retrieval_reference`. What does not hold is the append-only shape §10.1 asks for: the three corpus rows were **rewritten in place** (line 53, 79, 159), no restatement row was appended, and the superseded bytes survive only in git history. That would be a documentary complaint — except for the attack in 69.3, which shows the pin does not cover the corpus at all.
+
+**5. N-117 — digest and observation count. PARTIAL.** The artifact now carries `returns_digest = RET-V1-cf90af33f29e4684206b9f02f62638aae6fd54d22d529b89ae5061b95dd5acc7` and `observation_count = 493`, which is the evidence §68 asked for and it is the right quantity (493 session returns, not 494 nominal sessions). But the registry row it was meant to feed still has `returns_digest: null`, `sharpe_ratio: null` on all four rows, `TrialRegistry("data/trials/trial_registry.jsonl").evaluated_trial_count == 0`, and `CRIT-OVERFIT-02` is still `NOT RUN` for the same reason as before. See H-119 in 69.3.
+
+**6. N-118 — numeric-only circuit evidence. CLOSED.** A bundle with the two flags and no counts now yields `CRIT-EXEC-03 NOT RUN` and `CRIT-EXEC-04 NOT RUN` with "…cannot be substantiated without judged fill counts"; supplying `209 / 0 / 0` and `190 / 0 / 0` yields `PASS` with `0 of 209 judged BUY fill(s)…` and `0 of 190 judged SELL fill(s)…`. The constant sentence is gone from both branches.
+
+**7. CA-3 — band inventory. CONFIRMED AS A BLOCKER, not closed.** The inventory claim is accurate: `data/raw/2022` holds 248 Bhavcopy zips, `2023` 246, `2024` 249; the only price-band file in the repository is `data/reference/sec_list_20240116.csv` with columns `Symbol,Series,Security Name,Band,Remarks`; `data/silver/price_bands` exists but is **empty**; no other file in `data/` matches `sec_list` or `band`. My full-window run reports 3 band-covered symbols for 2022 and 3 for 2023, so the coverage disclosure is still the interpolated 3-name figure.
+### 69.3 New findings
+
+**H-118 (HIGH, §10.5 / §9.1) — the reference manifest's per-artefact digests are never checked against the artefacts, so a silent corpus edit passes every gate.** This is the decisive probe of the round. I changed one byte inside a DIVIDEND description in `data/reference/corporate_actions.jsonl` — semantically inert, but the file's SHA-256 became `1bc4ef40a0d8…` while `manifest.jsonl` still attested `c4706736c2b9…` — and ran the gates:
+
+```
+corporate_actions.jsonl sha256 : 1bc4ef40a0d8839eb03e3630e4c6c1789398494a40716c94fdd227b423a976fd
+manifest row still claims      : c4706736c2b910b0f1a2aad87f74ac87ef6a63fd9021dedcf40f051f45aa2676
+scripts/verify_phase2d_verdicts.py -> exit 0
+   OVERALL VERDICT: ALL PHASE 2D VERDICT ENGINE GATES PASSED (100%)
+tests: test_criteria.py + test_phase3b2_audit_s68_items.py -> 10 passed
+```
+
+(The file was restored to `c4706736…` immediately and `git status` is clean; see 69.7.) `evaluate_verdicts` hashes `manifest.jsonl` and compares it to `expected_manifest_fingerprint` — so the pin protects the *attestation*, and nothing recomputes `byte_count`/`sha256` for the four reference files the manifest describes. Consequences: the `retrieval_reference` restatement that H-115 relies on is documentary only; a corpus can be edited by anyone who does not also care to update the manifest; and the H-115 reseal pattern (edit corpus → edit manifest row → reseal pin in the same commit) is the *only* path, because leaving the manifest alone would have been just as invisible. **Accept:** a committed check recomputes every manifest row's `byte_count` and `sha256` against the file on disk and fails closed on mismatch; probe: reintroduce the one-byte edit above and require a non-zero exit from `verify_phase2d_verdicts.py` (or its successor). This must land before any CA-3 ingestion, or the new band files inherit an attestation nobody verifies.
+
+**H-119 (HIGH, §8.2 / §9.1) — the DSR is still uncomputable because no trial record is scored, and the runner prints a false reason for it.** N-117's remedy put a digest on the *report*; the discipline reads the *registry*:
+
+```
+registry rows 1..4: returns_digest None, sharpe_ratio None
+TrialRegistry(...).evaluated_trial_count == 0
+evaluate_strategy_significance(...) -> InvalidSampleError:
+  "When trial_count_n (4) > 1, computing DSR requires at least 2 evaluated trials to establish
+   empirical variance, got evaluated_trial_count=0."
+artifact: deflated_sharpe_ratio null -> CRIT-OVERFIT-02 NOT RUN
+CLI prints: "Haircut Sharpe Ratio: NOT RUN / INVALID (N=4 < minimum 2 required ...)"
+```
+
+Three defects stack. (a) The new digest is an additive field beside the null ones (§14.4): nothing consumes it, and the criterion it was supposed to unblock is unchanged. (b) The DSR/Haircut path cannot run until **at least two** rows carry `sharpe_ratio`, because variance needs two evaluated trials; with N = 4 and 0 evaluated, spending trials does not move the discipline at all. (c) The printed reason asserts `N=4 < minimum 2`, which its own output contradicts — a §9.1 breach in generated prose (pre-existing since `df284391`, first named here). **Accept:** `append_trial` writes `sharpe_ratio` (and the digest) for every new trial so `evaluated_trial_count` grows with N; the `else` branch prints the real failing input (`evaluated_trial_count` and the variance), not a count comparison; and either two trials are scored or the report states plainly that DSR is `NOT RUN` because zero trials carry a Sharpe.
+
+**N-120 (LOW) — the §68 H-116 figure is restated with the wrong quantity.** `CURRENT_STAGE_OF_WORK.md` says "The audit's `176 / 15` figure assumes the full-window gap scan; with the span-bounded scan the refused set is 17." My 15 was the count of **refused transition UUIDs**, a different counter from `unexplained_gap_refusals` (20 full-window, 17 in-sample, both correct and both reproducible). The conclusion drawn — that 17 is the span-bounded number — is right; the attribution of 15 is not. **Accept:** name the counter.
+
+**N-121 (LOW) — a synthetic fixture now satisfies CRIT-EXEC-03/04 with zero judged fills.** `verify_phase2d_verdicts.py` supplies `judged_fills = 0` to keep the fixture green, which is truthful for a fixture that has no fills, but it means `PASS` is reachable from a bundle with no fills at all. Real runs supply 209/190, so nothing measured is wrong. **Accept:** require `judged_fills > 0` for the criterion to be in scope, otherwise `NOT RUN` — the fixtures then need a judged fill or an explicit out-of-scope status.
+
+**N-122 (LOW, §12.4) — `verify_phase2c_walkforward.py` now compares a trial record's criteria version to the committed file's version.** `criteria_version_correct = (trial_rec.criteria_version == load_go_no_go_criteria().version)` replaced the literal `"1.1.0"`. For the in-gate trial this is correct and it survives version bumps, but it is also self-referential: the check can no longer detect a record stamped with whatever version happens to be committed. No fingerprint check was relaxed (those are unchanged and pass). **Accept:** a comment naming what is now unverified (§12.4), or a fixed expected version per generated trial.
+
+**Carried, not introduced here:** `CRIT-DATA-02`'s `or continuous_instruments_passed > 0` disjunct; `CRIT-WINDOW-01`'s 494 against the fold's 493 sessions; the hardcoded `Append-Before-Read Check: PASS` line; the parallel `open_lots` book applying mergers a session before `Portfolio` (now bridged by `lot_merger_settlement_pnl`); the `--trim-threshold` intervention that has still never emitted an order.
+### 69.4 Verdict
+
+| Phase | §68 | Verdict at `5cee179` | Basis |
+|---|---|---|---|
+| Phase 2D Tier-A gating | NO-GO | **NO-GO** (unchanged) | `CRIT-PROV-01 NOT RUN`; artifact regenerated under a consistent pin |
+| Phase 3B-1 | GO | **GO stands** | 418 passed, 9/9 verify scripts exit 0 |
+| Phase 3B-2a | GO | **GO stands** | counters unchanged where they should be |
+| Phase 3B-2b — truthful reporting | MET | **MET** | retraction made, `NOT EXERCISED` recorded, `N = 3` snapshot stated |
+| Phase 3B-2b — identity validation | H-116 open | **CLOSED** | 15 transition UUIDs refused under both window modes; `total_valid_isins` 196 → 196 |
+| Phase 3B-2b — merger economics | N-112 residual | **CLOSED** | three rows priced; unpriced fractional settlement raises at both levels, mutating nothing |
+| Phase 3B-2b — reference provenance | H-115 | **PARTIAL** | pin/timestamp/version consistent; corpus digests unverified (H-118) |
+| Phase 3B-2b — multiple-testing discipline | N-117 | **PARTIAL → H-119** | digest emitted but unconsumed; `evaluated_trial_count = 0`; `OVERFIT-02 NOT RUN` |
+| Phase 3B-2b — circuit evidence | N-118 | **CLOSED** | flag without counts is `NOT RUN` |
+| Phase 3B-2b — strategy evidence | not established | **STILL NOT ESTABLISHED** | one trial, never exercised; no hypothesis tested in three rounds |
+| Holdout | sealed | **SEALED** | no 2025+ session loaded or evaluated |
+| Publication / GO-oriented claims | blocked | **STILL BLOCKED** | `PROV-01`, `SURV-01`, `OVERFIT-02` unattested; CA-3 unsourced |
+
+Six of the seven §68 items close at their named probes. The remediation is real: identity validation is now structurally independent of the evaluation flag, the merger settlement cannot silently book book value, circuit evidence cannot be asserted without counts, and the retracted causal claim is gone. The one item that did not close on its own terms is H-115, and the reason is not sloppiness — it is that the repository never had a check tying a manifest row to the bytes it describes. The reseal was the symptom; H-118 is the disease, and it has been there since the manifest was introduced.
+
+The second-order finding is H-119. Three rounds have now spent effort on the multiple-testing discipline without making it computable: §68 asked for a digest, the digest arrived on the report, and the registry — the thing `evaluate_strategy_significance` reads — is still four unscored rows. Until two trials carry a Sharpe, `CRIT-OVERFIT-02` cannot leave `NOT RUN` no matter how many trials are registered, and the CLI will keep printing a reason that its own numbers refute.
+
+**The result of Trial #4 stands as recorded: `NOT EXERCISED / NULL EXPERIMENT`, N = 4 spent, zero information.** Nothing in this commit changes that, and nothing in it claims to.
+
+### 69.5 What would falsify this verdict
+
+- If a gate failed on the one-byte corpus edit, H-118 would be wrong: measured `verify_phase2d_verdicts.py` exit 0 with `ALL PHASE 2D VERDICT ENGINE GATES PASSED (100%)` and 10 tests green while the file's SHA-256 differed from the manifest row.
+- If `TrialRegistry("data/trials/trial_registry.jsonl").evaluated_trial_count` were non-zero, H-119's "uncomputable" limb would be wrong: measured 0 with 4 rows, and `evaluate_strategy_significance` raising `InvalidSampleError … got evaluated_trial_count=0`.
+- If the printed DSR reason matched its inputs, the false-reason limb would be wrong: measured `N=4 < minimum 2`.
+- If `--in-sample-only` still changed the transition refusal, H-116 would be wrong: measured 15 refused UUIDs and `total_valid_isins = 196` under both window modes, with all seven transition symbols refused.
+- If pricing MINDTREE and IDFC had moved any realised metric, the "no hidden restatement" claim would be wrong: all four artifacts report the same fifteen trades, `975192.29`, and identical CAGR/PF/drawdown to 22+ digits.
+- If the certified baseline JSON had been edited, the "byte-frozen" claim would be wrong: 0 of 292 leaves differ from `ef43e70`.
+- If an unpriced fractional merger settled instead of raising, N-112's closure would be wrong: both `Position.apply_corporate_action` and `Portfolio.apply_corporate_action` raised `CorporateActionError` with quantity and equity untouched.
+
+### 69.6 Work order — closing CA-3 before Trial #5
+
+Ordered by what unblocks what. CA-3 is now the binding constraint on strategy progress, not on reporting; every item below exists to make the 2022–2023 window simulatable without fabricating anything.
+
+1. **H-118 — make manifest attestations verifiable.** Add a committed check that recomputes `byte_count` and `sha256` for every `data/reference` artefact named in `manifest.jsonl` and fails closed on mismatch; wire it into `verify_phase2d_verdicts.py` (or a new `verify_reference_integrity.py` included in the CI gate list). **Probe that must fail closed:** the one-byte edit in 69.3 → non-zero exit. **Serves:** Phase 3B-2b provenance; prerequisite for item 2, because new band files must be attested by something that is actually checked.
+
+2. **CA-3(a) — availability probe for per-session NSE price bands.** Determine, with recorded evidence, whether the NSE archive serves the daily price-band report (`Symbol,Series,Security Name,Band,Remarks`, the schema of `sec_list_20240116.csv`) for sessions in `2022-01-03..2023-12-29`, and record the finding in the manifest whether the answer is yes or no. **Probe that must fail closed:** a run that needs a band for a session with no attested file must refuse the instrument-session, not interpolate. **Serves:** Phase 3B-2b strategy evidence.
+
+3. **CA-3(b) — if the archives exist, ingest them as attested Bronze/Silver.** Byte-exact payloads, one manifest row per session with `source_url`, `retrieval_timestamp`, `byte_count`, `sha256`, provenance `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` until a certificate exists; derived half-open band intervals keyed by `(symbol, series, effective_from)` and joined as-of date. **Probe that must fail closed:** on `2024-01-16` the derived band for every symbol must equal `sec_list_20240116.csv` row-for-row; any disagreement refuses. **Serves:** CA-3.
+
+4. **CA-3(c) — if the archives do not exist, shrink the claim instead of the data.** Declare 2022–2023 band-ineligible, run the binding window over band-covered sessions only, and mark `CRIT-EXEC-03/04` `NOT RUN` for the unsourced period rather than `PASS` on an interpolated band. A shorter honest window is required by §10.8; a synthesized band is prohibited by §6.3. **Serves:** Phase 3B-2b.
+
+5. **H-119 — score the trials.** `append_trial` must write `sharpe_ratio` and `returns_digest`; the DSR path must report `evaluated_trial_count` and the variance it used, and print the real blocking input when it cannot compute. Note the constraint this creates: with 4 rows unscored and `evaluated_trial_count = 0`, the DSR needs **two** scored trials before `CRIT-OVERFIT-02` can leave `NOT RUN`, and registry rows are append-only, so the two must be new trials. Plan Trial #5 and #6 with that in mind, or state that the DSR stays `NOT RUN` through N = 6.
+
+6. **Trial #5 — only after items 2–4 settle, and only with a reachable trigger.** The §68 lesson holds: a hypothesis whose parameter cannot fire in the window is a null experiment. With band coverage fixed, re-register a behavioural hypothesis whose trigger exists in the corpus, carrying `sharpe_ratio` and its digest; state the expected observation count before running.
+
+7. **N-120, N-121, N-122 — one-line corrections.** Name the counter in the stage file; require `judged_fills > 0` for `EXEC-03/04` scope; comment what the dynamic version check no longer verifies.
+
+### 69.7 Probe hygiene
+
+Two full runner invocations (~120 s each) were run from `5cee179` into `.tmp_s69/{full,is}` using **copies** of `data/trials/trial_registry.jsonl` and its `.manifest` under `--registry-path`, with `--no-record-trial`, so the committed registry was never written; it remains at 4 rows with the hashes it had at `ef43e70`. Two probe scripts (`.p_s69a.py`, `.p_s69b.py`) reproduced the transition-refusal loop and the fail-closed/dispatch paths using the committed helpers (`build_production_security_master`, `load_historical_snapshot`, `Portfolio`, `evaluate_verdicts`); nothing was stubbed or monkeypatched. The H-118 tamper probe modified `data/reference/corporate_actions.jsonl` in place, ran the gate and two test modules, and restored it with `git checkout --`; the restored SHA-256 equals the manifest row (`c4706736…`) and `git status` shows only this audit section. No holdout partition was read; no registry row was added, amended, or reordered; the certified baseline artifacts were not touched.
+
+**Not measured, and not claimed:** whether NSE's archive actually serves 2022–2023 `sec_list` files (that is the point of item 2 — I only confirmed none is present locally); whether the digest `RET-V1-cf90af33…` recomputes identically across runs (would need a byte-identical re-run; the 493-observation count and the unchanged metrics are the evidence I have); whether the modelled merger closes match any registrar cash-in-lieu rate; the ±10% flexing band; and nothing behind the holdout. `CRIT-PROV-01`, `CRIT-SURV-01`, `CRIT-OVERFIT-02`, `CRIT-OVERFIT-03` and `CRIT-INFO-01` remain `NOT RUN` for the reasons each states.
