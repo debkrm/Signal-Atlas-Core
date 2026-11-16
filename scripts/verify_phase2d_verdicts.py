@@ -59,6 +59,14 @@ def verify_gate_2d1_reproducibility() -> bool:
         "min_daily_turnover_crore": Decimal("10.0"),
         "prohibit_buy_at_upper_circuit": True,
         "prohibit_sell_at_lower_circuit": True,
+        # Finding N-118: the circuit criteria are only PASS with judged/violating counts present;
+        # this synthetic fixture has zero judged fills, so zero is the computed measurement.
+        "upper_circuit_buy_judged_fills": 0,
+        "upper_circuit_buy_violating_fills": 0,
+        "upper_circuit_buy_missing_limit_fills": 0,
+        "lower_circuit_sell_judged_fills": 0,
+        "lower_circuit_sell_violating_fills": 0,
+        "lower_circuit_sell_missing_limit_fills": 0,
         "execution_latency_sessions": 1,
         "statutory_costs_enforced": True,
         "strict_decimal_accounting": True,
@@ -161,6 +169,14 @@ def verify_gate_2d3_synthetic_fixture_end_to_end() -> bool:
         "min_daily_turnover_crore": Decimal("6.20"),
         "prohibit_buy_at_upper_circuit": True,
         "prohibit_sell_at_lower_circuit": True,
+        # Finding N-118: the circuit criteria are only PASS with judged/violating counts present;
+        # this synthetic fixture has zero judged fills, so zero is the computed measurement.
+        "upper_circuit_buy_judged_fills": 0,
+        "upper_circuit_buy_violating_fills": 0,
+        "upper_circuit_buy_missing_limit_fills": 0,
+        "lower_circuit_sell_judged_fills": 0,
+        "lower_circuit_sell_violating_fills": 0,
+        "lower_circuit_sell_missing_limit_fills": 0,
         "execution_latency_sessions": 1,
         "statutory_costs_enforced": True,
         "strict_decimal_accounting": True,

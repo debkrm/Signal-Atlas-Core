@@ -1,8 +1,8 @@
 {
-  "criteria_version": "1.1.0",
-  "criteria_fingerprint": "CRIT-FPR-V1-a7e535475f14de9e6951ed170931264e1726dc7b66c2f70999d16bc6936df893",
+  "criteria_version": "1.1.1",
+  "criteria_fingerprint": "CRIT-FPR-V1-28f7e7ad7418ca079b4154e08c29e8d89b2d096b464179aabafd3040f9e3c523",
   "calendar_fingerprint": "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad",
-  "timestamp_utc": "2026-11-14T16:45:00+00:00",
+  "timestamp_utc": "2026-11-16T10:00:00+00:00",
   "evaluation_start_date": "2022-01-03",
   "evaluation_end_date": "2026-10-30",
   "overall_verdict": "NO-GO",
@@ -269,6 +269,7 @@
   "metadata": {
     "binding_criteria_count": 22,
     "binding_failed_count": 19,
-    "unverified_provenance_gating_applied": true
+    "unverified_provenance_gating_applied": true,
+    "restatement_note": "Restatement 2026-11-16 (Audit \u00a768.6 item 3, H-115): supersedes the 2026-11-14T16:45:00+00:00 artifact, which no longer matched the criteria file. Criteria version 1.1.1 changes no threshold; it records the manifest pin move to MAN-FPR-V1-444e9a64aa5fbccb943dfc6994c7daca042d2ee446d971a09d2211645cc725c1 after data/reference/corporate_actions.jsonl gained modelled merger consideration prices (HDFC 1641.10, MINDTREE 4742.05, IDFC 74.19). Provenance remains CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and Tier-A gating is unchanged."
   }
 }

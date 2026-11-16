@@ -258,6 +258,14 @@ class Position:
                     if action.action_type == CorporateActionType.MERGER:
                         # Finding H-113: Stock merger with fractional entitlement.
                         # Allocate integer whole shares to new_isin, settle fractional remainder as cash-in-lieu.
+                        # Finding N-112: an unpriced fractional settlement has no consideration to book,
+                        # so it fails closed here rather than silently settling at removed book basis.
+                        if action.delisting_price is None:
+                            raise CorporateActionError(
+                                f"MERGER on {self._instrument_id} yields fractional shares {rem}/{den} but carries no "
+                                f"consideration price; cash-in-lieu cannot be silently settled at book value "
+                                f"(Finding N-112)."
+                            )
                         whole_qty = (self._quantity * num) // den
                         fractional_shares = Decimal(rem) / Decimal(den)
                         fractional_cost_basis = _quantize_paise(

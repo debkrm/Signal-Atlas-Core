@@ -185,6 +185,8 @@ def test_h113_stock_merger_fractional_cash_in_lieu():
         ratio_denominator=Decimal("25"),
         new_isin="INE040A01034",
         description="HDFC Ltd Merger into HDFC Bank (42 HDFCBANK per 25 HDFC)",
+        # Finding N-112: a fractional merger without a consideration price now fails closed.
+        delisting_price=Decimal("1641.10"),
     )
 
     cash_entry = portfolio.apply_corporate_action(merger_action)
@@ -202,20 +204,16 @@ def test_h113_stock_merger_fractional_cash_in_lieu():
     assert new_pos.quantity == 45
     assert new_pos.instrument_id == "INE040A01034"
 
-    # Fractional remainder 0.36 shares settled into cash
-    # (27 * 42) % 25 = 9 / 25 = 0.36 shares
-    # Fractional cost basis = total_cost_basis * 9 / (27 * 42) = total_cost_basis / 126
-    expected_frac_cash = (total_cost_basis_before * Decimal("9") / Decimal(27 * 42)).quantize(
-        Decimal("0.01")
-    )
-    assert cash_entry.amount == expected_frac_cash
+    # Fractional remainder 0.36 shares settled at the consideration price, not book value.
+    # (27 * 42) % 25 = 9 / 25 = 0.36 shares; 0.36 × 1641.10 = 590.796 -> ₹590.80
+    assert cash_entry.amount == Decimal("590.80")
 
-    # Whole cost basis + fractional cash equals original cost basis to the exact paisa
-    assert new_pos.total_cost_basis + cash_entry.amount == total_cost_basis_before
-
-    # Total portfolio equity preserved to the exact paisa
+    # Finding N-112: the fractional slice is a disposal, so equity moves by
+    # (consideration − removed book basis), not by zero (the old book-value tautology).
+    basis_removed = total_cost_basis_before - new_pos.total_cost_basis
     equity_after = portfolio.current_total_equity()
-    assert equity_after == equity_before
+    assert equity_after == equity_before - basis_removed + cash_entry.amount
+    assert equity_after != equity_before
 
 
 def test_h113_fail_closed_false_does_not_crash_on_hdfc_merger(tmp_path: Path):

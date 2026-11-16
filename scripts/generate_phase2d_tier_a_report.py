@@ -112,12 +112,24 @@ def build_tier_a_results_bundle(
         # Evaluation window (Finding H-65, H-66, H-69)
         "evaluation_start_date": start_date_str,
         "evaluation_end_date": end_date_str,
-        "evaluated_at_utc": "2026-11-14T16:45:00+00:00",
+        "evaluated_at_utc": "2026-11-16T10:00:00+00:00",
         "dataset_fingerprint": dataset_fp,
 
         # Data provenance status sourced from manifest (Rule 6.5, Residual R-3, Finding H-70)
         "data_provenance_status": prov_status,
         "provenance_attestation_reference": str(bhavcopy_manifest_file),
+
+        # Audit §68.6 item 3 (H-115): the 2026-11-14T16:45:00 artifact was rewritten in place after the
+        # reference corpus changed. This artifact is a restatement, not that snapshot: new evaluated-at
+        # timestamp, criteria version 1.1.1, and the manifest pin move named here.
+        "restatement_note": (
+            "Restatement 2026-11-16 (Audit §68.6 item 3, H-115): supersedes the 2026-11-14T16:45:00+00:00 "
+            "artifact, which no longer matched the criteria file. Criteria version 1.1.1 changes no "
+            "threshold; it records the manifest pin move to MAN-FPR-V1-444e9a64aa5fbccb943dfc6994c7daca042d2ee446d971a09d2211645cc725c1 "
+            "after data/reference/corporate_actions.jsonl gained modelled merger consideration prices "
+            "(HDFC 1641.10, MINDTREE 4742.05, IDFC 74.19). Provenance remains CONTENT_IDENTIFIED_ONLY / "
+            "SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and Tier-A gating is unchanged."
+        ),
     }
 
     # Traded EQ resolution percentage is dynamically populated only when computed from manifest
@@ -166,6 +178,8 @@ def generate_report() -> VerdictReport:
         criteria=criteria,
         calendar=calendar,
     )
+    if "restatement_note" in bundle:
+        report.metadata["restatement_note"] = bundle["restatement_note"]
 
     # Output directory
     verdicts_dir = REPO_ROOT / "reports" / "verdicts"
@@ -179,8 +193,11 @@ def generate_report() -> VerdictReport:
         json.dump(report.to_dict(), f, indent=2)
         f.write("\n")
 
+    md_text = report.to_markdown()
+    if "restatement_note" in bundle:
+        md_text += f"\n> **Restatement:** {bundle['restatement_note']}\n"
     with open(md_path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(report.to_markdown() + "\n")
+        f.write(md_text + "\n")
 
     # Structural and file assertions (Findings H-76, N-68, Audit §55.5, §56.4)
     assert report is not None

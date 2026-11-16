@@ -420,8 +420,10 @@ def run_phase_2c_verification() -> bool:
             and res_edited_criteria.fingerprint != res_a.fingerprint
         )
 
-        # Audit §31 H-34: Criteria version dynamically defaulted from criteria in force (1.1.0)
-        criteria_version_correct = (trial_rec.criteria_version == "1.1.0")
+        # Audit §31 H-34: Criteria version dynamically defaulted from criteria in force
+        criteria_version_correct = (
+            trial_rec.criteria_version == load_go_no_go_criteria().version
+        )
 
         # Audit §31 H-33 / §32 H-37: Execution config hashed into result fingerprint, model parameters serialized, carried on trial record
         exec_config_bound = (trial_rec.execution_config == res_a.execution_config)

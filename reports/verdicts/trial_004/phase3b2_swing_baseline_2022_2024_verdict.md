@@ -1,10 +1,10 @@
 # Signal Atlas — Automated Go/No-Go Research Verdict Report
 
 - **Overall Decision:** `NO-GO`
-- **Evaluated At (UTC):** `2026-11-16T09:51:54.397689+00:00`
+- **Evaluated At (UTC):** `2026-11-16T10:59:00.911905+00:00`
 - **Evaluation Window:** `2022-01-03` to `2023-12-29`
-- **Criteria Version:** `1.1.0`
-- **Criteria Fingerprint:** `CRIT-FPR-V1-a7e535475f14de9e6951ed170931264e1726dc7b66c2f70999d16bc6936df893`
+- **Criteria Version:** `1.1.1`
+- **Criteria Fingerprint:** `CRIT-FPR-V1-28f7e7ad7418ca079b4154e08c29e8d89b2d096b464179aabafd3040f9e3c523`
 - **Calendar Fingerprint:** `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad`
 - **Summary Counts:** `PASS=16`, `FAIL=3`, `NOT RUN=5` (Total=24)
 
@@ -29,7 +29,7 @@
 | CRIT-DATA-02 | Data Integrity | Fail Closed on Unexplained Gaps | `True` | `True` | **PASS** | YES | Price series partitioned into continuous segments on UNEXPLAINED_MISSING_RECORD (§6.3). |
 | CRIT-DATA-03 | Data Integrity | Point-in-Time Universe Selection | `True` | `True` | **PASS** | YES | Tradable constituents determined strictly prior to market open on session T (§6.1). |
 | CRIT-DATA-04 | Data Integrity | Zero Data Fabrication | `True` | `True` | **PASS** | YES | Zero forward-filling, linear interpolation, zero-price imputation, or NaN masking (§6.3). |
-| CRIT-DATA-05 | Universe Integrity | Traded EQ Resolution Pct | `>= 100.0%` | `96.6825%` | **FAIL** | YES | Active traded EQ scrips resolved to authoritative ISINs: 96.6825% (§41.3, Finding H-54). |
+| CRIT-DATA-05 | Universe Integrity | Traded EQ Resolution Pct | `>= 100.0%` | `92.8910%` | **FAIL** | YES | Active traded EQ scrips resolved to authoritative ISINs: 92.8910% (§41.3, Finding H-54). |
 | CRIT-DATA-06 | Calendar Integrity | Calendar Fingerprint Anchor | `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad` | `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad` | **PASS** | YES | Loaded calendar anchored and verified against criteria pins: full=CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad, sourced_1196=CAL-FPR-V1-2d5ac7ac32455327cd636d64a4e15a1f689f25eb42a815e151ea31c3cf61cda1. |
 | CRIT-PROV-01 | Data Provenance | Data Provenance Verification | `VERIFIED / EXCHANGE_ATTESTED` | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` | **NOT RUN** | YES | Dataset provenance is 'CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED'; per AGENTS.md Rule 6.5 and Audit §50.8 (Residual R-3), claims resting on unverified sources are NOT RUN for gating until verified archive proofs exist. |
 | CRIT-OVERFIT-01 | Anti-Overfitting | Trial Registry Accountability | `N >= 2` | `N = 4` | **PASS** | YES | Trial registry records 4 parameter sweeps/trials with full parameter accountability. |
@@ -53,7 +53,7 @@
 > Price band coverage across 2022–2024 reflects historical exchange report availability:
 > - **2022–2023**: Band-constrained. Price band evidence is restricted to dynamic flexing anchor names (HDFC, INFY, RELIANCE) via the ±10% initial limits. Cash-universe names without price band reports are rejected/skipped per §5.3 fail-closed invariants (32 fills executed).
 > - **2024**: Cash-universe coverage (0 scrips) supported by daily `sec_list` price band records (0 fills executed).
-> - **Universe Integrity & Gap Filtering**: 186 continuous active instruments evaluated out of 203 valid ISINs (17 instruments refused due to unexplained missing sessions per §6.3 fail-closed invariants).
+> - **Universe Integrity & Gap Filtering**: 179 continuous active instruments evaluated out of 196 valid ISINs (17 instruments refused due to unexplained missing sessions per §6.3 fail-closed invariants).
 
 | Year | Sessions | Band-Covered ISINs | Zero-Ticket Sessions | Tickets Emitted | Tickets Filled | Tickets Rejected | Closed Trades | CAGR | Win Rate | Profit Factor | Max Drawdown | Coverage Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|

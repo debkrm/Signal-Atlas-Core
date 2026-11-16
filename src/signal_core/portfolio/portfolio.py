@@ -241,11 +241,15 @@ class Portfolio:
             if merger_res is not None:
                 frac_shares, frac_cost_basis = merger_res
                 if frac_shares > Decimal("0"):
-                    price = getattr(action, "delisting_price", None)
-                    if price is not None:
-                        cash_amount = _quantize_paise(frac_shares * price)
-                    else:
-                        cash_amount = frac_cost_basis
+                    # Finding N-112: no silent cost-basis fallback. An unpriced fractional merger
+                    # settlement fails closed with CorporateActionError.
+                    price = action.delisting_price
+                    if price is None:
+                        raise CorporateActionError(
+                            f"MERGER on {old_isin} settles {frac_shares} fractional shares but carries no "
+                            f"consideration price; refusing book-value settlement (Finding N-112)."
+                        )
+                    cash_amount = _quantize_paise(frac_shares * price)
 
                     entry = self._ledger.record_merger_cash_in_lieu(
                         trade_date=action.ex_date,

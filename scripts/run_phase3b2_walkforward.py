@@ -33,6 +33,7 @@ from dataclasses import dataclass
 import datetime
 from decimal import Decimal
 import gzip
+import hashlib
 import io
 import json
 import os
@@ -377,6 +378,8 @@ def run_phase3b2_walkforward(
     # Physical Holdout Boundary Verification on Loaded Dataset (Rule 8.1, Finding H-105)
     max_d_raw = max(dataset.trading_dates)
     max_d = datetime.date.fromisoformat(max_d_raw) if isinstance(max_d_raw, str) else max_d_raw
+    min_d_raw = min(dataset.trading_dates)
+    min_d = datetime.date.fromisoformat(min_d_raw) if isinstance(min_d_raw, str) else min_d_raw
     if max_d >= partition_spec.holdout_start:
         raise HoldoutSealedError(
             f"Dataset contains trading dates >= holdout_start ({partition_spec.holdout_start}); "
@@ -392,16 +395,21 @@ def run_phase3b2_walkforward(
             uuid_to_isin[u] = u
             continue
 
-        # Finding H-109: Refuse UUIDs whose history spans an ISIN transition across evaluation window
-        s_isin = sec_master.resolve_isin_by_symbol(sym, eval_start, "EQ")
-        e_isin = sec_master.resolve_isin_by_symbol(sym, eval_end, "EQ")
+        # Finding H-109, H-116: Refuse UUIDs whose history spans an ISIN transition across the
+        # dataset's own span, never the evaluated window, so no evaluation flag can weaken
+        # identity validation (§10.4, §6.3).
+        s_isin = sec_master.resolve_isin_by_symbol(sym, min_d, "EQ")
+        e_isin = sec_master.resolve_isin_by_symbol(sym, max_d, "EQ")
         if s_isin is not None and e_isin is not None and s_isin != e_isin:
             refused_transition_uuids.add(u)
             continue
 
         # Identity resolution, not universe membership: a snapshot UUID may carry a symbol that was
         # renamed after the evaluation window (e.g. MCDOWELL-N -> UNITDSPR in H2 2024), so fall back
-        # to the dataset's own last session as well as the fixed 2024-01-16 cash-universe anchor.
+        # to the fixed 2024-01-16 cash-universe anchor, the evaluated window, and the dataset's own
+        # full-span last session. The span anchor is required, not dead: measured at §68, removing it
+        # makes --in-sample-only fail to resolve UNITDSPR (UUID 436d2da1) because that label does not
+        # exist at any 2022-2023 date. Resolution is independent of the evaluation flag.
         isin = (
             sec_master.resolve_isin_by_symbol(sym, datetime.date(2024, 1, 16), "EQ")
             or sec_master.resolve_isin_by_symbol(sym, eval_start, "EQ")
@@ -861,6 +869,15 @@ def run_phase3b2_walkforward(
         daily_returns.append(ret)
         prev_eq = snap.total_portfolio_value
 
+    # Finding N-117: a deterministic digest of the session mark-to-market return series, so the
+    # DSR/haircut discipline (§8.2) can be audited from the artifact without the trial row being
+    # rewritten. Quantised to 12 dp for byte-stable hashing; observation_count is the number of
+    # return observations actually used, not the number of sessions the run nominally covered.
+    returns_digest = "RET-V1-" + hashlib.sha256(
+        "\n".join(str(r.quantize(Decimal("0.000000000001"))) for r in daily_returns).encode("utf-8")
+    ).hexdigest() if daily_returns else None
+    observation_count = len(daily_returns)
+
     try:
         sig_report = evaluate_strategy_significance(
             returns=daily_returns if daily_returns else [Decimal("0.00")],
@@ -1181,6 +1198,8 @@ def run_phase3b2_walkforward(
         "profit_factor": profit_factor,
         "max_portfolio_drawdown": max_drawdown,
         "max_single_position_weight": max_single_pos_weight,
+        "returns_digest": returns_digest,
+        "observation_count": observation_count,
         "cagr": cagr,
         "annualized_sharpe": annualized_sr,
         "annual_turnover": annual_turnover,
@@ -1265,6 +1284,8 @@ def run_phase3b2_walkforward(
         report_dict["continuous_instruments_passed"] = continuous_instruments_passed
         report_dict["unexplained_gap_refusals"] = unexplained_gap_refusals
         report_dict["total_valid_isins"] = total_valid_isins
+        report_dict["returns_digest"] = returns_digest
+        report_dict["observation_count"] = observation_count
 
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(report_dict, f, indent=2)

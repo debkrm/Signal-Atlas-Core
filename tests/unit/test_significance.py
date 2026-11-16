@@ -306,17 +306,17 @@ def test_evaluate_strategy_significance_with_registry(tmp_path: Path):
     registry.append_trial(
         trial_id="T1", hypothesis="H1", rationale="R1", partition="IN_SAMPLE",
         canonical_params={"p": 1}, fold_spec_fingerprint="F1", dataset_fingerprint="D1",
-        criteria_version="1.1.0", timestamp_utc="2026-11-11T10:00:00Z", sharpe_ratio=Decimal("1.50"),
+        criteria_version="1.1.1", timestamp_utc="2026-11-11T10:00:00Z", sharpe_ratio=Decimal("1.50"),
     )
     registry.append_trial(
         trial_id="T2", hypothesis="H2", rationale="R2", partition="IN_SAMPLE",
         canonical_params={"p": 2}, fold_spec_fingerprint="F1", dataset_fingerprint="D1",
-        criteria_version="1.1.0", timestamp_utc="2026-11-11T10:01:00Z", sharpe_ratio=None,
+        criteria_version="1.1.1", timestamp_utc="2026-11-11T10:01:00Z", sharpe_ratio=None,
     )
     registry.append_trial(
         trial_id="T3", hypothesis="H3", rationale="R3", partition="IN_SAMPLE",
         canonical_params={"p": 3}, fold_spec_fingerprint="F1", dataset_fingerprint="D1",
-        criteria_version="1.1.0", timestamp_utc="2026-11-11T10:02:00Z", sharpe_ratio=Decimal("1.90"),
+        criteria_version="1.1.1", timestamp_utc="2026-11-11T10:02:00Z", sharpe_ratio=Decimal("1.90"),
     )
 
     criteria = load_go_no_go_criteria()
@@ -341,7 +341,7 @@ def test_evaluate_strategy_significance_with_registry(tmp_path: Path):
     assert report.haircut_result.trial_count_n == 3
     assert report.dsr_result.trial_sharpe_variance == Decimal("0.08")
     assert report.observation_count == 250
-    assert report.criteria_version == "1.1.0"
+    assert report.criteria_version == "1.1.1"
     assert report.dsr_verdict in ("PASS", "FAIL")
     assert report.haircut_verdict in ("PASS", "FAIL")
     assert report.overall_verdict in ("PASS", "FAIL")
@@ -425,7 +425,7 @@ def test_significance_report_fail_verdict_when_below_threshold(tmp_path: Path):
     registry.append_trial(
         trial_id="T1", hypothesis="H1", rationale="R1", partition="IN_SAMPLE",
         canonical_params={"p": 1}, fold_spec_fingerprint="F1", dataset_fingerprint="D1",
-        criteria_version="1.1.0", timestamp_utc="2026-11-11T10:00:00Z", sharpe_ratio=Decimal("1.00"),
+        criteria_version="1.1.1", timestamp_utc="2026-11-11T10:00:00Z", sharpe_ratio=Decimal("1.00"),
     )
 
     criteria = load_go_no_go_criteria()

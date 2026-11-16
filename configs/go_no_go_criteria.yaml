@@ -4,8 +4,10 @@
 # Never modify thresholds post-hoc after inspecting backtest results.
 
 metadata:
-  version: "1.1.0"
-  effective_date: "2026-11-11"
+  # 1.1.1 (2026-11-16): no threshold changed. Version bumped only to record the manifest pin move
+  # that follows the corporate_actions.jsonl restatement under Audit §68.6 item 3 (H-115, N-112).
+  version: "1.1.1"
+  effective_date: "2026-11-16"
   market: "NSE_CASH_EQUITY"
   currency: "INR"
 
@@ -123,8 +125,8 @@ market_data_and_accounting_invariants:
   zero_data_fabrication_required: true
 
   # Finding H-72: Authoritative reference manifest fingerprint pinned as criteria anchor (Audit §54.5, §54.10, §60.6 Item 4, §62.6 Item 4)
-  # MAN-FPR-V1 covers data/reference/manifest.jsonl content (35,742 bytes, SHA-256 4bfcebb762dd6451105503b86d57d1f069c8c79cfd548d7bcd0d625da1e7a517)
-  expected_manifest_fingerprint: "MAN-FPR-V1-4bfcebb762dd6451105503b86d57d1f069c8c79cfd548d7bcd0d625da1e7a517"
+  # MAN-FPR-V1 covers data/reference/manifest.jsonl content (36,007 bytes, SHA-256 444e9a64aa5fbccb943dfc6994c7daca042d2ee446d971a09d2211645cc725c1)
+  expected_manifest_fingerprint: "MAN-FPR-V1-444e9a64aa5fbccb943dfc6994c7daca042d2ee446d971a09d2211645cc725c1"
 
   # Authoritative Calendar and Session Reconciliation Invariants (AGENTS.md §6.3, §9.2, Findings H-56, H-61, H-62, H-64)
   # H-64: Calendar identity anchor — computed from session_records (dates, session_types, open/close times) at load time

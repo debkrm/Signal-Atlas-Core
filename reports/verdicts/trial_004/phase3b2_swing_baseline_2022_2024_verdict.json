@@ -1,8 +1,8 @@
 {
-  "criteria_version": "1.1.0",
-  "criteria_fingerprint": "CRIT-FPR-V1-a7e535475f14de9e6951ed170931264e1726dc7b66c2f70999d16bc6936df893",
+  "criteria_version": "1.1.1",
+  "criteria_fingerprint": "CRIT-FPR-V1-28f7e7ad7418ca079b4154e08c29e8d89b2d096b464179aabafd3040f9e3c523",
   "calendar_fingerprint": "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad",
-  "timestamp_utc": "2026-11-16T09:51:54.397689+00:00",
+  "timestamp_utc": "2026-11-16T10:59:00.911905+00:00",
   "evaluation_start_date": "2022-01-03",
   "evaluation_end_date": "2023-12-29",
   "overall_verdict": "NO-GO",
@@ -203,11 +203,11 @@
       "criterion_id": "CRIT-DATA-05",
       "category": "Universe Integrity",
       "metric_name": "Traded EQ Resolution Pct",
-      "computed_value": "96.6825%",
+      "computed_value": "92.8910%",
       "threshold_value": ">= 100.0%",
       "comparator": ">=",
       "status": "FAIL",
-      "evidence": "Active traded EQ scrips resolved to authoritative ISINs: 96.6825% (\u00a741.3, Finding H-54).",
+      "evidence": "Active traded EQ scrips resolved to authoritative ISINs: 92.8910% (\u00a741.3, Finding H-54).",
       "is_binding": true
     },
     {
@@ -354,7 +354,9 @@
   },
   "validation_metrics": null,
   "validation_folds_count": 0,
-  "continuous_instruments_passed": 186,
+  "continuous_instruments_passed": 179,
   "unexplained_gap_refusals": 17,
-  "total_valid_isins": 203
+  "total_valid_isins": 196,
+  "returns_digest": "RET-V1-cf90af33f29e4684206b9f02f62638aae6fd54d22d529b89ae5061b95dd5acc7",
+  "observation_count": 493
 }

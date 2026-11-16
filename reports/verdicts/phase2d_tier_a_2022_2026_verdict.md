@@ -1,10 +1,10 @@
 # Signal Atlas — Automated Go/No-Go Research Verdict Report
 
 - **Overall Decision:** `NO-GO`
-- **Evaluated At (UTC):** `2026-11-14T16:45:00+00:00`
+- **Evaluated At (UTC):** `2026-11-16T10:00:00+00:00`
 - **Evaluation Window:** `2022-01-03` to `2026-10-30`
-- **Criteria Version:** `1.1.0`
-- **Criteria Fingerprint:** `CRIT-FPR-V1-a7e535475f14de9e6951ed170931264e1726dc7b66c2f70999d16bc6936df893`
+- **Criteria Version:** `1.1.1`
+- **Criteria Fingerprint:** `CRIT-FPR-V1-28f7e7ad7418ca079b4154e08c29e8d89b2d096b464179aabafd3040f9e3c523`
 - **Calendar Fingerprint:** `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad`
 - **Summary Counts:** `PASS=3`, `FAIL=0`, `NOT RUN=20` (Total=23)
 
@@ -35,4 +35,6 @@
 | CRIT-OVERFIT-02 | Anti-Overfitting | Deflated Sharpe Ratio (DSR) | `>= 0.95` | `—` | **NOT RUN** | YES | Metric 'deflated_sharpe_ratio' not provided in results bundle. |
 | CRIT-OVERFIT-03 | Walk-Forward Stability | Positive Out-of-Sample Folds Ratio | `>= 0.80` | `—` | **NOT RUN** | YES | Metric 'walk_forward_positive_fold_ratio' not provided in results bundle. |
 | CRIT-INFO-01 | Execution Accounting | Circuit-Verified PnL Accounting | `True` | `—` | **NOT RUN** | NO | Informational metric 'circuit_verified_pnl' not provided in results bundle (pending historical circuit band verification across all fills). |
+
+> **Restatement:** Restatement 2026-11-16 (Audit §68.6 item 3, H-115): supersedes the 2026-11-14T16:45:00+00:00 artifact, which no longer matched the criteria file. Criteria version 1.1.1 changes no threshold; it records the manifest pin move to MAN-FPR-V1-444e9a64aa5fbccb943dfc6994c7daca042d2ee446d971a09d2211645cc725c1 after data/reference/corporate_actions.jsonl gained modelled merger consideration prices (HDFC 1641.10, MINDTREE 4742.05, IDFC 74.19). Provenance remains CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and Tier-A gating is unchanged.
 
