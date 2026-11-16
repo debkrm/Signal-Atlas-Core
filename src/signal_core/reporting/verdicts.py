@@ -1157,6 +1157,8 @@ def evaluate_verdicts(
 
     # F3: Walk-Forward Stability Ratio (positive folds >= min_positive_walk_forward_fold_ratio)
     val_wf = _to_decimal(results_bundle.get("walk_forward_positive_fold_ratio"))
+    wf_reason = results_bundle.get("walk_forward_not_run_reason")
+    wf_n_val = results_bundle.get("walk_forward_validation_folds_count")
     if val_wf is not None:
         status = VerdictStatus.PASS if val_wf >= active_criteria.min_positive_walk_forward_fold_ratio else VerdictStatus.FAIL
         evaluations.append(CriterionEvaluation(
@@ -1171,6 +1173,8 @@ def evaluate_verdicts(
             is_binding=True,
         ))
     else:
+        if not wf_reason and wf_n_val is not None:
+            wf_reason = f"Only N_val = {wf_n_val} validation fold evaluated; minimum 2 independent out-of-sample validation folds required for stability ratio (§8.3, Finding N-108)."
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-OVERFIT-03",
             category="Walk-Forward Stability",
@@ -1179,7 +1183,7 @@ def evaluate_verdicts(
             threshold_value=f">= {active_criteria.min_positive_walk_forward_fold_ratio}",
             comparator=">=",
             status=VerdictStatus.NOT_RUN,
-            evidence="Metric 'walk_forward_positive_fold_ratio' not provided in results bundle.",
+            evidence=wf_reason or "Metric 'walk_forward_positive_fold_ratio' not provided in results bundle.",
             is_binding=True,
         ))
 

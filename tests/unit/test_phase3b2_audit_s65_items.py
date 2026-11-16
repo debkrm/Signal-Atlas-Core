@@ -362,63 +362,68 @@ def test_h110_band_coverage_diagnostics_structure(tmp_path: Path):
     assert "Band-constrained" in md_text
 
 
-def test_h111_fill_at_uc_fails_crit_exec_03():
-    """H-111: A BUY fill at or above effective upper circuit limit fails CRIT-EXEC-03."""
-    criteria = load_go_no_go_criteria()
-    d1 = datetime.date(2024, 1, 16)
-    d2 = datetime.date(2024, 1, 17)
+def test_h111_fill_at_uc_fails_crit_exec_03(tmp_path: Path):
+    """
+    H-111 & N-109: Producer-driven circuit breach test.
+    Drives run_phase3b2_walkforward on a synthetic corpus where an order fills
+    at the derived upper circuit limit via adverse slippage and asserts CRIT-EXEC-03 FAIL
+    on the returned VerdictReport (Audit §66 N-109).
+    """
+    import json
+    from tests.unit.test_phase3b2_walkforward_runner import make_synthetic_snapshot
 
-    order = ExecutionOrder(
-        order_id="ORD-UC-TEST",
-        instrument_id="INE002A01018",
-        side=OrderSide.BUY,
-        order_type=OrderType.MARKET_ON_OPEN,
-        quantity=10,
-        signal_date=d1,
-        target_date=d2,
-        product=OrderProduct.DELIVERY,
+    snap_file = make_synthetic_snapshot(tmp_path, num_sessions=60)
+    with open(snap_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    # First execute baseline to identify the first buy fill date
+    res_baseline = run_phase3b2_walkforward(
+        snapshot_path=snap_file,
+        registry_path=tmp_path / "reg_base.jsonl",
+        verdict_output_dir=tmp_path / "v_base",
+        max_sessions=60,
+        trial_id="TRIAL-TEST-EXEC03-BASE",
+        write_verdict_files=False,
+    )
+    all_buys = [
+        t.fill_result
+        for s in res_baseline.session_summaries
+        for t in s.tickets
+        if t.fill_result and t.fill_result.order.side == OrderSide.BUY and t.fill_result.filled_quantity > 0
+    ]
+    assert len(all_buys) > 0, "Expected at least one buy fill in synthetic baseline run"
+    first_buy = all_buys[0]
+    target_d = first_buy.fill_date.isoformat()
+
+    # Modify the snapshot on target_d: set open 1 tick below dynamic upper circuit (prev_close * 1.10)
+    # and high at upper circuit. Adverse slippage pushes executed price to upper circuit.
+    bars = data["prices_by_instrument"]["UUID-INFY"]
+    for i, b in enumerate(bars):
+        if b["trade_date"] == target_d:
+            prev_b = bars[i - 1]
+            prev_c = Decimal(prev_b["close"])
+            uc = (prev_c * Decimal("1.10")).quantize(Decimal("0.05"))
+            b["open"] = str(uc - Decimal("0.05"))
+            b["high"] = str(uc)
+            b["close"] = str(uc - Decimal("0.10"))
+            break
+
+    snap_breach = tmp_path / "synthetic_snapshot_breach.json"
+    with open(snap_breach, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+    res_breach = run_phase3b2_walkforward(
+        snapshot_path=snap_breach,
+        registry_path=tmp_path / "reg_breach.jsonl",
+        verdict_output_dir=tmp_path / "v_breach",
+        max_sessions=60,
+        trial_id="TRIAL-TEST-EXEC03-BREACH",
+        write_verdict_files=False,
     )
 
-    # Synthetic fill executed at upper circuit
-    bad_fill = ExecutionFillResult(
-        order=order,
-        status=FillStatus.FILLED,
-        fill_date=d2,
-        latency_sessions=1,
-        filled_quantity=10,
-        unfilled_quantity=0,
-        executed_price=Decimal("2750.00"),
-        slippage=None,
-        costs=None,
-        effective_upper_circuit_limit=Decimal("2750.00"),
-        effective_lower_circuit_limit=Decimal("2250.00"),
-        circuit_evidence_present=True,
-        rejection_reason=None,
+    eval_exec3 = next(
+        e for e in res_breach.verdict_report.evaluations if e.criterion_id == "CRIT-EXEC-03"
     )
-
-    # In the runner logic:
-    buy_fills = [bad_fill]
-    prohibit_buy_at_uc = bool(
-        criteria.prohibit_buy_at_upper_circuit
-        and len(buy_fills) > 0
-        and all(
-            f.effective_upper_circuit_limit is not None
-            and f.executed_price is not None
-            and f.executed_price < f.effective_upper_circuit_limit
-            for f in buy_fills
-        )
-    )
-    assert prohibit_buy_at_uc is False
-
-    eval_report = evaluate_verdicts(
-        results_bundle={
-            "prohibit_buy_at_upper_circuit": prohibit_buy_at_uc,
-            "evaluation_start_date": "2024-01-16",
-            "evaluation_end_date": "2024-01-17",
-        },
-        criteria=criteria,
-    )
-    eval_exec3 = next(e for e in eval_report.evaluations if e.criterion_id == "CRIT-EXEC-03")
     assert eval_exec3.status == VerdictStatus.FAIL
     assert eval_exec3.computed_value == "False"
 

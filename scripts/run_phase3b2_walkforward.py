@@ -145,6 +145,7 @@ class Phase3B2WalkForwardRunResult:
     total_skipped_missing_bar: int
     in_sample_metrics: Optional[Dict[str, Any]] = None
     validation_metrics: Optional[Dict[str, Any]] = None
+    coverage_diagnostics: Optional[Dict[str, Any]] = None
 
 
 def build_historical_dataset_from_raw_bhavcopy(
@@ -320,6 +321,7 @@ def run_phase3b2_walkforward(
     write_verdict_files: bool = True,
     fail_closed_on_holdout: bool = True,
     fail_closed_on_unexplained: bool = True,
+    record_trial: bool = True,
 ) -> Phase3B2WalkForwardRunResult:
     """
     Executes the Phase 3B-2b walk-forward backtest and returns Phase3B2WalkForwardRunResult.
@@ -574,7 +576,7 @@ def run_phase3b2_walkforward(
             ca for ca in sec_master._corporate_actions
             if ca.ex_date == next_session
         ]
-        # Attribute dividends received on open lots while held (Finding H-107)
+        # Attribute dividends received on open lots while held (Finding H-107) and adjust lots for corporate actions (Finding H-113)
         for ca in actions_today:
             if ca.action_type == CorporateActionType.DIVIDEND and ca.isin in open_lots:
                 div_per_share = (
@@ -584,6 +586,49 @@ def run_phase3b2_walkforward(
                 )
                 for lot in open_lots[ca.isin]:
                     lot["dividends"] = lot.get("dividends", Decimal("0.00")) + (div_per_share * Decimal(lot["quantity"]))
+            elif ca.action_type == CorporateActionType.MERGER and ca.isin in open_lots and ca.new_isin:
+                num = int(ca.ratio_numerator)
+                den = int(ca.ratio_denominator)
+                old_lots = open_lots.pop(ca.isin, [])
+                for lot in old_lots:
+                    q = lot["quantity"]
+                    whole_q = (q * num) // den
+                    rem = (q * num) % den
+                    frac_costs = (lot["costs"] * Decimal(rem)) / Decimal(q * num) if (q * num) > 0 else Decimal("0.00")
+                    if rem > 0:
+                        closed_trades.append({
+                            "isin": ca.isin,
+                            "entry_date": lot["entry_date"],
+                            "exit_date": as_of,
+                            "quantity": Decimal(rem) / Decimal(den),
+                            "entry_price": lot["entry_price"],
+                            "exit_price": lot["entry_price"],
+                            "gross_pnl": Decimal("0.00"),
+                            "net_pnl": -frac_costs,
+                            "dividends": Decimal("0.00"),
+                            "total_costs": frac_costs,
+                            "intended_risk": None,
+                            "realized_r": None,
+                        })
+                    lot["quantity"] = whole_q
+                    lot["original_quantity"] = whole_q
+                    lot["entry_price"] = (lot["entry_price"] * Decimal(den) / Decimal(num)).quantize(Decimal("0.0001"))
+                    lot["costs"] = lot["costs"] - frac_costs
+                    if whole_q > 0:
+                        open_lots[ca.new_isin].append(lot)
+            elif ca.action_type in (CorporateActionType.SPLIT, CorporateActionType.BONUS, CorporateActionType.CONSOLIDATION) and ca.isin in open_lots:
+                num = int(ca.ratio_numerator)
+                den = int(ca.ratio_denominator)
+                target_isin = ca.new_isin if ca.new_isin else ca.isin
+                old_lots = open_lots.pop(ca.isin, [])
+                for lot in old_lots:
+                    lot["quantity"] = (lot["quantity"] * num) // den
+                    lot["original_quantity"] = (lot["original_quantity"] * num) // den
+                    lot["entry_price"] = (lot["entry_price"] * Decimal(den) / Decimal(num)).quantize(Decimal("0.0001"))
+                    open_lots[target_isin].append(lot)
+            elif ca.action_type == CorporateActionType.ISIN_TRANSITION and ca.isin in open_lots and ca.new_isin:
+                old_lots = open_lots.pop(ca.isin, [])
+                open_lots[ca.new_isin].extend(old_lots)
 
         # Current market prices as of as_of session (Finding H-102)
         cur_market_prices = {
@@ -727,27 +772,57 @@ def run_phase3b2_walkforward(
     trial_params = dict(strategy.parameters)
     trial_params["security_master_fingerprint"] = sec_master.fingerprint
 
-    trial_record = registry.append_trial(
-        trial_id=trial_id,
-        hypothesis=hypothesis,
-        rationale=rationale,
-        partition=PartitionRole.VALIDATION,
-        canonical_params=trial_params,
-        fold_spec_fingerprint=fold_spec_fp,
-        dataset_fingerprint=dataset.snapshot.content_fingerprint,
-        criteria_version=criteria.version,
-        timestamp_utc=ts_utc,
-        sharpe_ratio=None,  # Rule 3.2: Appended BEFORE reading Sharpe ratio!
-        partition_spec=partition_spec,
-        execution_config={
-            "execution_latency_sessions": 1,
-            "statutory_costs_enforced": True,
-            "strict_decimal_accounting": True,
-            "point_in_time_universe": True,
-            "zero_data_fabrication": True,
-            "security_master_fingerprint": sec_master.fingerprint,
-        },
-    )
+    if record_trial:
+        trial_record = registry.append_trial(
+            trial_id=trial_id,
+            hypothesis=hypothesis,
+            rationale=rationale,
+            partition=PartitionRole.VALIDATION,
+            canonical_params=trial_params,
+            fold_spec_fingerprint=fold_spec_fp,
+            dataset_fingerprint=dataset.snapshot.content_fingerprint,
+            criteria_version=criteria.version,
+            timestamp_utc=ts_utc,
+            sharpe_ratio=None,  # Rule 3.2: Appended BEFORE reading Sharpe ratio!
+            partition_spec=partition_spec,
+            execution_config={
+                "execution_latency_sessions": 1,
+                "statutory_costs_enforced": True,
+                "strict_decimal_accounting": True,
+                "point_in_time_universe": True,
+                "zero_data_fabrication": True,
+                "security_master_fingerprint": sec_master.fingerprint,
+            },
+        )
+    else:
+        existing_trials = [t for t in registry.get_trials() if t.trial_id == trial_id]
+        if existing_trials:
+            trial_record = existing_trials[-1]
+        else:
+            trial_record = TrialRecord(
+                seq=registry.total_trial_count,
+                trial_id=trial_id,
+                hypothesis=hypothesis,
+                rationale=rationale,
+                partition=PartitionRole.VALIDATION,
+                canonical_params=trial_params,
+                fold_spec_fingerprint=fold_spec_fp,
+                dataset_fingerprint=dataset.snapshot.content_fingerprint,
+                criteria_version=criteria.version,
+                timestamp_utc=ts_utc,
+                record_hash="RE_RENDER_UNREGISTERED",
+                prev_hash="0"*64,
+                sharpe_ratio=None,
+                partition_spec=partition_spec,
+                execution_config={
+                    "execution_latency_sessions": 1,
+                    "statutory_costs_enforced": True,
+                    "strict_decimal_accounting": True,
+                    "point_in_time_universe": True,
+                    "zero_data_fabrication": True,
+                    "security_master_fingerprint": sec_master.fingerprint,
+                },
+            )
 
     total_trial_count_n = registry.total_trial_count
 
@@ -985,10 +1060,19 @@ def run_phase3b2_walkforward(
         * (Decimal("250") / Decimal(len(sessions_to_run)))
     ) if avg_portfolio_equity > Decimal("0") and len(sessions_to_run) > 0 else Decimal("0.00")
 
-    # CRIT-OVERFIT-03: Walk-Forward Stability Ratio
-    walk_forward_positive_fold_ratio = Decimal("1.00") if (validation_metrics and validation_metrics["cagr"] > Decimal("0")) else Decimal("0.00")
+    # CRIT-OVERFIT-03: Walk-Forward Stability Ratio (Audit §66 N-108)
+    # When fewer than 2 independent out-of-sample validation folds exist (N_val < 2),
+    # omit walk_forward_positive_fold_ratio from extra_metrics so CRIT-OVERFIT-03 evaluates
+    # honestly to NOT RUN (and disclose N_val = 1 in the report).
+    num_val_folds = 1 if (validation_metrics is not None) else 0
+    if num_val_folds >= 2:
+        walk_forward_positive_fold_ratio: Optional[Decimal] = (
+            Decimal("1.00") if validation_metrics["cagr"] > Decimal("0") else Decimal("0.00")
+        )
+    else:
+        walk_forward_positive_fold_ratio = None
 
-    # H-110: Per-Year Band Coverage Diagnostics & Disclosure
+    # H-110 & N-110: Per-Year Band Coverage Diagnostics & Disclosure (Full-Year Session Union)
     coverage_diagnostics: Dict[str, Any] = {}
     for yr in (2022, 2023, 2024):
         yr_sessions = [s for s in sessions_to_run if s.year == yr]
@@ -999,14 +1083,13 @@ def run_phase3b2_walkforward(
         yr_filled = sum(s.tickets_filled for s in yr_summaries)
         yr_rejected = sum(s.tickets_rejected for s in yr_summaries)
 
-        # Count distinct ISINs that have a band registered during year yr
+        # Count distinct ISINs that have an active price band registered during year yr across ALL sessions (Finding N-110)
         yr_band_isins = set()
-        for isin in (pit_universe.get_universe_for_date(yr_sessions[0]) if yr_sessions else ()):
-            for s in yr_sessions:
+        for s in yr_sessions:
+            for isin in pit_universe.get_universe_for_date(s):
                 b = sec_master.get_price_band(isin, s)
                 if b is not None:
                     yr_band_isins.add(isin)
-                    break
 
         yr_trades = [t for t in closed_trades if t["exit_date"].year == yr]
         yr_wins = [t for t in yr_trades if t["net_pnl"] > Decimal("0.00")]
@@ -1040,50 +1123,16 @@ def run_phase3b2_walkforward(
             "profit_factor": yr_profit_factor,
             "max_drawdown": yr_maxdd,
             "coverage_notes": (
-                "Band-constrained: price band evidence restricted to F&O dynamic flexing anchor names (INFY, RELIANCE); cash names rejected/skipped per §5.3 fail-closed invariants"
+                f"Band-constrained: price band evidence restricted to F&O dynamic flexing anchor names (INFY, RELIANCE); cash names rejected/skipped per §5.3 fail-closed invariants ({yr_filled} fills executed)"
                 if yr in (2022, 2023)
-                else "Full cash universe coverage: 185 scrips supported by daily sec_list price band records"
+                else f"Cash universe coverage: {len(yr_band_isins)} scrips supported by daily sec_list price band records ({yr_filled} fills executed)"
             ),
         }
 
+    total_valid_isins = continuous_instruments_passed + unexplained_gap_refusals
+
     last_summary = session_summaries[-1] if session_summaries else None
-    results_bundle = last_summary.to_verdict_results_bundle(
-        runner=runner,
-        extra_metrics={
-            "evaluation_start_date": sessions_to_run[0].isoformat(),
-            "evaluation_end_date": sessions_to_run[-1].isoformat(),
-            "evaluated_at_utc": ts_utc,
-            "dataset_fingerprint": dataset.snapshot.content_fingerprint,
-            "data_provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
-            "provenance_attestation_reference": None,
-            "trial_count_n": total_trial_count_n,
-            "deflated_sharpe_ratio": dsr_val,
-            "haircut_sharpe_ratio": haircut_sr,
-            "total_trades": len(closed_trades),
-            "profit_factor": profit_factor,
-            "max_portfolio_drawdown": max_drawdown,
-            "max_single_position_weight": max_single_pos_weight,
-            "cagr": cagr,
-            "annualized_sharpe": annualized_sr,
-            "annual_turnover": annual_turnover,
-            "walk_forward_positive_fold_ratio": walk_forward_positive_fold_ratio,
-            "statutory_costs_enforced": statutory_costs_enforced,
-            "strict_decimal_accounting": strict_decimal_accounting,
-            "point_in_time_universe": pit_universe_enforced,
-            "zero_data_fabrication": zero_data_fabrication_enforced,
-            "fail_closed_on_unexplained_gaps": fail_closed_enforced,
-            "unexplained_gap_refusals": unexplained_gap_refusals,
-            "continuous_instruments_passed": continuous_instruments_passed,
-            "traded_eq_resolution_pct": traded_eq_resolution_pct,
-            "prohibit_buy_at_upper_circuit": prohibit_buy_at_uc,
-            "prohibit_sell_at_lower_circuit": prohibit_sell_at_lc,
-            "max_volume_participation": max_vol_participation,
-            "min_daily_turnover_crore": min_daily_turnover_cr,
-            "execution_latency_sessions": min_latency_observed,
-            "valuation_basis": "MARK_TO_MARKET",
-            "coverage_diagnostics": coverage_diagnostics,
-        },
-    ) if last_summary is not None else {
+    extra_m = {
         "evaluation_start_date": sessions_to_run[0].isoformat(),
         "evaluation_end_date": sessions_to_run[-1].isoformat(),
         "evaluated_at_utc": ts_utc,
@@ -1091,21 +1140,52 @@ def run_phase3b2_walkforward(
         "data_provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
         "provenance_attestation_reference": None,
         "trial_count_n": total_trial_count_n,
-        "surveillance_exit_constraints_enforced": False,
-        "surveillance_constraint_status": "NOT_RUN",
-        "surveillance_not_run_reason": "Surveillance framework exit constraints unverified or not run for evaluation window (§5.2, §10.8, §13.2, Finding N-92, CA-2).",
+        "deflated_sharpe_ratio": dsr_val,
+        "haircut_sharpe_ratio": haircut_sr,
+        "total_trades": len(closed_trades),
+        "profit_factor": profit_factor,
+        "max_portfolio_drawdown": max_drawdown,
+        "max_single_position_weight": max_single_pos_weight,
+        "cagr": cagr,
+        "annualized_sharpe": annualized_sr,
+        "annual_turnover": annual_turnover,
         "statutory_costs_enforced": statutory_costs_enforced,
         "strict_decimal_accounting": strict_decimal_accounting,
         "point_in_time_universe": pit_universe_enforced,
         "zero_data_fabrication": zero_data_fabrication_enforced,
         "fail_closed_on_unexplained_gaps": fail_closed_enforced,
+        "unexplained_gap_refusals": unexplained_gap_refusals,
+        "continuous_instruments_passed": continuous_instruments_passed,
+        "total_valid_isins": total_valid_isins,
+        "traded_eq_resolution_pct": traded_eq_resolution_pct,
+        "prohibit_buy_at_upper_circuit": prohibit_buy_at_uc,
+        "prohibit_sell_at_lower_circuit": prohibit_sell_at_lc,
+        "max_volume_participation": max_vol_participation,
+        "min_daily_turnover_crore": min_daily_turnover_cr,
         "execution_latency_sessions": min_latency_observed,
         "valuation_basis": "MARK_TO_MARKET",
-        "min_daily_turnover_crore": min_daily_turnover_cr,
-        "annual_turnover": annual_turnover,
-        "walk_forward_positive_fold_ratio": walk_forward_positive_fold_ratio,
         "coverage_diagnostics": coverage_diagnostics,
     }
+    if walk_forward_positive_fold_ratio is not None:
+        extra_m["walk_forward_positive_fold_ratio"] = walk_forward_positive_fold_ratio
+    else:
+        extra_m["walk_forward_validation_folds_count"] = num_val_folds
+        extra_m["walk_forward_not_run_reason"] = (
+            f"Only N_val = {num_val_folds} validation fold evaluated; minimum 2 independent out-of-sample validation folds required for stability ratio (§8.3, Finding N-108)."
+        )
+
+    if last_summary is not None:
+        results_bundle = last_summary.to_verdict_results_bundle(
+            runner=runner,
+            extra_metrics=extra_m,
+        )
+    else:
+        results_bundle = dict(extra_m)
+        results_bundle.update({
+            "surveillance_exit_constraints_enforced": False,
+            "surveillance_constraint_status": "NOT_RUN",
+            "surveillance_not_run_reason": "Surveillance framework exit constraints unverified or not run for evaluation window (§5.2, §10.8, §13.2, Finding N-92, CA-2).",
+        })
 
     verdict_report = evaluate_verdicts(
         results_bundle=results_bundle,
@@ -1135,6 +1215,10 @@ def run_phase3b2_walkforward(
             k: str(v) if isinstance(v, Decimal) else v
             for k, v in validation_metrics.items()
         } if validation_metrics else None
+        report_dict["validation_folds_count"] = num_val_folds
+        report_dict["continuous_instruments_passed"] = continuous_instruments_passed
+        report_dict["unexplained_gap_refusals"] = unexplained_gap_refusals
+        report_dict["total_valid_isins"] = total_valid_isins
 
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(report_dict, f, indent=2)
@@ -1142,7 +1226,7 @@ def run_phase3b2_walkforward(
         md_text = verdict_report.to_markdown()
         extra_md = [
             "",
-            "## Walk-Forward Fold Performance (Audit §64 H-103)",
+            "## Walk-Forward Fold Performance (Audit §64 H-103, §66 N-108)",
             "",
             "| Fold | Window | Sessions | Start Equity | End Equity | CAGR | Max Drawdown | Closed Trades | Win Rate | Profit Factor |",
             "|---|---|---|---|---|---|---|---|---|---|",
@@ -1159,14 +1243,29 @@ def run_phase3b2_walkforward(
                 f"| {m['fold']} | {m['window']} | {m['sessions']} | ₹{m['start_equity']:,.2f} | ₹{m['end_equity']:,.2f} | "
                 f"{m['cagr']*100:.2f}% | {m['max_drawdown']*100:.2f}% | {m['closed_trades']} | {m['win_rate']*100:.2f}% | {m['profit_factor']:.4f} |"
             )
+        if num_val_folds < 2:
+            extra_md.extend([
+                "",
+                "> [!NOTE]",
+                f"> **Out-of-Sample Stability Disclosure (Finding N-108)**: Only N_val = {num_val_folds} validation fold was evaluated (Fold 1: 2024-01-01..2024-12-31). `CRIT-OVERFIT-03` evaluates to `NOT RUN` because a ratio over N_val = 1 is arithmetically degenerate; at least 2 independent validation folds are required to measure parameter stability across rolling/anchored windows (§8.3).",
+            ])
+
+        diag_2022 = coverage_diagnostics.get("2022", {})
+        diag_2023 = coverage_diagnostics.get("2023", {})
+        diag_2024 = coverage_diagnostics.get("2024", {})
+        fills_2022_2023 = diag_2022.get("tickets_filled", 0) + diag_2023.get("tickets_filled", 0)
+        fills_2024 = diag_2024.get("tickets_filled", 0)
+        band_isins_2024 = diag_2024.get("band_covered_isins", 0)
+
         extra_md.extend([
             "",
             "## Band Coverage Diagnostics & Disclosure (Audit §65 H-110)",
             "",
             "> [!NOTE]",
             "> Price band coverage across 2022–2024 reflects historical exchange report availability:",
-            "> - **2022–2023**: Band-constrained. Price band evidence is restricted to the 2 F&O anchor names (INFY, RELIANCE) via the dynamic flexing framework (±10% initial limits). Cash-universe names without price band reports are rejected/skipped per §5.3 fail-closed invariants (22 fills executed).",
-            "> - **2024**: Full cash-universe coverage (185 scrips) supported by daily `sec_list` price band records (86 fills executed).",
+            f"> - **2022–2023**: Band-constrained. Price band evidence is restricted to F&O anchor names (INFY, RELIANCE) via the dynamic flexing framework (±10% initial limits). Cash-universe names without price band reports are rejected/skipped per §5.3 fail-closed invariants ({fills_2022_2023} fills executed).",
+            f"> - **2024**: Cash-universe coverage ({band_isins_2024} scrips) supported by daily `sec_list` price band records ({fills_2024} fills executed).",
+            f"> - **Universe Integrity & Gap Filtering**: {continuous_instruments_passed} continuous active instruments evaluated out of {total_valid_isins} valid ISINs ({unexplained_gap_refusals} instruments refused due to unexplained missing sessions per §6.3 fail-closed invariants).",
             "",
             "| Year | Sessions | Band-Covered ISINs | Zero-Ticket Sessions | Tickets Emitted | Tickets Filled | Tickets Rejected | Closed Trades | CAGR | Win Rate | Profit Factor | Max Drawdown | Coverage Notes |",
             "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
@@ -1212,6 +1311,7 @@ def run_phase3b2_walkforward(
         total_skipped_missing_bar=total_skipped_missing_bar,
         in_sample_metrics=in_sample_metrics,
         validation_metrics=validation_metrics,
+        coverage_diagnostics=coverage_diagnostics,
     )
 
 
@@ -1224,6 +1324,7 @@ def main() -> int:
     parser.add_argument("--verdict-output-dir", type=Path, default=None, help="Output directory for verdict reports")
     parser.add_argument("--trial-id", type=str, default="TRIAL-PHASE3B2-SWING-BASELINE-003", help="Trial ID for registry")
     parser.add_argument("--max-sessions", type=int, default=None, help="Cap sessions for fast diagnostic runs")
+    parser.add_argument("--no-record-trial", action="store_true", help="Re-render reports without appending a new row to trial registry")
     args = parser.parse_args()
 
     print("=" * 80)
@@ -1239,6 +1340,7 @@ def main() -> int:
         verdict_output_dir=args.verdict_output_dir,
         trial_id=args.trial_id,
         max_sessions=args.max_sessions,
+        record_trial=not args.no_record_trial,
     )
 
     print("\n--- 1. TRIAL REGISTRY REGISTRATION (Rule 3.2, §8.2) ---")

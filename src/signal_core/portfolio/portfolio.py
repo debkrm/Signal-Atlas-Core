@@ -202,10 +202,9 @@ class Portfolio:
             CorporateActionType.BONUS,
             CorporateActionType.CONSOLIDATION,
             CorporateActionType.RIGHTS,
-            CorporateActionType.MERGER,
         ):
             pos.apply_corporate_action(action)
-            # Finding H-96 & H-98: If SPLIT/BONUS/CONSOLIDATION/RIGHTS/MERGER carries new_isin, re-key the portfolio position mapping
+            # Finding H-96 & H-98: If SPLIT/BONUS/CONSOLIDATION/RIGHTS carries new_isin, re-key the portfolio position mapping
             if action.new_isin and action.new_isin != action.isin:
                 old_isin = action.isin
                 new_isin = action.new_isin
@@ -219,6 +218,47 @@ class Portfolio:
                 del self._positions[old_isin]
                 self._positions[new_isin] = pos
             return None
+
+        elif action.action_type == CorporateActionType.MERGER:
+            # Finding H-98 & H-113: Stock merger with new_isin consideration and fractional cash-in-lieu settlement
+            old_isin = action.isin
+            new_isin = action.new_isin
+            if not new_isin:
+                raise CorporateActionError(f"MERGER requires new_isin for {old_isin} (Finding H-98).")
+            if new_isin in self._positions and self._positions[new_isin] is not pos:
+                existing_target = self._positions[new_isin]
+                if not existing_target.is_closed and existing_target.quantity > 0:
+                    raise CorporateActionError(
+                        f"Cannot re-key {old_isin} to {new_isin} on MERGER: "
+                        f"target ISIN already has active open position (Finding H-96, H-98)."
+                    )
+            merger_res = pos.apply_corporate_action(action)
+            del self._positions[old_isin]
+            if pos.quantity > 0:
+                self._positions[new_isin] = pos
+
+            entry = None
+            if merger_res is not None:
+                frac_shares, frac_cost_basis = merger_res
+                if frac_shares > Decimal("0"):
+                    price = getattr(action, "delisting_price", None)
+                    if price is not None:
+                        cash_amount = _quantize_paise(frac_shares * price)
+                    else:
+                        cash_amount = frac_cost_basis
+
+                    entry = self._ledger.record_merger_cash_in_lieu(
+                        trade_date=action.ex_date,
+                        instrument_id=old_isin,
+                        amount=cash_amount,
+                        description=(
+                            f"Merger cash-in-lieu settlement for {old_isin} -> {new_isin}: "
+                            f"{frac_shares} fractional shares @ ₹{(cash_amount / frac_shares).quantize(Decimal('0.01')) if frac_shares > 0 else Decimal('0.00')}"
+                        ),
+                        reference_id=f"MERGER_{old_isin}_{action.ex_date.isoformat()}",
+                    )
+                    self._peak_portfolio_value = max(self._peak_portfolio_value, self.current_total_equity())
+            return entry
 
         elif action.action_type == CorporateActionType.DELISTING:
             if action.new_isin and action.new_isin != action.isin:

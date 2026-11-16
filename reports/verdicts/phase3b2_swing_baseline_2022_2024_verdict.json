@@ -2,14 +2,14 @@
   "criteria_version": "1.1.0",
   "criteria_fingerprint": "CRIT-FPR-V1-b3f35df928c1ce126e0cbc9f46b4f47f901448d8201bf8922060abe79fcd6677",
   "calendar_fingerprint": "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad",
-  "timestamp_utc": "2026-11-16T07:12:21.197323+00:00",
+  "timestamp_utc": "2026-11-16T08:27:23.194174+00:00",
   "evaluation_start_date": "2022-01-03",
   "evaluation_end_date": "2024-12-31",
   "overall_verdict": "NO-GO",
   "summary_counts": {
-    "PASS": 18,
+    "PASS": 17,
     "FAIL": 2,
-    "NOT_RUN": 4
+    "NOT_RUN": 5
   },
   "evaluations": [
     {
@@ -258,11 +258,11 @@
       "criterion_id": "CRIT-OVERFIT-03",
       "category": "Walk-Forward Stability",
       "metric_name": "Positive Out-of-Sample Folds Ratio",
-      "computed_value": "1.0000",
+      "computed_value": null,
       "threshold_value": ">= 0.80",
       "comparator": ">=",
-      "status": "PASS",
-      "evidence": "Walk-forward evaluation shows 100.00% of out-of-sample folds delivered positive edge (\u00a78.3).",
+      "status": "NOT RUN",
+      "evidence": "Only N_val = 1 validation fold evaluated; minimum 2 independent out-of-sample validation folds required for stability ratio (\u00a78.3, Finding N-108).",
       "is_binding": true
     },
     {
@@ -279,7 +279,7 @@
   ],
   "metadata": {
     "binding_criteria_count": 23,
-    "binding_failed_count": 5,
+    "binding_failed_count": 6,
     "unverified_provenance_gating_applied": true
   },
   "coverage_diagnostics": {
@@ -296,7 +296,7 @@
       "win_rate": "0",
       "profit_factor": "0E+2",
       "max_drawdown": "0.03536251901441910174202916810",
-      "coverage_notes": "Band-constrained: price band evidence restricted to F&O dynamic flexing anchor names (INFY, RELIANCE); cash names rejected/skipped per \u00a75.3 fail-closed invariants"
+      "coverage_notes": "Band-constrained: price band evidence restricted to F&O dynamic flexing anchor names (INFY, RELIANCE); cash names rejected/skipped per \u00a75.3 fail-closed invariants (20 fills executed)"
     },
     "2023": {
       "year": 2023,
@@ -311,12 +311,12 @@
       "win_rate": "0.4",
       "profit_factor": "1.202894128000227101755780449",
       "max_drawdown": "0.04115480800453974531801802628",
-      "coverage_notes": "Band-constrained: price band evidence restricted to F&O dynamic flexing anchor names (INFY, RELIANCE); cash names rejected/skipped per \u00a75.3 fail-closed invariants"
+      "coverage_notes": "Band-constrained: price band evidence restricted to F&O dynamic flexing anchor names (INFY, RELIANCE); cash names rejected/skipped per \u00a75.3 fail-closed invariants (12 fills executed)"
     },
     "2024": {
       "year": 2024,
       "sessions": 249,
-      "band_covered_isins": 91,
+      "band_covered_isins": 125,
       "zero_ticket_sessions": 18,
       "tickets_emitted": 4293,
       "tickets_filled": 367,
@@ -326,7 +326,7 @@
       "win_rate": "0.2685714285714285714285714286",
       "profit_factor": "2.090399772074059798294761362",
       "max_drawdown": "0.1236100250433281261863297744",
-      "coverage_notes": "Full cash universe coverage: 185 scrips supported by daily sec_list price band records"
+      "coverage_notes": "Cash universe coverage: 125 scrips supported by daily sec_list price band records (367 fills executed)"
     }
   },
   "in_sample_metrics": {
@@ -352,5 +352,9 @@
     "closed_trades": 175,
     "win_rate": "0.2685714285714285714285714286",
     "profit_factor": "2.090399772074059798294761362"
-  }
+  },
+  "validation_folds_count": 1,
+  "continuous_instruments_passed": 176,
+  "unexplained_gap_refusals": 20,
+  "total_valid_isins": 196
 }

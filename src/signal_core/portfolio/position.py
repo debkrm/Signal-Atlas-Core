@@ -197,9 +197,9 @@ class Position:
         else:
             raise LedgerValidationError(f"Unsupported OrderSide: {fill.order.side}")
 
-    def apply_corporate_action(self, action: CorporateAction) -> None:
+    def apply_corporate_action(self, action: CorporateAction) -> Optional[Tuple[Decimal, Decimal]]:
         """
-        Applies a mid-hold corporate action to an open position per AGENTS.md §13.2 and Audit §59.4, §59.7.
+        Applies a mid-hold corporate action to an open position per AGENTS.md §13.2 and Audit §59.4, §59.7, §66 (H-113).
 
         Invariants:
         - For SPLIT, BONUS, and ISIN_TRANSITION:
@@ -211,6 +211,9 @@ class Position:
           * Share quantity is reduced by ratio.
           * Average entry price is increased proportionally.
           * Total cost basis remains constant.
+        - For MERGER (Finding H-113):
+          * Allocates integer whole shares ((qty * num) // den) to new_isin.
+          * Returns (fractional_shares, fractional_cost_basis) for cash-in-lieu settlement, preserving total equity.
         - For DIVIDEND:
           * Share quantity and cost basis remain unchanged; cash inflow is credited at Portfolio level.
         """
@@ -221,14 +224,14 @@ class Position:
                 f"Corporate action ISIN '{action.isin}' does not match position '{self._instrument_id}'."
             )
         if self._quantity <= 0:
-            return
+            return None
 
         # Finding H-99: Rights entitlement grants the right to subscribe; it does not fabricate free shares without cash outflow.
         # Holding through rights ex-date leaves position quantity and cost basis unchanged.
         if action.action_type == CorporateActionType.RIGHTS:
-            return
+            return None
 
-        # Finding H-86, H-89, H-96, H-98, H-99:
+        # Finding H-86, H-89, H-96, H-98, H-99, H-113:
         # Exact rational integer restatement for SPLIT, BONUS, CONSOLIDATION, ISIN_TRANSITION, MERGER
         # and DELISTING carrying new_isin consideration.
         if action.action_type in (
@@ -240,26 +243,50 @@ class Position:
         ) or (
             action.action_type == CorporateActionType.DELISTING and action.new_isin and action.new_isin != self._instrument_id
         ):
-            if action.action_type == CorporateActionType.ISIN_TRANSITION and not action.new_isin:
+            if action.action_type in (CorporateActionType.ISIN_TRANSITION, CorporateActionType.MERGER) and not action.new_isin:
                 raise CorporateActionError(
-                    f"ISIN_TRANSITION requires new_isin for {self._instrument_id} (Finding H-86)."
+                    f"{action.action_type.value} requires new_isin for {self._instrument_id} (Finding H-86, H-98)."
                 )
 
             num = int(action.ratio_numerator)
             den = int(action.ratio_denominator)
 
             if num != den:
-                # Finding H-99: Exact integer divisibility check.
-                # Avoids floating/repeating decimal expansion errors like 14 * (15/14) = 14.99999...
+                # Finding H-99 & H-113: Divisibility check.
                 rem = (self._quantity * num) % den
                 if rem != 0:
-                    fractional_shares = Decimal(self._quantity * num) / Decimal(den)
-                    raise CorporateActionError(
-                        f"Non-integral restatement from corporate action {action.action_type.value} on {self._instrument_id}: "
-                        f"{self._quantity} shares × {action.ratio_numerator}/{action.ratio_denominator} = {fractional_shares} shares "
-                        f"(remainder {rem}/{den}). "
-                        f"Fractional entitlements cannot be silently truncated (Finding N-87, H-99)."
-                    )
+                    if action.action_type == CorporateActionType.MERGER:
+                        # Finding H-113: Stock merger with fractional entitlement.
+                        # Allocate integer whole shares to new_isin, settle fractional remainder as cash-in-lieu.
+                        whole_qty = (self._quantity * num) // den
+                        fractional_shares = Decimal(rem) / Decimal(den)
+                        fractional_cost_basis = _quantize_paise(
+                            self._total_cost_basis * Decimal(rem) / Decimal(self._quantity * num)
+                        )
+                        fractional_charges = _quantize_paise(
+                            self._unallocated_buy_charges * Decimal(rem) / Decimal(self._quantity * num)
+                        )
+                        self._total_cost_basis -= fractional_cost_basis
+                        self._unallocated_buy_charges -= fractional_charges
+                        self._realized_net_pnl -= fractional_charges
+                        self._quantity = whole_qty
+                        if self._quantity > 0:
+                            self._average_entry_price = (
+                                self._total_cost_basis / Decimal(self._quantity)
+                            ).quantize(PRICE_PRECISION, rounding=ROUND_HALF_UP)
+                        else:
+                            self._average_entry_price = Decimal("0.0000")
+                        if action.new_isin:
+                            self._instrument_id = action.new_isin
+                        return (fractional_shares, fractional_cost_basis)
+                    else:
+                        fractional_shares = Decimal(self._quantity * num) / Decimal(den)
+                        raise CorporateActionError(
+                            f"Non-integral restatement from corporate action {action.action_type.value} on {self._instrument_id}: "
+                            f"{self._quantity} shares × {action.ratio_numerator}/{action.ratio_denominator} = {fractional_shares} shares "
+                            f"(remainder {rem}/{den}). "
+                            f"Fractional entitlements cannot be silently truncated (Finding N-87, H-99)."
+                        )
                 new_qty = (self._quantity * num) // den
                 if new_qty <= 0:
                     raise LedgerValidationError(
@@ -274,7 +301,7 @@ class Position:
             # Finding H-96 & H-98: Re-key position unconditionally if corporate action specifies new_isin
             if action.new_isin:
                 self._instrument_id = action.new_isin
-            return
+            return None
 
     def close_delisting(self, delisting_price: Decimal) -> Tuple[Decimal, Decimal]:
         """

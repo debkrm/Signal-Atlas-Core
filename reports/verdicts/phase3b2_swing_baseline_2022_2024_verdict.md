@@ -1,12 +1,12 @@
 # Signal Atlas — Automated Go/No-Go Research Verdict Report
 
 - **Overall Decision:** `NO-GO`
-- **Evaluated At (UTC):** `2026-11-16T07:12:21.197323+00:00`
+- **Evaluated At (UTC):** `2026-11-16T08:27:23.194174+00:00`
 - **Evaluation Window:** `2022-01-03` to `2024-12-31`
 - **Criteria Version:** `1.1.0`
 - **Criteria Fingerprint:** `CRIT-FPR-V1-b3f35df928c1ce126e0cbc9f46b4f47f901448d8201bf8922060abe79fcd6677`
 - **Calendar Fingerprint:** `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad`
-- **Summary Counts:** `PASS=18`, `FAIL=2`, `NOT RUN=4` (Total=24)
+- **Summary Counts:** `PASS=17`, `FAIL=2`, `NOT RUN=5` (Total=24)
 
 ## Detailed Criteria Evaluation Matrix
 
@@ -34,26 +34,30 @@
 | CRIT-PROV-01 | Data Provenance | Data Provenance Verification | `VERIFIED / EXCHANGE_ATTESTED` | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` | **NOT RUN** | YES | Dataset provenance is 'CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED'; per AGENTS.md Rule 6.5 and Audit §50.8 (Residual R-3), claims resting on unverified sources are NOT RUN for gating until verified archive proofs exist. |
 | CRIT-OVERFIT-01 | Anti-Overfitting | Trial Registry Accountability | `N >= 2` | `N = 3` | **PASS** | YES | Trial registry records 3 parameter sweeps/trials with full parameter accountability. |
 | CRIT-OVERFIT-02 | Anti-Overfitting | Deflated Sharpe Ratio (DSR) | `>= 0.95` | `—` | **NOT RUN** | YES | Metric 'deflated_sharpe_ratio' not provided in results bundle. |
-| CRIT-OVERFIT-03 | Walk-Forward Stability | Positive Out-of-Sample Folds Ratio | `>= 0.80` | `1.0000` | **PASS** | YES | Walk-forward evaluation shows 100.00% of out-of-sample folds delivered positive edge (§8.3). |
+| CRIT-OVERFIT-03 | Walk-Forward Stability | Positive Out-of-Sample Folds Ratio | `>= 0.80` | `—` | **NOT RUN** | YES | Only N_val = 1 validation fold evaluated; minimum 2 independent out-of-sample validation folds required for stability ratio (§8.3, Finding N-108). |
 | CRIT-INFO-01 | Execution Accounting | Circuit-Verified PnL Accounting | `True` | `—` | **NOT RUN** | NO | Informational metric 'circuit_verified_pnl' not provided in results bundle (pending historical circuit band verification across all fills). |
 
 
-## Walk-Forward Fold Performance (Audit §64 H-103)
+## Walk-Forward Fold Performance (Audit §64 H-103, §66 N-108)
 
 | Fold | Window | Sessions | Start Equity | End Equity | CAGR | Max Drawdown | Closed Trades | Win Rate | Profit Factor |
 |---|---|---|---|---|---|---|---|---|---|
 | Fold 0 (In-Sample) | 2022-01-03 .. 2023-12-29 | 493 | ₹1,000,000.00 | ₹975,192.29 | -1.27% | 4.12% | 15 | 13.33% | 0.2146 |
 | Fold 1 (Validation) | 2024-01-01 .. 2024-12-31 | 249 | ₹975,192.29 | ₹1,204,430.88 | 23.61% | 12.36% | 175 | 26.86% | 2.0904 |
 
+> [!NOTE]
+> **Out-of-Sample Stability Disclosure (Finding N-108)**: Only N_val = 1 validation fold was evaluated (Fold 1: 2024-01-01..2024-12-31). `CRIT-OVERFIT-03` evaluates to `NOT RUN` because a ratio over N_val = 1 is arithmetically degenerate; at least 2 independent validation folds are required to measure parameter stability across rolling/anchored windows (§8.3).
+
 ## Band Coverage Diagnostics & Disclosure (Audit §65 H-110)
 
 > [!NOTE]
 > Price band coverage across 2022–2024 reflects historical exchange report availability:
-> - **2022–2023**: Band-constrained. Price band evidence is restricted to the 2 F&O anchor names (INFY, RELIANCE) via the dynamic flexing framework (±10% initial limits). Cash-universe names without price band reports are rejected/skipped per §5.3 fail-closed invariants (22 fills executed).
-> - **2024**: Full cash-universe coverage (185 scrips) supported by daily `sec_list` price band records (86 fills executed).
+> - **2022–2023**: Band-constrained. Price band evidence is restricted to F&O anchor names (INFY, RELIANCE) via the dynamic flexing framework (±10% initial limits). Cash-universe names without price band reports are rejected/skipped per §5.3 fail-closed invariants (32 fills executed).
+> - **2024**: Cash-universe coverage (125 scrips) supported by daily `sec_list` price band records (367 fills executed).
+> - **Universe Integrity & Gap Filtering**: 176 continuous active instruments evaluated out of 196 valid ISINs (20 instruments refused due to unexplained missing sessions per §6.3 fail-closed invariants).
 
 | Year | Sessions | Band-Covered ISINs | Zero-Ticket Sessions | Tickets Emitted | Tickets Filled | Tickets Rejected | Closed Trades | CAGR | Win Rate | Profit Factor | Max Drawdown | Coverage Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 2022 | 248 | 3 | 227 | 20 | 20 | 0 | 10 | -3.46% | 0.00% | 0.0000 | 3.54% | Band-constrained: price band evidence restricted to F&O dynamic flexing anchor names (INFY, RELIANCE); cash names rejected/skipped per §5.3 fail-closed invariants |
-| 2023 | 246 | 3 | 234 | 12 | 12 | 0 | 5 | 0.98% | 40.00% | 1.2029 | 4.12% | Band-constrained: price band evidence restricted to F&O dynamic flexing anchor names (INFY, RELIANCE); cash names rejected/skipped per §5.3 fail-closed invariants |
-| 2024 | 249 | 91 | 18 | 4293 | 367 | 96 | 175 | 23.53% | 26.86% | 2.0904 | 12.36% | Full cash universe coverage: 185 scrips supported by daily sec_list price band records |
+| 2022 | 248 | 3 | 227 | 20 | 20 | 0 | 10 | -3.46% | 0.00% | 0.0000 | 3.54% | Band-constrained: price band evidence restricted to F&O dynamic flexing anchor names (INFY, RELIANCE); cash names rejected/skipped per §5.3 fail-closed invariants (20 fills executed) |
+| 2023 | 246 | 3 | 234 | 12 | 12 | 0 | 5 | 0.98% | 40.00% | 1.2029 | 4.12% | Band-constrained: price band evidence restricted to F&O dynamic flexing anchor names (INFY, RELIANCE); cash names rejected/skipped per §5.3 fail-closed invariants (12 fills executed) |
+| 2024 | 249 | 125 | 18 | 4293 | 367 | 96 | 175 | 23.53% | 26.86% | 2.0904 | 12.36% | Cash universe coverage: 125 scrips supported by daily sec_list price band records (367 fills executed) |

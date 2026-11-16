@@ -204,6 +204,39 @@ class CashLedger:
             seq_prefix=f"DELIST_{instrument_id}",
         )
 
+    def record_merger_cash_in_lieu(
+        self,
+        trade_date: datetime.date,
+        instrument_id: str,
+        amount: Decimal,
+        description: Optional[str] = None,
+        reference_id: Optional[str] = None,
+    ) -> CashLedgerEntry:
+        """
+        Posts fractional cash-in-lieu proceeds from a stock merger into the ledger per AGENTS.md §5.4, §13.2 and Finding H-113.
+        """
+        if type(trade_date) is not datetime.date:
+            raise LedgerValidationError(f"trade_date must be exact datetime.date, got {type(trade_date).__name__}")
+        paise_amount = _quantize_paise(amount)
+        if paise_amount < Decimal("0.00"):
+            raise LedgerValidationError(f"Merger cash-in-lieu amount must be non-negative, got {amount!r}")
+
+        desc = description or f"Merger cash-in-lieu settlement for {instrument_id}: ₹{paise_amount}"
+        meta_items: Tuple[Tuple[str, str], ...] = (
+            ("instrument_id", instrument_id),
+            ("merger_cash_in_lieu", str(paise_amount)),
+        )
+        return self._post_entry(
+            trade_date=trade_date,
+            entry_type=CashEntryType.MERGER_CASH_IN_LIEU,
+            amount=paise_amount,
+            description=desc,
+            reference_id=reference_id,
+            circuit_evidence_present=True,
+            metadata=meta_items,
+            seq_prefix=f"MERGER_{instrument_id}",
+        )
+
     def record_fill(
         self,
         fill: ExecutionFillResult,
