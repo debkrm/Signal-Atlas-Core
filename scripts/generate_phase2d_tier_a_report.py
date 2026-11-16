@@ -119,17 +119,19 @@ def build_tier_a_results_bundle(
         "data_provenance_status": prov_status,
         "provenance_attestation_reference": str(bhavcopy_manifest_file),
 
-        # Audit §72 N-128: criteria version 1.1.2 adds the mandatory trials-manifest pin, which moves
-        # the criteria fingerprint, so the committed artifact is restated rather than silently stale.
-        # This supersedes the 1.1.1 restatement recorded under Audit §68.6 item 3 (H-115).
+        # Audit §73.9 items 3-4: appending the post-hoc stop trials (seq 6, seq 7) rewrites the
+        # trials manifest, so criteria 1.1.3 re-pins it and the committed artifact is restated rather
+        # than left describing a pin that no longer holds. No threshold changed.
         "restatement_note": (
-            "Restatement 2026-11-16 (Audit §72 N-128): supersedes the 1.1.1 restatement recorded under "
-            "Audit §68.6 item 3 (H-115) and the 2026-11-14T16:45:00+00:00 artifact before it. Criteria "
-            "version 1.1.2 changes no threshold; it adds the mandatory "
-            "expected_trial_registry_manifest_sha256 pin so the registry manifest that witnesses the "
-            "evaluation head has a root outside itself, and that addition moves the criteria "
-            "fingerprint. Provenance remains CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so "
-            "CRIT-PROV-01 is still NOT RUN and every Tier-A verdict is unchanged."
+            "Restatement 2026-11-16 (Audit §73.9 items 3-4, §73.10 Ruling C): supersedes the 1.1.2 "
+            "restatement recorded under Audit §72 N-128, the 1.1.1 restatement recorded under Audit "
+            "§68.6 item 3 (H-115), and the 2026-11-14T16:45:00+00:00 artifact before those. Criteria "
+            "version 1.1.3 changes no threshold: it re-pins "
+            "expected_trial_registry_manifest_sha256 after seq 6 (k=2.0) and seq 7 (k=3.0) were "
+            "appended post hoc, which moves the registry manifest and therefore the criteria "
+            "fingerprint. The trial registry now reads N = 7, N_eval = 3. Provenance remains "
+            "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and every "
+            "Tier-A verdict is unchanged."
         ),
     }
 

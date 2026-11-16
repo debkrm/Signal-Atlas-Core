@@ -590,8 +590,15 @@ class DailyTPlus1OrderRunner:
                             atr=candidate.atr,
                         )
                 elif intent.side == OrderSide.SELL:
-                    # Any completed exit (signal, trim or the stop itself) retires the protective order.
-                    self.cancel_protective_stop(intent.instrument_id)
+                    # Audit §73.4 H-125: a trim, or a partially filled stop, sells only part of the lot.
+                    # Protection follows the residual quantity; the order is retired only when the
+                    # position is actually closed, so a trimmed hold is never left unprotected.
+                    position = self._portfolio.get_position(intent.instrument_id)
+                    residual = 0 if position is None or position.is_closed else position.quantity
+                    if residual > 0:
+                        self.rearm_protective_stop(intent.instrument_id, residual)
+                    else:
+                        self.cancel_protective_stop(intent.instrument_id)
             except PortfolioRiskLimitError as exc:
                 fill_result = ExecutionFillResult(
                     order=order,
@@ -653,6 +660,77 @@ class DailyTPlus1OrderRunner:
     def cancel_protective_stop(self, instrument_id: str) -> bool:
         """Retires a protective stop after the position is exited by any other path."""
         return self._protective_stops.pop(instrument_id, None) is not None
+
+    def rearm_protective_stop(self, instrument_id: str, quantity: int) -> bool:
+        """
+        Keeps a pending stop armed for the shares a partial SELL left behind (Audit §73.4 H-125).
+
+        The price, signal session, armed session and ATR are the ones fixed at entry: only the
+        quantity follows the residual position. Returns False when no stop is armed, so the caller
+        can count a position that is unprotected rather than assume it is protected.
+        """
+        stop = self._protective_stops.get(instrument_id)
+        if stop is None or quantity <= 0:
+            return False
+        if stop.quantity == quantity:
+            return True
+        self._protective_stops[instrument_id] = ProtectiveStopOrder(
+            instrument_id=instrument_id,
+            stop_price=stop.stop_price,
+            quantity=quantity,
+            signal_date=stop.signal_date,
+            armed_session=stop.armed_session,
+            atr=stop.atr,
+        )
+        return True
+
+    def transfer_protective_stop(
+        self,
+        old_isin: str,
+        new_isin: str,
+        ratio_numerator: int = 1,
+        ratio_denominator: int = 1,
+    ) -> bool:
+        """
+        Carries a pending stop across a MERGER / ISIN transition (Audit §73.4 H-125).
+
+        The lot's entry price is restated by the same exchange ratio on the successor identity, so
+        the stop price and quantity are scaled identically: the protection survives the corporate
+        action at the same economic distance instead of being retired with the old price scale. A
+        merger that changes the price scale without this rescale would place the stop above the
+        market and manufacture an instant fill.
+
+        Returns False when there is no stop to carry, or when the successor already carries a stop
+        of its own (two lots cannot share one order), so the caller records the position as
+        explicitly unprotected (AGENTS.md §13.2, Audit §73.4).
+        """
+        stop = self._protective_stops.get(old_isin)
+        if stop is None:
+            return False
+        if ratio_numerator <= 0 or ratio_denominator <= 0:
+            raise OrderRunnerError(
+                f"corporate action ratio must be positive, got {ratio_numerator}:{ratio_denominator}"
+            )
+        if new_isin != old_isin and new_isin in self._protective_stops:
+            self.cancel_protective_stop(old_isin)
+            return False
+        self.cancel_protective_stop(old_isin)
+        adjusted_quantity = (stop.quantity * ratio_numerator) // ratio_denominator
+        if adjusted_quantity <= 0:
+            # A reverse merger can annihilate the lot; the position is then settled for cash and
+            # the caller counts it, rather than arming a stop for zero shares.
+            return False
+        self._protective_stops[new_isin] = ProtectiveStopOrder(
+            instrument_id=new_isin,
+            stop_price=(stop.stop_price * Decimal(ratio_denominator) / Decimal(ratio_numerator)).quantize(
+                Decimal("0.0001")
+            ),
+            quantity=adjusted_quantity,
+            signal_date=stop.signal_date,
+            armed_session=stop.armed_session,
+            atr=(stop.atr * Decimal(ratio_denominator) / Decimal(ratio_numerator)).quantize(Decimal("0.0001")),
+        )
+        return True
 
     def adjust_protective_stop_for_split(
         self, instrument_id: str, ratio_numerator: int, ratio_denominator: int
@@ -752,8 +830,9 @@ class DailyTPlus1OrderRunner:
 
             status = ticket.status
             if status in (FillStatus.FILLED, FillStatus.PARTIALLY_FILLED):
+                # The SELL branch of execute_ticket owns the stop lifecycle: it retires the order
+                # when the position is closed and re-arms it for any residual quantity (H-125).
                 filled += 1
-                self.cancel_protective_stop(isin)
             elif status == FillStatus.UNTRIGGERED:
                 untriggered += 1
             else:

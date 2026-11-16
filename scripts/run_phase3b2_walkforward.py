@@ -153,6 +153,9 @@ class Phase3B2WalkForwardRunResult:
     mean_net_expectancy: Optional[Decimal] = None
     protective_stop_exits: int = 0
     protective_stop_circuit_deferrals: int = 0
+    # Audit §73.4 H-125: held positions that crossed a merger / ISIN transition and were left with
+    # no live stop, so a reader never has to infer protection from silence.
+    unprotected_corporate_action_positions: int = 0
 
 
 def build_authoritative_runner(
@@ -178,6 +181,28 @@ def build_authoritative_runner(
         risk_per_trade_pct=Decimal("0.01"),
         atr_stop_multiple=atr_stop_multiple,
         eligibility_policy=APPROVED_EQ_ONLY_POLICY,
+    )
+
+
+def carry_protective_stop_across_corporate_action(
+    runner: DailyTPlus1OrderRunner,
+    action: Any,
+) -> bool:
+    """
+    Moves a held position's pending stop onto its successor identity (Audit §73.4 H-125).
+
+    Returns True only when a live stop now protects the successor ISIN. A merger or transition
+    without a successor identity, and a position that carried no stop, return False so the caller
+    counts the position as explicitly unprotected instead of dropping protection silently.
+    """
+    if not action.new_isin:
+        runner.cancel_protective_stop(action.isin)
+        return False
+    return runner.transfer_protective_stop(
+        action.isin,
+        action.new_isin,
+        int(action.ratio_numerator),
+        int(action.ratio_denominator),
     )
 
 
@@ -600,6 +625,8 @@ def run_phase3b2_walkforward(
     total_protective_stop_deferrals = 0
     total_protective_stop_circuit_deferrals = 0
     total_protective_stop_untriggered = 0
+    # Audit §73.4 H-125: held positions left without a stop by a merger / ISIN transition.
+    total_unprotected_ca_positions = 0
 
     num_sessions = len(sessions_to_run)
     for i in range(num_sessions - 1):
@@ -645,6 +672,9 @@ def run_phase3b2_walkforward(
                 if band is not None:
                     bands_next[isin] = band
 
+        # Audit §73.4 H-125: a held position crossing a merger / ISIN transition keeps its stop on the
+        # successor identity (rescaled by the exchange ratio) or is counted as unprotected.
+
         # Corporate actions effective on next_session ex-date (Finding H-100, H-107)
         actions_today = [
             ca for ca in sec_master._corporate_actions
@@ -652,6 +682,7 @@ def run_phase3b2_walkforward(
         ]
         # Attribute dividends received on open lots while held (Finding H-107) and adjust lots for corporate actions (Finding H-113)
         for ca in actions_today:
+            held_before_action = ca.isin in open_lots
             if ca.action_type == CorporateActionType.DIVIDEND and ca.isin in open_lots:
                 div_per_share = (
                     ca.dividend_amount
@@ -706,9 +737,14 @@ def run_phase3b2_walkforward(
                 open_lots[ca.new_isin].extend(old_lots)
 
             if ca.action_type in (CorporateActionType.MERGER, CorporateActionType.ISIN_TRANSITION):
-                # A new security identity carries a new price scale and no ATR history of its own,
-                # so the old stop is retired rather than left pointing at the wrong instrument.
-                runner.cancel_protective_stop(ca.isin)
+                # H-125: retiring the stop with the old identity left the successor unprotected. The
+                # lot's entry price is restated by the same ratio, so the stop moves with it; a stop
+                # that cannot be carried is counted, never silently dropped (AGENTS.md §13.2).
+                if held_before_action:
+                    if not carry_protective_stop_across_corporate_action(runner, ca):
+                        total_unprotected_ca_positions += 1
+                else:
+                    runner.cancel_protective_stop(ca.isin)
 
         # Current market prices as of as_of session (Finding H-102)
         cur_market_prices = {
@@ -919,6 +955,29 @@ def run_phase3b2_walkforward(
                 f"register the trial before evaluating it (AGENTS.md §8.2, Finding N-111)."
             )
         trial_record = existing_trials[-1]
+        # Audit §73.7 N-130: a re-render may only reproduce the configuration the registry already
+        # records. Without this the sweep path evaluated a new parameter value, named a registered
+        # trial_id, and left N unchanged — a variation whose result was already known and quoted.
+        registered_params = {
+            str(k): str(v) for k, v in dict(trial_record.canonical_params).items()
+        }
+        attempted_params = {str(k): str(v) for k, v in trial_params.items()}
+        if registered_params != attempted_params:
+            differing = sorted(
+                key
+                for key in set(registered_params) | set(attempted_params)
+                if registered_params.get(key) != attempted_params.get(key)
+            )
+            raise ValueError(
+                f"record_trial=False run of '{trial_id}' does not reproduce its registered "
+                f"canonical parameters; differing: "
+                + ", ".join(
+                    f"{key}={attempted_params.get(key)!r} (registered {registered_params.get(key)!r})"
+                    for key in differing
+                )
+                + " — a parameter variation must be registered before it is scored "
+                "(AGENTS.md §8.2, Audit §73.7 N-130)."
+            )
 
     total_trial_count_n = registry.total_trial_count
 
@@ -1022,6 +1081,19 @@ def run_phase3b2_walkforward(
         annualized_sr = annualized_sharpe(daily_returns) if daily_returns else Decimal("0.00")
         dsr_val = None
         haircut_sr = None
+
+    # Audit §73.9 item 2 / N-130, second half: a re-render may not describe a scored trial at a
+    # different result. Matching parameters are not sufficient — Trial #5's row states 3.0 while the
+    # engine that produced it sized at 2.0 — so the recomputed Sharpe must equal the one the ledger
+    # holds for that trial, which is the rule the gate applies (Finding H-122/N-125).
+    if not record_trial:
+        recorded_evaluation = registry.get_evaluation(trial_id)
+        if recorded_evaluation is not None and recorded_evaluation.sharpe_ratio != annualized_sr:
+            raise ValueError(
+                f"record_trial=False run of '{trial_id}' recomputes annualized_sharpe "
+                f"{annualized_sr}, but the ledger holds {recorded_evaluation.sharpe_ratio}; "
+                f"a re-render may not restate a scored trial (AGENTS.md §8.2, Audit §73.7 N-130)."
+            )
 
     # Per-Fold Walk-Forward Performance Metrics (Audit §64 H-103)
     is_snapshots = [s for s in portfolio.snapshots if s.as_of_date <= fold_is.test_end]
@@ -1379,6 +1451,7 @@ def run_phase3b2_walkforward(
         "protective_stop_deferrals": total_protective_stop_deferrals,
         "protective_stop_circuit_deferrals": total_protective_stop_circuit_deferrals,
         "protective_stop_untriggered": total_protective_stop_untriggered,
+        "unprotected_corporate_action_positions": total_unprotected_ca_positions,
     }
     if circuit_band_coverage_note is not None:
         extra_m["circuit_band_coverage_note"] = circuit_band_coverage_note
@@ -1451,6 +1524,9 @@ def run_phase3b2_walkforward(
         report_dict["unexplained_gap_refusals"] = unexplained_gap_refusals
         report_dict["total_valid_isins"] = total_valid_isins
         report_dict["trial_id"] = trial_id
+        # Audit §73.7 N-130: an unregistered re-render must say so in its own bytes, so a later
+        # reader cannot mistake an off-registry sweep for a scored trial.
+        report_dict["recorded"] = bool(record_trial)
         report_dict["returns_digest"] = returns_digest
         report_dict["observation_count"] = observation_count
         # N-125: the Sharpe a sidecar evaluation was derived from must be visible in the artifact
@@ -1473,6 +1549,7 @@ def run_phase3b2_walkforward(
         report_dict["protective_stop_exits"] = total_protective_stop_exits
         report_dict["protective_stop_deferrals"] = total_protective_stop_deferrals
         report_dict["protective_stop_circuit_deferrals"] = total_protective_stop_circuit_deferrals
+        report_dict["unprotected_corporate_action_positions"] = total_unprotected_ca_positions
 
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(report_dict, f, indent=2)
@@ -1606,6 +1683,7 @@ def run_phase3b2_walkforward(
         mean_net_expectancy=ledger_net_expectancy,
         protective_stop_exits=total_protective_stop_exits,
         protective_stop_circuit_deferrals=total_protective_stop_circuit_deferrals,
+        unprotected_corporate_action_positions=total_unprotected_ca_positions,
     )
 
 
@@ -1710,6 +1788,7 @@ def main() -> int:
     print(f"Trial ID:               {res.trial_record.trial_id}")
     print(f"Registry Sequence:       #{res.trial_record.seq}")
     print(f"Total Trial Count (N):   {res.total_trial_count_n}")
+    print(f"Row Recorded This Run:   {'yes (append)' if not args.no_record_trial else 'no (re-render, N-130)'}")
     print(f"Evaluated Trials (N_eval): {res.registry_evaluated_trial_count}")
     print(f"Append-Before-Read Check: PASS (sharpe_ratio was None when appended)")
     print(f"Fold Spec Fingerprint:   {res.trial_record.fold_spec_fingerprint}")
@@ -1725,6 +1804,7 @@ def main() -> int:
     print(f"Protective Stop Exits:   {res.protective_stop_exits} (deferred by frozen bid §5.3: {res.protective_stop_circuit_deferrals})")
     print(f"Active Stops at End:     {len(res.runner.protective_stops)}")
     print(f"Stops use ATR multiple:  {res.runner.atr_stop_multiple}")
+    print(f"Unprotected after CA:    {res.unprotected_corporate_action_positions} (merger / ISIN transition, H-125)")
     print(f"Open Positions at End:   {len(res.portfolio.get_open_positions())}")
 
     print("\n--- 3. EXACT DECIMAL PERFORMANCE DIAGNOSTICS (§6.4, §13.2, Finding H-103) ---")
