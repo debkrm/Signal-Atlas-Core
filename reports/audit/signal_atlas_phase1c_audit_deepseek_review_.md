@@ -6984,3 +6984,151 @@ Ordered by what unblocks what. CA-3 is now the binding constraint on strategy pr
 Two full runner invocations (~120 s each) were run from `5cee179` into `.tmp_s69/{full,is}` using **copies** of `data/trials/trial_registry.jsonl` and its `.manifest` under `--registry-path`, with `--no-record-trial`, so the committed registry was never written; it remains at 4 rows with the hashes it had at `ef43e70`. Two probe scripts (`.p_s69a.py`, `.p_s69b.py`) reproduced the transition-refusal loop and the fail-closed/dispatch paths using the committed helpers (`build_production_security_master`, `load_historical_snapshot`, `Portfolio`, `evaluate_verdicts`); nothing was stubbed or monkeypatched. The H-118 tamper probe modified `data/reference/corporate_actions.jsonl` in place, ran the gate and two test modules, and restored it with `git checkout --`; the restored SHA-256 equals the manifest row (`c4706736…`) and `git status` shows only this audit section. No holdout partition was read; no registry row was added, amended, or reordered; the certified baseline artifacts were not touched.
 
 **Not measured, and not claimed:** whether NSE's archive actually serves 2022–2023 `sec_list` files (that is the point of item 2 — I only confirmed none is present locally); whether the digest `RET-V1-cf90af33…` recomputes identically across runs (would need a byte-identical re-run; the 493-observation count and the unchanged metrics are the evidence I have); whether the modelled merger closes match any registrar cash-in-lieu rate; the ±10% flexing band; and nothing behind the holdout. `CRIT-PROV-01`, `CRIT-SURV-01`, `CRIT-OVERFIT-02`, `CRIT-OVERFIT-03` and `CRIT-INFO-01` remain `NOT RUN` for the reasons each states.
+---
+
+## §70 — Commit `308921b` (tag `feat-s69-308921b`): verification arrives, and the two ways around it
+
+### 70.1 Baseline re-measured at `308921b`
+
+| Gate | Result |
+|---|---|
+| `python -m pytest -q` | **426 passed**, exit 0, 0 skipped, 0 xfailed (77.47 s) |
+| All 9 `scripts/verify_*.py` | **exit 0** — `audit_append_only` (now 5 gates, incl. W0.5-5), `cash_universe_coverage`, `historical_snapshot`, `phase2a_containment_and_trials`, `phase2b_significance`, `phase2b5_storage`, `phase2c_walkforward`, `phase2d_verdicts` (now 6 gates, incl. 2D-6), `wave1_thin_slice` |
+| `verify_audit_append_only.py` | exit 0; zero deleted lines in §1–§69 |
+| Range | `5cee179..308921b` = 1 commit; 14 files, **+1013 / −64**, of which 171 lines are my §69 → their change is 13 files, +842 / −64 |
+| Registry | **4 rows, bytes unchanged** (`sha256 2ea07774f97bad1a…`, head `03dcf82861a4…`, `total_trials 4`); no row added, amended, or reordered; **no `.evaluations` sidecar exists in the repo** |
+| `verify_manifest_artifacts()` | **46 current rows recomputed and matched**, 19 superseded skipped |
+| Holdout | sealed: `validation_folds_count 0`, no 2025+ session in any artifact, dataset max `2024-12-31` |
+
+Two things did not move, and both matter: the certified baseline and the Trial #4 metrics are unchanged (`end_equity 975192.29`, `closed_trades 15`, PF `0.2146…`), so the re-render is a disclosure change and not a result change; and the registry is still N = 4 with **`evaluated_trial_count = 0`**, because no trial was spent (`--no-record-trial`).
+
+### 70.2 §69 items at their declared probes
+
+**1. H-118 — per-artifact attestation. CLOSED.** I repeated the exact tamper of §69 in the live tree — one bit flipped at byte 100 of `data/reference/corporate_actions.jsonl`, `manifest.jsonl` untouched — and both gates now refuse:
+
+```
+corporate_actions.jsonl sha256 on disk : e6c846d1eb123b40a3bf47bf1c639221d7a7a86b7177209bc5cfad82…
+verify_phase2d_verdicts.py   exit=1   OVERALL VERDICT: ONE OR MORE PHASE 2D GATES FAILED
+verify_audit_append_only.py  exit=1   OVERALL VERDICT: ONE OR MORE GATES FAILED
+control (row has is_current: true) -> ManifestIntegrityError: Line 64: corporate_actions.jsonl
+                                      has sha256 e6c846d1… on disk but the manifest attests c4706736…
+```
+
+The file was restored (`c4706736c2b9…`, equal to the manifest row) before anything else ran. The rejection names the artifact, the line, both digests, and the finding — exactly what §69.6 item 1 required. The gate is genuinely in the CI path (2D-6 is one of six checks in `verify_phase2d_verdicts.py`; W0.5-5 is one of five in `verify_audit_append_only.py`), not a script beside it.
+
+**2. H-119 — append-only scoring. CLOSED at its mechanism; the discipline remains unexercised.** Measured on a scratch registry:
+
+```
+register 3 trials          -> total_trial_count 3, evaluated_trial_count 0
+append 3 evaluations       -> registry .jsonl bytes byte-identical before/after
+                              N_eval 3, variance 0.7300
+1 scored trial             -> evaluate_strategy_significance raises InvalidSampleError (N_eval=1)
+2 scored trials            -> dsr_result is not None, N=2, N_eval=2, DSR 0.889777
+re-score a trial           -> TrialEvaluationError: "already has an appended evaluation; append-only"
+score unregistered trial   -> TrialEvaluationError: "Cannot score unregistered trial … (§8.2, N-111)"
+```
+
+So the arithmetic gap §69 named is closed: two scored trials make the DSR computable, scoring never rewrites the pre-registered row, and the CLI's false reason is replaced by `evaluated_trial_count=0 < minimum 2 scored trials required for DSR variance`, with a distinct message when the count is sufficient but the variance is not strictly positive. Both strings are correct for their inputs.
+
+At HEAD the discipline is still 0 of 4, exactly as disclosed. That is the honest state, not a defect — but §70.3 finds that the store which now carries the denominator can be edited without detection.
+
+**3. CA-3(a)/(c) — availability recorded; band-ineligibility wired to the runner. PARTIAL.** The probe is recorded with what §9.3 asks for: URL, HTTP status, byte count, the ignored query parameter, and a Wayback capture count with its timestamp (`2023-06-27T21:24:21Z`). The conclusion is explicitly bounded to "not retrievable here", which is what a single-environment probe can support. The consequence is wired honestly on the producer side: `SOURCED_PRICE_BAND_START = 2024-01-16`, the runner omits the six judged/violating counts when any session precedes it, supplies `circuit_band_coverage_note`, and the artifact re-renders as `14 PASS / 3 FAIL / 7 NOT RUN` with `CRIT-EXEC-03/04 NOT RUN` on `494 of 494` unsourced sessions. The 2024 coverage note now says "the attested 2024-01-16 snapshot applied as static bands" instead of implying daily records.
+
+What is not closed is the criterion itself: the NOT RUN branch is selected by a string the *producer* supplies, not by the engine inspecting the window. See H-120.
+
+**4. §69.6 item 7 (N-120, N-121, N-122 of §69) — OPEN, and disclosed as open.** The stage file's §68 section still attributes my `176 / 15` figure to the gap scan (my 15 was refused transition UUIDs), `CRIT-EXEC-03/04` still PASS on a bundle that supplies `judged_fills = 0`, and `verify_phase2c_walkforward.py` carries no comment naming what its dynamic version comparison no longer verifies. The delivery states this explicitly in its own "Not claimed" line, which I credit; §14.5 carries them as named residuals rather than new blockers.
+### 70.3 New findings
+
+**H-120 (HIGH, §5.3 / §9.1 / §14.4) — the band-coverage guard is a producer-supplied string, so the criterion still passes over unsourced sessions when the note is absent.** The verdict engine reads `circuit_band_coverage_note` from the results bundle and, if it is a non-empty string, emits `NOT RUN`. If it is absent, the old path runs. A bundle describing an unsourced 2022–2023 window, with the note simply omitted, reproduces the pre-CA-3(c) behaviour exactly:
+
+```
+evaluation window 2022-01-03..2023-12-29, counts 209/0/190/0, no note
+   CRIT-EXEC-03 = PASS     CRIT-EXEC-04 = PASS
+same bundle, with circuit_band_coverage_note
+   CRIT-EXEC-03 = NOT RUN  CRIT-EXEC-04 = NOT RUN
+```
+
+`evaluate_verdicts` already receives `evaluation_start_date`/`evaluation_end_date` and has `is_price_band_sourced()` available; it does not consult them for this criterion. This is the §14.4 pattern in its purest form: a guarded path added beside the unguarded one, selected by the caller. The committed test `test_ca3c_circuit_criteria_not_run_without_sourced_bands` makes the hole permanent by asserting the PASS branch — its variable is named `sourced`, but the bundle carries no window at all.
+
+Severity is set by what the criterion is for: a run whose producer forgets one key reverts to claiming circuit-fill realism over sessions with no band source, and nothing in the repository would notice, because the artifact would look self-consistent. **Accept:** `evaluate_verdicts` derives band eligibility from its own window (`any(not is_price_band_sourced(d) for d in window)`) and forces `NOT RUN` regardless of what the bundle says; the note becomes evidence, not the trigger. **Probe that must fail closed:** the bundle above — 2022–2023 window, counts, no note — must yield `NOT RUN`.
+
+**H-121 (HIGH, §8.2 / §10.5) — the evaluation sidecar has no external head anchor, so the DSR denominator and its variance can be reduced by deleting lines.** `trial_registry.jsonl` is anchored by `.manifest` (`head_hash`, `total_trials`). The new `<registry>.evaluations` file is verified only by its internal `prev_eval_hash` chain, which detects edits and interior deletions but not suffix truncation or omission:
+
+```
+3 evaluations on disk          -> N_eval 3, variance 0.7300, verify_integrity True
+delete the last line           -> N_eval 2, variance 0.5000, verify_integrity True   <-- NOT DETECTED
+delete the whole sidecar file  -> N_eval 0,                verify_integrity True   <-- NOT DETECTED
+```
+
+Two consequences. (a) The multiple-testing statistic that H-119 exists to make honest is the one quantity that can be lowered silently: remove the worst-scored trial and both N_eval and the variance move in the flattering direction. (b) `verify_integrity()` returning `True` after a deletion is a fail-open claim about an append-only ledger, which is precisely the defect §68 hit one level down. No `scripts/verify_*.py` reads the sidecar at all, so even the interior-tamper check is unit-tested only. **Accept:** an external anchor for the sidecar (head hash + count in the same `.manifest`, or a per-evaluation anchor line), `verify_integrity()` refusing on a count mismatch against it, and a gate that asserts the anchor for a committed sidecar. **Probe that must fail closed:** delete the last sidecar line and require a raised error from both `TrialRegistry()` and the gate.
+
+**N-123 (MEDIUM, §12.4) — the numeric circuit-evidence assertions were deleted rather than retargeted, so the N-118 guarantee now has no test.** `test_h114_runner_evidence_reports_observed_violation_count` previously asserted `exec3.status == PASS`, `re.match(r"^\d+ of \d+ judged BUY fill\(s\)", …)` and `evidence.startswith("0 of 2 ")`. It now asserts `NOT RUN` twice and that `"Simulator strictly enforces"` is absent. Because every fixture window is 2022 and the runner suppresses counts whenever the note is present, the count-formatting branch that N-118 and H-114 were about is no longer exercised end-to-end by anything. The status change is legitimate under the new contract; the loss of the count assertion is not, and the delivery's "this is the CA-3(c) contract, not a relaxation" is only half true. **Accept:** one fixture window starting on or after 2024-01-16 so `EXEC-03/04` still produce `0 of N judged …` evidence and a `PASS` path remains covered.
+
+**N-124 (MEDIUM, §10.5) — a manifest row with no `is_current` flag is silently reclassified as history.** The verifier skips any row where `row.get("is_current") is not True`, so a missing key and an explicit `false` are indistinguishable. Probe: tamper the corpus and drop `is_current` from its current row, and verification passes with `verified=45, superseded=20`; the same tampered corpus with the flag present raises at line 64. A manifest edit alone changes the pinned bytes, so this is not a bare bypass — but the H-115/H-118 reseal ritual *is* "edit the manifest, reseal the pin", and inside such a reseal a row can silently leave the verified set. **Accept:** require an explicit boolean on every row and fail closed when it is absent or not a bool.
+
+**N-125 (MEDIUM, §9.1) — the scored Sharpe is caller-supplied and unverifiable against the trial's own report.** `append_trial_evaluation` accepts whatever `sharpe_ratio` the runner passes; the `returns_digest` beside it is a label nobody recomputes, and the verdict artifact does not carry the Sharpe it was derived from (`trial_004`'s `in_sample_metrics` has no `sharpe_ratio`/`annualized_sharpe`; `metadata.annualized_sharpe` is `null`). So a sidecar figure cannot be tied to the artifact that justifies it, which is the same shape as H-118 one level up: an attestation without a verifier. **Accept:** write `annualized_sharpe` and `observation_count` into the verdict artifact and have the gate assert sidecar `sharpe_ratio` equals the artifact's value for the same `trial_id`.
+
+**N-126 (LOW, §10.5) — `SOURCED_PRICE_BAND_START` is a hand-typed date, and one snapshot is extrapolated across a year.** The constant asserts 2024-01-16 without reference to the manifest row that supplies `sec_list_20240116.csv`; a later snapshot added to the corpus would not move it. Separately, that single day's bands are applied as static bands for the whole of 2024, and the 2024 fold begins 2024-01-01, whose first fifteen sessions are unsourced. The combined effect is worth stating plainly because it governs the next two trials: **no window that can be run today produces `CRIT-EXEC-03/04` other than `NOT RUN`**, so two binding criteria are structurally unverifiable with the in-repo corpus. **Accept:** derive the constant from the manifest artifact's date (or assert equality), and record the 2024 static-band assumption as a named residual in the 2024 fold's own disclosure.
+
+**Carried:** `CRIT-DATA-02`'s `or continuous_instruments_passed > 0` disjunct; `CRIT-WINDOW-01`'s 494 against the fold's 493; the hardcoded `Append-Before-Read Check: PASS` line; the dual `open_lots`/`Portfolio` merger date book; `--trim-threshold` still never emitting an order.
+
+### 70.4 Verdict
+
+| Phase | §69 | Verdict at `308921b` | Basis |
+|---|---|---|---|
+| Phase 2D Tier-A gating | NO-GO | **NO-GO** (unchanged) | `CRIT-PROV-01 NOT RUN`; 2D gate now 6/6 with per-artifact attestation |
+| Phase 3B-1 | GO | **GO stands** | 426 passed, 9/9 verify scripts exit 0 |
+| Phase 3B-2a | GO | **GO stands** | no counters moved except by the new band disclosure |
+| Phase 3B-2b — reference provenance | H-118 open | **CLOSED** | live tamper → both gates exit 1; 46/46 current rows verified |
+| Phase 3B-2b — multiple-testing mechanics | H-119 open | **CLOSED (mechanism)** | append-only scoring, rows immutable, DSR computed at N_eval = 2 (0.889777) |
+| Phase 3B-2b — multiple-testing integrity | — | **H-121 OPEN** | sidecar truncation/omission undetected; no gate reads it |
+| Phase 3B-2b — circuit realism | N-118 closed | **AUTHORITY H-120 OPEN** | unsourced window + counts + no note ⇒ `EXEC-03/04 PASS` |
+| Phase 3B-2b — band sourcing | CA-3 open | **CA-3(c) MET, CA-3 OPEN** | probe recorded, ineligibility honest on the producer side; no per-session bands |
+| Phase 3B-2b — strategy evidence | not established | **STILL NOT ESTABLISHED** | 4 trials spent, 0 scored, 1 null experiment; no hypothesis tested in four rounds |
+| Holdout | sealed | **SEALED** | no 2025+ session loaded or evaluated |
+| Publication / GO-oriented claims | blocked | **BLOCKED** | `PROV-01`, `SURV-01`, `OVERFIT-02`, `OVERFIT-03`, `INFO-01` and both circuit criteria `NOT RUN` |
+
+The delivery does what §69 ordered and does it properly. The digest verifier is real, in the CI path, and fails on the exact attack that passed a round ago. The scoring sidecar is genuinely append-only — the pre-registered rows are byte-identical after being scored — and the arithmetic it was blocking now works. The band-ineligibility disclosure is honest in the artifact and in the runner's text.
+
+What the round adds is the same class of defect one level down, twice. H-118 was "the attestation is never verified"; H-121 is "the new attestation store has no anchor". H-118's fix proved the audit's point, and then the criterion it was adjacent to (CA-3(c)) was wired through a caller-supplied string rather than through the window the engine already holds — so the *verdict* can still assert circuit realism the *data* cannot support. Both are cheap to fix and both should be fixed before a trial leans on them.
+
+The strategic position is unchanged and now sharper: four trials spent, zero scored, zero information, and two binding execution criteria that no runnable window can evaluate. Trials #5 and #6 are the only way to move any of it, and they must be run for signal, not for a verdict.
+
+### 70.5 What would falsify this verdict
+
+- If a 2022–2023 bundle with counts and **no** note yielded `NOT RUN`, H-120 would be wrong: measured `EXEC-03 = PASS`, `EXEC-04 = PASS`.
+- If deleting the last evaluation line raised, H-121 would be wrong: measured `verify_integrity True`, `N_eval 3 → 2`, variance `0.7300 → 0.5000`, and `N_eval → 0` after deleting the file.
+- If the one-byte corpus edit still passed, H-118's closure would be wrong: measured exit 1 from both gates with the artifact, line and both digests named.
+- If a tamper behind a missing `is_current` raised, N-124 would be wrong: measured `verified=45, superseded=20` on a tampered corpus whose row lost the flag, against a raise with the flag present.
+- If two scored trials failed to produce a DSR, H-119's closure would be wrong: measured `DSR 0.889777 at N=2, N_eval=2`; and if one scored trial produced one, the "still uncomputable" statement would be wrong — it raises `InvalidSampleError`.
+- If the numeric `0 of N judged …` evidence were still asserted by a test, N-123 would be wrong: the s67 test now asserts only `NOT RUN` and the absence of a constant phrase.
+- If any runnable window could yield `EXEC-03 ≠ NOT RUN`, N-126's structural statement would be wrong: the in-sample window is wholly pre-2024-01-16 and the 2024 fold begins 2024-01-01.
+- If the re-render had changed a metric, the "disclosure only" claim would be wrong: `975192.29`, 15 trades and PF `0.2146402927805285752276267302` are identical to the certified baseline.
+### 70.6 Work order
+
+**1. H-120 — move band eligibility from the bundle to the engine.** In `evaluate_verdicts`, compute the evaluation window it already validates and force `CRIT-EXEC-03/04` to `NOT RUN` whenever any session in it is not `is_price_band_sourced`, treating `circuit_band_coverage_note` as evidence rather than as the trigger; when the window *is* sourced, require `judged_fills > 0` (§69 N-121) before `PASS` is reachable. **Probe that must fail closed:** the 2022–2023 bundle with counts and no note ⇒ `NOT RUN` for both ids. **Serves:** Phase 3B-2b circuit realism. Do this before Trial #5, or the trial's own verdict inherits a criterion that a missing key can flip.
+
+**2. H-121 — anchor the evaluation ledger.** Write the sidecar's head hash and row count into the registry's external `.manifest` (or append a per-evaluation anchor), and have `TrialRegistry.verify_integrity()` and a `scripts/verify_*` gate fail closed when the on-disk count differs from the anchored count. **Probe that must fail closed:** delete the last `.evaluations` line and delete the whole file, and require a raised error from both the class and the gate. **Serves:** Phase 3B-2b multiple-testing integrity.
+
+**3. N-123 — keep the numeric evidence under test.** Add one fixture whose window starts on or after 2024-01-16 so `EXEC-03/04` still emit `0 of N judged …` and a `PASS` is still asserted somewhere; keep the 2022 fixture's `NOT RUN` assertion beside it. **Probe:** the test must fail if the count-formatting branch is deleted. **Serves:** Phase 3B-2b.
+
+**4. N-124, N-125, N-126 and §69.6 item 7 — the small closures.** `is_current` must be an explicit boolean on every manifest row (probe: drop it from a tampered row and require a raise); publish `annualized_sharpe`/`observation_count` in the verdict artifact and assert the sidecar figure equals it; derive `SOURCED_PRICE_BAND_START` from the manifest artifact date or assert equality, and name the static-band assumption in the 2024 disclosure; name the refused-transition counter in the stage file; add the `verify_phase2c` comment.
+
+**5. Trial #5 — conditions.** Run it only after items 1–3 are green, and only in this shape:
+- **in-sample only** (`--in-sample-only`, window `2022-01-03..2023-12-29`); no validation fold touched. The 2024 fold is a single shot and is not for exploration.
+- **pre-registered, then scored**: `append_trial` with a stated hypothesis, the expected observation count, and `canonical_params` distinct from rows 1–4 (duplicate ids and duplicate params are refused), *before* metrics are read; then the evaluation is appended by the run itself — so **no `--no-record-trial`**. Registry, sidecar and artifact are committed together at one SHA.
+- **no configuration experiment in the trial**: `trim_threshold`, universe filter and cost schedule go into `canonical_params` and the pre-registration, not into a sweep inside it.
+- **expect `N_eval = 1`**, so the DSR raises and `CRIT-OVERFIT-02` stays `NOT RUN` with `evaluated_trial_count=1` as the printed reason. `EXEC-03/04` and `OVERFIT-03` are `NOT RUN` for the window (see N-126), so **Trial #5 cannot return a GO and must not be reported as one**. The only decision it supports: does the in-sample expectancy survive the full statutory cost schedule per completed round trip (§13.3) with breadth from ranked baskets rather than trade count (§13.4).
+- **Do not proceed** if that expectancy is ≤ 0 after costs: record N = 5, stop, and write the negative result. Spending Trial #6 or the 2024 fold on a losing configuration is how N inflates without information.
+
+**6. Trial #6 — conditions.** The second *scored in-sample* trial, a distinct pre-registered hypothesis, also in-sample only. It is the first run at which the DSR is computable (`N_eval = 2`, variance must be strictly positive), and therefore the first at which `CRIT-OVERFIT-02` (threshold `DSR ≥ 0.95`) can be judged at all. Two caveats to state in its report rather than discover later: a variance estimated from two points is directional only, and the penalty is applied at total N (6 after this trial, not 2), because the ledger counts every registered trial. If `DSR < 0.95` at N_eval = 2, that is the honest answer and a third scored trial is the only way to sharpen it.
+
+**7. The 2024 fold — spend it once, at the end.** It is `2024-01-01..2024-12-31`, frozen, and not repeatable: there is no second validation year inside the sealed boundary and the holdout is off limits. Spend it only when Trial #6's DSR clears the threshold and parameters are tagged; then run once with `--no-record-trial` so the fold does not become an extra trial, and label the result as a single-shot confirmation of a frozen configuration. `CRIT-OVERFIT-03` needs ≥2 independent validation folds (§8.3) and this corpus contains one, so it stays `NOT RUN` regardless. For circuit realism inside the fold, the band-judged sub-window is `2024-01-16..2024-12-31` (the first fifteen sessions are unsourced); running the whole year means `EXEC-03/04` are `NOT RUN` for it.
+
+**8. Unsolicited but material:** the strategy has now spent four trials and produced no information. If Trials #5 and #6 both return in-sample expectancy ≤ 0, the next work item is not a seventh trial but a re-examination of the signal itself — the multiple-testing budget is the scarce resource, and it is being consumed without a candidate to protect.
+
+### 70.7 Probe hygiene
+
+One probe script (`.p_s70.py`) and one scratch tree (`.tmp_s70/`) were used, both removed before the commit. It (a) flipped one bit in `data/reference/corporate_actions.jsonl`, ran both gates as subprocesses, and restored the file byte-for-byte (`c4706736…`, equal to the manifest row) inside a `finally`; (b) tampered a **copy** of the reference tree and rewrote only that copy's manifest to test the `is_current` path — the committed manifest was never modified; (c) built throwaway registries under `.tmp_s70/` for the scoring, truncation and DSR probes; (d) called `evaluate_verdicts` with in-memory bundles. `data/trials/trial_registry.jsonl` was read, never written (bytes `2ea07774…`, N = 4 at both ends of the round); no trial was registered or scored in the repository; no holdout partition was read; `CURRENT_STAGE_OF_WORK.md` was not edited.
+
+**Not measured, and not claimed:** whether NSE published per-session price-band files by some route the probe did not try (the availability conclusion is bounded to the three URL shapes and one environment the delivery recorded, and to a single Wayback capture — it is evidence of absence from those routes, not a proof of non-existence); whether the 2024-01-16 snapshot's bands held for the rest of 2024 (nothing in the corpus says they did); whether the sidecar's hash chain resists a rewrite of the registry `.jsonl` plus a fresh sidecar (the link to `record_hash` makes it expensive, and I did not attempt it); and the DSR figure at N_eval = 2 was computed on a synthetic registry with synthetic Sharpes, so it demonstrates computability, not any result about this strategy.
