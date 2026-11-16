@@ -6664,3 +6664,152 @@ Probes ran as scratch files (`.p_s67a.py`…`.p_s67c.py`) against `c5ccbce` thro
 **Note to the implementer (§11.3):** `CURRENT_STAGE_OF_WORK.md` currently describes the §66 items as "implemented & verified locally" without a §67 citation, and states "Preserves cash and portfolio equity continuity to the exact sub-paisa (verified diff 0.00)", which is N-112's tautology. The correct wording after this round cites §67 at `c5ccbce` for what this section calls closed, and does not describe the equity-preservation assertion as a verification. I have not edited that file.
 
 **Not measured, and not claimed:** whether the ±10% dynamic flexing band matches NSE's 2022–2023 framework on any session; per-name attribution inside 2024; the 2,749 cash-universe band intervals dated 2024-01-16 were not traced to individual `sec_list` records; the merger consideration price is not in the corpus, so no market-value settlement was tested; and nothing behind the holdout was read. `CRIT-OVERFIT-02`, `CRIT-SURV-01`, `CRIT-PROV-01` and `CRIT-INFO-01` remain `NOT RUN` for the reasons they state.
+---
+
+## §68 — Commit `ef43e70` (tag `feat-s67-ef43e70`): §67 hardening, and Trial #4 measured
+
+### 68.1 Baseline re-measured at `ef43e70`
+
+| Gate | Result |
+|---|---|
+| `python -m pytest -q` | **413 passed**, exit 0, 0 skipped, 0 xfailed |
+| `scripts/verify_audit_append_only.py` | exit 0; 0 deleted lines in tree/index and across all commits; `ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Working tree | clean at `ef43e70` before this section was written |
+| Diffstat | 19 files, **+1134 / −172** (2 commits in range: my §66-related `605a488` plus this one) |
+| Trial registry | **4 rows**; seq 4 `TRIAL-PHASE3B2-SWING-TRIM-004`, `prev_hash` links to row 3 (`3e3a2bd6055c`), `partition = IN_SAMPLE`, `timestamp_utc 2026-11-16T09:51:54.397689` |
+| Certified baseline artifacts | `reports/verdicts/phase3b2_swing_baseline_2022_2024_verdict.{json,md}` **not modified** — Trial #4 wrote only under `reports/verdicts/trial_004/` |
+| Holdout seal | unchanged; `2025-01-01..2026-11-11` sealed, `validation_folds_count = 0`, `validation_metrics = null` |
+
+The criteria file **was** changed: four lines, all of them the `expected_manifest_fingerprint` anchor and its comment. No threshold in `configs/go_no_go_criteria.yaml` moved, no criterion was added or removed, and the scorecard arithmetic is unchanged. That matters for §9.2 and is dealt with as H-115, not as a threshold violation.
+
+**One structural fact frames this whole round.** At `ef43e70` the certified baseline artifact can no longer be reproduced from HEAD: re-running `--trial-id TRIAL-PHASE3B2-SWING-BASELINE-003 --no-record-trial` gives **14 non-additive leaf differences** (`/criteria_fingerprint`, `CRIT-OVERFIT-01` `N = 3 → N = 4`, both circuit evidences, both 2022/2023 `coverage_notes`, `/timestamp_utc`) plus 125 new `band_covered_symbols` leaves. Most are intended and honest — N = 4 is the *correct* current answer — but no document says "the certified artifact is a record at N = 3; the live count is 4."
+
+### 68.2 §67 work order, item by item
+
+**1. H-114 — post-slippage circuit rejection. CLOSED.** Reproducing §67's exact breached bar (open `1374.95`, high = UC `1375.00`, MARKET_ON_OPEN BUY):
+
+```
+BUY  REJECTED_UPPER_CIRCUIT  filled_qty 0  executed_price None
+reason: Executed price (1375.00) is at or above Upper Circuit limit (1375.00); zero ask liquidity
+SELL REJECTED_LOWER_CIRCUIT  filled_qty 0  (open 1237.55, low = LC 1237.50)
+BUY  FILLED at 1304.75       (interior bar, 1300/1310/1290 — control)
+```
+
+The guard sits after slippage and after tick clamping, and it rejects rather than fills at the band edge. The evidence sentence is now computed: `0 of 209 judged BUY fill(s) executed at or above the effective Upper Circuit limit and 0 carried no limit`, `0 of 190 judged SELL fill(s) …`, which are the baseline's actual fill counts. §67's finding was that the engine could fill at the limit while asserting it could not; both halves are now false. Residual N-118: the old constant sentence survives as the `else` branch for callers that don't supply counts.
+
+**2. N-111 — unregistered re-render. CLOSED.** `--trial-id TRIAL-PHASE3B2-UNREGISTERED-999 --no-record-trial` exits **1** with `ValueError: record_trial=False requested for unregistered trial_id … register the trial before evaluating it (AGENTS.md §8.2, Finding N-111).` and writes no artifact. The fabricated `RE_RENDER_UNREGISTERED` record, the `"0"*64` previous hash and the off-by-one `seq` are deleted. A re-render now can only describe a trial that exists.
+
+**3. N-112 / N-115 — merger settlement. N-115 CLOSED; N-112 PARTIAL.** The held 27-share HDFC position yields 45 HDFCBANK shares, `rem = 9`, and a `MERGER_CASH_IN_LIEU` entry of **₹590.80** (`0.36 × 1641.10 = 590.796`, quantised); `Position.record_merger_cash_settlement_pnl` books `590.80 − fractional basis` as realized PnL, so the ledger identity closes without a special merger term, and the test now asserts `equity_after == equity_before − basis_removed + cash_entry.amount` **and** `equity_after != equity_before` — a delta, not the old tautology. The fractional zero-gross closed trade is gone; the lot book reconciles through `lot_merger_settlement_pnl = portfolio_merger_cash − lot_frac_book_basis_total`, and the unit test asserts no closed trade carries a fractional quantity.
+
+Two residual defects are named in 68.3: two of the three merger rows still have no price, and the HDFC price is a corpus-derived proxy rather than an attested settlement rate.
+
+**4. H-112 residual — named anchors. CLOSED.** The 2022–2023 prose and the per-year `coverage_notes` now interpolate `band_covered_symbols` from the diagnostics and read **`(HDFC, INFY, RELIANCE)`**, matching the union this audit measured in §67 and matching the table's 3. No typed enumeration remains in that sentence.
+
+**5. Part B — Trial #4. EXECUTED CORRECTLY AS A PROCESS; NULL AS AN EXPERIMENT.** The process side is right: registered as seq 4 with `partition = IN_SAMPLE` and the changed parameter named, evaluated on `2022-01-03 .. 2023-12-29`, `validation_folds_count = 0`, `CRIT-OVERFIT-03` `NOT RUN` with an in-sample reason rather than a degenerate ratio, 2024 reported as `sessions: 0`, certified baseline untouched, and an honest `16 PASS / 3 FAIL / 5 NOT RUN → NO-GO`. The three FAILs are `STAT-01` (15 trades), `STAT-02` (PF 0.2146) and `DATA-05` (96.6825%, already failing at baseline).
+
+The experiment side is empty, and measurably so:
+
+| Trial #4 `in_sample_metrics` | Certified baseline `in_sample_metrics` |
+|---|---|
+| 15 trades | 15 trades |
+| end equity `975192.29` | end equity `975192.29` |
+| profit factor `0.2146402927805285752276267302` | `0.2146402927805285752276267302` |
+| CAGR `-0.0126578513783100833588337349` | `-0.0126578513783100833588337349` |
+| max drawdown `0.04115480800453974531801802628` | `0.04115480800453974531801802628` |
+
+Identical to every printed digit, in a different file, under a different trial id. The cause is visible in the counters: 2022 emitted **20** tickets and filled 20; 2023 emitted **12** and filled 12 — byte-for-byte the baseline's 2022/2023 rows. **Zero trim tickets were emitted in 494 sessions.** The registered hypothesis is `a position whose close mark exceeds 9.5% of equity emits a T+1 partial SELL`; the largest weight that occurs in this window is **`0.0918`**, below the 9.5% trigger. The 11.30% breach the hypothesis was written to fix happens in the **2024 fold**, which this run was correctly forbidden to read. So Trial #4 spent one unit of the multiple-testing budget (N = 3 → 4) to re-measure the baseline, and the strategy change — 75 lines, a new CLI flag, a new `sell_quantity` path through the order runner — has never produced an order.
+### 68.3 New findings
+
+**H-117 (HIGH, §8.2 / §9.1) — Trial #4 tests nothing, and the document attributes the result to the trim.** The trial's verdict is the baseline's in-sample verdict, reproduced to the last digit (§68.2 item 5), because the intervention never fires on the window it was allowed to see. `CURRENT_STAGE_OF_WORK.md` nevertheless reports:
+
+> `CRIT-STAT-03 PASS` at `max_single_position_weight = 0.0918` (≤ 0.10), **down from the Trial #3 baseline breach of `0.1130`**.
+
+The two numbers are from different windows. 0.0918 is 2022–2023; 0.1130 is the full-window maximum and belongs to 2024. The baseline's *own* in-sample fold already stood at 0.0918 — so the sentence credits the trim with a difference that is entirely the evaluation window, and the §9.1 rule ("verdicts are computed, never typed") is broken by a causal claim no computation supports. **Accept:** the trim parameter is measured where it can bind, or the claim is withdrawn; and a trial whose intervention emits zero orders is recorded as `NOT EXERCISED` rather than as a completed evaluation of the hypothesis.
+
+**H-116 (HIGH, §10.4 / §6.3) — `--in-sample-only` disables the ISIN-transition refusal for eight UUIDs.** `run_phase3b2_walkforward` refuses a snapshot UUID when its symbol resolves to different ISINs at `eval_start` and `eval_end` (Finding H-109). Shortening the window moves `eval_end` from 2024-12-31 to 2023-12-29, and the refusal set falls **15 → 7**. These eight are no longer refused:
+
+```
+NESTLEIND  INE239A01016 -> INE239A01024      PERSISTENT INE262H01013 -> INE262H01021
+BDL        INE171Z01018 -> INE171Z01026      MAZDOCK    INE249Z01012 -> INE249Z01020
+CANBK      INE476A01014 -> INE476A01022      COCHINSHIP INE704P01017 -> INE704P01025 (×2 UUIDs)
+DRREDDY    INE089A01023 -> INE089A01031
+```
+
+Each is a face-value split that changed the ISIN in 2024; admitted, they resolve forward to the post-split ISIN and 2022–2023 bars are attributed to an identity the security did not carry then — precisely what §10.4 forbids and what H-109 refused. The footprint is visible in the disclosure: `total_valid_isins` **196 → 203**, `continuous_instruments_passed` **176 → 186**, `unexplained_gap_refusals` **20 → 17**, and the reason the extra names never trade is incidental (band coverage admits only HDFC, INFY, RELIANCE before 2024-01-16), which is why the PnL is unchanged. So this is an integrity and disclosure defect, not a result change — but the run now claims 186 "continuous active instruments evaluated" when ten of them are identity-merged. **Accept:** the transition refusal is computed over the dataset's span (`min(trading_dates) .. max(trading_dates)`), not the evaluated window, so no evaluation flag can weaken identity validation. Note also that the added `resolve_isin_by_symbol(sym, max_d, …)` fallback is dead: no UUID resolves only through it, so the growth is entirely the refusal change.
+
+**H-115 (HIGH, §10.1 / §9.2 / §11.1) — the reference corpus, its manifest row, its pin, and a certified verdict artifact were all edited in place in one commit.** Four coupled edits to make one merger row carry a price:
+
+1. `data/reference/corporate_actions.jsonl` — the HDFC MERGER row was **modified in place** (description extended, `delisting_price` added). No restatement row, no effective-dated append, unlike the append-only correction model in §10.1.
+2. `data/reference/manifest.jsonl` — `byte_count` 54276 → 54375 and a new `sha256`, while `timestamp_utc` stays **`2026-11-15T22:00:00+00:00`**. The manifest now attests a retrieval that predates the bytes it describes.
+3. `configs/go_no_go_criteria.yaml` — `expected_manifest_fingerprint` resealed to the new content in the same commit as the data edit. The pin exists to detect exactly this; resealing it removes the detection, and §14.3 names the attack.
+4. `reports/verdicts/phase2d_tier_a_2022_2026_verdict.{json,md}` — a **certified historical artifact** was rewritten in place: `criteria_fingerprint` `CRIT-FPR-V1-b3f35df9…` → `…a7e53547…`, with `timestamp_utc` unchanged at `2026-11-14T16:45:00`, so the artifact now states it was evaluated under a criteria file that did not exist until 2026-11-16.
+
+The knock-on is structural: the criteria content changed (fingerprint `b3f35df9…` → `a7e53547…`) while `criteria_version` stayed **`1.1.0`**. Two artifacts now exist under one version with two fingerprints, one of them rewritten to match and the other (the Phase 3B-2b baseline) left alone — which is the only reason the inconsistency is visible at all. **Accept:** the corpus correction is an append carrying an effective date and a restatement reference; the manifest timestamp moves with the bytes; the pin moves only through a criteria **version** bump that names the data change; historical verdict artifacts are frozen, or regenerated to a new path under a new timestamp with the restatement cited.
+
+**N-112 residual (MEDIUM) — two of three mergers still settle at book value, and the one that does not settles at a proxy.** The mercy is per-row, not structural:
+
+```
+MINDTREE 2022-11-23  73/100 -> INE214T01019   delisting_price None
+HDFC     2023-07-13  42/25  -> INE040A01034   delisting_price 1641.10
+IDFC     2024-09-27  31/20  -> INE092T01019   delisting_price None
+```
+
+The `delisting_price`-or-cost-basis fallback is intact, so MINDTREE and IDFC reproduce the zero-PnL-by-construction settlement. **IDFC's ex-date lies inside the certified baseline's own window**, so the defect is live in the baseline configuration, not only in unused rows. And 1641.10 is verified to be HDFCBANK's **close on 2023-07-13** from `prices_by_instrument` — a price derived from the corpus being evaluated, not the registrar's cash-in-lieu rate the row's wording implies; the `circular_ref` still points only at the delisting circular. **Accept:** every merger row carries a price or fails closed, and a proxy price is labelled as a derivation (`modelled close on effective date`) rather than as the settled amount.
+
+**N-117 (MEDIUM, §8.2) — the trial row still carries no statistics, and N has grown by one for no information.** Row 4 has `returns_digest: null`, `sharpe_ratio: null`, `observation_count: null`. `CRIT-OVERFIT-02` therefore remains `NOT RUN`, so §66.5 condition 3 (DSR/haircut over total N at selection time) is still not computable, now at **N = 4**. The budget moved and the evidence that disciplines it did not.
+
+**N-118 (LOW) — the constant circuit sentence is still reachable.** In `verdicts.py`, `CRIT-EXEC-03`/`-04` format their evidence only when the run supplies `upper_circuit_buy_judged_fills` etc.; otherwise the pre-H-114 sentence ("Simulator strictly enforces zero …") is emitted. Any caller that does not pass counts — including the synthetic harness path — prints an uncomputed claim. **Accept:** delete the `else` branch; absence of counts is `NOT RUN`.
+
+**N-119 (LOW, §12.1 / §14.2) — the certified artifact is a record at N = 3 and nothing says so.** Re-rendering trial 003 at HEAD changes `/criteria_fingerprint`, `CRIT-OVERFIT-01` to `N = 4`, both circuit evidences, and every coverage note (§68.1). None of that is wrong; what is missing is one sentence in the documents that cite the baseline: it was certified at `c5ccbce` under criteria `b3f35df9…`, and the registry now holds four trials. A reader comparing the artifact to a fresh run will otherwise read the difference as drift.
+
+**Carried, not introduced here:** `CRIT-DATA-02`'s `or continuous_instruments_passed > 0` disjunct; `CRIT-WINDOW-01`'s evidence counting 494 sessions against the fold's 493 (a one-session boundary difference present in every artifact since §66); the hardcoded `Append-Before-Read Check: PASS` line; and the runner's parallel `open_lots` book, which still applies corporate actions a session before `Portfolio` does (`as_of` 2023-07-12 versus the ex-date 2023-07-13), now bridged by `lot_merger_settlement_pnl` instead of by a duplicate trade.
+### 68.4 Verdict
+
+| Phase | §67 | Verdict at `ef43e70` | Basis |
+|---|---|---|---|
+| Phase 2D Tier-A gating | NO-GO | **NO-GO** (unchanged) | `CRIT-PROV-01 NOT RUN`; artifact regenerated under a resealed pin (H-115) |
+| Phase 3B-1 | GO | **GO stands** | 413 tests, no regression |
+| Phase 3B-2a | GO | **GO stands** | counters unchanged |
+| Phase 3B-2b — truthful reporting | MET | **MET** | 3 FAIL / 5 NOT RUN computed; no PASS manufactured |
+| Phase 3B-2b — certified baseline | certified at N=3 | **certified record stands; not reproducible at HEAD, and the current N is 4** | 14 non-additive leaf differences, N-119 |
+| **§67 hardening items 1–4** | open | **CLOSED — H-114, N-111, N-115, H-112 residual** | probed at the engine, the CLI and the disclosure |
+| **§67 hardening item 3 (merger)** | N-112 open | **PARTIAL** | HDFC settles at 590.80; other two rows still book value |
+| **Trial #4 (`TRIM-004`)** | authorized | **EXECUTED — null experiment; hypothesis NOT EXERCISED** | metrics identical to the baseline's in-sample fold; zero trim tickets |
+| Phase 3B-2b — strategy evidence | not established | **STILL NOT ESTABLISHED** | one hypothesis tried, none tested |
+| Publication / GO-oriented claims | blocked | **STILL BLOCKED** | `PROV-01`, `SURV-01`, `OVERFIT-02` unattested; holdout sealed |
+
+**On the hardening:** three of the four §67 items are closed at the probe each named, and closed in the right shape — H-114 rejects instead of filling at the band and reports counts instead of a sentence, N-111 fails closed, N-115 removes the duplicate representation. The merger item moved the number and left the structure: one row priced, two still at book value, the fallback still silent, the price a corpus-derived proxy. And the pin reseal (H-115) is the round's most serious defect, because it is the mechanism the repository uses to notice that a reference file changed under it.
+
+**On Trial #4:** the process is honest and the result is empty. A registered trial with an intervention that emits zero orders and a verdict identical to the previous trial's own sub-window is not a test of the hypothesis. It cost one unit of the multiple-testing budget (N = 4) and produced no information, and the summary of it credits the trim with a difference the window explains. That claim must be withdrawn; the trial itself should be recorded as `NOT EXERCISED` rather than as a completed evaluation.
+
+**The substantive conclusion is about the window, not the strategy.** Since §66 the binding constraint has been CA-3: price bands cover only HDFC, INFY and RELIANCE before 2024-01-16, so the 2022–2023 in-sample window can hold at most a handful of positions in three names and cannot produce a 9.5%+ weight at all. Any behavioural hypothesis — concentration, exit, sizing, ranking — is untestable there, not because the code is wrong but because the corpus admits almost no positions. Trial #5 that does not address CA-3 will be another null, and each one spends a trial. The ordering below puts CA-3 before any further strategy work for that reason.
+
+### 68.5 What would falsify this verdict
+
+- If any trim intent appeared in the Trial #4 run, H-117's "zero tickets" limb would be wrong: measured by 2022 `tickets_emitted` 20 = `tickets_filled` 20 and 2023 12 = 12, identical to the baseline, and by metrics equal to every printed digit.
+- If the baseline's in-sample fold differed from Trial #4 in any digit, the "same experiment twice" reading would be wrong: measured equal in trade count, end equity, PF, CAGR and drawdown.
+- If the transition refusal were computed over the dataset span rather than `eval_end`, H-116 would be wrong: measured 15 refusals at `eval_end = 2024-12-31` versus 7 at `2023-12-29`, with the eight names listed.
+- If `data/reference/manifest.jsonl` carried a retrieval timestamp later than the corpus edit, H-115's manifest limb would be wrong: measured `2026-11-15T22:00:00` with a changed byte count and hash.
+- If `reports/verdicts/phase2d_tier_a_2022_2026_verdict.md` still carried `CRIT-FPR-V1-b3f35df9…`, the rewritten-artifact limb would be wrong.
+- If all three merger rows carried a price, N-112's residual would be wrong: measured `None` for MINDTREE and IDFC, and IDFC's ex-date inside the baseline window.
+- If a caller without counts produced `NOT RUN` instead of the constant sentence, N-118 would be wrong.
+
+### 68.6 Ordered work order
+
+1. **H-117** — withdraw the "down from 0.1130" attribution in `CURRENT_STAGE_OF_WORK.md` (the implementer's own file), and record `TRIAL-PHASE3B2-SWING-TRIM-004` as `NOT EXERCISED` in the phase section. No code change; this is §9.1.
+2. **H-116** — compute the ISIN-transition refusal over `min(trading_dates)..max(trading_dates)` so no evaluation flag can weaken identity validation, and re-state `total_valid_isins` / `continuous_instruments_passed` / `unexplained_gap_refusals` for the 2022–2023 window. Before any further trial.
+3. **H-115** — restore provenance integrity: append a restatement row for the HDFC merger carrying the effective date and the derivation of 1641.10, move the manifest timestamp, and bump `criteria_version` for the pin move (or revert the pin and carry the old one until the version bump exists). Freeze the Phase 2D artifact; if it must be re-rendered, write a new path with a new timestamp and cite the restatement.
+4. **N-112 residual** — price MINDTREE and IDFC, and delete the cost-basis fallback so an unpriced merger fails closed. IDFC's ex-date is inside the baseline window, so this is not cosmetic.
+5. **N-119** — one sentence in the documents that cite the baseline: certified at `c5ccbce` under `b3f35df9…`, current registry N = 4.
+6. **N-118** — delete the constant circuit evidence branch; absent counts is `NOT RUN`.
+7. **N-117** — emit `returns_digest` and the moment statistics so DSR/haircut is computable at N = 4.
+8. **CA-3** — price bands for 2022–2023, or declare the window unsimulatable for behavioural hypotheses. **This now blocks strategy progress, not just reporting.**
+9. **Trial #5 design** — do not run another behavioural hypothesis on a window where the intervention cannot fire. If CA-3 cannot be closed, the honest step is a *ranking/breadth* hypothesis that needs no concentration threshold, or accepting that the certified baseline is the last measurable result on this corpus.
+
+### 68.7 Probe hygiene
+
+Probes ran as `.p_s68a.py`, `.p_s68b.py` and two runner invocations against `ef43e70`: a direct simulator call set (rejected UC, rejected LC, interior control fill), a security-master/dataset enumeration, a baseline re-render at HEAD into `/tmp/s68_base` with copied registry **and** manifest, and an unregistered-trial CLI run against `.tmp_s68/reg`. No committed registry row was added, no committed artifact overwritten, `data/trials/trial_registry.jsonl` unchanged at 4 rows, and the certified baseline JSON byte-identical before and after. Private access was limited to reading `prices_by_instrument`, `symbols_by_instrument`, `get_corporate_actions`, `resolve_isin_by_symbol` and `Portfolio.apply_corporate_action` directly; nothing was stubbed to make a probe pass, and the two load-bearing observations (metrics identical to the digit, eight un-refused transition UUIDs) are unmodified behaviour. Scratch files were deleted; the only working-tree change is this section.
+
+**Note to the implementer (§11.3):** the new phase section is correctly hedged ("implemented; measured locally; not audited") and correctly cites §67 — that part of the discipline now holds. The two sentences that need correction are the "down from the Trial #3 baseline breach of 0.1130" attribution (H-117) and "Preserves cash and portfolio equity continuity", which is gone and replaced by an accurate description of N-112. I have not edited that file.
+
+**Not measured, and not claimed:** whether NSE's cash-in-lieu rate for HDFC fractions was near 1641.10 (no circular ingested); whether the 2024 fold would have triggered the trim — the code path was never executed by a run, only by a unit test; per-name attribution inside 2024; the ±10% flexing band against NSE's 2022–2023 framework; and nothing behind the holdout was read. `CRIT-OVERFIT-02`, `CRIT-OVERFIT-03`, `CRIT-SURV-01`, `CRIT-PROV-01` and `CRIT-INFO-01` remain `NOT RUN` for the reasons they state.
