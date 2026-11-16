@@ -7295,3 +7295,136 @@ Both runs must record (no `--no-record-trial` on the first execution), so the ev
 Five probe scripts (`probe_h120.py`, `probe_h120b.py`, `probe_h121.py`, `probe_h122.py`, `probe_n124_n126.py`) and four measurement scripts (`tape.py`, `tape2.py`, `stops.py`, `variants.py`) ran from a temporary directory outside the repository and were deleted; `git status` was empty at both ends of the round. Tampering was done on **copies** of `data/reference`, `data/trials` and on throwaway registries under a temp tree; the committed manifest, registry and reference corpus were read, never written (registry bytes `2ea07774…` before and after). `evaluate_verdicts` was called with in-memory bundles. No holdout partition was read. `CURRENT_STAGE_OF_WORK.md` was not edited.
 
 **Not measured, and not claimed:** whether a caller inside the repository can actually emit a bundle without window keys (I attacked the public API, not every call site); whether the 2024-01-16 static bands held for the rest of 2024; whether `ema_200` produces the 27 crossovers my index-level reconstruction finds once the engine's subsegment partitioning and ADTV filters are applied — the count is an estimate from the same corpus, not a run; whether Trial #5 or #6 will show positive expectancy (no trial was executed this round); and the DSR at `N_eval = 2`, which is computable but rests on a two-point variance and is directional only.
+## §72 — Review round at `5176bc5`: the band guard now fails closed, the ledger grew a second witness, and the stop trial measured a stop the engine never places
+
+Reviewed range `125f905..5176bc5` (two commits, one tag each): `f4a1b31` (`feat-s71-hardening-f4a1b31`, 7 files, +564/−52) and `5176bc5` (`feat-s71-trials-5176bc5`, 7 files, +461/−4). Every claim below was re-measured at that SHA with a probe; nothing is taken from the delivery note, and one of the delivery note's own diagnoses is contradicted in 72.3 (H-124).
+
+### 72.1 Baseline re-measured at `5176bc5`
+
+Working tree clean, `HEAD = 5176bc5`. `scripts/verify_audit_append_only.py` exits **0**, printing `ALL REPOSITORY FOUNDATION GATES PASSED (100%)`.
+
+| Gate | Measured at `5176bc5` |
+|---|---|
+| W0.5-1 audit append-only | PASS — working tree, index and every commit since `a3a40f1`: **0 deleted lines** |
+| W0.5-2 verification scripts | PASS — all 8 in-gate scripts exit 0 (plus this gate's own `verify_audit_append_only.py` = 9 exit 0) |
+| W0.5-3 offline suite | **450 passed in 90.53 s**, 450 collected, **0 skipped, 0 xfailed** (434 at `125f905`; +16 in `tests/unit/test_phase3b2_audit_s71_items.py`) |
+| W0.5-4 tags | PASS — 13 audit tags incl. `audit-s71-cd5073bd → cd5073b`, plus `feat-s71-hardening-f4a1b31` and `feat-s71-trials-5176bc5` |
+| W0.5-5 reference manifest | PASS — **46 current** artifacts match `byte_count` + `sha256`, **19 superseded** skipped |
+| G2A-6.1–6.5 | PASS (throwaway registry, `N_eval=2`: deleted last line, deleted sidecar and disagreeing Sharpe all refused) |
+| G2A-6.6 | PASS — committed registry **N = 5, N_eval = 1, sidecar_present = True** |
+| G2A-6.7 | PASS — `1 scored trial(s) agree with their verdict artifacts, and every committed artifact naming a post-sidecar trial has a ledger row` |
+
+Ledger bytes, measured: registry `7994` B `sha256 0a64ad3c…` (was `5893` B `2ea07774…` at `125f905`; **the new file starts with the old file byte-for-byte**, `new.startswith(old) = True`, +2101 B appended — the registry is still append-only at the byte level, §10.1). Sidecar `556` B `ddc8c63b…`; sidecar anchor `217` B `af9aa1d1…`; registry manifest `327` B `0290d02b…`, now carrying `evaluation_count: 1`, `head_eval_hash: 2de8bf94…`.
+
+**Trial #5 artifact** (`reports/verdicts/trial_005/…{json,md}`, new directory — the baseline artifact at `reports/verdicts/trial_004/` was not overwritten): `overall_verdict NO-GO`, `14 PASS / 3 FAIL / 7 NOT RUN`, window `2022-01-03..2023-12-29`, 493 observations, `end_equity 975192.29`, `closed_trades 15`, `win_rate 0.1333`, `PF 0.2146402927805285752276267302`, `annualized_sharpe -0.6995862169544497756996745538`, `max_drawdown 0.04115480800453974531801802628`, `validation_folds_count 0`, `unsourced_band_sessions 494`. Ledger row and artifact agree on all four attestable fields (`sharpe`, `max_drawdown`, `observation_count 493`, `returns_digest RET-V1-cf90af33…`). **Holdout 2025-01-01..2026-11-11 was not read**: every registry row is `IN_SAMPLE`, the run's last evaluated session is 2023-12-29, and `validation_folds_count = 0`.
+
+### 72.2 Status of the §71 work order
+
+| §71 item | Status | Measurement |
+|---|---|---|
+| **1. H-123** band eligibility unassertable without a walkable window | **CLOSED** | 15-bundle matrix, 72.2.1: every malformed window is `NOT RUN` on both criteria; the two well-formed sourced bundles still `PASS` with numeric evidence |
+| **2. H-122** witness the evaluation head outside the pair + reverse check | **PARTIAL** | the three declared probes now refuse (72.2.2 rows 1–3, 9b); the witness itself is removable — new **N-128** |
+| **3. N-127** derive the band boundary only from verified rows | **CLOSED** at the declared probe | fabricated row alone leaves `2024-01-16`; malformed line raises `PriceBandValidationError`; a row *plus* a matching file still moves it — residual recorded, not new |
+| **4. Trial #5 then #6 under the gate** | **COMPLETE, with H-124 attached** | #5 registered and scored as §71.6.1 specified and honestly reported as null; Gate A honoured — #6 not run, fold frozen. But the row records a parameter the engine never received (72.3) |
+
+The `N-118` test adaptation in `tests/unit/test_phase3b2_audit_s68_items.py` was checked for the §12.4 weakening pattern: the bare bundle gained a 2024 window and the expected sentence moved from `"judged"` to `"not provided in results bundle"`, while `NOT_RUN` is still asserted for both criteria. That is a consequence of H-123, not a relaxation — but it does retire the older wording assertion, so N-118's text is now covered only at the counts-absent branch.
+
+#### 72.2.1 H-123 probe matrix (`evaluate_verdicts` with the §71 counts bundle, unchanged)
+
+| bundle | window | EXEC-03 / EXEC-04 | evidence |
+|---|---|---|---|
+| A | `2022-01-03..2023-12-29` (494 unsourced) | NOT RUN / NOT RUN | `494 of 494 … have no sourced NSE price-band report` |
+| B | keys omitted | NOT RUN / NOT RUN | `must both be supplied as non-empty ISO dates (got None and None)` |
+| C | `2023-12-30..2023-12-31` (weekend) | NOT RUN / NOT RUN | `contains 0 calendar sessions` |
+| E | `""` / `""` | NOT RUN / NOT RUN | `must both be supplied` |
+| G | `2024-06-03..2024-06-04` (sourced) | **PASS / PASS** | `0 of 2 judged BUY fill(s) executed at or above the effective Upper Circuit limit…` |
+| N1 | `"  "` / `"\t"` | NOT RUN / NOT RUN | whitespace is empty |
+| N2 | `datetime.date` objects | NOT RUN / NOT RUN | non-string is unassertable |
+| N3 | `2024-06-04..2024-06-03` reversed | NOT RUN / NOT RUN | `the window is reversed (2024-06-04 > 2024-06-03)` — **no `CalendarError` escapes** |
+| N4/N5 | start only / end only | NOT RUN / NOT RUN | names the missing side |
+| N6 | `2024-13-45` / `soon` | NOT RUN / NOT RUN | `is not parseable as ISO dates` |
+| N7 | `2027-01-01..2027-01-07` (future) | NOT RUN / NOT RUN | `contains 0 calendar sessions` |
+| N8 | `2024-06-03..2024-06-03` single sourced session | **PASS / PASS** | numeric evidence retained |
+| N9 | producer note, no window | NOT RUN / NOT RUN | the note cannot select the branch |
+| N10 | sourced, **0 judged fills** | NOT RUN / NOT RUN | `the prohibition is untested on this run rather than satisfied` |
+
+Bundles B, C and E — the three that obtained `PASS` in §71.2.1 — are the load-bearing rows. The guard's precondition is now the *absence* of caller input, so there is no unguarded path left in front of the counts branch: the counts branch is reachable only from a session-bearing, fully band-sourced window. Reaching `PASS` therefore requires the 2024-01-16+ corpus, which is exactly what §5.3 intends.
+
+#### 72.2.2 H-122 witness matrix (throwaway copy of `data/trials`, one append)
+
+| attack | result |
+|---|---|
+| 0 intact | `LOADED N_eval=1 verify=True` |
+| 1 delete **both** ledger files | **REFUSED** `dual-file erasure detected` (witness 1 row) |
+| 2 truncate to 0 + recomputed anchor | **REFUSED** `Evaluation head anchor mismatch for 'head_eval_hash'` |
+| 3 delete sidecar, anchor attests 0 | **REFUSED** `ledger … is absent, but its anchor attests 0` |
+| 4 erase pair **+ reset the manifest witness** | **LOADED N_eval=0 verify=True** |
+| 5 erase pair **+ drop the two witness keys** | **LOADED N_eval=0 verify=True** |
+| 6 empty ledger + drop witness keys | REFUSED (anchor mismatch) |
+| 7 drop the witness keys only, ledger intact | LOADED `N_eval=1` — **removal of the witness is not itself detected** |
+| 8 truncate + re-anchor + rewrite witness | REFUSED (anchor mismatch) |
+| 9b artifact present, pair erased | REFUSED before agreement |
+| a artifact with ledger intact | `checked=1` |
+| b artifact naming an **unregistered** trial (real artifact kept, fake added) | **REFUSED** `Verdict artifact fake.json names trial 'TRIAL-PHASE3B2-SWING-FAKE-006', which is not in the registry; a scored figure must be registered` |
+| b2 artifact renamed to an unregistered id (real evaluation orphaned) | **REFUSED** `Trial 'TRIAL-PHASE3B2-SWING-ATR3-005' has an appended evaluation but no verdict artifact under …` (forward direction still live) |
+| c pair erased + witness intact + real artifact | REFUSED (constructor) |
+| d pair erased + **witness dropped** + real artifact | **REFUSED** `artifact->ledger direction is unattested` |
+| e pair erased + witness dropped + artifact `annualized_sharpe: null` | **`checked=0`, PASSES, `N_eval=0`** |
+| f witness dropped only + real artifact | `checked=1` |
+
+The reverse direction is genuinely bidirectional: row `d` shows that even the witness-key bypass is caught by the artifact→ledger check as long as the artifact keeps its score. Row `e` is the remaining seam: null the artifact's Sharpe and drop two manifest keys, and the ledger can be erased with every gate green.
+
+### 72.3 New findings
+
+**H-124 (HIGH) — Trial #5's row records `atr_stop_multiple = "3.0"`, but the sizing engine ran at `2.0`; the parameter never left the strategy object.** `scripts/run_phase3b2_walkforward.py:537-543` builds the single production `DailyTPlus1OrderRunner` without `atr_stop_multiple`, so it keeps its default `Decimal("2.0")`; the same function then hands `atr_stop_multiple=3.0` to `DeliverySwingTrendStrategy` (`:544-551`), whose only use of that field is `parameters()`. Sizing happens inside `runner.generate_order_intent` from `self._atr_stop_multiple`. Measured by replicating the committed wiring: strategy `parameters["atr_stop_multiple"] = 3.0`, runner default `= 2.0`. The grep for `DailyTPlus1OrderRunner(` across `src/` and `scripts/` returns exactly one construction, and it omits the kwarg. So the registry row that `CRIT-OVERFIT-01` reads as "full parameter accountability" describes a configuration that was never executed, and the §71.6.1 supply-side claim that the trial "changed the R denominator" is also false: the R denominator was computed from `k = 2.0`, as in the baseline. Two independent mechanisms make the trial inert — the strategy places no stop (§13.2 gap, below) and the runner never received `k`. Additionally, even with correct wiring the risk leg cannot bind at this tape: `q_risk < q_weight ⟺ ATR/price > 0.125/k` under 1 % risk and an 8 % weight cap, i.e. ATR > 6.25 % at `k=2` and > 4.17 % at `k=3`, against measured ATRs of 1.96–2.14 %. Measured at `px = 1000`, `equity = 1e6`: `k=2` and `k=3` both return `qty = 80`, `binding = MAX_POSITION_WEIGHT`, until ATR% reaches 5 %, where `k=3` first binds (`qty 66`, `RISK_BUDGET`).
+
+**N-128 (MEDIUM) — the new witness has no root outside the file that carries it.** `_load_evaluations` reads `evaluation_count`/`head_eval_hash` from `<registry>.manifest`, a file the same append path writes and that no digest, criteria pin or gate attests. Removing those two keys restores the §71 bypass (row 7: undetected; row 5: `N_eval=0, verify=True`), and `if witness_count:` treats a witnessed zero as "no witness". Row `e` completes the seam on the artifact side: the reverse check skips any artifact whose `annualized_sharpe` is `null`. The residual matters because §71 graded H-122 MEDIUM on the argument that git witnesses the ledger; the same now applies to the witness, so git remains the only root. That is not nothing — every step of attack `e` requires editing a committed file — but it is not what "witnessed outside the pair" was asked to buy.
+
+**N-129 (MEDIUM) — the number that decided Gate A is not reproducible from the repository.** The delivery note reports statutory costs `₹3,511.93` and "mean net expectancy per closed round trip `-₹2,254.56` (`-0.5833R`)". Neither figure is in the artifact, the registry row or the evaluation row; the artifact carries no per-trade ledger, and the committed aggregate implies a different number: `(975192.29 − 1000000)/15 = −₹1,653.85` per closed trade. Realised-only PnL could legitimately be more negative than the equity change if open positions were in profit at 2023-12-29 — but nothing committed proves it, and §9.1 requires a printed computation behind a status input. The Gate A *decision* is robust without it (PF `0.2146 < 1` and 15 ≥ 10 on the artifact's own figures), so no verdict flips; the accountability gap is real.
+
+### 72.4 Verdicts
+
+| Phase / item | Verdict |
+|---|---|
+| §71 work order (H-123, H-122, N-127, Trial #5 then #6) | **2 CLOSED, 1 PARTIAL (H-122 → N-128), 1 COMPLETE with a new HIGH (H-124)** |
+| Phase 2A/3B-2b anti-overfitting integrity | **PARTIAL** — bidirectional artifact/ledger agreement is real and gate-enforced; the witness and the Gate A metric are not externally rooted (N-128, N-129) |
+| Phase 3B-2b Trial #5 | **NO-GO and structurally null, correctly recorded as such** — but not a test of stop geometry, because no stop order exists and `k` never reached sizing |
+| Overall | **NO-GO** unchanged: `CRIT-STAT-01`, `CRIT-STAT-02`, `CRIT-DATA-05` FAIL; `CRIT-EXEC-03/04`, `CRIT-PROV-01`, `CRIT-SURV-01`, `CRIT-INFO-01`, `CRIT-OVERFIT-02`, `CRIT-OVERFIT-03` NOT RUN |
+
+**What would falsify me.** H-123 is wrong if any bundle can reach `CRIT-EXEC-03/04 PASS` without a parseable, ordered, session-bearing, fully sourced window — B, C, E, N1–N7 and N10 were exactly that attack and each is now `NOT RUN`. H-122/N-128 are mis-graded if a committed digest of the trials manifest exists anywhere in `configs/`, a gate, or CI — I found none, and dropping the two keys leaves the gate green. H-124 is wrong if any caller threads `atr_stop_multiple` into `DailyTPlus1OrderRunner` — the single construction in the repository does not, and the strategy object cannot reach sizing any other way. N-129 is wrong if `₹2,254.56` is derivable from a committed artifact or ledger — I searched the tree and found the number only in prose.
+
+### 72.5 Ordered work order
+
+1. **Close H-124 — one value for `k`, and make the row describe the run.** Thread `atr_stop_multiple` into the runner construction at `scripts/run_phase3b2_walkforward.py:537`, or refuse `--atr-stop-multiple` outright until a stop order exists; record `canonical_params` from the object that sizes, not from the strategy. Probe: a fixture with ATR/price > 6.25 % must show a **different fill quantity** at `k=3` than at `k=2`, and `registry_row.canonical_params.atr_stop_multiple == runner.k`; on the current corpus the same probe must show `RISK_BUDGET` never binding. Serves Phase 3B-2b and §8.2.
+2. **Implement the protective stop as an engine capability (ruling 1, 72.6).** A persisted stop order per open long, tested by the existing `ExecutionFillSimulator` `STOP_LOSS` path against each session's bar, refused when the session's low equals the lower circuit (§5.3), and reported as an exit delay rather than a fill. Probe: a frozen-bid session must leave the position open with a named deferral; a gap-through session must fill at the open, not at the stop. Serves §13.2 and any future stop-geometry hypothesis.
+3. **Close N-128 — root the witness.** Pin the trials-manifest `{evaluation_count, head_eval_hash}` in `configs/go_no_go_criteria.yaml` (or a committed attestation the gate re-derives), treat `evaluation_count == 0` as a witnessed zero rather than absent, and require `annualized_sharpe` to be present-and-equal for every post-sidecar artifact instead of skipping `null`. Probe: dropping the two keys, and nulling the artifact Sharpe, must each fail `G2A-6.7`. Serves Phase 2A.
+4. **Close N-129 — commit the ledger behind the gate input.** Write the per-trade record (entry/exit, costs, net PnL, R) beside the artifact so `-₹2,254.56` and `₹3,511.93` recompute from committed bytes, and have the artifact carry the expectancy figure it was judged on. Probe: recompute both figures from the committed file and compare to the note to the paise. Serves §9.1.
+5. **Do not execute Trial #6** (ruling 2, 72.6). The family stays failed at `N = 5`, `N_eval = 1`; any future hypothesis — including "a protective stop exists" — is registered as a **new** `seq 6` trial id with its own return series, never as #6 for the DSR counter.
+
+### 72.6 Auditor erratum E-1 and two rulings
+
+**E-1 (my error, recorded because §71 is the contract for this round).** §71.6.1 pre-registered Trial #5 on a premise I did not verify: "the 2.0× stop sits inside routine large-cap noise" and "every executed trade's stop price moves a further ~2.0–2.1 % of notional", closing with "the trial cannot be a null run of the H-117 class". The first sentence is false in this codebase — `DeliverySwingTrendStrategy` exits only on `close < slow_val` and no producer anywhere emits `OrderType.STOP_LOSS`, although `ExecutionFillSimulator` supports it (`simulator.py:275-296`). My "18 of 47 stop touches" measurement described a price level the engine never tests. The implementer found this, reported it, and correctly did not retune the spent trial. §71.6.1's parameter set was executed faithfully; the design was wrong. H-117 stands, and it now also has a second, independent failure mode (H-124).
+
+**Ruling 1 — should the strategy emit T+1 protective ATR stop-loss exit orders before stop parameters are tested again? Yes, and it is not optional.** Four reasons, in order of force:
+
+1. **§13.2 requires it as realism, independent of any hypothesis.** A multi-session delivery hold with no protective order models a strategy that can only exit on a moving-average cross, which is not a risk-managed swing position; the ledger's R-multiple is then computed from a stop distance that nothing ever enforces (`intended_risk` is a sizing artefact, not an order).
+2. **`k` is meaningless until a stop exists.** Today `atr_stop_multiple` affects neither exits (no stop order) nor entries' capital (weight cap binds below 6.25 % ATR), so every `k` sweep is null by construction — H-124 is the wiring half of that, the missing order is the other half.
+3. **The engine is already capable**, so this is not a second fill path (§7.4): `STOP_LOSS` exists in `order_types.py:92`, is validated in `order_intent.py:140-149`, and fills in `simulator.py:275-296` with gap handling (`open <= stop` → open; else `low <= stop` → stop). Adding a producer conforms to the single authoritative engine rather than forking it.
+4. **It must be built with the §5.3 constraint, not around it.** A stop sitting at the lower circuit cannot fill; the implementation must refuse to fill a stop when `low == lower_circuit_limit` (bid depth zero), leave the order pending, and surface the deferral in the session summary. A stop that "always fills" reproduces exactly the flaw §5.3 forbids, and it would *improve* measured expectancy by assuming an exit that the market may not offer.
+
+Two design constraints that follow from the point-in-time rules: the stop must be **persisted at entry** (stop = entry reference − `k`×ATR(14) at the signal session's close) and evaluated bar-by-bar from the entry session onward, never recomputed from a later close; and the R denominator used in reporting must be the *intended* stop distance that the order actually carries, which is what H-124 breaks today. Note this is a strategy/engine change, so per §13.6 and §8.2 it needs its own pre-registration and its own trial id — "a protective stop exists" is a different hypothesis from "3.0× beats 2.0×", and it cannot be smuggled into a spent id.
+
+**Ruling 2 — do not run Trial #6 for `N_eval = 2`; register a revised hypothesis instead.** Four reasons:
+
+1. **My own gate already answered.** §71.6.2 Gate A: net expectancy ≤ 0 → the family stops at `N = 5`. §14.5 makes a named gate the contract for the next round; the expectancy is negative on the artifact's own figures and the trial was registered and spent.
+2. **Spending it would manufacture `N_eval`, which is the thing DSR exists to punish.** Trial #5's `returns_digest` is byte-identical to trial #4's (`RET-V1-cf90af33…`), so the two-point Sharpe variance would be computed from two runs on the same 493-session, three-name fold, one of which is an exact copy. `CRIT-OVERFIT-02` would move from NOT RUN to computed at `N = 6, N_eval = 2` — a *smaller* deflated Sharpe than an honest two-hypothesis sample, and a purely cosmetic gain in apparent rigour (§8.2).
+3. **Trial #6 cannot measure 2022 even if run.** `ema_200` is first computable on 2022-10-21 in this corpus (no pre-2022 bars, §6.3 forbids back-filling), so a third of the window is structurally signal-free, and the residual 2023 comparison rests on the baseline's 5 closed trades — no power to attribute anything to the filter.
+4. **It is not the binding constraint.** The family has 3 entry-eligible names and 15 closed trades in two years against `CRIT-STAT-01 ≥ 100` (§13.4 breadth), and 494/494 in-sample sessions are unsourced so `CRIT-EXEC-03/04` and `CRIT-PROV-01` cannot be asserted at all. No stop-geometry or regime-filter change moves those. Breadth — sourced band history and a wider `EQ` universe — is what stands between this project and a verdictable run; stop realism is what stands between it and a *correct* one.
+
+So: freeze the family at `N = 5`, record Trial #5 as the null it was (done), close H-124 and implement ruling 1, then re-register a stop hypothesis as `seq 6` with a distinct return series. If a later round wants `CRIT-OVERFIT-02`, it should come from two genuinely different strategies on the same binding window, not from a duplicate.
+
+### 72.7 Probe hygiene
+
+Seven probe scripts (`probe_h123.py`, `probe_h122.py`, `probe_h122b.py`, `probe_h122c.py`, `probe_n127.py`, `probe_n127b.py`, `probe_wiring.py`, plus `probe_t5_null.py`) ran from `/tmp/s72`, outside the repository, and are disposable. Tampering was done only on `tempfile` copies of `data/trials` and `data/reference`; the committed registry, sidecar, anchors, manifest and corpus were read and never written. `git status` was empty at the start and end of the round; registry bytes were re-hashed before and after (`0a64ad3c…`, 7994 B). `evaluate_verdicts` was called with in-memory bundles only. No holdout partition was read. `CURRENT_STAGE_OF_WORK.md` was not edited.
+
+**Not measured, and not claimed:** whether a repository call site other than `run_phase3b2_walkforward.py` can construct a bundle without window keys (the public API was attacked, not every call site); whether a stop order implemented per ruling 1 would raise or lower this family's expectancy (it is not implemented, and I did not simulate one); whether `ema_200` yields the 27 crossovers my index-level reconstruction found once the engine's subsegment partitioning and ADTV filters apply; and any DSR at `N_eval ≥ 2`, which remains NOT RUN.
