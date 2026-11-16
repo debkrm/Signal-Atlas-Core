@@ -1,6 +1,8 @@
 {
-  "total_trials": 4,
-  "head_hash": "03dcf82861a4f684d154189629a200d415077f4ab690fd7791d914c7bf0cc266",
-  "last_trial_id": "TRIAL-PHASE3B2-SWING-TRIM-004",
-  "timestamp_utc": "2026-11-16T09:51:54.397689+00:00"
+  "total_trials": 5,
+  "head_hash": "815eef2bf078bc2a72b286b97c70908a761454e4c3f1c13318e6300523f64336",
+  "last_trial_id": "TRIAL-PHASE3B2-SWING-ATR3-005",
+  "timestamp_utc": "2026-11-16T16:12:03.919663+00:00",
+  "evaluation_count": 1,
+  "head_eval_hash": "2de8bf94b7daf0e5d9ffd96c06d6691f9bfc214f42c6a9edcd0a835b00e9c8d5"
 }
