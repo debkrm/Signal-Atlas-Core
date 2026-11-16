@@ -2,14 +2,14 @@
   "criteria_version": "1.1.0",
   "criteria_fingerprint": "CRIT-FPR-V1-b3f35df928c1ce126e0cbc9f46b4f47f901448d8201bf8922060abe79fcd6677",
   "calendar_fingerprint": "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad",
-  "timestamp_utc": "2026-11-16T05:53:35.045730+00:00",
+  "timestamp_utc": "2026-11-16T07:12:21.197323+00:00",
   "evaluation_start_date": "2022-01-03",
   "evaluation_end_date": "2024-12-31",
   "overall_verdict": "NO-GO",
   "summary_counts": {
-    "PASS": 16,
+    "PASS": 18,
     "FAIL": 2,
-    "NOT_RUN": 6
+    "NOT_RUN": 4
   },
   "evaluations": [
     {
@@ -71,11 +71,11 @@
       "criterion_id": "CRIT-STAT-05",
       "category": "Risk & Performance",
       "metric_name": "Annual Portfolio Turnover",
-      "computed_value": null,
+      "computed_value": "2.54",
       "threshold_value": "<= 12.0",
       "comparator": "<=",
-      "status": "NOT RUN",
-      "evidence": "Metric 'annual_turnover' not provided in results bundle.",
+      "status": "PASS",
+      "evidence": "Computed annual portfolio turnover: 2.54x.",
       "is_binding": true
     },
     {
@@ -93,11 +93,11 @@
       "criterion_id": "CRIT-EXEC-02",
       "category": "Execution Realism",
       "metric_name": "Min Traded Value (Cr)",
-      "computed_value": "40.32",
+      "computed_value": "139.09",
       "threshold_value": ">= 5.0",
       "comparator": ">=",
       "status": "PASS",
-      "evidence": "Minimum average daily traded turnover observed: \u20b940.32 Cr.",
+      "evidence": "Minimum average daily traded turnover observed: \u20b9139.09 Cr.",
       "is_binding": true
     },
     {
@@ -236,11 +236,11 @@
       "criterion_id": "CRIT-OVERFIT-01",
       "category": "Anti-Overfitting",
       "metric_name": "Trial Registry Accountability",
-      "computed_value": "N = 2",
+      "computed_value": "N = 3",
       "threshold_value": "N >= 2",
       "comparator": ">=",
       "status": "PASS",
-      "evidence": "Trial registry records 2 parameter sweeps/trials with full parameter accountability.",
+      "evidence": "Trial registry records 3 parameter sweeps/trials with full parameter accountability.",
       "is_binding": true
     },
     {
@@ -258,11 +258,11 @@
       "criterion_id": "CRIT-OVERFIT-03",
       "category": "Walk-Forward Stability",
       "metric_name": "Positive Out-of-Sample Folds Ratio",
-      "computed_value": null,
+      "computed_value": "1.0000",
       "threshold_value": ">= 0.80",
       "comparator": ">=",
-      "status": "NOT RUN",
-      "evidence": "Metric 'walk_forward_positive_fold_ratio' not provided in results bundle.",
+      "status": "PASS",
+      "evidence": "Walk-forward evaluation shows 100.00% of out-of-sample folds delivered positive edge (\u00a78.3).",
       "is_binding": true
     },
     {
@@ -279,7 +279,78 @@
   ],
   "metadata": {
     "binding_criteria_count": 23,
-    "binding_failed_count": 7,
+    "binding_failed_count": 5,
     "unverified_provenance_gating_applied": true
+  },
+  "coverage_diagnostics": {
+    "2022": {
+      "year": 2022,
+      "sessions": 248,
+      "band_covered_isins": 3,
+      "zero_ticket_sessions": 227,
+      "tickets_emitted": 20,
+      "tickets_filled": 20,
+      "tickets_rejected": 0,
+      "closed_trades": 10,
+      "cagr": "-0.0345631824870645891289758953",
+      "win_rate": "0",
+      "profit_factor": "0E+2",
+      "max_drawdown": "0.03536251901441910174202916810",
+      "coverage_notes": "Band-constrained: price band evidence restricted to F&O dynamic flexing anchor names (INFY, RELIANCE); cash names rejected/skipped per \u00a75.3 fail-closed invariants"
+    },
+    "2023": {
+      "year": 2023,
+      "sessions": 246,
+      "band_covered_isins": 3,
+      "zero_ticket_sessions": 234,
+      "tickets_emitted": 12,
+      "tickets_filled": 12,
+      "tickets_rejected": 0,
+      "closed_trades": 5,
+      "cagr": "0.009836598009552169457707084",
+      "win_rate": "0.4",
+      "profit_factor": "1.202894128000227101755780449",
+      "max_drawdown": "0.04115480800453974531801802628",
+      "coverage_notes": "Band-constrained: price band evidence restricted to F&O dynamic flexing anchor names (INFY, RELIANCE); cash names rejected/skipped per \u00a75.3 fail-closed invariants"
+    },
+    "2024": {
+      "year": 2024,
+      "sessions": 249,
+      "band_covered_isins": 91,
+      "zero_ticket_sessions": 18,
+      "tickets_emitted": 4293,
+      "tickets_filled": 367,
+      "tickets_rejected": 96,
+      "closed_trades": 175,
+      "cagr": "0.235343243809982783612084606",
+      "win_rate": "0.2685714285714285714285714286",
+      "profit_factor": "2.090399772074059798294761362",
+      "max_drawdown": "0.1236100250433281261863297744",
+      "coverage_notes": "Full cash universe coverage: 185 scrips supported by daily sec_list price band records"
+    }
+  },
+  "in_sample_metrics": {
+    "fold": "Fold 0 (In-Sample)",
+    "window": "2022-01-03 .. 2023-12-29",
+    "sessions": 493,
+    "start_equity": "1000000.00",
+    "end_equity": "975192.29",
+    "cagr": "-0.0126578513783100833588337349",
+    "max_drawdown": "0.04115480800453974531801802628",
+    "closed_trades": 15,
+    "win_rate": "0.1333333333333333333333333333",
+    "profit_factor": "0.2146402927805285752276267302"
+  },
+  "validation_metrics": {
+    "fold": "Fold 1 (Validation)",
+    "window": "2024-01-01 .. 2024-12-31",
+    "sessions": 249,
+    "start_equity": "975192.29",
+    "end_equity": "1204430.88",
+    "cagr": "0.236117805270221608968693976",
+    "max_drawdown": "0.1236100250433281261863297744",
+    "closed_trades": 175,
+    "win_rate": "0.2685714285714285714285714286",
+    "profit_factor": "2.090399772074059798294761362"
   }
 }

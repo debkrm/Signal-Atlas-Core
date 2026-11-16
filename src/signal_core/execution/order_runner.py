@@ -481,7 +481,7 @@ class DailyTPlus1OrderRunner:
                     order=order,
                     status=FillStatus.REJECTED_RISK_LIMIT,
                     fill_date=fill_result.fill_date,
-                    latency_sessions=fill_res.latency_sessions if 'fill_res' in locals() else fill_result.latency_sessions,
+                    latency_sessions=fill_result.latency_sessions,
                     filled_quantity=0,
                     unfilled_quantity=order.quantity,
                     executed_price=None,
@@ -490,6 +490,8 @@ class DailyTPlus1OrderRunner:
                     circuit_evidence_present=fill_result.circuit_evidence_present,
                     rejection_reason=str(exc),
                     fill_id=f"REJ_RISK_{order.order_id}_{fill_result.fill_date}" if order.order_id else None,
+                    effective_upper_circuit_limit=fill_result.effective_upper_circuit_limit,
+                    effective_lower_circuit_limit=fill_result.effective_lower_circuit_limit,
                 )
 
         return DailyExecutionTicket(

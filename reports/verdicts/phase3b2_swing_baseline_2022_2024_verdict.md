@@ -1,12 +1,12 @@
 # Signal Atlas — Automated Go/No-Go Research Verdict Report
 
 - **Overall Decision:** `NO-GO`
-- **Evaluated At (UTC):** `2026-11-16T05:53:35.045730+00:00`
+- **Evaluated At (UTC):** `2026-11-16T07:12:21.197323+00:00`
 - **Evaluation Window:** `2022-01-03` to `2024-12-31`
 - **Criteria Version:** `1.1.0`
 - **Criteria Fingerprint:** `CRIT-FPR-V1-b3f35df928c1ce126e0cbc9f46b4f47f901448d8201bf8922060abe79fcd6677`
 - **Calendar Fingerprint:** `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad`
-- **Summary Counts:** `PASS=16`, `FAIL=2`, `NOT RUN=6` (Total=24)
+- **Summary Counts:** `PASS=18`, `FAIL=2`, `NOT RUN=4` (Total=24)
 
 ## Detailed Criteria Evaluation Matrix
 
@@ -17,9 +17,9 @@
 | CRIT-STAT-02 | Risk & Performance | Profit Factor | `>= 1.50` | `1.7428` | **PASS** | YES | Computed gross profit / gross loss ratio: 1.7428. |
 | CRIT-STAT-03 | Risk & Performance | Max Single Position Weight | `<= 0.10` | `0.1130` | **FAIL** | YES | Maximum single position capital allocation observed: 0.1130. |
 | CRIT-STAT-04 | Risk & Performance | Max Portfolio Drawdown | `<= 0.25` | `0.1236` | **PASS** | YES | Maximum closed + open position drawdown observed: 12.36%. |
-| CRIT-STAT-05 | Risk & Performance | Annual Portfolio Turnover | `<= 12.0` | `—` | **NOT RUN** | YES | Metric 'annual_turnover' not provided in results bundle. |
+| CRIT-STAT-05 | Risk & Performance | Annual Portfolio Turnover | `<= 12.0` | `2.54` | **PASS** | YES | Computed annual portfolio turnover: 2.54x. |
 | CRIT-EXEC-01 | Execution Realism | Volume Participation Cap | `<= 0.03` | `0.0001` | **PASS** | YES | Peak session volume participation observed: 0.0001. |
-| CRIT-EXEC-02 | Execution Realism | Min Traded Value (Cr) | `>= 5.0` | `40.32` | **PASS** | YES | Minimum average daily traded turnover observed: ₹40.32 Cr. |
+| CRIT-EXEC-02 | Execution Realism | Min Traded Value (Cr) | `>= 5.0` | `139.09` | **PASS** | YES | Minimum average daily traded turnover observed: ₹139.09 Cr. |
 | CRIT-EXEC-03 | Execution Realism | Upper Circuit BUY Prohibition | `True` | `True` | **PASS** | YES | Simulator strictly enforces zero BUY fills when price equals Upper Circuit band (§5.3). |
 | CRIT-EXEC-04 | Execution Realism | Lower Circuit SELL Prohibition | `True` | `True` | **PASS** | YES | Simulator strictly enforces zero SELL / Stop-Loss fills when price equals Lower Circuit band (§5.3). |
 | CRIT-EXEC-05 | Execution Realism | Execution Latency (Sessions) | `>= 1` | `1` | **PASS** | YES | Orders execute at session T+1 following signal calculation at session T close. |
@@ -32,7 +32,28 @@
 | CRIT-DATA-05 | Universe Integrity | Traded EQ Resolution Pct | `>= 100.0%` | `92.8910%` | **FAIL** | YES | Active traded EQ scrips resolved to authoritative ISINs: 92.8910% (§41.3, Finding H-54). |
 | CRIT-DATA-06 | Calendar Integrity | Calendar Fingerprint Anchor | `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad` | `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad` | **PASS** | YES | Loaded calendar anchored and verified against criteria pins: full=CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad, sourced_1196=CAL-FPR-V1-2d5ac7ac32455327cd636d64a4e15a1f689f25eb42a815e151ea31c3cf61cda1. |
 | CRIT-PROV-01 | Data Provenance | Data Provenance Verification | `VERIFIED / EXCHANGE_ATTESTED` | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` | **NOT RUN** | YES | Dataset provenance is 'CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED'; per AGENTS.md Rule 6.5 and Audit §50.8 (Residual R-3), claims resting on unverified sources are NOT RUN for gating until verified archive proofs exist. |
-| CRIT-OVERFIT-01 | Anti-Overfitting | Trial Registry Accountability | `N >= 2` | `N = 2` | **PASS** | YES | Trial registry records 2 parameter sweeps/trials with full parameter accountability. |
+| CRIT-OVERFIT-01 | Anti-Overfitting | Trial Registry Accountability | `N >= 2` | `N = 3` | **PASS** | YES | Trial registry records 3 parameter sweeps/trials with full parameter accountability. |
 | CRIT-OVERFIT-02 | Anti-Overfitting | Deflated Sharpe Ratio (DSR) | `>= 0.95` | `—` | **NOT RUN** | YES | Metric 'deflated_sharpe_ratio' not provided in results bundle. |
-| CRIT-OVERFIT-03 | Walk-Forward Stability | Positive Out-of-Sample Folds Ratio | `>= 0.80` | `—` | **NOT RUN** | YES | Metric 'walk_forward_positive_fold_ratio' not provided in results bundle. |
+| CRIT-OVERFIT-03 | Walk-Forward Stability | Positive Out-of-Sample Folds Ratio | `>= 0.80` | `1.0000` | **PASS** | YES | Walk-forward evaluation shows 100.00% of out-of-sample folds delivered positive edge (§8.3). |
 | CRIT-INFO-01 | Execution Accounting | Circuit-Verified PnL Accounting | `True` | `—` | **NOT RUN** | NO | Informational metric 'circuit_verified_pnl' not provided in results bundle (pending historical circuit band verification across all fills). |
+
+
+## Walk-Forward Fold Performance (Audit §64 H-103)
+
+| Fold | Window | Sessions | Start Equity | End Equity | CAGR | Max Drawdown | Closed Trades | Win Rate | Profit Factor |
+|---|---|---|---|---|---|---|---|---|---|
+| Fold 0 (In-Sample) | 2022-01-03 .. 2023-12-29 | 493 | ₹1,000,000.00 | ₹975,192.29 | -1.27% | 4.12% | 15 | 13.33% | 0.2146 |
+| Fold 1 (Validation) | 2024-01-01 .. 2024-12-31 | 249 | ₹975,192.29 | ₹1,204,430.88 | 23.61% | 12.36% | 175 | 26.86% | 2.0904 |
+
+## Band Coverage Diagnostics & Disclosure (Audit §65 H-110)
+
+> [!NOTE]
+> Price band coverage across 2022–2024 reflects historical exchange report availability:
+> - **2022–2023**: Band-constrained. Price band evidence is restricted to the 2 F&O anchor names (INFY, RELIANCE) via the dynamic flexing framework (±10% initial limits). Cash-universe names without price band reports are rejected/skipped per §5.3 fail-closed invariants (22 fills executed).
+> - **2024**: Full cash-universe coverage (185 scrips) supported by daily `sec_list` price band records (86 fills executed).
+
+| Year | Sessions | Band-Covered ISINs | Zero-Ticket Sessions | Tickets Emitted | Tickets Filled | Tickets Rejected | Closed Trades | CAGR | Win Rate | Profit Factor | Max Drawdown | Coverage Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2022 | 248 | 3 | 227 | 20 | 20 | 0 | 10 | -3.46% | 0.00% | 0.0000 | 3.54% | Band-constrained: price band evidence restricted to F&O dynamic flexing anchor names (INFY, RELIANCE); cash names rejected/skipped per §5.3 fail-closed invariants |
+| 2023 | 246 | 3 | 234 | 12 | 12 | 0 | 5 | 0.98% | 40.00% | 1.2029 | 4.12% | Band-constrained: price band evidence restricted to F&O dynamic flexing anchor names (INFY, RELIANCE); cash names rejected/skipped per §5.3 fail-closed invariants |
+| 2024 | 249 | 91 | 18 | 4293 | 367 | 96 | 175 | 23.53% | 26.86% | 2.0904 | 12.36% | Full cash universe coverage: 185 scrips supported by daily sec_list price band records |

@@ -351,12 +351,16 @@ class ExecutionFillSimulator:
                     order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_UPPER_CIRCUIT,
                     f"Fill reference price ({ref_price}) is at or above Upper Circuit limit ({effective_upper}); zero ask liquidity",
                     circuit_evidence_present=circuit_evidence,
+                    effective_upper_circuit_limit=effective_upper,
+                    effective_lower_circuit_limit=effective_lower,
                 )
             if price_bar.high == price_bar.low:
                 return self._create_rejected_result(
                     order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_UPPER_CIRCUIT,
                     f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); buyers rationed",
                     circuit_evidence_present=circuit_evidence,
+                    effective_upper_circuit_limit=effective_upper,
+                    effective_lower_circuit_limit=effective_lower,
                 )
 
         # A SELL order cannot fill if fill reference price is at or through lower circuit limit
@@ -366,12 +370,16 @@ class ExecutionFillSimulator:
                     order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_LOWER_CIRCUIT,
                     f"Fill reference price ({ref_price}) is at or below Lower Circuit limit ({effective_lower}); sellers trapped",
                     circuit_evidence_present=circuit_evidence,
+                    effective_upper_circuit_limit=effective_upper,
+                    effective_lower_circuit_limit=effective_lower,
                 )
             if price_bar.high == price_bar.low:
                 return self._create_rejected_result(
                     order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_LOWER_CIRCUIT,
                     f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); sellers trapped",
                     circuit_evidence_present=circuit_evidence,
+                    effective_upper_circuit_limit=effective_upper,
+                    effective_lower_circuit_limit=effective_lower,
                 )
 
         # 2. Invariant 8a: Contradictory Price Band Invariants (Rule 5.3, 6.3, Finding H-97)
@@ -384,6 +392,8 @@ class ExecutionFillSimulator:
                 order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_PRICE_LIMIT,
                 f"Inverted price band: lower limit ({effective_lower}) > upper limit ({effective_upper})",
                 circuit_evidence_present=circuit_evidence,
+                effective_upper_circuit_limit=effective_upper,
+                effective_lower_circuit_limit=effective_lower,
             )
 
         if effective_upper is not None:
@@ -393,6 +403,8 @@ class ExecutionFillSimulator:
                     order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_PRICE_LIMIT,
                     f"Session price bar [{price_bar.low}, {price_bar.high}, open={price_bar.open}] contradicts upper circuit band ({effective_upper})",
                     circuit_evidence_present=circuit_evidence,
+                    effective_upper_circuit_limit=effective_upper,
+                    effective_lower_circuit_limit=effective_lower,
                 )
 
         if effective_lower is not None:
@@ -402,6 +414,8 @@ class ExecutionFillSimulator:
                     order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_PRICE_LIMIT,
                     f"Session price bar [{price_bar.low}, {price_bar.high}, open={price_bar.open}] contradicts lower circuit band ({effective_lower})",
                     circuit_evidence_present=circuit_evidence,
+                    effective_upper_circuit_limit=effective_upper,
+                    effective_lower_circuit_limit=effective_lower,
                 )
 
         # Invariant 9: Slippage Calculation & Execution Price Realism (Finding H-97)
@@ -449,12 +463,18 @@ class ExecutionFillSimulator:
             if order.side == OrderSide.BUY and executed_price > order.limit_price:
                 return self._create_rejected_result(
                     order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_PRICE_LIMIT,
-                    f"Adjusted execution price {executed_price} breached limit price {order.limit_price}"
+                    f"Adjusted execution price {executed_price} breached limit price {order.limit_price}",
+                    circuit_evidence_present=circuit_evidence,
+                    effective_upper_circuit_limit=effective_upper,
+                    effective_lower_circuit_limit=effective_lower,
                 )
             elif order.side == OrderSide.SELL and executed_price < order.limit_price:
                 return self._create_rejected_result(
                     order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_PRICE_LIMIT,
-                    f"Adjusted execution price {executed_price} fell below limit price {order.limit_price}"
+                    f"Adjusted execution price {executed_price} fell below limit price {order.limit_price}",
+                    circuit_evidence_present=circuit_evidence,
+                    effective_upper_circuit_limit=effective_upper,
+                    effective_lower_circuit_limit=effective_lower,
                 )
 
         # Invariant 10: Statutory Indian Transaction Costs
@@ -487,6 +507,8 @@ class ExecutionFillSimulator:
             circuit_evidence_present=circuit_evidence,
             rejection_reason=None,
             fill_id=fill_id,
+            effective_upper_circuit_limit=effective_upper,
+            effective_lower_circuit_limit=effective_lower,
         )
 
     def _create_rejected_result(
@@ -497,6 +519,8 @@ class ExecutionFillSimulator:
         status: FillStatus,
         reason: str,
         circuit_evidence_present: bool = False,
+        effective_upper_circuit_limit: Optional[Decimal] = None,
+        effective_lower_circuit_limit: Optional[Decimal] = None,
     ) -> ExecutionFillResult:
         if order.order_id is not None:
             order_key = (order.order_id, fill_date)
@@ -518,4 +542,6 @@ class ExecutionFillSimulator:
             circuit_evidence_present=circuit_evidence_present,
             rejection_reason=reason,
             fill_id=fill_id,
+            effective_upper_circuit_limit=effective_upper_circuit_limit,
+            effective_lower_circuit_limit=effective_lower_circuit_limit,
         )

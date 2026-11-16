@@ -396,14 +396,17 @@ class ISINTransitionEvent:
 
 
 def compute_security_master_fingerprint(
-    symbol_intervals: Sequence[SymbolInterval],
-    corporate_actions: Sequence[CorporateAction],
-    delisting_events: Sequence[DelistingEvent],
-    isin_transitions: Sequence[ISINTransitionEvent],
+    symbol_intervals: Union[Any, Sequence[SymbolInterval]],
+    corporate_actions: Optional[Sequence[CorporateAction]] = None,
+    delisting_events: Optional[Sequence[DelistingEvent]] = None,
+    isin_transitions: Optional[Sequence[ISINTransitionEvent]] = None,
     price_bands: Optional[Sequence[PriceBandRecord]] = None,
     price_band_intervals: Optional[Sequence[PriceBandInterval]] = None,
 ) -> str:
-    """Computes a deterministic SHA-256 fingerprint for security master state."""
+    """Computes a deterministic SHA-256 fingerprint for security master state (Finding N-104)."""
+    if isinstance(symbol_intervals, SecurityMaster):
+        return symbol_intervals.fingerprint
+
     hasher = hashlib.sha256()
     hasher.update(b"SEC_MASTER_V1:\n")
 
@@ -417,21 +420,21 @@ def compute_security_master_fingerprint(
 
     # 2. Corporate Actions
     hasher.update(b"CORP_ACTIONS:\n")
-    sorted_ca = sorted(corporate_actions, key=lambda ca: (ca.isin, ca.ex_date, ca.action_type.value))
+    sorted_ca = sorted(corporate_actions or (), key=lambda ca: (ca.isin, ca.ex_date, ca.action_type.value))
     for ca in sorted_ca:
         row = f"{ca.isin},{ca.ex_date.isoformat()},{ca.action_type.value},{ca.ratio_numerator},{ca.ratio_denominator}\n"
         hasher.update(row.encode("utf-8"))
 
     # 3. Delistings
     hasher.update(b"DELISTINGS:\n")
-    sorted_del = sorted(delisting_events, key=lambda d: (d.isin, d.effective_date))
+    sorted_del = sorted(delisting_events or (), key=lambda d: (d.isin, d.effective_date))
     for d in sorted_del:
         row = f"{d.isin},{d.effective_date.isoformat()},{d.reason}\n"
         hasher.update(row.encode("utf-8"))
 
     # 4. Transitions
     hasher.update(b"TRANSITIONS:\n")
-    sorted_tr = sorted(isin_transitions, key=lambda t: (t.old_isin, t.effective_date))
+    sorted_tr = sorted(isin_transitions or (), key=lambda t: (t.old_isin, t.effective_date))
     for t in sorted_tr:
         row = f"{t.old_isin},{t.new_isin},{t.effective_date.isoformat()},{t.reason}\n"
         hasher.update(row.encode("utf-8"))

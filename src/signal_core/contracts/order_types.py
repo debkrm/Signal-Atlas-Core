@@ -54,6 +54,25 @@ class TransactionCostBreakdownProtocol(Protocol):
     def to_paise(self) -> Any: ...
 
 
+@runtime_checkable
+class ExecutionFillResultProtocol(Protocol):
+    """Protocol matching ExecutionFillResult interface for execution fills (Findings N-100, H-111)."""
+    order: ExecutionOrder
+    status: FillStatus
+    fill_date: datetime.date
+    latency_sessions: int
+    filled_quantity: int
+    unfilled_quantity: int
+    executed_price: Optional[Decimal]
+    slippage: Optional[SlippageResultProtocol]
+    costs: Optional[TransactionCostBreakdownProtocol]
+    circuit_evidence_present: bool
+    rejection_reason: Optional[str]
+    fill_id: Optional[str]
+    effective_upper_circuit_limit: Optional[Decimal]
+    effective_lower_circuit_limit: Optional[Decimal]
+
+
 class OrderSide(str, Enum):
     """Direction of trade execution."""
     BUY = "BUY"
@@ -177,6 +196,8 @@ class ExecutionFillResult:
     circuit_evidence_present: bool
     rejection_reason: Optional[str]
     fill_id: Optional[str] = None
+    effective_upper_circuit_limit: Optional[Decimal] = None
+    effective_lower_circuit_limit: Optional[Decimal] = None
 
     def __post_init__(self) -> None:
         if self.fill_id is not None:

@@ -704,6 +704,8 @@ class WalkForwardEngine:
                             circuit_evidence_present=fill_res.circuit_evidence_present,
                             rejection_reason=str(exc),
                             fill_id=f"REJ_RISK_{ord_req.order_id}_{t}#1" if ord_req.order_id else None,
+                            effective_upper_circuit_limit=fill_res.effective_upper_circuit_limit,
+                            effective_lower_circuit_limit=fill_res.effective_lower_circuit_limit,
                         )
                         fold_trades[-1] = rejected_fill
 
