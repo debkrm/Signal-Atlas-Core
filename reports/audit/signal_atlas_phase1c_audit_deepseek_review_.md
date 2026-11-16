@@ -6389,3 +6389,149 @@ Items 1–3 decide whether Trial #3 is interpretable. Items 4–7 decide whether
 Probes ran as inline snippets and four scratch files (`.p_s65a…d.py`) against `df28439` through the public API; the only private access was reading `portfolio._positions`/`_quantity` on synthetic objects to place a holding and inspect a snapshot, never on a live run's book. The baseline was reproduced twice into `/tmp` with a copied registry (appending trials `003`/`004` there, not in the repository) so the committed registry gained no row and no committed verdict file was overwritten. Independent recomputation of the maximum position weight used only `Portfolio.snapshots`. All scratch files were deleted; the only working-tree change is this section.
 
 **Not measured, and not claimed:** the 2024 result has no out-of-sample partner (the holdout is sealed and only a human can unlock it), so nothing here speaks to whether the rule generalises; the derived ±10% flexing band is an approximation of NSE's flexing framework and the run's fills were not re-priced against published 2024 band files; the corporate-action corpus was again not compared against NSE's published action history; the `security_master` hardcoded F&O intervals (INFY, RELIANCE, HDFC, COCHINSHIP at `effective_from=2015-01-01`) were read but their publication basis was not verified; and no claim is made about per-name attribution within 2024.
+---
+
+## §66 — Commit `aff86d8` (tag `feat-s65-aff86d8`): §65 truth-pass items, Trial #3, and certification of the baseline artifact
+
+### 66.1 Baseline re-measured at `aff86d8`
+
+| Gate | Result |
+|---|---|
+| `python -m pytest -q` | **401 passed**, exit 0, 0 skipped, 0 xfailed |
+| `scripts/verify_audit_append_only.py` | exit 0; 0 deleted lines in tree/index and in every commit since `a3a40f1`; `ALL REPOSITORY FOUNDATION GATES PASSED (100%)`, including tag verification |
+| Working tree | clean at `aff86d8` before this section was written |
+| Diffstat `df28439..aff86d8` | 13 files, **+1066 / −79** (includes this auditor's §65, +138) |
+| Criteria file | **untouched** — not in the diffstat; no threshold was adjusted post hoc (§9.2) |
+| Criteria pin | `MAN-FPR-V1-78bf1bf5…` recomputed from `data/reference/manifest.jsonl`, **35,742 bytes**, matches |
+| Criteria fingerprint | `CRIT-FPR-V1-b3f35df9…`, version `1.1.0` — unchanged, so all 24 thresholds are the ones under which Trial #2 was judged |
+| Holdout seal | `holdout_start 2025-01-01 -> 2026-11-11`; `check_partition_access(VALIDATION)` allowed, `HOLDOUT` and `"holdout"` both raise `HoldoutSealedError` |
+| Trial registry | 3 rows, `prev_hash` chain intact 1→2→3; trial 3 carries `security_master_fingerprint SEC-MSTR-V1-7db16b03…` |
+
+**The artifact reproduces deterministically.** A fresh execution of `aff86d8` into a new registry and output directory differs from the committed JSON in **3 of 288 leaves**: `/timestamp_utc`, and `/evaluations[20]` (`CRIT-OVERFIT-01`) `computed_value`/`evidence` reading `N = 4` against the committed `N = 3`, which is simply my extra registry row. Every other leaf — all 24 statuses, all thresholds, the fold block, and the new `coverage_diagnostics` — is identical. That is a stronger reproducibility result than §65's, because the artifact now carries more computed content than it did.
+
+### 66.2 The §65.7 work order, measured at its named probe
+
+**1. H-111 — effective circuit limits on the fill result. CLOSED.** `ExecutionFillResult` carries `effective_upper_circuit_limit` / `effective_lower_circuit_limit`, populated on every rejection path *and* on the filled result, and preserved through the risk-rejection paths in both `order_runner.py` and `walkforward.py`. Measured over the committed run: **399 fills (209 BUY, 190 SELL), 0 missing an upper limit on a buy, 0 missing a lower limit on a sell, 0 both-None, 0 filled at or beyond its limit, `circuit_evidence_present = True` on all 399.** The criterion now iterates a non-empty judged set, and `len(buy_fills) > 0` / `len(sell_fills) > 0` makes an empty set FAIL rather than PASS. The §65 defect is gone at the consumer.
+
+**2. N-105 — `CRIT-DATA-02` from telemetry. CLOSED, with one residual.** `fail_closed_enforced` is now `fail_closed_on_unexplained and (unexplained_gap_refusals > 0 or continuous_instruments_passed > 0)`, and both counters are exported into the bundle. The engine is genuinely exercised: instrumenting `compute_standard_features_for_instrument` over the committed run gives **176 instruments passed, 20 refused** for unexplained gaps. The acceptance probe I set in §65.7 runs and flips: an otherwise identical run with `fail_closed_on_unexplained=False` reports **`CRIT-DATA-02 FAIL`** (`computed_value "False"`), and `True` → `PASS` on the normal run. Residual **R-66-A**: the `or continuous_instruments_passed > 0` disjunct makes the expression equal to `fail_closed_on_unexplained` on any dataset where something passes; the refusal count is now *reported* but not *required*. On this run refusals = 20 > 0, so the PASS is earned; on a gap-free dataset it would be earned by the flag alone.
+
+**3. N-105 — `CRIT-DATA-03` point-in-time universe. PARTIAL.** The type check is replaced by a per-session audit: every constituent the schedule names must resolve in the security master on that date, be series `EQ`, and be active. That is a real check over a non-empty set and it fails closed if a schedule names a suspended, delisted or `BE` name. What it still does not measure is the *selection process* — that constituents were derived from information available before the open on T rather than from the composition known afterwards. The schedule is validated for plausibility, not for point-in-time provenance. Partial, as §65.7 item 2 permitted ("measures constituent selection **or** becomes NOT RUN").
+
+**4. H-110 — per-year coverage disclosure. PARTIAL, and the disclosure contains false numbers.** See H-112 below. Per-year and per-fold blocks are now emitted into **both** the JSON (`coverage_diagnostics`, `in_sample_metrics`, `validation_metrics`) and the Markdown, and the numbers in those blocks reproduce exactly. But (a) no coverage criterion was added to `configs/go_no_go_criteria.yaml` — still 24 criteria, no coverage condition, so a 3-year window over 493 empty sessions still reports `CRIT-WINDOW-01 PASS`; and (b) the prose note accompanying the table states three counts that contradict the table four lines beneath it.
+
+**5. N-104 — security-master fingerprint in the trial record. CLOSED.** `TrialRecord.canonical_params` now includes `security_master_fingerprint`, and the fingerprint function hashes symbol intervals, corporate actions, delistings, ISIN transitions, **discrete price bands and price-band intervals** (source descriptor and percentage included). Trial 001/002 carry no such key; trial 003 carries `SEC-MSTR-V1-7db16b03d3727adfa57aad21d58d9420`. The rationale now names the change instead of repeating trial 001's text verbatim. Residual: `dataset_fingerprint` is still identical across all three trials (`DATA-CTNT-V2-659aea8f…`) because it covers bars only — two trials are now distinguishable, but only by looking at a second field.
+
+**6. `CRIT-STAT-05` annual turnover. CLOSED.** Computed from filled turnover against average portfolio equity, annualised on the 250-session convention: **2.54** against a `<= 12.0` limit. It responds to the ledger, not to a constant.
+
+**7. `CRIT-EXEC-02` 20-session ADTV. CLOSED.** Entry fills now take trailing-20-session traded turnover from the bar history (`traded_value`, falling back to `volume × close`), divided by 20 and converted to crore: minimum **₹139.09 Cr** against a `>= 5.0 Cr` floor. The single-day fallback survives only when fewer than 20 prior bars exist; on this corpus every entry had a full window. The §65 definition defect is fixed.
+
+**8. `CRIT-OVERFIT-03` fold-stability provider. PARTIAL — see N-108.** The provider exists and reads the fold block, but at one validation fold the statistic is degenerate.
+
+**9. `CRIT-OVERFIT-02` DSR. STILL NOT RUN.** Correctly, since it needs a returns digest the runner does not yet emit; it prints `NOT RUN` with the missing input named, which is what §65.7 item 8 asked for as the interim state.
+
+Net: 5 of 9 items closed at their consumers, 3 partial with named residuals, 1 correctly still `NOT RUN`. The two things §65 called decisive for the release condition — the empty judged fill set and the typed `fail_closed` literal — are both closed, and closed in a way a probe can falsify.
+### 66.3 Does Trial #3 satisfy the truth-pass release condition? **Yes — with two named residuals**
+
+The condition from §64.6/§65.3 was two-limbed: *every PASS reproduces from the run's own outputs, and flipping the run's behaviour flips the verdict.*
+
+**Limb 1 — every PASS is computed.** All 18 PASSes now descend from run state; none is a literal, a type check, or an empty iteration. The five defects §65 named are resolved:
+
+| Criterion | §65 defect | Measured at `aff86d8` |
+|---|---|---|
+| `CRIT-DATA-02` | `fail_closed_enforced = True` constant | derived from `unexplained_gap_refusals` (20) and passes (176); flip run → `FAIL` |
+| `CRIT-DATA-03` | `all(isinstance(..., tuple))` | per-session constituent audit against the dated master (resolver, series `EQ`, active) |
+| `CRIT-DATA-04` | vacuous conjunct | set scans over 152,767 bars for synthetic flags, non-positive prices and intrabar inconsistency, plus synthetic-band and dataset-level flags |
+| `CRIT-EXEC-03` | empty set (no fill carried a limit) | 209 buys, all with a numeric `effective_upper_circuit_limit`, none filled at or above it |
+| `CRIT-EXEC-04` | empty set | 190 sells, all with a numeric `effective_lower_circuit_limit`, none filled at or below it |
+
+**Limb 2 — the verdict flips with behaviour.** Demonstrated live at the runner, not in a copied expression: `fail_closed_on_unexplained=False` turns `CRIT-DATA-02` to `FAIL`. That single flag also changes the traded population — **399 fills become 406** (2022: 20 → 25, 2023: 12 → 20, 2024: 367 → 361) — so the criteria are reading a run whose composition responds to its own inputs. §65's synthetic-fill probe for `EXEC-03` is now covered by `test_h111_fill_at_uc_fails_crit_exec_03` (but see N-109 for what that test really proves).
+
+**Trial #3 is certified as the baseline artifact.** Its verdict is honest and computed: `PASS 18 / FAIL 2 / NOT RUN 4`, overall **`NO-GO`**, with `CRIT-STAT-03 0.1130 FAIL` (concentration), `CRIT-DATA-05 92.8910% FAIL` (resolution), and `CRIT-SURV-01` / `CRIT-PROV-01` / `CRIT-OVERFIT-02` / `CRIT-INFO-01` honestly `NOT RUN`. Nothing in this section changes that verdict, and nothing should: provenance is still unattested and surveillance history still absent.
+
+**Two residuals, named rather than implied, that do not block certification but do block any GO-oriented reading:**
+
+- **H-112** — the Markdown disclosure paragraph contains three hardcoded counts that contradict the table immediately below it.
+- **N-108** — `CRIT-OVERFIT-03 = 1.0000` is arithmetically degenerate at one validation fold.
+
+### 66.4 New findings
+
+**H-112 (HIGH, §9.1) — the report's own disclosure paragraph states three false counts.** The Band Coverage section prints:
+
+> **2022–2023**: … (22 fills executed)
+> **2024**: Full cash-universe coverage (185 scrips) … (86 fills executed)
+
+Measured from the same run, and printed in the table four lines below:
+
+```
+2022  tickets_filled 20   closed_trades 10   band_covered_isins 3
+2023  tickets_filled 12   closed_trades  5   band_covered_isins 3
+2024  tickets_filled 367  closed_trades 175  band_covered_isins 91
+```
+
+2022–2023 executed **32** fills, not 22. 2024 executed **367**, not 86. 2024's diagnostic counts **91** band-covered ISINs, not 185. All three numbers are string literals in `run_phase3b2_walkforward.py` (lines 1045 and 1169), inside the same `extra_md` block that formats the computed table — so the artifact simultaneously contains the truth and a typed contradiction of it. The §9.1 rule is about statuses and summary metrics; a fill count in prose is a summary metric, and this is precisely the failure mode §9.1 exists to prevent: a human-readable sentence that no computation backs, set beside computed numbers that disprove it.
+
+The disclosure *structure* is still the right fix and it is what §65.7 asked for. What it needs is for the sentence to be formatted from `coverage_diagnostics` rather than typed. **Accept:** every count in the disclosure prose is interpolated from the diagnostics dict, and a test asserts the interpolated value equals the table cell for each year.
+
+**N-108 (MEDIUM) — `CRIT-OVERFIT-03` is degenerate at a single validation fold.** `walk_forward_positive_fold_ratio = 1.00 if validation_metrics["cagr"] > 0 else 0.00`. With one validation window the statistic takes only the values {0, 1}, so a threshold of `>= 0.80` is satisfied by "2024 was profitable" and its evidence text — *"100.00% of out-of-sample folds delivered positive edge"* — describes one fold, which is not a ratio. Two further problems compound it: the in-sample fold is ignored entirely, so no *stability* across windows is measured; and 2024 is the window every trial in this repository has been judged on, so it is a calibration set being reported as an out-of-sample fold. **Accept:** the criterion requires at least two validation windows opened in sequence (or reports the count it was computed over), and its `computed_value` names the fold count so a reader cannot mistake 1/1 for a stability claim. Until a second validation window exists it should read `NOT RUN` with the reason named — which is honest, and does not change `NO-GO`.
+
+**N-109 (MEDIUM, §14.4) — the H-111 test reproduces the runner's expression instead of driving the runner.** `test_h111_fill_at_uc_fails_crit_exec_03` rebuilds `prohibit_buy_at_uc` inline from a hand-made `ExecutionFillResult` and asserts the test's own copy evaluates `False`. It proves the criteria layer maps `False → FAIL` and that a fill `at` the limit fails the copied predicate. It cannot detect the runner drifting away from that predicate. This is the same shape as the pass-through literal test §65 flagged. `test_n105_data02_...` is the counter-example done right — it calls `run_phase3b2_walkforward` twice with different flags and asserts the two statuses. **Accept:** the circuit test constructs a corpus in which a fill lands at the derived limit and asserts `CRIT-EXEC-03` `FAIL` on the returned `VerdictReport`.
+
+**N-110 (LOW) — `band_covered_isins` counts the universe as of the year's first session only.** The diagnostic iterates `pit_universe.get_universe_for_date(yr_sessions[0])` and asks whether a band resolves on any session of that year — so a name admitted mid-year is never counted. 2024 reports **91**. Measured from the security master directly: **2,753 band intervals across 2,749 ISINs**, 2,195 with a band percentage and 558 marked unconstrained; bands resolve for **3 ISINs on 2024-01-01, 4 on 2023-06-01, and 2,751 from 2024-01-16**. The 91 is therefore a sampling artifact, not a coverage measurement, and the number the note asserts (185) matches nothing measurable. **Accept:** count distinct ISINs that have a resolving band on *any* session of the year, and separately report how many of those the strategy actually evaluated.
+
+**H-113 (MEDIUM, §13.2) — the M&A path on a held position is unexercisable, and the gap guard is what hides it.** With `fail_closed_on_unexplained=False` the run now crashes: `CorporateActionError: Non-integral restatement from corporate action MERGER on INE001A01036: 27 shares × 42/25 = 45.36 shares (remainder 9/25)`. The HDFC→HDFC Bank merger is recorded as a 42/25 *quantity restatement inside one ISIN*, but a merger is a cash-and-share exchange across two ISINs with a cash settlement for the fractional entitlement; truncating or raising on 0.36 of a share is the wrong model in either direction. In the committed run the position never exists, because the HDFC series is refused upstream, so §13.2's "corporate actions that fall inside the holding window are applied to the open position" is verified only for splits, bonuses and dividends — never for a merger. I had to bypass the MERGER row to execute the DATA-02 flip probe, and I am recording that bypass here rather than presenting the flip as a clean run. **Accept:** mergers are modelled as ISIN transition plus cash-out of the fractional entitlement, and a held-position merger is exercised in a fixture; and the 20 unexplained-gap refusals are named as a disclosure line, because the honest universe is 176 names, not 196.
+### 66.5 Verdict, certification, and authorization
+
+| Phase | §65 | Verdict at `aff86d8` | Basis |
+|---|---|---|---|
+| Phase 2D Tier-A gating | NO-GO | **NO-GO** (unchanged) | pin recomputed; `CRIT-PROV-01 NOT RUN` |
+| Phase 3B-1 | GO | **GO stands** | 401 tests, no regression; clamp and holdout guard intact |
+| Phase 3B-2a | GO | **GO stands** | counters unchanged |
+| **Phase 3B-2b — truth-pass release condition** | NOT MET (12/16) | **MET (18/18 computed)** | empty judged fill set and typed `fail_closed` both closed at the consumer, flip probe demonstrated; residuals H-112, N-108 named |
+| **Phase 3B-2b — certified baseline artifact** | — | **Trial #3 CERTIFIED** | 3/288 leaves differ on re-execution (N and timestamp); verdict computed, honest, `NO-GO` |
+| Phase 3B-2b — strategy evidence | not established | **STILL NOT ESTABLISHED** | effective window 2024-wide; 4 sessions of band coverage before 2024-01-16; merger path unexercised |
+| Publication / GO-oriented claims | blocked | **STILL BLOCKED** | `CRIT-PROV-01` unattested, no real 2022–2024 surveillance intervals, no confirmatory out-of-sample window |
+| **Strategy-improvement trials (Trial #4+)** | — | **AUTHORIZED, EXPLORATORY ONLY** | see conditions below |
+
+**Certification, stated precisely.** `TRIAL-PHASE3B2-SWING-BASELINE-003` is certified as this repository's baseline verdict artifact. Every one of its 18 PASSes is computed from the run it describes; its 2 FAILs are correct and material (an 11.30% concentration against a 10% ceiling; 92.89% ISIN resolution); its 4 `NOT RUN`s name their missing inputs. Re-executing the commit reproduces the artifact to three leaves, all of them the trial count and the clock. A reader can reproduce the verdict in under a minute and cannot mistake it for a GO.
+
+It is not certified as a statement about the strategy's edge, for the reason §65 gave and nothing in this round changes: before 2024-01-16 only four ISINs have a resolvable band, so 493 of 743 sessions produced 32 fills in two names, and 92% of the 190 closed trades come from one calendar year that has now served as the evaluation fold for three consecutive trials.
+
+**Authorization for Trial #4 and beyond.** Strategy-improvement trials are authorized, with four binding conditions:
+
+1. **Exploratory, in-sample only.** Trials #4+ are evaluated on the 2022-01-03..2023-12-29 window. The 2024 fold is frozen for a single confirmation run of the *final* chosen configuration, after which it stops being usable as a test at all. Nothing produced by Trials #4+ may be reported as out-of-sample evidence, and no `GO` may be derived from them.
+2. **Every trial is registered before it is evaluated**, with a rationale naming what changed and the parameters that differ from Trial #3. Trial #3's row is now distinguishable from #1/#2 by `security_master_fingerprint`; later rows must be distinguishable by their actual change, not by prose.
+3. **The multiple-testing budget is reported at selection time.** `CRIT-OVERFIT-01` counts trials; when the final configuration is chosen, `CRIT-OVERFIT-02` must be computed as DSR/haircut over the *total* trial count with the returns digest, not left `NOT RUN`. Trial #3 has already consumed three trials of budget for zero parameter variation, and that must be visible in any later significance claim.
+4. **No confirmatory evaluation is possible yet.** The holdout window is `2025-01-01 .. 2026-11-11` and the fixture's last bar is 2024-12-31, so no data exists behind the seal. Until the holdout is ingested and a human unlocks it, `NOT RUN` on `SURV-01`/`PROV-01` and the absence of a confirmatory window are permanent features of every verdict this repository can produce, not obstacles a later trial will clear.
+
+Under those conditions the authorization is useful: Trials #4+ can establish whether any variant beats the 0.2146 in-sample profit factor out of sample on 2024, which is a real question and is answerable without touching the holdout.
+
+### 66.6 What would falsify this verdict
+
+- If the disclosure prose counts were interpolated from `coverage_diagnostics`, H-112 would be wrong: falsified by a per-year formatted sentence whose numbers equal the table cells and move when the run changes.
+- If `walk_forward_positive_fold_ratio` counted more than one validation fold, N-108's "degenerate" limb would be wrong: falsified by a ratio whose denominator exceeds 1.
+- If `test_h111_fill_at_uc_fails_crit_exec_03` called the runner, N-109 would be wrong: falsified by a `run_phase3b2_walkforward` call inside that test.
+- If a held position in any run passed through a MERGER without the gap guard refusing the ISIN first, H-113's "unexercisable" limb would be wrong: falsified by a completed run holding `INE001A01036` across 2023-07-13.
+- If `CRIT-DATA-02` still returned `True` with `fail_closed_on_unexplained=False`, the release-condition verdict would collapse: falsified by the flip run's status, measured here as `FAIL`.
+- If any fill carried a `None` effective limit, H-111's closure would be wrong: falsified by one such fill; measured 0 of 399.
+- If the committed JSON failed to reproduce beyond the N/timestamp leaves, the certification would be wrong: falsified by a fourth differing leaf.
+
+### 66.7 Ordered work order
+
+1. **H-112** — interpolate every count in the disclosure prose from `coverage_diagnostics`, and test that each interpolated number equals its table cell. Until this is fixed the committed artifact contains sentences no computation backs.
+2. **N-108** — make `CRIT-OVERFIT-03` report its fold count and read `NOT RUN` below two validation windows; a 1/1 ratio may not be printed as a stability claim.
+3. **H-113** — model a merger as ISIN transition plus cash settlement of the fractional entitlement, exercise a held-position merger in a fixture, and disclose the 20 unexplained-gap refusals as a line in the verdict artifact (honest universe: 176 names).
+4. **N-110** — count band coverage over a year's sessions rather than the first session's universe, and drop the unmeasurable "185 scrips" claim.
+5. **N-109** — drive `CRIT-EXEC-03/04` from a real runner invocation in the test, not from a copy of the expression.
+6. **`CRIT-DATA-03`** — close the remaining limb: record how the daily universe was derived at T and fail closed if it cannot be shown to predate the open.
+7. **CA-3** — bands for 2022–2023 from dated publications, or declare the window unsimulatable and let the criteria say so. This is the item that decides whether a three-year claim can ever be made.
+8. **CA-1** — extend the corporate-action corpus to the traded universe, dividends included.
+9. **`CRIT-OVERFIT-02`** — emit the returns digest so DSR/haircut can be computed at selection time over the full trial count.
+10. **N-106 / N-107** — `CRIT-DATA-05` at exchange resolution rather than refusal ratio; `EXEC-05` latency and slippage parameters re-checked against §7.3.
+
+Items 1–3 are what make Trial #4+ reportable. Items 4–5 are honesty of the artifact itself. Items 6–9 are what would let a three-year claim be made at all.
+
+### 66.8 Probe hygiene
+
+Probes ran as scratch files (`.p_s66a.py`…`.p_s66c.py`) plus inline snippets against `aff86d8` through the public API. Three full executions and one instrumented execution were performed into `/tmp/s66`, `/tmp/s66b`, each with a copied `trial_registry.jsonl` **and** its `.manifest`; those runs appended audit trials in `/tmp` only, so the committed registry gained no row and no committed verdict file was overwritten. The one private access was reading `SecurityMaster._price_bands` / `_price_band_intervals` to count coverage directly, and `Portfolio.apply_corporate_actions_for_session` was wrapped in one probe to bypass the MERGER row — disclosed in H-113 rather than hidden. All scratch files were deleted; the only working-tree change is this section.
+
+**Not measured, and not claimed:** the 2024 result still has no out-of-sample partner and none is possible until the holdout is ingested; the derived ±10% flexing band remains an approximation of NSE's framework and fills were not re-priced against published 2024 band files; the corporate-action corpus was not compared against NSE's published action history; the hardcoded F&O anchor intervals (three from 2015, one from 2017) remain unverified against their publications; the 2,749 cash-universe band intervals dated 2024-01-16 were not traced to individual `sec_list` records — their source descriptors were read but not audited; and no claim is made about per-name attribution inside 2024. `CRIT-OVERFIT-02`, `CRIT-SURV-01`, `CRIT-PROV-01` and `CRIT-INFO-01` remain `NOT RUN` for the reasons they state.
