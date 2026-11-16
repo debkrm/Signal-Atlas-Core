@@ -2,7 +2,7 @@
   "criteria_version": "1.1.1",
   "criteria_fingerprint": "CRIT-FPR-V1-28f7e7ad7418ca079b4154e08c29e8d89b2d096b464179aabafd3040f9e3c523",
   "calendar_fingerprint": "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad",
-  "timestamp_utc": "2026-11-16T13:46:01.285971+00:00",
+  "timestamp_utc": "2026-11-16T14:52:57.197019+00:00",
   "evaluation_start_date": "2022-01-03",
   "evaluation_end_date": "2023-12-29",
   "overall_verdict": "NO-GO",
@@ -108,7 +108,7 @@
       "threshold_value": "True",
       "comparator": "==",
       "status": "NOT RUN",
-      "evidence": "494 of 494 evaluated session(s) (2022-01-03..2023-12-29) have no sourced NSE price-band report; the only attested report is sec_list_20240116.csv. Circuit-prohibition compliance cannot be asserted over unsourced sessions, so this criterion is NOT RUN rather than PASS on an interpolated band (CA-3(c), \u00a76.3, \u00a710.8).",
+      "evidence": "494 of 494 evaluated session(s) (2022-01-03..2023-12-29) in the window 2022-01-03..2023-12-29 have no sourced NSE price-band report (earliest attested snapshot 2024-01-16); circuit-prohibition compliance cannot be asserted, so this criterion is NOT RUN (\u00a75.3, \u00a79.1, Finding H-120). Producer note: 494 of 494 evaluated session(s) (2022-01-03..2023-12-29) have no sourced NSE price-band report; the only attested report is sec_list_20240116.csv. Circuit-prohibition compliance cannot be asserted over unsourced sessions, so this criterion is NOT RUN rather than PASS on an interpolated band (CA-3(c), \u00a76.3, \u00a710.8).",
       "is_binding": true
     },
     {
@@ -119,7 +119,7 @@
       "threshold_value": "True",
       "comparator": "==",
       "status": "NOT RUN",
-      "evidence": "494 of 494 evaluated session(s) (2022-01-03..2023-12-29) have no sourced NSE price-band report; the only attested report is sec_list_20240116.csv. Circuit-prohibition compliance cannot be asserted over unsourced sessions, so this criterion is NOT RUN rather than PASS on an interpolated band (CA-3(c), \u00a76.3, \u00a710.8).",
+      "evidence": "494 of 494 evaluated session(s) (2022-01-03..2023-12-29) in the window 2022-01-03..2023-12-29 have no sourced NSE price-band report (earliest attested snapshot 2024-01-16); circuit-prohibition compliance cannot be asserted, so this criterion is NOT RUN (\u00a75.3, \u00a79.1, Finding H-120). Producer note: 494 of 494 evaluated session(s) (2022-01-03..2023-12-29) have no sourced NSE price-band report; the only attested report is sec_list_20240116.csv. Circuit-prohibition compliance cannot be asserted over unsourced sessions, so this criterion is NOT RUN rather than PASS on an interpolated band (CA-3(c), \u00a76.3, \u00a710.8).",
       "is_binding": true
     },
     {
@@ -337,7 +337,7 @@
       "win_rate": "0.00",
       "profit_factor": "0.00",
       "max_drawdown": "0.00",
-      "coverage_notes": "Cash universe coverage: 0 scrips supported by the attested 2024-01-16 sec_list snapshot applied as static bands (0 fills executed)"
+      "coverage_notes": "Cash universe coverage: 0 scrips supported by the attested 2024-01-16 sec_list snapshot applied as static bands (0 fills executed); unverified assumption: those bands held for every session from 2024-01-16 to 2024-12-31 (N-126)"
     }
   },
   "in_sample_metrics": {
@@ -357,8 +357,11 @@
   "continuous_instruments_passed": 179,
   "unexplained_gap_refusals": 17,
   "total_valid_isins": 196,
+  "trial_id": "TRIAL-PHASE3B2-SWING-TRIM-004",
   "returns_digest": "RET-V1-cf90af33f29e4684206b9f02f62638aae6fd54d22d529b89ae5061b95dd5acc7",
   "observation_count": 493,
+  "annualized_sharpe": "-0.6995862169544497756996745538",
+  "evaluated_trial_count": 0,
   "unsourced_band_sessions": 494,
   "circuit_band_coverage_note": "494 of 494 evaluated session(s) (2022-01-03..2023-12-29) have no sourced NSE price-band report; the only attested report is sec_list_20240116.csv. Circuit-prohibition compliance cannot be asserted over unsourced sessions, so this criterion is NOT RUN rather than PASS on an interpolated band (CA-3(c), \u00a76.3, \u00a710.8)."
 }

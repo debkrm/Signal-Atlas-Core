@@ -12,6 +12,9 @@ from dataclasses import dataclass
 import datetime
 from decimal import Decimal, ROUND_FLOOR, ROUND_CEILING
 from enum import Enum
+import json
+from pathlib import Path
+import re
 from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 
@@ -35,7 +38,38 @@ class PriceBandPublicationSource(str, Enum):
 # paths return 404 and the live endpoint always returns the current session's file — so sessions
 # before this date have no sourced band observation and cannot be treated as band-judged.
 # Sessions from this date use the attested static-band snapshot.
-SOURCED_PRICE_BAND_START = datetime.date(2024, 1, 16)
+#
+# N-126: the date is derived from the manifest artifact name (`sec_list_YYYYMMDD.csv`), so adding a
+# later snapshot to the corpus moves it without a hand edit. The literal is only a fallback for an
+# environment with no manifest (e.g. an installed package outside the repository).
+_FALLBACK_SOURCED_PRICE_BAND_START = datetime.date(2024, 1, 16)
+_MANIFEST_PATH = Path(__file__).resolve().parents[3] / "data" / "reference" / "manifest.jsonl"
+_SEC_LIST_ARTIFACT_RE = re.compile(r"sec_list_(\d{8})\.csv$")
+
+
+def derive_sourced_price_band_start(manifest_path: Optional[Union[str, Path]] = None) -> datetime.date:
+    """Earliest attested `sec_list_<date>.csv` snapshot date in the reference manifest (N-126)."""
+    path = Path(manifest_path) if manifest_path else _MANIFEST_PATH
+    try:
+        if not path.is_file():
+            return _FALLBACK_SOURCED_PRICE_BAND_START
+        dates = []
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if not isinstance(row, dict) or row.get("is_current") is not True:
+                    continue
+                match = _SEC_LIST_ARTIFACT_RE.search(str(row.get("artifact", "")))
+                if match:
+                    dates.append(datetime.datetime.strptime(match.group(1), "%Y%m%d").date())
+    except Exception:
+        return _FALLBACK_SOURCED_PRICE_BAND_START
+    return min(dates) if dates else _FALLBACK_SOURCED_PRICE_BAND_START
+
+
+SOURCED_PRICE_BAND_START = derive_sourced_price_band_start()
 
 
 def is_price_band_sourced(as_of: datetime.date) -> bool:

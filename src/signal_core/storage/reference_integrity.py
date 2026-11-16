@@ -77,7 +77,16 @@ def verify_manifest_artifacts(
                     f"Line {line_no}: malformed JSON in {mpath.name}: {exc}"
                 ) from exc
 
-            if row.get("is_current") is not True:
+            # N-124: `is_current` must be an explicit boolean. A missing or non-boolean flag is not
+            # history — it is an attestation the verifier cannot classify, so it fails closed rather
+            # than silently leaving the verified set.
+            is_current = row.get("is_current")
+            if not isinstance(is_current, bool):
+                raise ManifestIntegrityError(
+                    f"Line {line_no}: row for {row.get('artifact')!r} has no explicit boolean "
+                    f"'is_current' (got {is_current!r}); every row must state it (Finding N-124)"
+                )
+            if is_current is False:
                 superseded += 1
                 continue
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime
 from decimal import Decimal
 from pathlib import Path
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -26,7 +27,7 @@ from signal_core.contracts.price_bar import PriceBar
 from signal_core.execution.order_runner import ExecutionOrder
 from signal_core.execution.simulator import ExecutionFillResult, ExecutionFillSimulator, FillStatus
 from signal_core.portfolio.portfolio import Portfolio
-from signal_core.reporting.verdicts import VerdictStatus
+from signal_core.reporting.verdicts import VerdictStatus, evaluate_verdicts
 from signal_core.storage.calendar import load_anchored_nse_trading_calendar
 from signal_core.storage.security_master import (
     CorporateAction,
@@ -152,6 +153,29 @@ def test_h114_runner_evidence_reports_observed_violation_count(tmp_path: Path):
     assert "no sourced NSE price-band report" in exec4.evidence
     assert "Simulator strictly enforces" not in exec3.evidence
     assert "Simulator strictly enforces" not in exec4.evidence
+
+
+def test_n123_sourced_window_keeps_numeric_circuit_evidence():
+    """N-123: a band-sourced window still exercises N-118's numeric fill-count evidence."""
+    bundle = {
+        "evaluation_start_date": "2024-01-16",
+        "evaluation_end_date": "2024-03-29",
+        "prohibit_buy_at_upper_circuit": True,
+        "prohibit_sell_at_lower_circuit": True,
+        "upper_circuit_buy_judged_fills": 2,
+        "upper_circuit_buy_violating_fills": 0,
+        "upper_circuit_buy_missing_limit_fills": 0,
+        "lower_circuit_sell_judged_fills": 2,
+        "lower_circuit_sell_violating_fills": 0,
+        "lower_circuit_sell_missing_limit_fills": 0,
+    }
+    report = evaluate_verdicts(bundle)
+    exec3 = next(e for e in report.evaluations if e.criterion_id == "CRIT-EXEC-03")
+    exec4 = next(e for e in report.evaluations if e.criterion_id == "CRIT-EXEC-04")
+    assert exec3.status == VerdictStatus.PASS
+    assert exec4.status == VerdictStatus.PASS
+    assert exec3.evidence.startswith("0 of 2 judged BUY fill(s)"), exec3.evidence
+    assert re.match(r"^\d+ of \d+ judged SELL fill\(s\)", exec4.evidence), exec4.evidence
 
 
 def test_n111_rerender_unknown_trial_fails_closed(tmp_path: Path):

@@ -102,7 +102,9 @@ def test_verdict_report_reproducibility():
     # H-67: Unattested VERIFIED claim evaluates to NOT RUN and overall NO-GO
     assert report1.overall_verdict == OverallVerdict.NO_GO
     assert report1.summary_counts["FAIL"] == 0
-    assert report1.summary_counts["NOT_RUN"] == 2  # CRIT-PROV-01 and CRIT-INFO-01
+    # CRIT-PROV-01, CRIT-INFO-01, and CRIT-EXEC-03/04 (H-120: the window includes sessions with no
+    # sourced price-band report, so circuit compliance is unassertable).
+    assert report1.summary_counts["NOT_RUN"] == 4
     assert report1.evaluation_start_date == "2022-01-03"
     assert report1.evaluation_end_date == "2026-10-31"
     assert "- **Evaluation Window:** `2022-01-03` to `2026-10-31`" in report1.to_markdown()
@@ -314,8 +316,10 @@ def test_synthetic_fixture_end_to_end_regression():
     assert "CRIT-STAT-05" in passed_ids  # turnover
     assert "CRIT-EXEC-01" in passed_ids  # volume participation
     assert "CRIT-EXEC-02" in passed_ids  # daily turnover
-    assert "CRIT-EXEC-03" in passed_ids  # UC buy prohibition
-    assert "CRIT-EXEC-04" in passed_ids  # LC sell prohibition
+    # H-120 / N-121: the fixture judged 0 circuit fills and its window opens before the earliest
+    # attested band report, so the circuit criteria are NOT RUN rather than vacuously PASS.
+    assert "CRIT-EXEC-03" not in passed_ids
+    assert "CRIT-EXEC-04" not in passed_ids
     assert "CRIT-EXEC-05" in passed_ids  # latency >= 1
     assert "CRIT-COST-01" in passed_ids  # costs
     assert "CRIT-DATA-01" in passed_ids  # decimal
@@ -333,9 +337,11 @@ def test_synthetic_fixture_end_to_end_regression():
     # The ONLY NOT RUN entries must be:
     # 1. CRIT-PROV-01 (due to synthetic provenance being SOURCE_UNVERIFIED per Residual R-3)
     # 2. CRIT-INFO-01 (circuit_verified_pnl informational metric per DoD)
+    # 3. CRIT-EXEC-03/04 (H-120: the 2024 window opens before the earliest sourced band report,
+    #    and N-121 forbids PASS on zero judged fills)
     not_run_ids = {e.criterion_id for e in report.evaluations if e.status == VerdictStatus.NOT_RUN}
-    assert not_run_ids == {"CRIT-PROV-01", "CRIT-INFO-01"}, (
-        f"Unexpected NOT RUN metrics: {not_run_ids}. Only unverified provenance and circuit PnL should be NOT RUN."
+    assert not_run_ids == {"CRIT-PROV-01", "CRIT-INFO-01", "CRIT-EXEC-03", "CRIT-EXEC-04"}, (
+        f"Unexpected NOT RUN metrics: {not_run_ids}."
     )
 
 
@@ -786,6 +792,10 @@ def test_tier_a_report_omitted_engine_output_falsifier():
                 "not provided in results bundle" in ev.evidence
                 or "CONTENT_IDENTIFIED_ONLY" in ev.evidence
                 or "unverified" in ev.evidence.lower()
+                # H-120 / N-121: engine-derived band ineligibility and vacuous-fill refusals.
+                or "no sourced NSE price-band report" in ev.evidence
+                or "untested on this run" in ev.evidence
+                or "no sourced price-band report" in ev.evidence
             ), f"NOT_RUN criterion {ev.criterion_id} has unexpected evidence: {ev.evidence}"
 
     eval_stat1 = next(e for e in rep.evaluations if e.criterion_id == "CRIT-STAT-01")
@@ -802,7 +812,9 @@ def test_tier_a_report_omitted_engine_output_falsifier():
 
     eval_exec3 = next(e for e in rep.evaluations if e.criterion_id == "CRIT-EXEC-03")
     assert eval_exec3.status == VerdictStatus.NOT_RUN
-    assert "not provided in results bundle" in eval_exec3.evidence
+    # The engine derives band eligibility from the bundle's own window (H-120); even a fully
+    # sourced window cannot PASS on zero judged fills (N-121).
+    assert "no sourced NSE price-band report" in eval_exec3.evidence
 
     # 4. H-75 acceptance probe: criteria flag mutation alone does not alter evaluation status
     import dataclasses

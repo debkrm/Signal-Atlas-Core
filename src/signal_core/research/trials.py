@@ -33,6 +33,51 @@ from signal_core.research.containment import (
 GENESIS_PREV_HASH = "0" * 64
 
 
+def verify_evaluation_artifact_agreement(
+    registry: "TrialRegistry", artifact_root: Union[str, Path]
+) -> Tuple[int, Tuple[str, ...]]:
+    """
+    Cross-checks every appended evaluation against the verdict artifact for the same trial (N-125).
+
+    The sidecar's `sharpe_ratio` must equal the `annualized_sharpe` the run wrote into its verdict
+    JSON, so a scored figure can be traced to the report it was derived from. Returns
+    `(checked, messages)`; raises `TrialEvaluationError` on a missing or disagreeing artifact.
+    """
+    root = Path(artifact_root)
+    checked = 0
+    messages: List[str] = []
+    for trial_id, evaluation in registry._evaluations.items():
+        artifact = None
+        if root.is_dir():
+            for candidate in sorted(root.rglob("*.json")):
+                try:
+                    data = json.loads(candidate.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if isinstance(data, dict) and data.get("trial_id") == trial_id:
+                    artifact = data
+                    break
+        if artifact is None:
+            raise TrialEvaluationError(
+                f"Trial '{trial_id}' has an appended evaluation but no verdict artifact under {root} "
+                f"naming it; the scored figure is unattested (Finding N-125)."
+            )
+        recorded = artifact.get("annualized_sharpe")
+        if recorded is None:
+            raise TrialEvaluationError(
+                f"Verdict artifact for '{trial_id}' carries no 'annualized_sharpe'; the sidecar "
+                f"figure cannot be tied to its report (Finding N-125)."
+            )
+        if Decimal(str(recorded)) != evaluation.sharpe_ratio:
+            raise TrialEvaluationError(
+                f"Trial '{trial_id}': sidecar sharpe_ratio {evaluation.sharpe_ratio} does not equal "
+                f"the artifact's annualized_sharpe {recorded} (Finding N-125)."
+            )
+        checked += 1
+        messages.append(f"{trial_id}: sharpe {evaluation.sharpe_ratio} matches artifact")
+    return checked, tuple(messages)
+
+
 class TrialRegistryError(ValueError):
     """Base exception for trial registry and multi-hypothesis errors."""
     pass
@@ -310,6 +355,9 @@ class TrialRegistry:
         self._path = Path(file_path)
         self._manifest_path = self._path.with_name(self._path.name + ".manifest")
         self._evaluation_path = self._path.with_name(self._path.name + ".evaluations")
+        self._evaluation_manifest_path = self._path.with_name(
+            self._path.name + ".evaluations.manifest"
+        )
         self._records: List[TrialRecord] = []
         self._trial_ids: set[str] = set()
         self._evaluations: Dict[str, TrialEvaluation] = {}
@@ -329,6 +377,11 @@ class TrialRegistry:
     @property
     def evaluation_path(self) -> Path:
         return self._evaluation_path
+
+    @property
+    def evaluation_manifest_path(self) -> Path:
+        """External head anchor for the evaluation sidecar (Finding H-121)."""
+        return self._evaluation_manifest_path
 
     @property
     def total_trial_count(self) -> int:
@@ -505,10 +558,62 @@ class TrialRegistry:
         self._records = temp_records
         self._trial_ids = temp_trial_ids
 
+    def _load_evaluation_anchor(self) -> Optional[Dict[str, Any]]:
+        """Loads the external evaluation head anchor if it exists (Finding H-121)."""
+        if not self._evaluation_manifest_path.is_file():
+            return None
+        try:
+            data = json.loads(self._evaluation_manifest_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            raise RegistryTamperedError(
+                f"Malformed evaluation head anchor at {self._evaluation_manifest_path}: {e}"
+            ) from e
+        if not isinstance(data, dict):
+            raise RegistryTamperedError(
+                f"Evaluation head anchor at {self._evaluation_manifest_path} must be a JSON object."
+            )
+        return data
+
+    def _write_evaluation_anchor(
+        self, evaluation_count: int, head_eval_hash: str, byte_count: int, sha256: str
+    ) -> None:
+        """Writes the evaluation head anchor atomically via temp-file replace with fsync (H-121)."""
+        payload = {
+            "evaluation_count": evaluation_count,
+            "head_eval_hash": head_eval_hash,
+            "byte_count": byte_count,
+            "sha256": sha256,
+        }
+        anchor_json = json.dumps(payload, indent=2) + "\n"
+        self._evaluation_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_anchor = self._evaluation_manifest_path.with_name(
+            f".{self._evaluation_manifest_path.name}.tmp_{os.getpid()}_{time.time_ns()}"
+        )
+        try:
+            with temp_anchor.open("w", encoding="utf-8", newline="\n") as f:
+                f.write(anchor_json)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_anchor, self._evaluation_manifest_path)
+        except Exception:
+            if temp_anchor.exists():
+                try:
+                    temp_anchor.unlink()
+                except Exception:
+                    pass
+            raise
+
     def _load_evaluations(self) -> None:
-        """Loads and verifies the append-only post-evaluation sidecar (Finding H-119)."""
+        """Loads and verifies the append-only post-evaluation sidecar (Findings H-119, H-121)."""
         parsed: Dict[str, TrialEvaluation] = {}
+        anchor = self._load_evaluation_anchor()
         if not self._evaluation_path.exists():
+            if anchor is not None:
+                raise RegistryTamperedError(
+                    f"Evaluation ledger {self._evaluation_path} is absent, but its head anchor "
+                    f"{self._evaluation_manifest_path} attests "
+                    f"{anchor.get('evaluation_count')!r} row(s): whole-file deletion detected (Finding H-121)."
+                )
             self._evaluations = parsed
             return
 
@@ -591,6 +696,36 @@ class TrialRegistry:
             last_ts = rec_ts
             prev_hash = rec.eval_hash
             parsed[rec.trial_id] = rec
+
+        # H-121: the internal chain detects edits and interior deletions but not suffix truncation,
+        # which lowers N_eval and the DSR penalty. The external anchor is the only witness to the
+        # tail, so a sidecar without one fails closed.
+        if anchor is None:
+            raise RegistryTamperedError(
+                f"Evaluation ledger {self._evaluation_path} has no external head anchor at "
+                f"{self._evaluation_manifest_path}; its tail cannot be verified (Finding H-121)."
+            )
+        disk_count = sum(1 for l in raw_bytes.decode("utf-8").splitlines() if l.strip())
+        head_eval_hash = list(parsed.values())[-1].eval_hash if parsed else GENESIS_PREV_HASH
+        expected = {
+            "evaluation_count": disk_count,
+            "head_eval_hash": head_eval_hash,
+            "byte_count": len(raw_bytes),
+            "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+        }
+        for key, actual in expected.items():
+            attested = anchor.get(key)
+            if attested != actual:
+                raise RegistryTamperedError(
+                    f"Evaluation head anchor mismatch for '{key}': anchor attests {attested!r}, "
+                    f"on-disk ledger yields {actual!r} (truncation, extension or rewrite detected; "
+                    f"Finding H-121)."
+                )
+        if len(parsed) != disk_count:
+            raise RegistryTamperedError(
+                f"Evaluation ledger parsed {len(parsed)} unique trial(s) from {disk_count} line(s) "
+                f"but the anchor attests {anchor.get('evaluation_count')!r} (Finding H-121)."
+            )
 
         self._evaluations = parsed
 
@@ -918,6 +1053,14 @@ class TrialRegistry:
             f.write(json.dumps(record.to_dict(), separators=(",", ":")) + "\n")
             f.flush()
             os.fsync(f.fileno())
+
+        persisted = self._evaluation_path.read_bytes()
+        self._write_evaluation_anchor(
+            evaluation_count=len(self._evaluations) + 1,
+            head_eval_hash=eval_hash,
+            byte_count=len(persisted),
+            sha256=hashlib.sha256(persisted).hexdigest(),
+        )
 
         self._evaluations[trial_id] = record
         return record

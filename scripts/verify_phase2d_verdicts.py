@@ -203,8 +203,10 @@ def verify_gate_2d3_synthetic_fixture_end_to_end() -> bool:
     # Check that the ONLY NOT RUN entries are:
     # 1. CRIT-PROV-01 (unverified synthetic provenance)
     # 2. CRIT-INFO-01 (informational circuit_verified_pnl)
+    # 3. CRIT-EXEC-03/04 (H-120 window band ineligibility, and N-121: zero judged fills
+    #    cannot PASS)
     not_run_ids = {e.criterion_id for e in report.evaluations if e.status == VerdictStatus.NOT_RUN}
-    expected_not_run = {"CRIT-PROV-01", "CRIT-INFO-01"}
+    expected_not_run = {"CRIT-PROV-01", "CRIT-INFO-01", "CRIT-EXEC-03", "CRIT-EXEC-04"}
     if not_run_ids != expected_not_run:
         print(f"[FAIL] Unexpected NOT RUN criteria: {not_run_ids} != {expected_not_run}")
         return False

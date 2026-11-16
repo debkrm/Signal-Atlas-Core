@@ -421,6 +421,11 @@ def run_phase_2c_verification() -> bool:
         )
 
         # Audit §31 H-34: Criteria version dynamically defaulted from criteria in force
+        # Audit §69 N-122: this compares the row's `criteria_version` to the version of the criteria
+        # file loaded *now*. It therefore verifies label agreement at check time, not that the version
+        # was pinned when the trial was registered: a criteria edit between registration and this
+        # check moves both sides together and stays invisible, because the row carries no criteria
+        # fingerprint. Pinning it would require a frozen version -> fingerprint table in the row.
         criteria_version_correct = (
             trial_rec.criteria_version == load_go_no_go_criteria().version
         )

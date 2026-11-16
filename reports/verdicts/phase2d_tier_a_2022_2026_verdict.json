@@ -108,7 +108,7 @@
       "threshold_value": "True",
       "comparator": "==",
       "status": "NOT RUN",
-      "evidence": "Flag 'prohibit_buy_at_upper_circuit' not provided in results bundle.",
+      "evidence": "505 of 1196 evaluated session(s) (2022-01-03..2024-01-15) in the window 2022-01-03..2026-10-30 have no sourced NSE price-band report (earliest attested snapshot 2024-01-16); circuit-prohibition compliance cannot be asserted, so this criterion is NOT RUN (\u00a75.3, \u00a79.1, Finding H-120).",
       "is_binding": true
     },
     {
@@ -119,7 +119,7 @@
       "threshold_value": "True",
       "comparator": "==",
       "status": "NOT RUN",
-      "evidence": "Flag 'prohibit_sell_at_lower_circuit' not provided in results bundle.",
+      "evidence": "505 of 1196 evaluated session(s) (2022-01-03..2024-01-15) in the window 2022-01-03..2026-10-30 have no sourced NSE price-band report (earliest attested snapshot 2024-01-16); circuit-prohibition compliance cannot be asserted, so this criterion is NOT RUN (\u00a75.3, \u00a79.1, Finding H-120).",
       "is_binding": true
     },
     {

@@ -22,6 +22,7 @@ from signal_core.contracts.criteria import (
     compute_manifest_fingerprint,
     load_go_no_go_criteria,
 )
+from signal_core.contracts.price_band import SOURCED_PRICE_BAND_START, is_price_band_sourced
 from signal_core.contracts.provenance import ProvenanceStatus
 from signal_core.storage.calendar import (
     CalendarError,
@@ -578,16 +579,38 @@ def evaluate_verdicts(
             is_binding=True,
         ))
 
+    # H-120: band eligibility is derived from the engine's own evaluation window, not from a
+    # producer-supplied string. Any session without a sourced price-band report makes circuit
+    # compliance unassertable for the whole window. The bundle note, when present, becomes
+    # supporting evidence only — it can no longer select the branch (§5.3, §9.1, §14.4).
+    band_window_note: Optional[str] = None
+    if start_d is not None and end_d is not None and start_d <= end_d:
+        window_sessions = active_cal.session_records_in_range(start_d, end_d)
+        unsourced_dates = [r.date for r in window_sessions if not is_price_band_sourced(r.date)]
+        if unsourced_dates:
+            band_window_note = (
+                f"{len(unsourced_dates)} of {len(window_sessions)} evaluated session(s) "
+                f"({unsourced_dates[0].isoformat()}..{unsourced_dates[-1].isoformat()}) in the window "
+                f"{start_d.isoformat()}..{end_d.isoformat()} have no sourced NSE price-band report "
+                f"(earliest attested snapshot {SOURCED_PRICE_BAND_START.isoformat()}); circuit-prohibition "
+                f"compliance cannot be asserted, so this criterion is NOT RUN (§5.3, §9.1, Finding H-120)."
+            )
+    bundle_band_note = results_bundle.get("circuit_band_coverage_note")
+    bundle_band_note = bundle_band_note.strip() if isinstance(bundle_band_note, str) else ""
+    band_block_reason: Optional[str] = band_window_note or (bundle_band_note or None)
+    band_block_evidence: Optional[str] = None
+    if band_block_reason is not None:
+        band_block_evidence = band_block_reason
+        if bundle_band_note and bundle_band_note != band_block_reason:
+            band_block_evidence = f"{band_block_reason} Producer note: {bundle_band_note}"
+
     # B3: Circuit Filter BUY Prohibition (prohibit_buy_at_upper_circuit)
     # Finding N-118: evidence is always the computed fill-count sentence. A caller that supplies the
     # flag but no judged/violating counts cannot substantiate the claim, so the criterion is NOT RUN.
     val_buy_uc = results_bundle.get("prohibit_buy_at_upper_circuit")
     buy_uc_judged = results_bundle.get("upper_circuit_buy_judged_fills")
     buy_uc_violations = results_bundle.get("upper_circuit_buy_violating_fills")
-    # CA-3(c): an evaluation window containing sessions with no sourced price-band report cannot
-    # substantiate a circuit claim, so the criterion is NOT RUN even if counts are supplied.
-    buy_uc_band_note = results_bundle.get("circuit_band_coverage_note")
-    if isinstance(buy_uc_band_note, str) and buy_uc_band_note.strip():
+    if band_block_evidence is not None:
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-EXEC-03",
             category="Execution Realism",
@@ -596,27 +619,44 @@ def evaluate_verdicts(
             threshold_value=str(active_criteria.prohibit_buy_at_upper_circuit),
             comparator="==",
             status=VerdictStatus.NOT_RUN,
-            evidence=buy_uc_band_note,
+            evidence=band_block_evidence,
             is_binding=True,
         ))
     elif val_buy_uc is not None and buy_uc_judged is not None and buy_uc_violations is not None:
-        status = VerdictStatus.PASS if val_buy_uc is True else VerdictStatus.FAIL
-        buy_uc_missing = results_bundle.get("upper_circuit_buy_missing_limit_fills", 0)
-        buy_uc_evidence = (
-            f"{buy_uc_violations} of {buy_uc_judged} judged BUY fill(s) executed at or above the effective "
-            f"Upper Circuit limit and {buy_uc_missing} carried no limit (zero such fills permitted, §5.3, Finding H-114)."
-        )
-        evaluations.append(CriterionEvaluation(
-            criterion_id="CRIT-EXEC-03",
-            category="Execution Realism",
-            metric_name="Upper Circuit BUY Prohibition",
-            computed_value=str(val_buy_uc),
-            threshold_value=str(active_criteria.prohibit_buy_at_upper_circuit),
-            comparator="==",
-            status=status,
-            evidence=buy_uc_evidence,
-            is_binding=True,
-        ))
+        if int(buy_uc_judged) == 0:
+            # N-121: a PASS over zero judged fills is vacuous — nothing was tested.
+            evaluations.append(CriterionEvaluation(
+                criterion_id="CRIT-EXEC-03",
+                category="Execution Realism",
+                metric_name="Upper Circuit BUY Prohibition",
+                computed_value=None,
+                threshold_value=str(active_criteria.prohibit_buy_at_upper_circuit),
+                comparator="==",
+                status=VerdictStatus.NOT_RUN,
+                evidence=(
+                    "0 BUY fills judged against an effective Upper Circuit limit; the prohibition is "
+                    "untested on this run rather than satisfied (§9.1, Finding N-121)."
+                ),
+                is_binding=True,
+            ))
+        else:
+            status = VerdictStatus.PASS if val_buy_uc is True else VerdictStatus.FAIL
+            buy_uc_missing = results_bundle.get("upper_circuit_buy_missing_limit_fills", 0)
+            buy_uc_evidence = (
+                f"{buy_uc_violations} of {buy_uc_judged} judged BUY fill(s) executed at or above the effective "
+                f"Upper Circuit limit and {buy_uc_missing} carried no limit (zero such fills permitted, §5.3, Finding H-114)."
+            )
+            evaluations.append(CriterionEvaluation(
+                criterion_id="CRIT-EXEC-03",
+                category="Execution Realism",
+                metric_name="Upper Circuit BUY Prohibition",
+                computed_value=str(val_buy_uc),
+                threshold_value=str(active_criteria.prohibit_buy_at_upper_circuit),
+                comparator="==",
+                status=status,
+                evidence=buy_uc_evidence,
+                is_binding=True,
+            ))
     elif val_buy_uc is not None:
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-EXEC-03",
@@ -650,8 +690,7 @@ def evaluate_verdicts(
     val_sell_lc = results_bundle.get("prohibit_sell_at_lower_circuit")
     sell_lc_judged = results_bundle.get("lower_circuit_sell_judged_fills")
     sell_lc_violations = results_bundle.get("lower_circuit_sell_violating_fills")
-    sell_lc_band_note = results_bundle.get("circuit_band_coverage_note")
-    if isinstance(sell_lc_band_note, str) and sell_lc_band_note.strip():
+    if band_block_evidence is not None:
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-EXEC-04",
             category="Execution Realism",
@@ -660,27 +699,44 @@ def evaluate_verdicts(
             threshold_value=str(active_criteria.prohibit_sell_at_lower_circuit),
             comparator="==",
             status=VerdictStatus.NOT_RUN,
-            evidence=sell_lc_band_note,
+            evidence=band_block_evidence,
             is_binding=True,
         ))
     elif val_sell_lc is not None and sell_lc_judged is not None and sell_lc_violations is not None:
-        status = VerdictStatus.PASS if val_sell_lc is True else VerdictStatus.FAIL
-        sell_lc_missing = results_bundle.get("lower_circuit_sell_missing_limit_fills", 0)
-        sell_lc_evidence = (
-            f"{sell_lc_violations} of {sell_lc_judged} judged SELL fill(s) executed at or below the effective "
-            f"Lower Circuit limit and {sell_lc_missing} carried no limit (zero such fills permitted, §5.3, Finding H-114)."
-        )
-        evaluations.append(CriterionEvaluation(
-            criterion_id="CRIT-EXEC-04",
-            category="Execution Realism",
-            metric_name="Lower Circuit SELL Prohibition",
-            computed_value=str(val_sell_lc),
-            threshold_value=str(active_criteria.prohibit_sell_at_lower_circuit),
-            comparator="==",
-            status=status,
-            evidence=sell_lc_evidence,
-            is_binding=True,
-        ))
+        if int(sell_lc_judged) == 0:
+            # N-121: a PASS over zero judged fills is vacuous — nothing was tested.
+            evaluations.append(CriterionEvaluation(
+                criterion_id="CRIT-EXEC-04",
+                category="Execution Realism",
+                metric_name="Lower Circuit SELL Prohibition",
+                computed_value=None,
+                threshold_value=str(active_criteria.prohibit_sell_at_lower_circuit),
+                comparator="==",
+                status=VerdictStatus.NOT_RUN,
+                evidence=(
+                    "0 SELL fills judged against an effective Lower Circuit limit; the prohibition is "
+                    "untested on this run rather than satisfied (§9.1, Finding N-121)."
+                ),
+                is_binding=True,
+            ))
+        else:
+            status = VerdictStatus.PASS if val_sell_lc is True else VerdictStatus.FAIL
+            sell_lc_missing = results_bundle.get("lower_circuit_sell_missing_limit_fills", 0)
+            sell_lc_evidence = (
+                f"{sell_lc_violations} of {sell_lc_judged} judged SELL fill(s) executed at or below the effective "
+                f"Lower Circuit limit and {sell_lc_missing} carried no limit (zero such fills permitted, §5.3, Finding H-114)."
+            )
+            evaluations.append(CriterionEvaluation(
+                criterion_id="CRIT-EXEC-04",
+                category="Execution Realism",
+                metric_name="Lower Circuit SELL Prohibition",
+                computed_value=str(val_sell_lc),
+                threshold_value=str(active_criteria.prohibit_sell_at_lower_circuit),
+                comparator="==",
+                status=status,
+                evidence=sell_lc_evidence,
+                is_binding=True,
+            ))
     elif val_sell_lc is not None:
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-EXEC-04",

@@ -1194,7 +1194,8 @@ def run_phase3b2_walkforward(
                 f"invariants ({yr_filled} fills executed); circuit criteria are NOT RUN for these sessions"
                 if yr in (2022, 2023)
                 else f"Cash universe coverage: {len(yr_band_isins)} scrips supported by the attested 2024-01-16 "
-                f"sec_list snapshot applied as static bands ({yr_filled} fills executed)"
+                f"sec_list snapshot applied as static bands ({yr_filled} fills executed); unverified "
+                f"assumption: those bands held for every session from 2024-01-16 to 2024-12-31 (N-126)"
             ),
         }
 
@@ -1323,8 +1324,13 @@ def run_phase3b2_walkforward(
         report_dict["continuous_instruments_passed"] = continuous_instruments_passed
         report_dict["unexplained_gap_refusals"] = unexplained_gap_refusals
         report_dict["total_valid_isins"] = total_valid_isins
+        report_dict["trial_id"] = trial_id
         report_dict["returns_digest"] = returns_digest
         report_dict["observation_count"] = observation_count
+        # N-125: the Sharpe a sidecar evaluation was derived from must be visible in the artifact
+        # that justifies it, so the two can be compared rather than trusted independently.
+        report_dict["annualized_sharpe"] = str(annualized_sr) if annualized_sr is not None else None
+        report_dict["evaluated_trial_count"] = registry.evaluated_trial_count
         report_dict["unsourced_band_sessions"] = len(unsourced_band_sessions)
         report_dict["circuit_band_coverage_note"] = circuit_band_coverage_note
 
@@ -1382,7 +1388,7 @@ def run_phase3b2_walkforward(
             "> [!NOTE]",
             "> Price band coverage across 2022–2024 reflects historical exchange report availability:",
             f"> - **2022–2023**: Band-ineligible (CA-3(c)). No sourced NSE price-band report exists; only the dynamic flexing anchor names ({band_symbols_2022_2023_text}) carry ±10% derived limits. Cash-universe names without price band reports are rejected/skipped per §5.3 fail-closed invariants ({fills_2022_2023} fills executed), and `CRIT-EXEC-03`/`-04` are `NOT RUN` over these sessions.",
-            f"> - **2024**: Cash-universe coverage ({band_isins_2024} scrips) supported by the attested 2024-01-16 `sec_list` snapshot applied as static bands ({fills_2024} fills executed).",
+            f"> - **2024**: Cash-universe coverage ({band_isins_2024} scrips) supported by the attested 2024-01-16 `sec_list` snapshot applied as static bands ({fills_2024} fills executed). Unverified assumption (N-126): those bands held for every session from 2024-01-16 to 2024-12-31; the fold's first fifteen sessions (2024-01-01..2024-01-15) are unsourced and band-ineligible.",
             f"> - **Universe Integrity & Gap Filtering**: {continuous_instruments_passed} continuous active instruments evaluated out of {total_valid_isins} valid ISINs ({unexplained_gap_refusals} instruments refused due to unexplained missing sessions per §6.3 fail-closed invariants).",
             "",
             "| Year | Sessions | Band-Covered ISINs | Zero-Ticket Sessions | Tickets Emitted | Tickets Filled | Tickets Rejected | Closed Trades | CAGR | Win Rate | Profit Factor | Max Drawdown | Coverage Notes |",

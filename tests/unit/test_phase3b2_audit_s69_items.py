@@ -29,13 +29,16 @@ if str(REPO_ROOT) not in sys.path:
 from signal_core.contracts.criteria import load_go_no_go_criteria
 from signal_core.contracts.price_band import (
     SOURCED_PRICE_BAND_START,
+    derive_sourced_price_band_start,
     is_price_band_sourced,
 )
 from signal_core.reporting.verdicts import VerdictStatus, evaluate_verdicts
 from signal_core.research.significance import evaluate_strategy_significance
 from signal_core.research.trials import (
+    RegistryTamperedError,
     TrialEvaluationError,
     TrialRegistry,
+    verify_evaluation_artifact_agreement,
 )
 from signal_core.storage.reference_integrity import (
     ManifestIntegrityError,
@@ -136,6 +139,81 @@ def test_h119_append_only_scoring_increments_evaluated_count(tmp_path: Path):
         )
 
 
+def _scored_registry(tmp_path: Path, count: int = 3) -> TrialRegistry:
+    registry = TrialRegistry(tmp_path / "trial_registry.jsonl")
+    for i in range(count):
+        _register(registry, f"TRIAL-H121-{i}", f"2026-11-16T10:0{i}:00+00:00")
+    for i in range(count):
+        registry.append_trial_evaluation(
+            f"TRIAL-H121-{i}",
+            Decimal(str(0.5 + i)),
+            f"RET-V1-h121-{i}",
+            10,
+            f"2026-11-16T10:1{i}:00+00:00",
+        )
+    return registry
+
+
+def test_h121_suffix_truncation_is_detected(tmp_path: Path):
+    registry = _scored_registry(tmp_path)
+    sidecar = registry.evaluation_path
+    lines = sidecar.read_bytes().splitlines(keepends=True)
+    sidecar.write_bytes(b"".join(lines[:-1]))
+
+    with pytest.raises(RegistryTamperedError, match="anchor"):
+        TrialRegistry(tmp_path / "trial_registry.jsonl")
+    # The in-memory instance must also refuse rather than report True over a truncated ledger.
+    with pytest.raises(RegistryTamperedError, match="anchor"):
+        registry.verify_integrity()
+
+
+def test_h121_whole_sidecar_deletion_is_detected(tmp_path: Path):
+    registry = _scored_registry(tmp_path)
+    registry.evaluation_path.unlink()
+
+    with pytest.raises(RegistryTamperedError, match="whole-file deletion"):
+        TrialRegistry(tmp_path / "trial_registry.jsonl")
+
+
+def test_h121_missing_anchor_fails_closed(tmp_path: Path):
+    registry = _scored_registry(tmp_path)
+    registry.evaluation_manifest_path.unlink()
+
+    with pytest.raises(RegistryTamperedError, match="no external head anchor"):
+        TrialRegistry(tmp_path / "trial_registry.jsonl")
+
+
+def test_h121_anchor_records_count_head_and_bytes(tmp_path: Path):
+    import json as _json
+
+    registry = _scored_registry(tmp_path)
+    anchor = _json.loads(registry.evaluation_manifest_path.read_text(encoding="utf-8"))
+    assert anchor["evaluation_count"] == 3
+    assert anchor["head_eval_hash"] == registry.get_evaluation("TRIAL-H121-2").eval_hash
+    assert anchor["byte_count"] == registry.evaluation_path.stat().st_size
+    assert len(anchor["sha256"]) == 64
+
+
+def test_n125_artifact_sharpe_must_match_sidecar(tmp_path: Path):
+    import json as _json
+
+    registry = _scored_registry(tmp_path, count=2)
+    art_dir = tmp_path / "verdicts"
+    art_dir.mkdir()
+    for tid, sharpe in (("TRIAL-H121-0", "0.5"), ("TRIAL-H121-1", "1.5")):
+        (art_dir / f"{tid}.json").write_text(
+            _json.dumps({"trial_id": tid, "annualized_sharpe": sharpe}), encoding="utf-8"
+        )
+    checked, _ = verify_evaluation_artifact_agreement(registry, art_dir)
+    assert checked == 2
+
+    (art_dir / "TRIAL-H121-1.json").write_text(
+        _json.dumps({"trial_id": "TRIAL-H121-1", "annualized_sharpe": "9.99"}), encoding="utf-8"
+    )
+    with pytest.raises(TrialEvaluationError, match="does not equal"):
+        verify_evaluation_artifact_agreement(registry, art_dir)
+
+
 def test_h119_scored_trials_make_dsr_computable(tmp_path: Path):
     registry = TrialRegistry(tmp_path / "trial_registry.jsonl")
     _register(registry, "TRIAL-S69-A", "2026-11-16T10:00:00+00:00")
@@ -170,28 +248,71 @@ def test_ca3c_band_sourcing_boundary():
     assert SOURCED_PRICE_BAND_START == datetime.date(2024, 1, 16)
     assert not is_price_band_sourced(datetime.date(2024, 1, 15))
     assert is_price_band_sourced(datetime.date(2024, 1, 16))
+    # N-126: the constant is derived from the manifest snapshot name, not hand-typed.
+    manifest = REPO_ROOT / "data" / "reference" / "manifest.jsonl"
+    assert derive_sourced_price_band_start(manifest) == SOURCED_PRICE_BAND_START
 
 
-def test_ca3c_circuit_criteria_not_run_without_sourced_bands():
-    note = (
-        "10 of 10 evaluated session(s) (2022-01-03..2022-01-14) have no sourced NSE price-band "
-        "report; the only attested report is sec_list_20240116.csv."
-    )
+_COUNTS = {
+    "prohibit_buy_at_upper_circuit": True,
+    "prohibit_sell_at_lower_circuit": True,
+    "upper_circuit_buy_judged_fills": 2,
+    "upper_circuit_buy_violating_fills": 0,
+    "lower_circuit_sell_judged_fills": 2,
+    "lower_circuit_sell_violating_fills": 0,
+}
+
+
+def test_h120_unsourced_window_forces_not_run_without_producer_note():
+    """The engine, not the caller, decides band eligibility (Finding H-120)."""
     bundle = {
-        "prohibit_buy_at_upper_circuit": True,
-        "prohibit_sell_at_lower_circuit": True,
-        "upper_circuit_buy_judged_fills": 5,
-        "upper_circuit_buy_violating_fills": 0,
-        "lower_circuit_sell_judged_fills": 5,
-        "lower_circuit_sell_violating_fills": 0,
+        **_COUNTS,
+        "evaluation_start_date": "2022-01-03",
+        "evaluation_end_date": "2023-12-29",
     }
-    sourced = evaluate_verdicts(bundle)
-    assert next(e for e in sourced.evaluations if e.criterion_id == "CRIT-EXEC-03").status == VerdictStatus.PASS
-
-    unsourced = evaluate_verdicts({**bundle, "circuit_band_coverage_note": note})
-    exec3 = next(e for e in unsourced.evaluations if e.criterion_id == "CRIT-EXEC-03")
-    exec4 = next(e for e in unsourced.evaluations if e.criterion_id == "CRIT-EXEC-04")
+    report = evaluate_verdicts(bundle)
+    exec3 = next(e for e in report.evaluations if e.criterion_id == "CRIT-EXEC-03")
+    exec4 = next(e for e in report.evaluations if e.criterion_id == "CRIT-EXEC-04")
     assert exec3.status == VerdictStatus.NOT_RUN
     assert exec4.status == VerdictStatus.NOT_RUN
-    assert exec3.evidence == note
-    assert exec4.evidence == note
+    assert "no sourced NSE price-band report" in exec3.evidence
+    assert "no sourced NSE price-band report" in exec4.evidence
+    assert "H-120" in exec3.evidence
+
+    # A producer note is evidence, not the trigger: it cannot lift the window-derived refusal.
+    with_note = evaluate_verdicts({**bundle, "circuit_band_coverage_note": "producer says fine"})
+    assert next(
+        e for e in with_note.evaluations if e.criterion_id == "CRIT-EXEC-03"
+    ).status == VerdictStatus.NOT_RUN
+
+
+def test_h120_sourced_window_passes_on_judged_fills():
+    bundle = {
+        **_COUNTS,
+        "evaluation_start_date": "2024-01-16",
+        "evaluation_end_date": "2024-03-29",
+    }
+    report = evaluate_verdicts(bundle)
+    exec3 = next(e for e in report.evaluations if e.criterion_id == "CRIT-EXEC-03")
+    exec4 = next(e for e in report.evaluations if e.criterion_id == "CRIT-EXEC-04")
+    assert exec3.status == VerdictStatus.PASS
+    assert exec4.status == VerdictStatus.PASS
+    assert exec3.evidence.startswith("0 of 2 judged BUY fill(s)")
+    assert exec4.evidence.startswith("0 of 2 judged SELL fill(s)")
+
+
+def test_n121_zero_judged_fills_cannot_pass():
+    bundle = {
+        **_COUNTS,
+        "evaluation_start_date": "2024-01-16",
+        "evaluation_end_date": "2024-03-29",
+        "upper_circuit_buy_judged_fills": 0,
+        "lower_circuit_sell_judged_fills": 0,
+    }
+    report = evaluate_verdicts(bundle)
+    exec3 = next(e for e in report.evaluations if e.criterion_id == "CRIT-EXEC-03")
+    exec4 = next(e for e in report.evaluations if e.criterion_id == "CRIT-EXEC-04")
+    assert exec3.status == VerdictStatus.NOT_RUN
+    assert exec4.status == VerdictStatus.NOT_RUN
+    assert "0 BUY fills judged" in exec3.evidence
+    assert "0 SELL fills judged" in exec4.evidence

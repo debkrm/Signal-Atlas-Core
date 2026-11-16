@@ -33,11 +33,15 @@ from signal_core.research.trials import (
     DuplicateTrialError,
     GENESIS_PREV_HASH,
     RegistryTamperedError,
+    TrialEvaluationError,
     TrialRecord,
     TrialRegistry,
     TrialRegistryError,
     _compute_record_hash,
+    verify_evaluation_artifact_agreement,
 )
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def run_phase_2a_verification() -> bool:
@@ -558,6 +562,133 @@ def run_phase_2a_verification() -> bool:
             g2a5_5_ok = True
         print(f"[{'PASS' if g2a5_5_ok else 'FAIL'}] G2A-5.6 (A-18): Non-monotonic back-dated timestamp rejected fail-closed.")
         all_passed = all_passed and g2a5_5_ok
+
+        # ----------------------------------------------------------------------
+        # GATE G2A-6: Evaluation Ledger Head Anchor (H-121) & Sharpe Attestation (N-125)
+        # ----------------------------------------------------------------------
+        print("\n--- Gate G2A-6: Evaluation Ledger Head Anchor & Sharpe Attestation ---")
+
+        reg_ev_p = temp_dir / "reg_eval.jsonl"
+        reg_ev = TrialRegistry(reg_ev_p)
+        for i, tid in enumerate(("T_EVAL_1", "T_EVAL_2")):
+            reg_ev.append_trial(
+                trial_id=tid,
+                hypothesis=f"H{tid}",
+                rationale="R",
+                partition="IN_SAMPLE",
+                canonical_params={"variant": i},
+                fold_spec_fingerprint="F1",
+                dataset_fingerprint="D1",
+                criteria_version="1.1.0",
+                timestamp_utc=f"2026-11-11T11:0{i}:00Z",
+            )
+        reg_ev.append_trial_evaluation("T_EVAL_1", Decimal("0.40"), "RET-E1", 10, "2026-11-11T11:10:00Z")
+        reg_ev.append_trial_evaluation("T_EVAL_2", Decimal("1.10"), "RET-E2", 12, "2026-11-11T11:11:00Z")
+
+        anchor_path = reg_ev.evaluation_manifest_path
+        g2a6_1_ok = anchor_path.is_file() and reg_ev.verify_integrity() and reg_ev.evaluated_trial_count == 2
+        print(
+            f"[{'PASS' if g2a6_1_ok else 'FAIL'}] G2A-6.1 (H-121): External head anchor present and "
+            f"verifies N_eval={reg_ev.evaluated_trial_count} against {anchor_path.name}."
+        )
+        all_passed = all_passed and g2a6_1_ok
+
+        sidecar_path = reg_ev.evaluation_path
+        full_bytes = sidecar_path.read_bytes()
+
+        # H-121 probe: suffix truncation must be detected by constructor and verify_integrity()
+        sidecar_path.write_bytes(b"".join(full_bytes.splitlines(keepends=True)[:-1]))
+        trunc_ctor = trunc_recheck = False
+        try:
+            TrialRegistry(reg_ev_p)
+        except RegistryTamperedError:
+            trunc_ctor = True
+        try:
+            reg_ev.verify_integrity()
+        except RegistryTamperedError:
+            trunc_recheck = True
+        g2a6_2_ok = trunc_ctor and trunc_recheck
+        print(
+            f"[{'PASS' if g2a6_2_ok else 'FAIL'}] G2A-6.2 (H-121): Deleted last sidecar line rejected "
+            f"by TrialRegistry()={trunc_ctor} and verify_integrity()={trunc_recheck}."
+        )
+        all_passed = all_passed and g2a6_2_ok
+        sidecar_path.write_bytes(full_bytes)
+
+        # H-121 probe: whole-file deletion while the anchor survives must be detected
+        sidecar_path.unlink()
+        delete_detected = False
+        try:
+            TrialRegistry(reg_ev_p)
+        except RegistryTamperedError:
+            delete_detected = True
+        g2a6_3_ok = delete_detected and not sidecar_path.exists()
+        print(
+            f"[{'PASS' if g2a6_3_ok else 'FAIL'}] G2A-6.3 (H-121): Deleted sidecar file rejected against "
+            f"surviving anchor (detected={delete_detected})."
+        )
+        all_passed = all_passed and g2a6_3_ok
+        sidecar_path.write_bytes(full_bytes)
+
+        # N-125: sidecar figure must equal the annualized_sharpe in the trial's verdict artifact
+        art_dir = temp_dir / "artifacts"
+        art_dir.mkdir(parents=True, exist_ok=True)
+        for tid, sr in (("T_EVAL_1", "0.40"), ("T_EVAL_2", "1.10")):
+            (art_dir / f"{tid}.json").write_text(
+                json.dumps({"trial_id": tid, "annualized_sharpe": sr}), encoding="utf-8"
+            )
+        checked, _msgs = verify_evaluation_artifact_agreement(reg_ev, art_dir)
+        g2a6_4_ok = checked == 2
+        print(
+            f"[{'PASS' if g2a6_4_ok else 'FAIL'}] G2A-6.4 (N-125): {checked} evaluation(s) matched "
+            f"their artifact 'annualized_sharpe'."
+        )
+        all_passed = all_passed and g2a6_4_ok
+
+        (art_dir / "T_EVAL_2.json").write_text(
+            json.dumps({"trial_id": "T_EVAL_2", "annualized_sharpe": "9.99"}), encoding="utf-8"
+        )
+        mismatch_detected = False
+        try:
+            verify_evaluation_artifact_agreement(reg_ev, art_dir)
+        except TrialEvaluationError:
+            mismatch_detected = True
+        print(
+            f"[{'PASS' if mismatch_detected else 'FAIL'}] G2A-6.5 (N-125): Disagreeing artifact Sharpe "
+            f"rejected fail-closed."
+        )
+        all_passed = all_passed and mismatch_detected
+
+        # Committed registry: anchor and sidecar integrity, plus artifact agreement when scored
+        repo_reg_path = REPO_ROOT / "data" / "trials" / "trial_registry.jsonl"
+        if repo_reg_path.is_file():
+            repo_reg = TrialRegistry(repo_reg_path)
+            g2a6_5_ok = repo_reg.verify_integrity()
+            print(
+                f"[{'PASS' if g2a6_5_ok else 'FAIL'}] G2A-6.6 (H-121): Committed registry verifies "
+                f"with N={repo_reg.total_trial_count}, N_eval={repo_reg.evaluated_trial_count}, "
+                f"sidecar_present={repo_reg.evaluation_path.exists()}."
+            )
+            all_passed = all_passed and g2a6_5_ok
+            if repo_reg.evaluated_trial_count:
+                agreement_ok = False
+                try:
+                    n_checked, _ = verify_evaluation_artifact_agreement(
+                        repo_reg, REPO_ROOT / "reports" / "verdicts"
+                    )
+                    agreement_ok = n_checked == repo_reg.evaluated_trial_count
+                except TrialEvaluationError as exc:
+                    print(f"[FAIL] G2A-6.7 (N-125): {exc}")
+                print(
+                    f"[{'PASS' if agreement_ok else 'FAIL'}] G2A-6.7 (N-125): Committed sidecar figures "
+                    f"agree with their verdict artifacts."
+                )
+                all_passed = all_passed and agreement_ok
+            else:
+                print(
+                    "[N/A] G2A-6.7 (N-125): 0 scored trials in the committed registry; artifact "
+                    "agreement is NOT APPLICABLE (no sidecar figure exists to attest)."
+                )
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
