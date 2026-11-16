@@ -1070,7 +1070,7 @@ def load_cash_universe_price_band_intervals(
                     PriceBandInterval(
                         isin=isin,
                         band_percentage=None,
-                        effective_from=datetime.date(2022, 1, 1),
+                        effective_from=datetime.date(2024, 1, 16),
                         effective_to=None,
                         is_unconstrained=True,
                         source_descriptor=fo_source,
@@ -1083,29 +1083,13 @@ def load_cash_universe_price_band_intervals(
                     PriceBandInterval(
                         isin=isin,
                         band_percentage=pct,
-                        effective_from=datetime.date(2022, 1, 1),
+                        effective_from=datetime.date(2024, 1, 16),
                         effective_to=None,
                         is_unconstrained=False,
                         source_descriptor=static_source,
                         circular_ref="NSE/CML/SEC_LIST_20240116",
                     )
                 )
-
-    # For any remaining cash universe EQ isins not in sec_list, assign standard 20% band
-    for isin in sorted(all_cash_isins):
-        if isin not in seen_isins:
-            seen_isins.add(isin)
-            intervals.append(
-                PriceBandInterval(
-                    isin=isin,
-                    band_percentage=Decimal("20.00"),
-                    effective_from=datetime.date(2022, 1, 1),
-                    effective_to=None,
-                    is_unconstrained=False,
-                    source_descriptor=static_source,
-                    circular_ref="NSE/CML/SEC_LIST_20240116",
-                )
-            )
 
     return tuple(intervals)
 

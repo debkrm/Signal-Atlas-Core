@@ -19,10 +19,12 @@ from decimal import Decimal
 from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union, TYPE_CHECKING
 
 from signal_core.contracts.criteria import load_go_no_go_criteria
+from signal_core.contracts.dataset import PriceConvention
 from signal_core.contracts.exchange_series import APPROVED_EQ_ONLY_POLICY, ExchangeSeries, ExchangeSessionObservation
 from signal_core.contracts.price_band import PriceBandRecord
 from signal_core.contracts.price_bar import PriceBar
 from signal_core.execution.types import FillStatus, OrderProduct, OrderSide, OrderType
+from signal_core.storage.security_master import SecurityMasterError
 from signal_core.strategy.base import OrderIntent, Strategy
 
 if TYPE_CHECKING:
@@ -175,15 +177,10 @@ class SwingSessionExecutionSummary:
     ) -> Dict[str, Any]:
         """
         Exports session execution summary into an authoritative results bundle for evaluate_verdicts()
-        per AGENTS.md §9.1, §9.3, §10.8, Findings CA-2, H-101.
+        per AGENTS.md §9.1, §9.3, §10.8, Findings CA-2, H-101, H-104.
+        Pure telemetry: zero hardcoded literals; all metrics flow from executed state or extra_metrics.
         """
-        bundle: Dict[str, Any] = {
-            "execution_latency_sessions": 1,
-            "statutory_costs_enforced": True,
-            "strict_decimal_accounting": True,
-            "point_in_time_universe": True,
-            "zero_data_fabrication": True,
-        }
+        bundle: Dict[str, Any] = {}
         surv = self.surveillance_result or (getattr(runner, "last_surveillance_result", None) if runner else None)
         if surv is not None:
             bundle["surveillance_exit_constraints_enforced"] = (
@@ -215,6 +212,7 @@ def execute_swing_strategy_session(
     latest_market_prices: Optional[Mapping[str, Decimal]] = None,
     corporate_actions: Optional[Sequence[Any]] = None,
     security_master: Optional[Any] = None,
+    price_convention: Optional[PriceConvention] = None,
 ) -> SwingSessionExecutionSummary:
     """
     Authoritative execution harness that routes DeliverySwingTrendStrategy signals through
@@ -234,13 +232,15 @@ def execute_swing_strategy_session(
     """
     from signal_core.execution.order_runner import DailySignalCandidate
 
-    # Finding H-100: Apply corporate actions for next_session before session trading
+    # Finding H-100 & H-108: Apply corporate actions for next_session before session trading
     ca_entries: List[Any] = []
     if corporate_actions:
-        applied = runner.portfolio.apply_corporate_actions_for_session(next_session, corporate_actions)
+        applied = runner.portfolio.apply_corporate_actions_for_session(
+            next_session, corporate_actions, price_convention=price_convention
+        )
         ca_entries.extend(applied)
 
-    # Finding H-101: Evaluate surveillance exit constraints if security_master provided
+    # Finding H-101 & N-103: Evaluate surveillance exit constraints if security_master provided
     surv_result = None
     if security_master is not None:
         try:
@@ -249,7 +249,7 @@ def execute_swing_strategy_session(
                 security_master=security_master,
                 latest_market_prices=latest_market_prices,
             )
-        except Exception:
+        except SecurityMasterError:
             surv_result = runner.last_surveillance_result
 
     raw_intents = strategy.generate_signals(

@@ -13,6 +13,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from signal_core.contracts.criteria import GoNoGoCriteria, load_go_no_go_criteria
+from signal_core.contracts.dataset import PriceConvention
 from signal_core.contracts.order_types import ExecutionFillResult, FillStatus, OrderSide
 from signal_core.portfolio.ledger import CashLedger, PAISE_PRECISION, _quantize_paise
 from signal_core.portfolio.position import Position
@@ -144,12 +145,18 @@ class Portfolio:
         self._peak_portfolio_value = max(Decimal("0.00"), self._peak_portfolio_value + entry.amount)
         return entry
 
-    def apply_corporate_action(self, action: CorporateAction) -> Optional[CashLedgerEntry]:
+    def apply_corporate_action(
+        self,
+        action: CorporateAction,
+        price_convention: Optional[PriceConvention] = None,
+    ) -> Optional[CashLedgerEntry]:
         """
-        Applies a mid-hold corporate action across open portfolio positions per AGENTS.md §13.2 and Audit §59.4, §59.7, §60.6.
+        Applies a mid-hold corporate action across open portfolio positions per AGENTS.md §13.2 and Audit §59.4, §59.7, §60.6, §64.3 (H-108).
         - For SPLIT, BONUS, CONSOLIDATION: restates position shares and average cost basis, keeping equity invariant.
         - For ISIN_TRANSITION: re-keys position identity in self._positions to new_isin, keeping shares and cost constant (Finding H-86).
         - For DIVIDEND: posts cash dividend inflow to CashLedger via CashEntryType.DIVIDEND_INFLOW.
+        - Finding H-108: If price_convention is PriceConvention.SPLIT_BONUS_ADJUSTED, refuses (fail closed)
+          SPLIT, BONUS, CONSOLIDATION, and ISIN_TRANSITION because price series is already adjusted.
         """
         if not isinstance(action, CorporateAction):
             raise LedgerValidationError(f"Expected CorporateAction, got {type(action)}")
@@ -157,6 +164,19 @@ class Portfolio:
         pos = self.get_position(action.isin)
         if pos is None or pos.is_closed or pos.quantity <= 0:
             return None
+
+        # Finding H-108: Guard against double-counting adjustments on an already-adjusted series
+        if price_convention == PriceConvention.SPLIT_BONUS_ADJUSTED:
+            if action.action_type in (
+                CorporateActionType.SPLIT,
+                CorporateActionType.BONUS,
+                CorporateActionType.CONSOLIDATION,
+                CorporateActionType.ISIN_TRANSITION,
+            ):
+                raise CorporateActionError(
+                    f"Corporate action {action.action_type.value} cannot be restated on an already "
+                    f"SPLIT_BONUS_ADJUSTED price series for {action.isin} (AGENTS.md §10.3, Finding H-108)."
+                )
 
         # Finding H-86 & H-96: Re-key the position in self._positions whenever new_isin is specified
         if action.action_type == CorporateActionType.ISIN_TRANSITION:
@@ -259,6 +279,7 @@ class Portfolio:
         self,
         session_date: datetime.date,
         corporate_actions: Sequence[CorporateAction],
+        price_convention: Optional[PriceConvention] = None,
     ) -> Sequence[CashLedgerEntry]:
         """
         Applies all corporate actions whose ex-date matches session_date to currently open held positions.
@@ -267,7 +288,7 @@ class Portfolio:
         entries: List[CashLedgerEntry] = []
         for ca in corporate_actions:
             if ca.ex_date == session_date:
-                entry = self.apply_corporate_action(ca)
+                entry = self.apply_corporate_action(ca, price_convention=price_convention)
                 if entry is not None:
                     entries.append(entry)
         return tuple(entries)

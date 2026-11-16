@@ -395,6 +395,8 @@ class DailyTPlus1OrderRunner:
         price_band: Optional[PriceBandRecord] = None,
         explicit_series: Optional[ExchangeSeries] = None,
         average_daily_turnover: Optional[Decimal] = None,
+        latest_market_prices: Optional[Mapping[str, Decimal]] = None,
+        prev_close: Optional[Decimal] = None,
     ) -> DailyExecutionTicket:
         """
         Executes an OrderIntent via the authoritative ExecutionFillSimulator and posts
@@ -461,6 +463,7 @@ class DailyTPlus1OrderRunner:
             price_band=price_band,
             explicit_series=effective_series,
             average_daily_turnover=average_daily_turnover,
+            prev_close=prev_close,
         )
 
         realised_risk: Optional[Decimal] = None
@@ -468,7 +471,7 @@ class DailyTPlus1OrderRunner:
 
         if fill_result.status in (FillStatus.FILLED, FillStatus.PARTIALLY_FILLED):
             try:
-                self._portfolio.process_fill(fill_result)
+                self._portfolio.process_fill(fill_result, latest_market_prices=latest_market_prices)
                 if intent.side == OrderSide.BUY and intent.stop_price is not None and fill_result.executed_price is not None:
                     realised_risk = _quantize_paise(
                         Decimal(fill_result.filled_quantity) * (fill_result.executed_price - intent.stop_price)
@@ -530,6 +533,8 @@ class DailyTPlus1OrderRunner:
             price_band=price_band,
             explicit_series=explicit_series,
             average_daily_turnover=average_daily_turnover,
+            latest_market_prices=latest_market_prices,
+            prev_close=candidate.entry_reference_price,
         )
 
     def evaluate_surveillance_exit_constraints(
@@ -557,7 +562,14 @@ class DailyTPlus1OrderRunner:
             isin for isin in open_positions
             if not security_master.has_surveillance_coverage(isin, session_date)
         ]
-        if require_coverage and uncovered_held:
+        if uncovered_held:
+            self.last_surveillance_result = SurveillanceExitResult(
+                candidates=(),
+                session_date=session_date,
+                status="NOT_RUN",
+                coverage_complete=False,
+                reason=f"Authoritative surveillance coverage absent for held securities: {uncovered_held}",
+            )
             raise SecurityMasterError(
                 f"Held security {uncovered_held[0]} has no authoritative surveillance coverage as-of {session_date} "
                 f"(Authoritative surveillance coverage is 0 for held positions per AGENTS.md §5.2, §10.8, Finding H-87, N-92 remainder). "
@@ -579,13 +591,6 @@ class DailyTPlus1OrderRunner:
         }
 
         for isin, pos in open_positions.items():
-            # Finding H-87: Fail closed if held security lacks authoritative surveillance coverage
-            if not security_master.has_surveillance_coverage(isin, session_date):
-                raise SecurityMasterError(
-                    f"Held security {isin} has no authoritative surveillance coverage as-of {session_date} "
-                    f"(AGENTS.md §5.2, §10.8, Finding H-87). Refuses valuation / exit evaluation of unsurveilled position."
-                )
-
             stages = security_master.resolve_surveillance(isin, session_date)
             for surv in stages:
                 if surv.stage in escalated_stages:

@@ -2,14 +2,14 @@
   "criteria_version": "1.1.0",
   "criteria_fingerprint": "CRIT-FPR-V1-b3f35df928c1ce126e0cbc9f46b4f47f901448d8201bf8922060abe79fcd6677",
   "calendar_fingerprint": "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad",
-  "timestamp_utc": "2026-11-15T20:27:20.750296+00:00",
+  "timestamp_utc": "2026-11-16T05:53:35.045730+00:00",
   "evaluation_start_date": "2022-01-03",
   "evaluation_end_date": "2024-12-31",
   "overall_verdict": "NO-GO",
   "summary_counts": {
     "PASS": 16,
-    "FAIL": 0,
-    "NOT_RUN": 8
+    "FAIL": 2,
+    "NOT_RUN": 6
   },
   "evaluations": [
     {
@@ -27,44 +27,44 @@
       "criterion_id": "CRIT-STAT-01",
       "category": "Risk & Performance",
       "metric_name": "Total Completed Trades",
-      "computed_value": "621",
+      "computed_value": "190",
       "threshold_value": ">= 100",
       "comparator": ">=",
       "status": "PASS",
-      "evidence": "Recorded 621 executed round-trip trades in evaluation window.",
+      "evidence": "Recorded 190 executed round-trip trades in evaluation window.",
       "is_binding": true
     },
     {
       "criterion_id": "CRIT-STAT-02",
       "category": "Risk & Performance",
       "metric_name": "Profit Factor",
-      "computed_value": "1.6297",
+      "computed_value": "1.7428",
       "threshold_value": ">= 1.50",
       "comparator": ">=",
       "status": "PASS",
-      "evidence": "Computed gross profit / gross loss ratio: 1.6297.",
+      "evidence": "Computed gross profit / gross loss ratio: 1.7428.",
       "is_binding": true
     },
     {
       "criterion_id": "CRIT-STAT-03",
       "category": "Risk & Performance",
       "metric_name": "Max Single Position Weight",
-      "computed_value": "0.0800",
+      "computed_value": "0.1130",
       "threshold_value": "<= 0.10",
       "comparator": "<=",
-      "status": "PASS",
-      "evidence": "Maximum single position capital allocation observed: 0.0800.",
+      "status": "FAIL",
+      "evidence": "Maximum single position capital allocation observed: 0.1130.",
       "is_binding": true
     },
     {
       "criterion_id": "CRIT-STAT-04",
       "category": "Risk & Performance",
       "metric_name": "Max Portfolio Drawdown",
-      "computed_value": "0.2380",
+      "computed_value": "0.1236",
       "threshold_value": "<= 0.25",
       "comparator": "<=",
       "status": "PASS",
-      "evidence": "Maximum closed + open position drawdown observed: 23.80%.",
+      "evidence": "Maximum closed + open position drawdown observed: 12.36%.",
       "is_binding": true
     },
     {
@@ -82,22 +82,22 @@
       "criterion_id": "CRIT-EXEC-01",
       "category": "Execution Realism",
       "metric_name": "Volume Participation Cap",
-      "computed_value": null,
+      "computed_value": "0.0001",
       "threshold_value": "<= 0.03",
       "comparator": "<=",
-      "status": "NOT RUN",
-      "evidence": "Metric 'max_volume_participation' not provided in results bundle.",
+      "status": "PASS",
+      "evidence": "Peak session volume participation observed: 0.0001.",
       "is_binding": true
     },
     {
       "criterion_id": "CRIT-EXEC-02",
       "category": "Execution Realism",
       "metric_name": "Min Traded Value (Cr)",
-      "computed_value": "5.00",
+      "computed_value": "40.32",
       "threshold_value": ">= 5.0",
       "comparator": ">=",
       "status": "PASS",
-      "evidence": "Minimum average daily traded turnover observed: \u20b95.00 Cr.",
+      "evidence": "Minimum average daily traded turnover observed: \u20b940.32 Cr.",
       "is_binding": true
     },
     {
@@ -141,7 +141,7 @@
       "threshold_value": "ENFORCED / VERIFIED",
       "comparator": "==",
       "status": "NOT RUN",
-      "evidence": "Surveillance coverage unverified / 0 across registered universe",
+      "evidence": "Authoritative surveillance coverage absent for held securities: ['INE075A01022', 'INE090A01021', 'INE094A01015', 'INE127D01025', 'INE101A01026', 'INE935N01020', 'INE118H01025', 'INE646L01027', 'INE437A01024', 'INE736A01011', 'INE860A01027', 'INE591G01017', 'INE040A01034', 'INE982J01020', 'INE745G01035', 'INE382Z01011', 'INE417T01026', 'INE881D01027']",
       "is_binding": true
     },
     {
@@ -203,11 +203,11 @@
       "criterion_id": "CRIT-DATA-05",
       "category": "Universe Integrity",
       "metric_name": "Traded EQ Resolution Pct",
-      "computed_value": "100.0000%",
+      "computed_value": "92.8910%",
       "threshold_value": ">= 100.0%",
       "comparator": ">=",
-      "status": "PASS",
-      "evidence": "Active traded EQ scrips resolved to authoritative ISINs: 100.0000% (\u00a741.3, Finding H-54).",
+      "status": "FAIL",
+      "evidence": "Active traded EQ scrips resolved to authoritative ISINs: 92.8910% (\u00a741.3, Finding H-54).",
       "is_binding": true
     },
     {
@@ -236,22 +236,22 @@
       "criterion_id": "CRIT-OVERFIT-01",
       "category": "Anti-Overfitting",
       "metric_name": "Trial Registry Accountability",
-      "computed_value": "N = 1",
+      "computed_value": "N = 2",
       "threshold_value": "N >= 2",
       "comparator": ">=",
-      "status": "NOT RUN",
-      "evidence": "Multi-hypothesis testing requires N >= 2 trials for Deflated Sharpe Ratio evaluation (AGENTS.md \u00a78.2).",
+      "status": "PASS",
+      "evidence": "Trial registry records 2 parameter sweeps/trials with full parameter accountability.",
       "is_binding": true
     },
     {
       "criterion_id": "CRIT-OVERFIT-02",
       "category": "Anti-Overfitting",
       "metric_name": "Deflated Sharpe Ratio (DSR)",
-      "computed_value": "0.9390",
+      "computed_value": null,
       "threshold_value": ">= 0.95",
       "comparator": ">=",
       "status": "NOT RUN",
-      "evidence": "DSR computed with N <= 1 invalidates multiple-testing penalty; marked NOT RUN.",
+      "evidence": "Metric 'deflated_sharpe_ratio' not provided in results bundle.",
       "is_binding": true
     },
     {

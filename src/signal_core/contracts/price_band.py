@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import datetime
 from decimal import Decimal, ROUND_FLOOR, ROUND_CEILING
 from enum import Enum
-from typing import Any, Dict, Mapping, Optional, Union
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 
 class PriceBandValidationError(ValueError):
@@ -268,6 +268,42 @@ class PriceBandRecord:
             source_ref=self.source_ref,
         )
 
+    def derive_dynamic_flexing_limits(self, prev_close: Decimal) -> "PriceBandRecord":
+        """
+        Derives concrete numeric upper and lower dynamic flexing limits (±10% initial dynamic band
+        under NSE F&O dynamic flexing framework per circular NSE/FAOP/60350, Audit §64 H-106).
+        Tick-rounded to NSE tick grid (0.05): upper rounded down (ROUND_FLOOR), lower rounded up (ROUND_CEILING).
+        """
+        if self.upper_circuit_limit is not None and self.lower_circuit_limit is not None:
+            return self
+        if not isinstance(prev_close, Decimal):
+            raise PriceBandValidationError(f"prev_close must be Decimal, got {type(prev_close).__name__}")
+        if prev_close <= Decimal("0"):
+            raise PriceBandValidationError(f"prev_close must be strictly positive, got {prev_close}")
+
+        pct = self.band_percentage if self.band_percentage is not None else Decimal("10.00")
+        pct_factor = pct / Decimal("100")
+        raw_upper = prev_close * (Decimal("1") + pct_factor)
+        raw_lower = prev_close * (Decimal("1") - pct_factor)
+
+        tick_size = Decimal("0.05")
+        upper_ticks = (raw_upper / tick_size).to_integral_value(rounding=ROUND_FLOOR)
+        derived_upper = (upper_ticks * tick_size).quantize(Decimal("0.01"))
+        lower_ticks = (raw_lower / tick_size).to_integral_value(rounding=ROUND_CEILING)
+        derived_lower = (lower_ticks * tick_size).quantize(Decimal("0.01"))
+
+        return PriceBandRecord(
+            isin=self.isin,
+            trade_date=self.trade_date,
+            series=self.series,
+            upper_circuit_limit=derived_upper,
+            lower_circuit_limit=derived_lower,
+            band_percentage=pct,
+            is_unconstrained=self.is_unconstrained,
+            source_descriptor=self.source_descriptor,
+            source_ref=self.source_ref,
+        )
+
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
             "isin": self.isin,
@@ -304,6 +340,35 @@ class PriceBandRecord:
             source_descriptor=src_desc,
             source_ref=str(data["source_ref"]) if data.get("source_ref") else None,
         )
+
+
+def derive_dynamic_flexing_limits(
+    prev_close: Decimal,
+    band_percentage: Optional[Decimal] = None,
+) -> Tuple[Decimal, Decimal]:
+    """
+    Derives concrete numeric lower and upper dynamic flexing limits (±10% initial dynamic band
+    under NSE F&O dynamic flexing framework per circular NSE/FAOP/60350, Audit §64 H-106).
+    Tick-rounded to NSE tick grid (0.05): upper rounded down (ROUND_FLOOR), lower rounded up (ROUND_CEILING).
+    Returns (lower_limit, upper_limit).
+    """
+    if not isinstance(prev_close, Decimal):
+        raise PriceBandValidationError(f"prev_close must be Decimal, got {type(prev_close).__name__}")
+    if prev_close <= Decimal("0"):
+        raise PriceBandValidationError(f"prev_close must be strictly positive, got {prev_close}")
+
+    pct = band_percentage if band_percentage is not None else Decimal("10.00")
+    pct_factor = pct / Decimal("100")
+    raw_upper = prev_close * (Decimal("1") + pct_factor)
+    raw_lower = prev_close * (Decimal("1") - pct_factor)
+
+    tick_size = Decimal("0.05")
+    upper_ticks = (raw_upper / tick_size).to_integral_value(rounding=ROUND_FLOOR)
+    derived_upper = (upper_ticks * tick_size).quantize(Decimal("0.01"))
+    lower_ticks = (raw_lower / tick_size).to_integral_value(rounding=ROUND_CEILING)
+    derived_lower = (lower_ticks * tick_size).quantize(Decimal("0.01"))
+
+    return (derived_lower, derived_upper)
 
 
 @dataclass(frozen=True, slots=True)

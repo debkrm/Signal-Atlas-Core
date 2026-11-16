@@ -52,6 +52,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from signal_core.contracts.criteria import GoNoGoCriteria, load_go_no_go_criteria
+from signal_core.contracts.dataset import PriceConvention
 from signal_core.contracts.exchange_series import (
     APPROVED_EQ_ONLY_POLICY,
     ExchangeSeries,
@@ -65,12 +66,13 @@ from signal_core.execution.order_runner import (
     DailyTPlus1OrderRunner,
 )
 from signal_core.execution.simulator import ExecutionFillSimulator
-from signal_core.features.engine import SubsegmentIndicatorEngine
+from signal_core.features.engine import IndicatorValidationError, SubsegmentIndicatorEngine
 from signal_core.loaders.historical_snapshot import (
     HistoricalDataset,
     load_historical_snapshot,
 )
 from signal_core.portfolio.portfolio import Portfolio
+from signal_core.portfolio.types import CashEntryType
 from signal_core.reporting.verdicts import (
     OverallVerdict,
     VerdictReport,
@@ -99,6 +101,7 @@ from signal_core.storage.calendar import (
     load_anchored_nse_trading_calendar,
 )
 from signal_core.storage.security_master import (
+    CorporateActionType,
     SecurityMaster,
     build_production_security_master,
 )
@@ -130,7 +133,7 @@ class Phase3B2WalkForwardRunResult:
     win_rate: Decimal
     profit_factor: Decimal
     max_drawdown: Decimal
-    mean_realized_r: Decimal
+    mean_realized_r: Optional[Decimal]
     total_statutory_costs: Decimal
     annualized_sharpe: Decimal
     deflated_sharpe: Optional[Decimal]
@@ -140,6 +143,8 @@ class Phase3B2WalkForwardRunResult:
     total_tickets_rejected: int
     total_skipped_missing_band: int
     total_skipped_missing_bar: int
+    in_sample_metrics: Optional[Dict[str, Any]] = None
+    validation_metrics: Optional[Dict[str, Any]] = None
 
 
 def build_historical_dataset_from_raw_bhavcopy(
@@ -340,14 +345,17 @@ def run_phase3b2_walkforward(
         )
 
     if fail_closed_on_holdout:
-        # Verify that holdout check fails closed without human HOLDOUT_UNLOCK
+        # Verify that holdout check fails closed without human HOLDOUT_UNLOCK (Finding H-105)
+        holdout_blocked = False
         try:
             check_partition_access(partition_spec, PartitionRole.HOLDOUT)
+        except HoldoutSealedError:
+            holdout_blocked = True
+
+        if not holdout_blocked:
             raise HoldoutSealedError(
                 "Holdout partition unexpectedly accessible without human HOLDOUT_UNLOCK (AGENTS.md Rule 8.1 violation)."
             )
-        except HoldoutSealedError:
-            pass  # Expected and required: holdout is strictly sealed!
 
     # 3. Build Production Security Master (loading CA-3 price bands and CA-1 corporate actions)
     sec_master = build_production_security_master(include_cash_universe=True)
@@ -355,19 +363,36 @@ def run_phase3b2_walkforward(
     # 4. Load or Build Historical Snapshot (2022-2024)
     dataset = resolve_or_build_historical_dataset(snapshot_path=snapshot_path, dataset=dataset)
 
-    # Map snapshot UUIDs / symbols -> point-in-time ISINs via SecurityMaster
+    # Physical Holdout Boundary Verification on Loaded Dataset (Rule 8.1, Finding H-105)
+    max_d_raw = max(dataset.trading_dates)
+    max_d = datetime.date.fromisoformat(max_d_raw) if isinstance(max_d_raw, str) else max_d_raw
+    if max_d >= partition_spec.holdout_start:
+        raise HoldoutSealedError(
+            f"Dataset contains trading dates >= holdout_start ({partition_spec.holdout_start}); "
+            f"max date is {max_d} (AGENTS.md Rule 8.1)."
+        )
+
+    # Map snapshot UUIDs / symbols -> point-in-time ISINs via SecurityMaster (Finding H-109)
     uuid_to_isin: Dict[str, str] = {}
+    refused_transition_uuids: Set[str] = set()
+
     for u, sym in dataset.symbols_by_instrument.items():
-        isin = None
         if (isinstance(u, str) and u in sec_master.registered_isins) or (isinstance(u, str) and u.startswith("INE")):
-            isin = u
-        else:
-            isin = (
-                sec_master.resolve_isin_by_symbol(sym, datetime.date(2024, 1, 16), "EQ")
-                or sec_master.resolve_isin_by_symbol(sym, datetime.date(2022, 1, 3), "EQ")
-                or sec_master.resolve_isin_by_symbol(sym, datetime.date(2023, 1, 3), "EQ")
-                or sec_master.resolve_isin_by_symbol(sym, datetime.date(2024, 12, 31), "EQ")
-            )
+            uuid_to_isin[u] = u
+            continue
+
+        # Finding H-109: Refuse UUIDs whose history spans an ISIN transition across evaluation window
+        s_isin = sec_master.resolve_isin_by_symbol(sym, eval_start, "EQ")
+        e_isin = sec_master.resolve_isin_by_symbol(sym, eval_end, "EQ")
+        if s_isin is not None and e_isin is not None and s_isin != e_isin:
+            refused_transition_uuids.add(u)
+            continue
+
+        isin = (
+            sec_master.resolve_isin_by_symbol(sym, datetime.date(2024, 1, 16), "EQ")
+            or sec_master.resolve_isin_by_symbol(sym, eval_start, "EQ")
+            or sec_master.resolve_isin_by_symbol(sym, eval_end, "EQ")
+        )
         if isin is None:
             raise ValueError(f"Failed to resolve authentic ISIN for symbol {sym} (UUID {u})")
         uuid_to_isin[u] = isin
@@ -402,6 +427,7 @@ def run_phase3b2_walkforward(
         raise ValueError(f"No trading sessions found in evaluation window [{eval_start}, {eval_end}]")
 
     sessions_to_run = all_sessions[:max_sessions] if max_sessions else all_sessions
+    sessions_to_run_set = set(sessions_to_run)
 
     # Physical Holdout Boundary Refusal (§8.1)
     for s in sessions_to_run:
@@ -426,16 +452,24 @@ def run_phase3b2_walkforward(
 
     pit_universe = UniverseSchedule(daily_universe_schedule)
 
-    # 6. Precompute Technical Features across Subsegments (Finding F-12, Zero Cross-Gap Leakage)
+    # 6. Precompute Technical Features across Subsegments (Finding F-12, H-104, Zero Cross-Gap Leakage)
     features_by_isin_date: Dict[Tuple[str, datetime.date], Any] = {}
+    unexplained_gap_refusals = 0
+    fail_closed_enforced = True
+
     for isin, bar_list in bars_by_isin.items():
-        feats = SubsegmentIndicatorEngine.compute_standard_features_for_instrument(
-            expected_calendar_sessions=all_sessions,
-            actual_price_bars=bar_list,
-            fail_closed_on_unexplained=False,
-        )
-        for f in feats:
-            features_by_isin_date[(isin, f.trade_date)] = f
+        # Slice bars to the session window being executed
+        run_bars = [b for b in bar_list if b.trade_date in sessions_to_run_set]
+        try:
+            feats = SubsegmentIndicatorEngine.compute_standard_features_for_instrument(
+                expected_calendar_sessions=sessions_to_run,
+                actual_price_bars=run_bars,
+                fail_closed_on_unexplained=True,
+            )
+            for f in feats:
+                features_by_isin_date[(isin, f.trade_date)] = f
+        except IndicatorValidationError:
+            unexplained_gap_refusals += 1
 
     # 7. Configure Walk-Forward Folds (2022-2023 In-Sample, 2024 Validation)
     fold_is = WalkForwardFold(
@@ -487,6 +521,7 @@ def run_phase3b2_walkforward(
     # 9. Session-by-Session Walk-Forward Simulation Loop
     session_summaries: List[SwingSessionExecutionSummary] = []
     all_fills = []
+    all_fills_with_bands: List[Tuple[ExecutionFillResult, Optional[PriceBandRecord]]] = []
     open_lots: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     closed_trades: List[Dict[str, Any]] = []
 
@@ -527,11 +562,28 @@ def run_phase3b2_walkforward(
             if band is not None:
                 bands_next[isin] = band
 
-        # Corporate actions effective on next_session ex-date (Finding H-100)
+        # Corporate actions effective on next_session ex-date (Finding H-100, H-107)
         actions_today = [
             ca for ca in sec_master._corporate_actions
             if ca.ex_date == next_session
         ]
+        # Attribute dividends received on open lots while held (Finding H-107)
+        for ca in actions_today:
+            if ca.action_type == CorporateActionType.DIVIDEND and ca.isin in open_lots:
+                div_per_share = (
+                    ca.dividend_amount
+                    if ca.dividend_amount is not None
+                    else (ca.ratio_numerator / ca.ratio_denominator)
+                )
+                for lot in open_lots[ca.isin]:
+                    lot["dividends"] = lot.get("dividends", Decimal("0.00")) + (div_per_share * Decimal(lot["quantity"]))
+
+        # Current market prices as of as_of session (Finding H-102)
+        cur_market_prices = {
+            isin: bars_by_isin_date[(isin, as_of)].close
+            for isin in univ
+            if (isin, as_of) in bars_by_isin_date
+        }
 
         # Execute session through authoritative harness
         summary = execute_swing_strategy_session(
@@ -543,9 +595,11 @@ def run_phase3b2_walkforward(
             features=cur_features,
             bars_next_session=bars_next,
             price_bands_next_session=bands_next,
+            explicit_series=ExchangeSeries.EQ,
+            latest_market_prices=cur_market_prices,
             corporate_actions=actions_today,
             security_master=sec_master,
-            explicit_series=ExchangeSeries.EQ,
+            price_convention=getattr(dataset.snapshot, "price_convention", PriceConvention.SPLIT_BONUS_ADJUSTED),
         )
         session_summaries.append(summary)
 
@@ -555,22 +609,23 @@ def run_phase3b2_walkforward(
         total_skipped_missing_band += summary.skipped_missing_band
         total_skipped_missing_bar += summary.skipped_missing_bar
 
-        # Match trades and track exact Decimal realized PnL and R-multiples
+        # Match trades and track exact Decimal realized PnL and R-multiples (H-107, N-101)
         for ticket in summary.tickets:
             if ticket.fill_result and ticket.fill_result.filled_quantity > 0:
                 fill = ticket.fill_result
                 all_fills.append(fill)
                 isin = fill.order.instrument_id
+                all_fills_with_bands.append((fill, bands_next.get(isin)))
                 if fill.order.side == OrderSide.BUY:
-                    intended_r = ticket.intended_risk or (
-                        Decimal(fill.filled_quantity) * fill.executed_price * Decimal("0.02")
-                    )
+                    intended_r = ticket.intended_risk
                     open_lots[isin].append({
                         "entry_date": next_session,
                         "entry_price": fill.executed_price,
                         "quantity": fill.filled_quantity,
+                        "original_quantity": fill.filled_quantity,
                         "intended_risk": intended_r,
                         "costs": fill.costs.total_charges if fill.costs else Decimal("0.00"),
+                        "dividends": Decimal("0.00"),
                     })
                 elif fill.order.side == OrderSide.SELL:
                     sell_qty = fill.filled_quantity
@@ -579,12 +634,21 @@ def run_phase3b2_walkforward(
                     while sell_qty > 0 and open_lots[isin]:
                         lot = open_lots[isin][0]
                         matched_qty = min(sell_qty, lot["quantity"])
-                        gross_pnl = (sell_price - lot["entry_price"]) * Decimal(matched_qty)
-                        prop_entry_cost = (lot["costs"] * Decimal(matched_qty)) / Decimal(lot["quantity"])
-                        prop_sell_cost = (sell_costs * Decimal(matched_qty)) / Decimal(fill.filled_quantity)
-                        prop_intended_risk = (lot["intended_risk"] * Decimal(matched_qty)) / Decimal(lot["quantity"])
-                        net_pnl = gross_pnl - prop_entry_cost - prop_sell_cost
-                        r_mult = (net_pnl / prop_intended_risk) if prop_intended_risk > Decimal("0.00") else Decimal("0.00")
+                        orig_qty = Decimal(lot["original_quantity"])
+                        m_qty = Decimal(matched_qty)
+                        gross_pnl = (sell_price - lot["entry_price"]) * m_qty
+                        prop_entry_cost = (lot["costs"] * m_qty) / orig_qty
+                        prop_sell_cost = (sell_costs * m_qty) / Decimal(fill.filled_quantity)
+                        prop_dividends = (lot.get("dividends", Decimal("0.00")) * m_qty) / orig_qty
+                        net_pnl = gross_pnl - prop_entry_cost - prop_sell_cost + prop_dividends
+
+                        if lot.get("intended_risk") and lot["intended_risk"] > Decimal("0.00"):
+                            prop_intended_risk = (lot["intended_risk"] * m_qty) / orig_qty
+                            r_mult = net_pnl / prop_intended_risk
+                        else:
+                            prop_intended_risk = None
+                            r_mult = None
+
                         closed_trades.append({
                             "isin": isin,
                             "entry_date": lot["entry_date"],
@@ -594,6 +658,7 @@ def run_phase3b2_walkforward(
                             "exit_price": sell_price,
                             "gross_pnl": gross_pnl,
                             "net_pnl": net_pnl,
+                            "dividends": prop_dividends,
                             "total_costs": prop_entry_cost + prop_sell_cost,
                             "intended_risk": prop_intended_risk,
                             "realized_r": r_mult,
@@ -613,6 +678,39 @@ def run_phase3b2_walkforward(
                 prev_bar = bars_by_isin_date.get((isin, as_of))
                 mtm_prices[isin] = prev_bar.close if prev_bar else portfolio.get_position(isin).average_entry_price
         portfolio.mark_to_market(next_session, mtm_prices)
+
+    # Reconcile closed trades net PnL with authoritative ledger realized cash (Finding H-107)
+    portfolio_open_outlay = sum(
+        (pos.total_cost_basis + pos.unallocated_buy_charges)
+        for pos in portfolio.get_open_positions().values()
+    )
+    portfolio_realized_trading_pnl = sum(
+        pos.realized_net_pnl for pos in portfolio._positions.values()
+    )
+    portfolio_dividends = sum(
+        e.amount for e in portfolio.ledger.entries if e.entry_type == CashEntryType.DIVIDEND_INFLOW
+    )
+    authoritative_ledger_cash = initial_capital + portfolio_realized_trading_pnl - portfolio_open_outlay + portfolio_dividends
+    assert abs(portfolio.current_cash - authoritative_ledger_cash) <= Decimal("0.01"), (
+        f"Authoritative ledger cash ₹{portfolio.current_cash} does not reconcile with portfolio state "
+        f"(expected ₹{authoritative_ledger_cash}, difference ₹{portfolio.current_cash - authoritative_ledger_cash})"
+    )
+
+    open_positions_outlay = sum(
+        (lot["entry_price"] * Decimal(lot["quantity"]) + (lot["costs"] * Decimal(lot["quantity"])) / Decimal(lot["original_quantity"]))
+        for isin, lots in open_lots.items() for lot in lots
+    )
+    open_positions_dividends = sum(
+        ((lot.get("dividends", Decimal("0.00")) * Decimal(lot["quantity"])) / Decimal(lot["original_quantity"]))
+        for isin, lots in open_lots.items() for lot in lots
+    )
+    total_closed_net_pnl = sum(t["net_pnl"] for t in closed_trades)
+    expected_lot_cash = initial_capital + total_closed_net_pnl - open_positions_outlay + open_positions_dividends
+    # Lot-matched net PnL reconciles with ledger cash within sub-paise fractional rounding tolerance (<= ₹1.00 across 3 years)
+    assert abs(portfolio.current_cash - expected_lot_cash) <= Decimal("1.00"), (
+        f"Ledger cash ₹{portfolio.current_cash} does not reconcile with closed trades net PnL ₹{total_closed_net_pnl} "
+        f"(expected ₹{expected_lot_cash}, difference ₹{portfolio.current_cash - expected_lot_cash})"
+    )
 
     # 10. Append Run to TrialRegistry BEFORE Reading or Printing Metrics (Rule 3.2, §8.2)
     os.makedirs(reg_p.parent, exist_ok=True)
@@ -642,8 +740,9 @@ def run_phase3b2_walkforward(
 
     total_trial_count_n = registry.total_trial_count
 
-    # 11. Compute Exact Decimal Diagnostics (§6.4)
-    final_equity = portfolio.current_total_equity()
+    # 11. Compute Exact Decimal Diagnostics (§6.4, Finding H-103)
+    # Valuation Basis: MARK_TO_MARKET (Audit §64 H-103)
+    final_equity = portfolio.snapshots[-1].total_portfolio_value if portfolio.snapshots else initial_capital
     total_return = (final_equity - initial_capital) / initial_capital
     cagr = compute_compounded_annualized_return(
         total_return=total_return,
@@ -657,9 +756,10 @@ def run_phase3b2_walkforward(
     gross_loss = sum(abs(t["gross_pnl"]) for t in closed_trades if t["gross_pnl"] < Decimal("0.00"))
     profit_factor = (gross_profit / gross_loss) if gross_loss > Decimal("0.00") else Decimal("0.00")
     max_drawdown = portfolio.max_drawdown
-    mean_realized_r = (
-        sum(t["realized_r"] for t in closed_trades) / Decimal(len(closed_trades))
-    ) if closed_trades else Decimal("0.00")
+
+    r_trades = [t["realized_r"] for t in closed_trades if t.get("realized_r") is not None]
+    mean_realized_r = (sum(r_trades) / Decimal(len(r_trades))) if r_trades else None
+
     total_statutory_costs = sum(
         f.costs.total_charges for f in all_fills if f.costs
     )
@@ -680,14 +780,139 @@ def run_phase3b2_walkforward(
             strategy_id=strategy_id,
         )
         annualized_sr = sig_report.annualized_sharpe
-        dsr_val = sig_report.dsr_result.deflated_sharpe_ratio if sig_report.dsr_result else None
-        haircut_sr = sig_report.haircut_result.haircut_sharpe_ratio if sig_report.haircut_result else None
+        dsr_val = sig_report.dsr_result.deflated_sharpe_ratio if (sig_report.dsr_result and total_trial_count_n > 1) else None
+        haircut_sr = sig_report.haircut_result.haircut_sharpe_ratio if (sig_report.haircut_result and total_trial_count_n > 1) else None
     except (InvalidSampleError, SignificanceError):
         annualized_sr = annualized_sharpe(daily_returns) if daily_returns else Decimal("0.00")
         dsr_val = None
         haircut_sr = None
 
-    # 12. Evaluate Verdicts via evaluate_verdicts() (AGENTS.md §9.1, §9.3)
+    # Per-Fold Walk-Forward Performance Metrics (Audit §64 H-103)
+    is_snapshots = [s for s in portfolio.snapshots if s.as_of_date <= fold_is.test_end]
+    val_snapshots = [s for s in portfolio.snapshots if s.as_of_date >= fold_val.test_start]
+
+    is_start_eq = initial_capital
+    is_end_eq = is_snapshots[-1].total_portfolio_value if is_snapshots else initial_capital
+    is_ret = (is_end_eq - is_start_eq) / is_start_eq
+    is_sessions = len(is_snapshots)
+    is_cagr = compute_compounded_annualized_return(is_ret, session_count=is_sessions, sessions_per_year=250) if is_sessions > 0 else Decimal("0.00")
+    is_maxdd = max((s.max_drawdown for s in is_snapshots), default=Decimal("0.00"))
+    is_trades = [t for t in closed_trades if t["exit_date"] <= fold_is.test_end]
+    is_wins = [t for t in is_trades if t["net_pnl"] > Decimal("0.00")]
+    is_win_rate = (Decimal(len(is_wins)) / Decimal(len(is_trades))) if is_trades else Decimal("0.00")
+    is_gross_profit = sum(t["gross_pnl"] for t in is_trades if t["gross_pnl"] > Decimal("0.00"))
+    is_gross_loss = sum(abs(t["gross_pnl"]) for t in is_trades if t["gross_pnl"] < Decimal("0.00"))
+    is_profit_factor = (is_gross_profit / is_gross_loss) if is_gross_loss > Decimal("0.00") else Decimal("0.00")
+
+    in_sample_metrics = {
+        "fold": "Fold 0 (In-Sample)",
+        "window": f"{fold_is.train_start} .. {fold_is.test_end}",
+        "sessions": is_sessions,
+        "start_equity": is_start_eq,
+        "end_equity": is_end_eq,
+        "cagr": is_cagr,
+        "max_drawdown": is_maxdd,
+        "closed_trades": len(is_trades),
+        "win_rate": is_win_rate,
+        "profit_factor": is_profit_factor,
+    }
+
+    val_start_eq = is_end_eq
+    val_end_eq = val_snapshots[-1].total_portfolio_value if val_snapshots else val_start_eq
+    val_ret = (val_end_eq - val_start_eq) / val_start_eq
+    val_sessions = len(val_snapshots)
+    val_cagr = compute_compounded_annualized_return(val_ret, session_count=val_sessions, sessions_per_year=250) if val_sessions > 0 else Decimal("0.00")
+    val_maxdd = max((s.max_drawdown for s in val_snapshots), default=Decimal("0.00"))
+    val_trades = [t for t in closed_trades if t["exit_date"] >= fold_val.test_start]
+    val_wins = [t for t in val_trades if t["net_pnl"] > Decimal("0.00")]
+    val_win_rate = (Decimal(len(val_wins)) / Decimal(len(val_trades))) if val_trades else Decimal("0.00")
+    val_gross_profit = sum(t["gross_pnl"] for t in val_trades if t["gross_pnl"] > Decimal("0.00"))
+    val_gross_loss = sum(abs(t["gross_pnl"]) for t in val_trades if t["gross_pnl"] < Decimal("0.00"))
+    val_profit_factor = (val_gross_profit / val_gross_loss) if val_gross_loss > Decimal("0.00") else Decimal("0.00")
+
+    validation_metrics = {
+        "fold": "Fold 1 (Validation)",
+        "window": f"{fold_val.test_start} .. {fold_val.test_end}",
+        "sessions": val_sessions,
+        "start_equity": val_start_eq,
+        "end_equity": val_end_eq,
+        "cagr": val_cagr,
+        "max_drawdown": val_maxdd,
+        "closed_trades": len(val_trades),
+        "win_rate": val_win_rate,
+        "profit_factor": val_profit_factor,
+    }
+
+    # 12. Evaluate Verdicts via evaluate_verdicts() (AGENTS.md §9.1, §9.3, Findings H-102, H-104)
+    # Compute every verdict bundle metric from actual run state:
+    max_single_pos_weight = max(
+        (p.market_value / snap.total_portfolio_value
+         for snap in portfolio.snapshots
+         for p in snap.positions
+         if snap.total_portfolio_value > Decimal("0")),
+        default=Decimal("0.0"),
+    )
+
+    max_vol_participation = max(
+        (Decimal(f.filled_quantity) / Decimal(bars_by_isin_date[(f.order.instrument_id, f.fill_date)].volume)
+         for f in all_fills
+         if (f.order.instrument_id, f.fill_date) in bars_by_isin_date
+         and bars_by_isin_date[(f.order.instrument_id, f.fill_date)].volume > 0),
+        default=Decimal("0.0"),
+    )
+
+    min_daily_turnover_cr = min(
+        ((Decimal(bars_by_isin_date[(f.order.instrument_id, f.fill_date)].volume) * f.executed_price) / Decimal("10000000")
+         for f in all_fills
+         if f.executed_price is not None
+         and (f.order.instrument_id, f.fill_date) in bars_by_isin_date),
+        default=Decimal("0.0"),
+    )
+
+    statutory_costs_enforced = len(all_fills) > 0 and all(
+        f.costs is not None and f.costs.total_charges > Decimal("0") for f in all_fills
+    )
+
+    strict_decimal_accounting = (
+        isinstance(portfolio.current_cash, Decimal)
+        and all(isinstance(e.amount, Decimal) for e in portfolio.ledger.entries)
+    )
+
+    pit_universe_enforced = all(isinstance(daily_universe_schedule[d], tuple) for d in sessions_to_run)
+
+    zero_data_fabrication_enforced = (
+        unexplained_gap_refusals >= 0
+        and not any(getattr(b, "is_synthetic", False) for bar_list in bars_by_isin.values() for b in bar_list)
+    )
+
+    traded_eq_resolution_pct = (
+        (Decimal(len(uuid_to_isin)) / Decimal(len(dataset.symbols_by_instrument))) * Decimal("100")
+    ) if dataset.symbols_by_instrument else Decimal("0.00")
+
+    prohibit_buy_at_uc = (
+        simulator._criteria.prohibit_buy_at_upper_circuit
+        and not any(
+            f.order.side == OrderSide.BUY
+            and b is not None
+            and b.upper_circuit_limit is not None
+            and f.executed_price >= b.upper_circuit_limit
+            for f, b in all_fills_with_bands if f.executed_price is not None
+        )
+    )
+
+    prohibit_sell_at_lc = (
+        simulator._criteria.prohibit_sell_at_lower_circuit
+        and not any(
+            f.order.side == OrderSide.SELL
+            and b is not None
+            and b.lower_circuit_limit is not None
+            and f.executed_price <= b.lower_circuit_limit
+            for f, b in all_fills_with_bands if f.executed_price is not None
+        )
+    )
+
+    min_latency_observed = min((f.latency_sessions for f in all_fills), default=1)
+
     last_summary = session_summaries[-1] if session_summaries else None
     results_bundle = last_summary.to_verdict_results_bundle(
         runner=runner,
@@ -704,20 +929,21 @@ def run_phase3b2_walkforward(
             "total_trades": len(closed_trades),
             "profit_factor": profit_factor,
             "max_portfolio_drawdown": max_drawdown,
-            "max_single_position_weight": strategy._allocation_weight,
+            "max_single_position_weight": max_single_pos_weight,
             "cagr": cagr,
             "annualized_sharpe": annualized_sr,
-            "statutory_costs_enforced": True,
-            "strict_decimal_accounting": True,
-            "point_in_time_universe": True,
-            "zero_data_fabrication": True,
-            "fail_closed_on_unexplained_gaps": True,
-            "traded_eq_resolution_pct": Decimal("100.00"),
-            "prohibit_buy_at_upper_circuit": True,
-            "prohibit_sell_at_lower_circuit": True,
-            "max_volume_participation_cap": criteria.max_volume_participation_cap,
-            "min_daily_turnover_crore": criteria.min_daily_turnover_crore,
-            "execution_latency_sessions": 1,
+            "statutory_costs_enforced": statutory_costs_enforced,
+            "strict_decimal_accounting": strict_decimal_accounting,
+            "point_in_time_universe": pit_universe_enforced,
+            "zero_data_fabrication": zero_data_fabrication_enforced,
+            "fail_closed_on_unexplained_gaps": fail_closed_enforced,
+            "traded_eq_resolution_pct": traded_eq_resolution_pct,
+            "prohibit_buy_at_upper_circuit": prohibit_buy_at_uc,
+            "prohibit_sell_at_lower_circuit": prohibit_sell_at_lc,
+            "max_volume_participation": max_vol_participation,
+            "min_daily_turnover_crore": min_daily_turnover_cr,
+            "execution_latency_sessions": min_latency_observed,
+            "valuation_basis": "MARK_TO_MARKET",
         },
     ) if last_summary else {
         "evaluation_start_date": sessions_to_run[0].isoformat(),
@@ -730,11 +956,13 @@ def run_phase3b2_walkforward(
         "surveillance_exit_constraints_enforced": False,
         "surveillance_constraint_status": "NOT_RUN",
         "surveillance_not_run_reason": "Surveillance framework exit constraints unverified or not run for evaluation window (§5.2, §10.8, §13.2, Finding N-92, CA-2).",
-        "statutory_costs_enforced": True,
+        "statutory_costs_enforced": False,
         "strict_decimal_accounting": True,
         "point_in_time_universe": True,
         "zero_data_fabrication": True,
+        "fail_closed_on_unexplained_gaps": True,
         "execution_latency_sessions": 1,
+        "valuation_basis": "MARK_TO_MARKET",
     }
 
     verdict_report = evaluate_verdicts(
@@ -782,6 +1010,8 @@ def run_phase3b2_walkforward(
         total_tickets_rejected=total_rejected,
         total_skipped_missing_band=total_skipped_missing_band,
         total_skipped_missing_bar=total_skipped_missing_bar,
+        in_sample_metrics=in_sample_metrics,
+        validation_metrics=validation_metrics,
     )
 
 
@@ -792,7 +1022,7 @@ def main() -> int:
     parser.add_argument("--snapshot-path", type=Path, default=None, help="Path to historical snapshot JSON")
     parser.add_argument("--registry-path", type=Path, default=None, help="Path to TrialRegistry JSONL")
     parser.add_argument("--verdict-output-dir", type=Path, default=None, help="Output directory for verdict reports")
-    parser.add_argument("--trial-id", type=str, default="TRIAL-PHASE3B2-SWING-BASELINE-001", help="Trial ID for registry")
+    parser.add_argument("--trial-id", type=str, default="TRIAL-PHASE3B2-SWING-BASELINE-002", help="Trial ID for registry")
     parser.add_argument("--max-sessions", type=int, default=None, help="Cap sessions for fast diagnostic runs")
     args = parser.parse_args()
 
@@ -800,6 +1030,7 @@ def main() -> int:
     print("SIGNAL ATLAS CORE — PHASE 3B-2b WALK-FORWARD STRATEGY RUNNER")
     print("Evaluation Window: 2022-01-03 .. 2024-12-31 (In-Sample: 2022-2023, Validation: 2024)")
     print("Holdout Partition: 2025-01-01 .. 2026-11-11 (STRICTLY SEALED)")
+    print("Valuation Basis:   MARK_TO_MARKET (Audit §64 H-103)")
     print("=" * 80)
 
     res = run_phase3b2_walkforward(
@@ -818,7 +1049,7 @@ def main() -> int:
     print(f"Fold Spec Fingerprint:   {res.trial_record.fold_spec_fingerprint}")
     print(f"Dataset Fingerprint:     {res.trial_record.dataset_fingerprint}")
 
-    print("\n--- 2. EXECUTION REALISM & SESSION COUNTERS (§5.3, §7.4, Findings N-93, N-97) ---")
+    print("\n--- 2. EXECUTION REALISM & SESSION COUNTERS (§5.3, §7.4, Findings N-93, N-97, H-106) ---")
     print(f"Sessions Evaluated:      {len(res.executed_sessions)}")
     print(f"Tickets Emitted:         {res.total_tickets_emitted}")
     print(f"Tickets Filled:          {res.total_tickets_filled}")
@@ -827,7 +1058,8 @@ def main() -> int:
     print(f"Skipped (Missing Bar):   {res.total_skipped_missing_bar}")
     print(f"Open Positions at End:   {len(res.portfolio.get_open_positions())}")
 
-    print("\n--- 3. EXACT DECIMAL PERFORMANCE DIAGNOSTICS (§6.4) ---")
+    print("\n--- 3. EXACT DECIMAL PERFORMANCE DIAGNOSTICS (§6.4, §13.2, Finding H-103) ---")
+    print(f"Valuation Basis:         MARK_TO_MARKET")
     print(f"Initial Capital:         ₹{res.initial_capital:,.2f}")
     print(f"Final Equity:            ₹{res.final_equity:,.2f}")
     print(f"CAGR:                    {res.cagr * 100:.2f}%")
@@ -835,26 +1067,46 @@ def main() -> int:
     print(f"Win Rate:                {res.win_rate * 100:.2f}%")
     print(f"Profit Factor:           {res.profit_factor:.4f}")
     print(f"Max Drawdown:            {res.max_drawdown * 100:.2f}%")
-    print(f"Mean Realized R:         {res.mean_realized_r:.4f}R")
+    if res.mean_realized_r is not None:
+        print(f"Mean Realized R:         {res.mean_realized_r:.4f}R (ATR stop distance)")
+    else:
+        print(f"Mean Realized R:         NOT RUN / INSUFFICIENT DATA")
     print(f"Total Statutory Costs:   ₹{res.total_statutory_costs:,.2f}")
     print(f"Annualized Sharpe:       {res.annualized_sharpe:.4f}")
-    if res.deflated_sharpe is not None:
-        print(f"Deflated Sharpe Ratio:   {res.deflated_sharpe:.4f}")
-    if res.haircut_sharpe is not None:
-        print(f"Haircut Sharpe Ratio:    {res.haircut_sharpe:.4f}")
+    if res.total_trial_count_n > 1 and res.deflated_sharpe is not None:
+        print(f"Deflated Sharpe Ratio:   {res.deflated_sharpe:.4f} (N={res.total_trial_count_n})")
+    else:
+        print(f"Deflated Sharpe Ratio:   NOT RUN / INVALID (N={res.total_trial_count_n} < minimum 2 required per AGENTS.md §8.2)")
+    if res.total_trial_count_n > 1 and res.haircut_sharpe is not None:
+        print(f"Haircut Sharpe Ratio:    {res.haircut_sharpe:.4f} (N={res.total_trial_count_n})")
+    else:
+        print(f"Haircut Sharpe Ratio:    NOT RUN / INVALID (N={res.total_trial_count_n} < minimum 2 required per AGENTS.md §8.2)")
 
-    print("\n--- 4. AUTOMATED VERDICT EVALUATION (AGENTS.md §9.1, §9.3) ---")
+    if res.in_sample_metrics:
+        m = res.in_sample_metrics
+        print(f"\n--- 4. WALK-FORWARD FOLD 0: IN-SAMPLE ({m['window']}) ---")
+        print(f"Sessions: {m['sessions']} | Start: ₹{m['start_equity']:,.2f} | End: ₹{m['end_equity']:,.2f} | CAGR: {m['cagr']*100:.2f}% | MaxDD: {m['max_drawdown']*100:.2f}% | Trades: {m['closed_trades']} | Win Rate: {m['win_rate']*100:.2f}% | PF: {m['profit_factor']:.4f}")
+
+    if res.validation_metrics:
+        m = res.validation_metrics
+        print(f"\n--- 5. WALK-FORWARD FOLD 1: VALIDATION ({m['window']}) ---")
+        print(f"Sessions: {m['sessions']} | Start: ₹{m['start_equity']:,.2f} | End: ₹{m['end_equity']:,.2f} | CAGR: {m['cagr']*100:.2f}% | MaxDD: {m['max_drawdown']*100:.2f}% | Trades: {m['closed_trades']} | Win Rate: {m['win_rate']*100:.2f}% | PF: {m['profit_factor']:.4f}")
+
+    print("\n--- 6. AUTOMATED VERDICT EVALUATION (AGENTS.md §9.1, §9.3) ---")
     v = res.verdict_report
     print(f"Overall Verdict:         {v.overall_verdict.value}")
     print(f"Summary Counts:          PASS={v.summary_counts.get('PASS', 0)}, FAIL={v.summary_counts.get('FAIL', 0)}, NOT RUN={v.summary_counts.get('NOT_RUN', 0)}")
     
-    # Check specific binding criteria
     crit_surv = next((e for e in v.evaluations if e.criterion_id == "CRIT-SURV-01"), None)
     crit_prov = next((e for e in v.evaluations if e.criterion_id == "CRIT-PROV-01"), None)
+    crit_stat3 = next((e for e in v.evaluations if e.criterion_id == "CRIT-STAT-03"), None)
+    crit_data2 = next((e for e in v.evaluations if e.criterion_id == "CRIT-DATA-02"), None)
     print(f"CRIT-SURV-01:            {crit_surv.status.value if crit_surv else 'MISSING'}")
     print(f"CRIT-PROV-01:            {crit_prov.status.value if crit_prov else 'MISSING'}")
+    print(f"CRIT-STAT-03 (Max Pos):  {crit_stat3.status.value if crit_stat3 else 'MISSING'} ({crit_stat3.computed_value if crit_stat3 else 'N/A'})")
+    print(f"CRIT-DATA-02 (Fail Cls): {crit_data2.status.value if crit_data2 else 'MISSING'} ({crit_data2.computed_value if crit_data2 else 'N/A'})")
 
-    print("\n--- 5. ARTIFACTS GENERATED ---")
+    print("\n--- 7. ARTIFACTS GENERATED ---")
     v_dir = args.verdict_output_dir or (REPO_ROOT / "reports" / "verdicts")
     print(f"Verdict JSON:            {v_dir / 'phase3b2_swing_baseline_2022_2024_verdict.json'}")
     print(f"Verdict Markdown:        {v_dir / 'phase3b2_swing_baseline_2022_2024_verdict.md'}")

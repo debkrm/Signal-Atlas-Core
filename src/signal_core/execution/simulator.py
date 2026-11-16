@@ -140,6 +140,7 @@ class ExecutionFillSimulator:
         round_to_paise: bool = False,
         price_band: Optional[PriceBandRecord] = None,
         quantize_to_tick: Optional[bool] = None,
+        prev_close: Optional[Decimal] = None,
     ) -> ExecutionFillResult:
         """
         Simulates the execution of an order against an exchange session observation or price bar.
@@ -335,6 +336,13 @@ class ExecutionFillSimulator:
 
         is_unconstrained = price_band.is_unconstrained if price_band else False
 
+        # Finding H-106: Unconstrained F&O names operate under dynamic flexing framework (±10% initial band)
+        if is_unconstrained and prev_close is not None and effective_upper is None and price_band is not None:
+            dyn_band = price_band.derive_dynamic_flexing_limits(prev_close)
+            effective_upper = dyn_band.upper_circuit_limit
+            effective_lower = dyn_band.lower_circuit_limit
+            circuit_evidence = True
+
         # 1. Circuit Freeze Fills (AGENTS.md Rule 5.3, Rule 7.4):
         # A BUY order cannot fill if fill reference price is at or through upper circuit limit
         if order.side == OrderSide.BUY and self._criteria.prohibit_buy_at_upper_circuit:
@@ -345,18 +353,11 @@ class ExecutionFillSimulator:
                     circuit_evidence_present=circuit_evidence,
                 )
             if price_bar.high == price_bar.low:
-                if effective_upper is not None and price_bar.high >= effective_upper:
-                    return self._create_rejected_result(
-                        order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_UPPER_CIRCUIT,
-                        f"Whole-day locked upper circuit session ({price_bar.high}); buyers rationed",
-                        circuit_evidence_present=circuit_evidence,
-                    )
-                elif effective_upper is None:
-                    return self._create_rejected_result(
-                        order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_UPPER_CIRCUIT,
-                        f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); buyers rationed",
-                        circuit_evidence_present=circuit_evidence,
-                    )
+                return self._create_rejected_result(
+                    order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_UPPER_CIRCUIT,
+                    f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); buyers rationed",
+                    circuit_evidence_present=circuit_evidence,
+                )
 
         # A SELL order cannot fill if fill reference price is at or through lower circuit limit
         if order.side == OrderSide.SELL and self._criteria.prohibit_sell_at_lower_circuit:
@@ -367,18 +368,11 @@ class ExecutionFillSimulator:
                     circuit_evidence_present=circuit_evidence,
                 )
             if price_bar.high == price_bar.low:
-                if effective_lower is not None and price_bar.low <= effective_lower:
-                    return self._create_rejected_result(
-                        order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_LOWER_CIRCUIT,
-                        f"Whole-day locked lower circuit session ({price_bar.low}); sellers trapped",
-                        circuit_evidence_present=circuit_evidence,
-                    )
-                elif effective_lower is None:
-                    return self._create_rejected_result(
-                        order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_LOWER_CIRCUIT,
-                        f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); sellers trapped",
-                        circuit_evidence_present=circuit_evidence,
-                    )
+                return self._create_rejected_result(
+                    order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_LOWER_CIRCUIT,
+                    f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); sellers trapped",
+                    circuit_evidence_present=circuit_evidence,
+                )
 
         # 2. Invariant 8a: Contradictory Price Band Invariants (Rule 5.3, 6.3, Finding H-97)
         # Band and bar consistency check: fail closed if band contradicts price bar or is inverted.

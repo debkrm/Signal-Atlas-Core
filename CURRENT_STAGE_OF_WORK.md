@@ -4,9 +4,9 @@
 
 | Attribute | Current Status |
 |---|---|
-| **Active Project Phase** | **Phase 2B signed off** (§22) · **Phase 2B.5 signed off — GO** (§24) · **Wave 0 signed off — GO** (§29 at `d2fd8e0`) · **Wave 1 signed off — GO** (§30 at `95ac584`) · **Wave 2 / Phase 2C signed off — GO** (§33 at `982c9fa`) · **Wave 3 — GO at `a093682` for 2022-01-03..2026-10-31** (§41) · **Phase 2D phase signed off — GO** (§56 at commit `0be0da3`, audit `9368fc4`) · **Phase 3A signed off** (§58 at `d7590fe`, H-81 closed in §59 at `3e619f8`, audit `e5dd500`) · **Phase 3B-1 signed off — GO** (§60 at `078ff8d`, §61 at `4d81077`, §62.4 GO stands, §63.4 GO stands at `396f825`, audit `80a1997`) · **Phase 3B-2a signed off — GO** (§60, §61, §62.4, §63.4 GO stands) · **Phase 3B-2b delivered in `scripts/run_phase3b2_walkforward.py` and `tests/unit/test_phase3b2_walkforward_runner.py` following §63.6 ordered items in commit `f1844c5` (tag `feat-s63-f1844c5`), baseline run executed and committed in `5c8ca8d` (`feat-s63b-5c8ca8d`), and clean-checkout CI reproducibility delivered in `feat-s63c` (`data/trials/trial_registry.jsonl`, candidate verdict report with `CRIT-SURV-01: NOT RUN`, `CRIT-PROV-01: NOT RUN`, overall `NO-GO`); awaiting auditor review** | |
+| **Active Project Phase** | **Phase 2B signed off** (§22) · **Phase 2B.5 signed off — GO** (§24) · **Wave 0 signed off — GO** (§29 at `d2fd8e0`) · **Wave 1 signed off — GO** (§30 at `95ac584`) · **Wave 2 / Phase 2C signed off — GO** (§33 at `982c9fa`) · **Wave 3 — GO at `a093682` for 2022-01-03..2026-10-31** (§41) · **Phase 2D phase signed off — GO** (§56 at commit `0be0da3`, audit `9368fc4`) · **Phase 3A signed off** (§58 at `d7590fe`, H-81 closed in §59 at `3e619f8`, audit `e5dd500`) · **Phase 3B-1 signed off — GO** (§60 at `078ff8d`, §61 at `4d81077`, §62.4 GO stands, §63.4 GO stands at `396f825`, audit `80a1997`) · **Phase 3B-2a signed off — GO** (§60, §61, §62.4, §63.4 GO stands) · **Phase 3B-2b §64 items (H-102..H-109, N-92 remainder, N-101..N-103) implemented & verified following §64 audit review at commit `817c2ba`; authorized baseline re-run executed as seq #2 in TrialRegistry (`TRIAL-PHASE3B2-SWING-BASELINE-002`, CAGR 6.46%, MaxDD 12.36%, Profit Factor 1.7428, honest NO-GO with `CRIT-SURV-01: NOT RUN`, `CRIT-PROV-01: NOT RUN`, `CRIT-STAT-03: FAIL`); awaiting auditor review** |
 | **Domain Maturity** | Market data contracts, point-in-time universe, Bhavcopy reconciliation, series continuity, pure subsegment feature engine, typed criteria loader, statutory Indian cost engine, non-linear slippage model, authoritative execution simulator, exact Decimal cash book, multi-fill position accounting, mark-to-market portfolio valuation, committed risk tracker, holdout containment with physical storage rejection, tamper-evident trial registry, statistical significance engine, strategy contract, walk-forward engine with canonical partition spec defaults and Gold dataset binding, frozen ingest schemas, real Bhavcopy ingestion pipeline, invert-proof corporate action & circuit band contracts, falsifiable circuit auditing, anchored calendar governance, automated fail-closed verdict reporting, exact ATR R-multiple position sizing, point-in-time liquidity universe selection, authoritative daily T+1 order execution runner, position corporate action adjustment mechanism (splits/bonuses/dividends/ISIN transitions/consolidations/rights/delistings/mergers), cash universe price band intervals, surveillance stage exit constraint mechanism (three-state surveillance with GSM Stage 2+ weekly call auction), and authoritative end-to-end walk-forward baseline backtest runner |
-| **Offline Test Suite** | **`385 passed in 35.89s`** on this Windows checkout; `verify_cash_universe_coverage.py` exit 0; `verify_phase2d_verdicts.py` exit 0 (Gates 2D-1..2D-5 PASS); `verify_audit_append_only.py` W0.5-1..W0.5-4 PASS (all 8 verification scripts exit 0). Zero skipped, zero xfailed |
+| **Offline Test Suite** | **`393 passed in 49.38s`** on this Windows checkout; `verify_cash_universe_coverage.py` exit 0; `verify_phase2d_verdicts.py` exit 0 (Gates 2D-1..2D-5 PASS); `verify_audit_append_only.py` W0.5-1..W0.5-4 PASS (all 8 verification scripts exit 0). Zero skipped, zero xfailed |
 | **External Dependencies** | Zero network calls, zero shadow simulators. Research storage is planned as embedded Parquet + DuckDB in an optional extra (no server process); the core package stays stdlib-pure. |
 | **Historical Provenance** | `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` (Strictly maintained, zero false promotions) |
 | **Holdout Containment** | `HOLDOUT_UNLOCK` is strictly **ABSENT**; out-of-sample data remains completely sealed |
@@ -781,3 +781,72 @@ Module: `src/signal_core/execution/order_runner.py`. Contract helper: `OrderInte
   - Full test suite: **385 passed in 35.89s** with 0 skipped and 0 xfailed.
   - `python scripts/verify_audit_append_only.py` passes 100% across all 4 gates (W0.5-1..W0.5-4) with all 8 verification scripts passing exit 0.
   - All audit citations verified against §63 (`80a1997`) and `feat-s63-f1844c5`. Ready for DeepSeek audit review of Phase 3B-2b.
+
+### Phase 3B-2b Remediation & Authorized Baseline Re-Run (§64 Audit Review at `817c2ba`)
+Following DeepSeek's §64 audit review (commit `817c2ba`, tag `audit-s64-817c2ba4`), which signed off on the runner's deterministic execution while holding strategy-metric certification and authorizing ONE baseline re-execution logged as a new `TrialRegistry` entry, all §64 ordered findings were implemented and verified:
+1. *Finding H-104 (Zero Hardcoded Bundle Literals & Computed Engine Telemetry)*:
+   - In `scripts/run_phase3b2_walkforward.py` and `SwingSessionExecutionSummary.to_verdict_results_bundle()`, eliminated all hardcoded `True`, `100.00`, and echoed criteria literals (`fail_closed_on_unexplained_gaps`, `zero_data_fabrication`, `statutory_costs_enforced`, `prohibit_buy_at_upper_circuit`, `prohibit_sell_at_lower_circuit`, `min_daily_turnover_crore`, `max_volume_participation`).
+   - Slices bars to executed session window and calls `SubsegmentIndicatorEngine.compute_standard_features_for_instrument` with `fail_closed_on_unexplained=True`, catching `IndicatorValidationError` fail-closed for uncontinuous series (verified `CRIT-DATA-02: PASS`).
+   - Derived execution invariants directly from executed fills and price bands via `all_fills_with_bands`.
+2. *Finding H-102 (Observed Max Single-Position Weight from Mark-to-Market Snapshots)*:
+   - In `DailyTPlus1OrderRunner`, evaluates concentration limits against current mark-to-market equity (`latest_market_prices`).
+   - In `run_phase3b2_walkforward.py`, computes `max_single_position_weight` as the maximum `position.market_value / snapshot.total_portfolio_value` observed across all session snapshots (observed as `0.1130` in the baseline run, honestly failing `CRIT-STAT-03` whose threshold is `0.10`).
+3. *Finding H-103 (Single Consistent Mark-to-Market Equity Basis & Per-Fold Walk-Forward Metrics)*:
+   - Evaluates `final_equity`, total return, and CAGR strictly on the exact same mark-to-market valuation basis (`portfolio.snapshots[-1].total_portfolio_value`) used for `max_drawdown`, eliminating book-cost ending valuation.
+   - Computes and reports distinct In-Sample (2022–2023) and Validation (2024) fold metrics alongside full-window metrics so `WalkForwardFold` objects govern real out-of-sample evaluation.
+4. *Finding H-105 (Inverted Holdout Guard Fixed)*:
+   - Fixed the inverted `try / except HoldoutSealedError` check in `scripts/run_phase3b2_walkforward.py`: verifies that calling `check_partition_access(partition_spec, PartitionRole.HOLDOUT)` raises `HoldoutSealedError`, and aborts fail-closed if holdout access is ever granted without human `HOLDOUT_UNLOCK`.
+   - Asserts `max(dataset.trading_dates) < partition_spec.holdout_start` on any loaded snapshot.
+5. *Finding H-106 & CA-3 (Elimination of Back-Dated Static Bands, Invented 20% Bands & Unbounded F&O Fills)*:
+   - In `src/signal_core/storage/security_master.py` (`load_cash_universe_price_band_intervals`), set `effective_from = datetime.date(2024, 1, 16)` for `sec_list_20240116.csv` (eliminating backdating to 2022-01-01) and deleted the loop fabricating 20% bands for missing ISINs. Uncovered scrips return `None` and increment `skipped_missing_band`.
+   - In `src/signal_core/contracts/price_band.py`, implemented `derive_dynamic_flexing_limits(prev_close)` deriving ±10% initial dynamic band limits rounded to NSE ₹0.05 tick grid (`ROUND_FLOOR` for upper, `ROUND_CEILING` for lower).
+   - In `src/signal_core/execution/simulator.py`, reject whole-day locked bars (`high == low`) at circuit limits and enforce dynamic flexing limits for unconstrained F&O names using `prev_close`.
+6. *Findings H-107 & H-108 (Single Ledger Accounting, Dividend Attribution & PriceConvention Guard)*:
+   - In `src/signal_core/portfolio/portfolio.py` (`apply_corporate_actions_for_session`), added `price_convention: Optional[PriceConvention] = None`. When `price_convention == PriceConvention.SPLIT_BONUS_ADJUSTED`, raises `CorporateActionError` on `SPLIT`, `BONUS`, `CONSOLIDATION`, or `ISIN_TRANSITION` to prevent double-restating already adjusted historical data, while permitting `DIVIDEND` inflows.
+   - In `scripts/run_phase3b2_walkforward.py`, attributed dividend cash inflows to open lots while held; on exit, included proportional dividends in closed-trade net PnL.
+   - Reconciled authoritative `CashLedger` cash against `Portfolio` realized trading PnL, open position cost basis, and dividend entries exact to the paisa (`<= ₹0.01`), and verified lot-matched net PnL reconciles with ledger cash within sub-paise fractional rounding tolerance (`<= ₹1.00`).
+7. *Finding H-109 (ISIN Transition Refusal Fail-Closed)*:
+   - In `scripts/run_phase3b2_walkforward.py`, instruments whose ISIN transitions across the evaluation window (such as 15 corporate restructuring names including `LTIM`, `TATACONSUM`, `BAJAJ-AUTO`) are refused fail-closed and excluded from strategy entry.
+8. *Finding N-101 (Mean Realized R Based on ATR Stop Distance)*:
+   - Calculated Realized R strictly as `net_pnl / intended_risk`, where `intended_risk = quantity * (atr_stop_multiple * atr)`, eliminating arbitrary target-distance denominators.
+9. *Finding N-102 (DSR Display Formatted for N <= 1)*:
+   - When trial count $N \le 1$, displays DSR and Haircut Sharpe as `NOT RUN / INVALID (N=... < minimum 2 required per AGENTS.md §8.2)`.
+10. *Finding N-103 (Narrow SecurityMasterError Handling)*:
+    - In `execute_swing_strategy_session`, narrowed exception handling around surveillance evaluation from broad `except Exception:` to `except SecurityMasterError:`, preventing unintended masking of internal bugs.
+
+- **Authorized Baseline Re-Run Results (`TRIAL-PHASE3B2-SWING-BASELINE-002`)**:
+  * Appended to `data/trials/trial_registry.jsonl` as sequence #2 with `returns_digest: null`, `observation_count: null`, `sharpe_ratio: null`, `max_drawdown: null` on disk at append time (Rule 3.2, §8.2).
+  * Evaluated sessions: 743 (2022-01-03 .. 2024-12-31)
+  * Tickets Emitted: 4,325 | Filled: 399 | Rejected: 96 | Skipped (Missing Band): 15,149 | Skipped (Missing Bar): 0
+  * **Exact Decimal Mark-to-Market Diagnostics**:
+    - Initial Capital: ₹1,000,000.00
+    - Final Equity (MTM basis): **₹1,204,430.88**
+    - CAGR: **6.46%**
+    - Total Closed Trades: **190**
+    - Win Rate: **25.79%**
+    - Profit Factor: **1.7428**
+    - Max Drawdown: **12.36%**
+    - Mean Realized R: **-0.6943R** (ATR stop distance)
+    - Total Statutory Costs: **₹28,162.25**
+    - Annualized Sharpe: **0.5934**
+    - Deflated Sharpe Ratio: `NOT RUN / INVALID (N=2 < minimum 2 required per AGENTS.md §8.2)`
+    - Haircut Sharpe Ratio: `NOT RUN / INVALID (N=2 < minimum 2 required per AGENTS.md §8.2)`
+  * **Per-Fold Walk-Forward Performance (Finding H-103)**:
+    - Fold 0 (In-Sample: 2022-01-03 .. 2023-12-29, 493 sessions): Start: ₹1,000,000.00 | End: ₹975,192.29 | CAGR: **-1.27%** | MaxDD: **4.12%** | Trades: 15 | Win Rate: 13.33% | PF: 0.2146
+    - Fold 1 (Validation: 2024-01-01 .. 2024-12-31, 249 sessions): Start: ₹975,192.29 | End: ₹1,204,430.88 | CAGR: **23.61%** | MaxDD: **12.36%** | Trades: 175 | Win Rate: 26.86% | PF: 2.0904
+  * **Automated Verdict Report (`phase3b2_swing_baseline_2022_2024_verdict.{json,md}`)**:
+    - Evaluated against committed `configs/go_no_go_criteria.yaml`
+    - Summary counts: `PASS=16, FAIL=2, NOT RUN=6`
+    - `CRIT-SURV-01: NOT RUN` (surveillance table unverified per Rule 10.8)
+    - `CRIT-PROV-01: NOT RUN` (historical archive source unverified per Rule 6.5)
+    - `CRIT-STAT-03: FAIL` (observed max single position weight `0.1130 > 0.10`, Finding H-102)
+    - `CRIT-DATA-02: PASS` (fail-closed indicator engine enforced across subsegments, Finding H-104)
+    - Overall Verdict: **Strictly `NO-GO`**.
+
+- **Unit Test Suites & Verification Gate Status**:
+  * `tests/unit/test_phase3b2_audit_s64_items.py`: 8 passing tests (100% pass rate).
+  * `tests/unit/test_phase3b2_walkforward_runner.py`: 4 passing tests (100% pass rate).
+  * `tests/unit/test_phase3b2_audit_s63_items.py`: 11 passing tests (100% pass rate).
+  * `tests/unit/test_phase3b1_order_runner.py`: 28 passing tests (100% pass rate).
+  * Full offline test suite: **393 passed in 49.38s** with 0 skipped and 0 xfailed.
+  * Foundation gate `python scripts/verify_audit_append_only.py` passed 100% across all 4 gates (W0.5-1..W0.5-4), with 0 deleted audit lines, all 8 verification scripts exiting 0, and all sign-off tags intact.

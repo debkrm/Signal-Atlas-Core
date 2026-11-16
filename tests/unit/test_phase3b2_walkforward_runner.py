@@ -153,7 +153,7 @@ def test_walkforward_runner_end_to_end(tmp_path: Path):
     assert isinstance(res.win_rate, Decimal)
     assert isinstance(res.profit_factor, Decimal)
     assert isinstance(res.max_drawdown, Decimal)
-    assert isinstance(res.mean_realized_r, Decimal)
+    assert res.mean_realized_r is None or isinstance(res.mean_realized_r, Decimal)
     assert isinstance(res.total_statutory_costs, Decimal)
     assert res.total_statutory_costs >= Decimal("0.00")
 
