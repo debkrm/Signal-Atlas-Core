@@ -1,6 +1,6 @@
 {
-  "total_trials": 3,
-  "head_hash": "3e3a2bd6055c6ca85f85c3c82ac739fce924fd827620882bca7672f9614aaed1",
-  "last_trial_id": "TRIAL-PHASE3B2-SWING-BASELINE-003",
-  "timestamp_utc": "2026-11-16T07:12:21.197323+00:00"
+  "total_trials": 4,
+  "head_hash": "03dcf82861a4f684d154189629a200d415077f4ab690fd7791d914c7bf0cc266",
+  "last_trial_id": "TRIAL-PHASE3B2-SWING-TRIM-004",
+  "timestamp_utc": "2026-11-16T09:51:54.397689+00:00"
 }

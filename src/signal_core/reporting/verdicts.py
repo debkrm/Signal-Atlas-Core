@@ -582,6 +582,16 @@ def evaluate_verdicts(
     val_buy_uc = results_bundle.get("prohibit_buy_at_upper_circuit")
     if val_buy_uc is not None:
         status = VerdictStatus.PASS if val_buy_uc is True else VerdictStatus.FAIL
+        buy_uc_judged = results_bundle.get("upper_circuit_buy_judged_fills")
+        buy_uc_violations = results_bundle.get("upper_circuit_buy_violating_fills")
+        if buy_uc_judged is not None and buy_uc_violations is not None:
+            buy_uc_missing = results_bundle.get("upper_circuit_buy_missing_limit_fills", 0)
+            buy_uc_evidence = (
+                f"{buy_uc_violations} of {buy_uc_judged} judged BUY fill(s) executed at or above the effective "
+                f"Upper Circuit limit and {buy_uc_missing} carried no limit (zero such fills permitted, §5.3, Finding H-114)."
+            )
+        else:
+            buy_uc_evidence = "Simulator strictly enforces zero BUY fills when price equals Upper Circuit band (§5.3)."
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-EXEC-03",
             category="Execution Realism",
@@ -590,7 +600,7 @@ def evaluate_verdicts(
             threshold_value=str(active_criteria.prohibit_buy_at_upper_circuit),
             comparator="==",
             status=status,
-            evidence="Simulator strictly enforces zero BUY fills when price equals Upper Circuit band (§5.3).",
+            evidence=buy_uc_evidence,
             is_binding=True,
         ))
     else:
@@ -610,6 +620,16 @@ def evaluate_verdicts(
     val_sell_lc = results_bundle.get("prohibit_sell_at_lower_circuit")
     if val_sell_lc is not None:
         status = VerdictStatus.PASS if val_sell_lc is True else VerdictStatus.FAIL
+        sell_lc_judged = results_bundle.get("lower_circuit_sell_judged_fills")
+        sell_lc_violations = results_bundle.get("lower_circuit_sell_violating_fills")
+        if sell_lc_judged is not None and sell_lc_violations is not None:
+            sell_lc_missing = results_bundle.get("lower_circuit_sell_missing_limit_fills", 0)
+            sell_lc_evidence = (
+                f"{sell_lc_violations} of {sell_lc_judged} judged SELL fill(s) executed at or below the effective "
+                f"Lower Circuit limit and {sell_lc_missing} carried no limit (zero such fills permitted, §5.3, Finding H-114)."
+            )
+        else:
+            sell_lc_evidence = "Simulator strictly enforces zero SELL / Stop-Loss fills when price equals Lower Circuit band (§5.3)."
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-EXEC-04",
             category="Execution Realism",
@@ -618,7 +638,7 @@ def evaluate_verdicts(
             threshold_value=str(active_criteria.prohibit_sell_at_lower_circuit),
             comparator="==",
             status=status,
-            evidence="Simulator strictly enforces zero SELL / Stop-Loss fills when price equals Lower Circuit band (§5.3).",
+            evidence=sell_lc_evidence,
             is_binding=True,
         ))
     else:

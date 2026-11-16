@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union, TYPE_CHECKING
 
 from signal_core.contracts.criteria import load_go_no_go_criteria
@@ -54,11 +54,28 @@ class DeliverySwingTrendStrategy(Strategy):
         slow_indicator: str = "sma_50",
         allocation_weight: Optional[Decimal] = None,
         atr_stop_multiple: Decimal = Decimal("2.0"),
+        max_position_weight_trim_threshold: Optional[Decimal] = None,
     ) -> None:
         self._strategy_id = strategy_id
         self._fast_indicator = fast_indicator
         self._slow_indicator = slow_indicator
         self._atr_stop_multiple = atr_stop_multiple
+
+        # Trial #4 (Finding H-114 scope, §66.5 Condition 1): optional automated winner
+        # concentration trim. None (the default) leaves the certified baseline behaviour untouched.
+        if max_position_weight_trim_threshold is not None:
+            if (
+                isinstance(max_position_weight_trim_threshold, bool)
+                or not isinstance(max_position_weight_trim_threshold, Decimal)
+                or not max_position_weight_trim_threshold.is_finite()
+                or max_position_weight_trim_threshold <= Decimal("0")
+                or max_position_weight_trim_threshold > Decimal("1")
+            ):
+                raise ValueError(
+                    f"max_position_weight_trim_threshold must be a finite Decimal in (0, 1], "
+                    f"got {max_position_weight_trim_threshold!r}"
+                )
+        self._max_position_weight_trim_threshold = max_position_weight_trim_threshold
 
         if allocation_weight is not None:
             self._allocation_weight = allocation_weight
@@ -79,6 +96,7 @@ class DeliverySwingTrendStrategy(Strategy):
             "slow_indicator": self._slow_indicator,
             "allocation_weight": str(self._allocation_weight),
             "atr_stop_multiple": str(self._atr_stop_multiple),
+            "max_position_weight_trim_threshold": str(self._max_position_weight_trim_threshold),
             "policy": "APPROVED_EQ_ONLY_POLICY",
         }
 
@@ -88,10 +106,15 @@ class DeliverySwingTrendStrategy(Strategy):
         next_session: datetime.date,
         universe: Sequence[str],
         features: Mapping[str, Any],
+        portfolio: Optional[Any] = None,
+        latest_market_prices: Optional[Mapping[str, Decimal]] = None,
     ) -> Tuple[OrderIntent, ...]:
         """
         Formulates trade intents at session as_of (T close) for execution at next_session (T+1).
         Respects APPROVED_EQ_ONLY_POLICY: only generates intents for instruments present in universe.
+        When max_position_weight_trim_threshold is configured and a portfolio is supplied, emits a
+        partial T+1 SELL trim for any position whose mark-to-market weight exceeds the threshold,
+        reducing it to the strategy allocation weight (§13.2, CRIT-STAT-03).
         """
         intents: list[OrderIntent] = []
 
@@ -133,6 +156,53 @@ class DeliverySwingTrendStrategy(Strategy):
                         intent_id=f"SWING_SELL_{isin}_{as_of.isoformat()}",
                     )
                 )
+
+        # Automated winner concentration trim (Trial #4). Only an open position already inside the
+        # point-in-time universe is trimmed, and a full exit intent for the same ISIN takes precedence.
+        if self._max_position_weight_trim_threshold is not None and portfolio is not None:
+            equity = portfolio.current_total_equity(latest_market_prices)
+            exiting_isins = {i.instrument_id for i in intents if i.side == OrderSide.SELL}
+            if equity > Decimal("0"):
+                for isin in sorted(universe):
+                    if isin in exiting_isins:
+                        continue
+                    pos = portfolio.get_position(isin)
+                    if pos is None or pos.is_closed or pos.quantity <= 0:
+                        continue
+                    mark = None
+                    if latest_market_prices is not None:
+                        mark = latest_market_prices.get(isin)
+                    if mark is None:
+                        mark = getattr(features.get(isin), "close", None)
+                    if mark is None:
+                        continue
+                    mark = Decimal(str(mark))
+                    if mark <= Decimal("0"):
+                        continue
+                    current_value = mark * Decimal(pos.quantity)
+                    if (current_value / equity) <= self._max_position_weight_trim_threshold:
+                        continue
+                    target_value = equity * self._allocation_weight
+                    excess_value = current_value - target_value
+                    if excess_value <= Decimal("0"):
+                        continue
+                    trim_qty = int((excess_value / mark).to_integral_value(rounding=ROUND_CEILING))
+                    trim_qty = min(trim_qty, pos.quantity)
+                    if trim_qty <= 0:
+                        continue
+                    intents.append(
+                        OrderIntent(
+                            instrument_id=isin,
+                            signal_date=as_of,
+                            target_date=next_session,
+                            side=OrderSide.SELL,
+                            order_type=OrderType.MARKET_ON_OPEN,
+                            product=OrderProduct.DELIVERY,
+                            quantity=trim_qty,
+                            intent_id=f"SWING_TRIM_{isin}_{as_of.isoformat()}",
+                            metadata={"trim_reason": "MAX_POSITION_WEIGHT"},
+                        )
+                    )
 
         return tuple(intents)
 
@@ -257,6 +327,8 @@ def execute_swing_strategy_session(
         next_session=next_session,
         universe=universe,
         features=features,
+        portfolio=runner.portfolio,
+        latest_market_prices=latest_market_prices,
     )
 
     tickets: List[DailyExecutionTicket] = []
@@ -315,6 +387,7 @@ def execute_swing_strategy_session(
             series="EQ",
             allocation_weight=alloc_weight,
             metadata={"intent_id": intent.intent_id},
+            sell_quantity=intent.quantity if intent.side == OrderSide.SELL else None,
         )
 
         t_plus_1_bar = bars_next_session.get(isin)

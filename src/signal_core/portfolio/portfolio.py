@@ -257,6 +257,10 @@ class Portfolio:
                         ),
                         reference_id=f"MERGER_{old_isin}_{action.ex_date.isoformat()}",
                     )
+                    # Finding N-112: the settled slice is a disposal at the consideration price, so
+                    # its realized PnL is (consideration - removed book basis), keeping the ledger
+                    # identity exact and refusing the zero-PnL tautology of a book-value settlement.
+                    pos.record_merger_cash_settlement_pnl(cash_amount, frac_cost_basis)
                     self._peak_portfolio_value = max(self._peak_portfolio_value, self.current_total_equity())
             return entry
 

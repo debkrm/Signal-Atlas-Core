@@ -123,8 +123,8 @@ market_data_and_accounting_invariants:
   zero_data_fabrication_required: true
 
   # Finding H-72: Authoritative reference manifest fingerprint pinned as criteria anchor (Audit §54.5, §54.10, §60.6 Item 4, §62.6 Item 4)
-  # MAN-FPR-V1 covers data/reference/manifest.jsonl content (35,690 bytes, SHA-256 bc99ab5d364892a990c973370bc72f1c666a337387119b49925bdb9572af6f01)
-  expected_manifest_fingerprint: "MAN-FPR-V1-78bf1bf559c07cc5f5856f1c824eb4c7042f5050b5547ee373c893e5ee2b54d9"
+  # MAN-FPR-V1 covers data/reference/manifest.jsonl content (35,742 bytes, SHA-256 4bfcebb762dd6451105503b86d57d1f069c8c79cfd548d7bcd0d625da1e7a517)
+  expected_manifest_fingerprint: "MAN-FPR-V1-4bfcebb762dd6451105503b86d57d1f069c8c79cfd548d7bcd0d625da1e7a517"
 
   # Authoritative Calendar and Session Reconciliation Invariants (AGENTS.md §6.3, §9.2, Findings H-56, H-61, H-62, H-64)
   # H-64: Calendar identity anchor — computed from session_records (dates, session_types, open/close times) at load time

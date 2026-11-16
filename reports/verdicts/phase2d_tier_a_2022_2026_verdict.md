@@ -4,7 +4,7 @@
 - **Evaluated At (UTC):** `2026-11-14T16:45:00+00:00`
 - **Evaluation Window:** `2022-01-03` to `2026-10-30`
 - **Criteria Version:** `1.1.0`
-- **Criteria Fingerprint:** `CRIT-FPR-V1-b3f35df928c1ce126e0cbc9f46b4f47f901448d8201bf8922060abe79fcd6677`
+- **Criteria Fingerprint:** `CRIT-FPR-V1-a7e535475f14de9e6951ed170931264e1726dc7b66c2f70999d16bc6936df893`
 - **Calendar Fingerprint:** `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad`
 - **Summary Counts:** `PASS=3`, `FAIL=0`, `NOT RUN=20` (Total=23)
 

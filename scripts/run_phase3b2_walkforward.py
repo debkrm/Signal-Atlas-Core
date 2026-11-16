@@ -322,6 +322,8 @@ def run_phase3b2_walkforward(
     fail_closed_on_holdout: bool = True,
     fail_closed_on_unexplained: bool = True,
     record_trial: bool = True,
+    in_sample_only: bool = False,
+    max_position_weight_trim_threshold: Optional[Decimal] = None,
 ) -> Phase3B2WalkForwardRunResult:
     """
     Executes the Phase 3B-2b walk-forward backtest and returns Phase3B2WalkForwardRunResult.
@@ -338,7 +340,13 @@ def run_phase3b2_walkforward(
     # The evaluation window is strictly 2022-01-03 .. 2024-12-31.
     # Out-of-sample Holdout is 2025-01-01 .. 2026-11-11.
     eval_start = eval_start_date or datetime.date(2022, 1, 3)
-    eval_end = eval_end_date or datetime.date(2024, 12, 31)
+    if eval_end_date is not None:
+        eval_end = eval_end_date
+    elif in_sample_only:
+        # §66.5 Condition 1: exploratory trials are evaluated on 2022-01-03..2023-12-29 only.
+        eval_end = datetime.date(2023, 12, 29)
+    else:
+        eval_end = datetime.date(2024, 12, 31)
 
     # Physical Holdout Boundary Refusal (§8.1)
     if eval_start >= partition_spec.holdout_start or eval_end >= partition_spec.holdout_start:
@@ -391,10 +399,14 @@ def run_phase3b2_walkforward(
             refused_transition_uuids.add(u)
             continue
 
+        # Identity resolution, not universe membership: a snapshot UUID may carry a symbol that was
+        # renamed after the evaluation window (e.g. MCDOWELL-N -> UNITDSPR in H2 2024), so fall back
+        # to the dataset's own last session as well as the fixed 2024-01-16 cash-universe anchor.
         isin = (
             sec_master.resolve_isin_by_symbol(sym, datetime.date(2024, 1, 16), "EQ")
             or sec_master.resolve_isin_by_symbol(sym, eval_start, "EQ")
             or sec_master.resolve_isin_by_symbol(sym, eval_end, "EQ")
+            or sec_master.resolve_isin_by_symbol(sym, max_d, "EQ")
         )
         if isin is None:
             raise ValueError(f"Failed to resolve authentic ISIN for symbol {sym} (UUID {u})")
@@ -499,7 +511,7 @@ def run_phase3b2_walkforward(
         embargo_sessions=0,
         partition_role=PartitionRole.VALIDATION,
     )
-    folds = (fold_is, fold_val)
+    folds = (fold_is,) if in_sample_only else (fold_is, fold_val)
     fold_spec_fp = compute_fold_spec_fingerprint(folds)
 
     # 8. Instantiate Single Authoritative Execution Engine & Strategy (§7.4, §13.5)
@@ -525,6 +537,7 @@ def run_phase3b2_walkforward(
         slow_indicator=slow_indicator,
         allocation_weight=allocation_weight,
         atr_stop_multiple=atr_stop_multiple,
+        max_position_weight_trim_threshold=max_position_weight_trim_threshold,
     )
 
     # 9. Session-by-Session Walk-Forward Simulation Loop
@@ -533,6 +546,9 @@ def run_phase3b2_walkforward(
     all_fills_with_bands: List[Tuple[ExecutionFillResult, Optional[PriceBandRecord]]] = []
     open_lots: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     closed_trades: List[Dict[str, Any]] = []
+    # N-112/N-115: book basis removed from the lot book by merger fractional slices, used only to
+    # reconcile the lot book against the ledger's market-value cash settlement.
+    lot_frac_book_basis_total = Decimal("0.00")
 
     total_emitted = 0
     total_filled = 0
@@ -595,21 +611,12 @@ def run_phase3b2_walkforward(
                     whole_q = (q * num) // den
                     rem = (q * num) % den
                     frac_costs = (lot["costs"] * Decimal(rem)) / Decimal(q * num) if (q * num) > 0 else Decimal("0.00")
-                    if rem > 0:
-                        closed_trades.append({
-                            "isin": ca.isin,
-                            "entry_date": lot["entry_date"],
-                            "exit_date": as_of,
-                            "quantity": Decimal(rem) / Decimal(den),
-                            "entry_price": lot["entry_price"],
-                            "exit_price": lot["entry_price"],
-                            "gross_pnl": Decimal("0.00"),
-                            "net_pnl": -frac_costs,
-                            "dividends": Decimal("0.00"),
-                            "total_costs": frac_costs,
-                            "intended_risk": None,
-                            "realized_r": None,
-                        })
+                    # N-115: the fractional slice is a cash settlement, not a trade. It is recorded
+                    # solely as CashEntryType.MERGER_CASH_IN_LIEU by the Portfolio ledger; adding a
+                    # zero-gross closed trade here would double-count it and inflate the trade count.
+                    lot_frac_book_basis_total += (
+                        lot["entry_price"] * Decimal(rem) / Decimal(num)
+                    ).quantize(Decimal("0.01"))
                     lot["quantity"] = whole_q
                     lot["original_quantity"] = whole_q
                     lot["entry_price"] = (lot["entry_price"] * Decimal(den) / Decimal(num)).quantize(Decimal("0.0001"))
@@ -742,7 +749,15 @@ def run_phase3b2_walkforward(
     portfolio_dividends = sum(
         e.amount for e in portfolio.ledger.entries if e.entry_type == CashEntryType.DIVIDEND_INFLOW
     )
-    authoritative_ledger_cash = initial_capital + portfolio_realized_trading_pnl - portfolio_open_outlay + portfolio_dividends
+    portfolio_merger_cash = sum(
+        e.amount for e in portfolio.ledger.entries if e.entry_type == CashEntryType.MERGER_CASH_IN_LIEU
+    )
+    # The merger cash settlement is already reflected through the position's settlement PnL
+    # (consideration minus removed book basis), so this identity needs no separate merger term.
+    authoritative_ledger_cash = (
+        initial_capital + portfolio_realized_trading_pnl - portfolio_open_outlay
+        + portfolio_dividends
+    )
     assert abs(portfolio.current_cash - authoritative_ledger_cash) <= Decimal("0.01"), (
         f"Authoritative ledger cash ₹{portfolio.current_cash} does not reconcile with portfolio state "
         f"(expected ₹{authoritative_ledger_cash}, difference ₹{portfolio.current_cash - authoritative_ledger_cash})"
@@ -757,7 +772,13 @@ def run_phase3b2_walkforward(
         for isin, lots in open_lots.items() for lot in lots
     )
     total_closed_net_pnl = sum(t["net_pnl"] for t in closed_trades)
-    expected_lot_cash = initial_capital + total_closed_net_pnl - open_positions_outlay + open_positions_dividends
+    # The lot book drops the fractional slice's book basis, so the ledger's market-value settlement
+    # contributes (cash received - book basis removed) to lot-level cash (Finding N-112).
+    lot_merger_settlement_pnl = portfolio_merger_cash - lot_frac_book_basis_total
+    expected_lot_cash = (
+        initial_capital + total_closed_net_pnl - open_positions_outlay
+        + open_positions_dividends + lot_merger_settlement_pnl
+    )
     # Lot-matched net PnL reconciles with ledger cash within sub-paise fractional rounding tolerance (<= ₹1.00 across 3 years)
     assert abs(portfolio.current_cash - expected_lot_cash) <= Decimal("1.00"), (
         f"Ledger cash ₹{portfolio.current_cash} does not reconcile with closed trades net PnL ₹{total_closed_net_pnl} "
@@ -777,7 +798,7 @@ def run_phase3b2_walkforward(
             trial_id=trial_id,
             hypothesis=hypothesis,
             rationale=rationale,
-            partition=PartitionRole.VALIDATION,
+            partition=PartitionRole.IN_SAMPLE if in_sample_only else PartitionRole.VALIDATION,
             canonical_params=trial_params,
             fold_spec_fingerprint=fold_spec_fp,
             dataset_fingerprint=dataset.snapshot.content_fingerprint,
@@ -795,34 +816,16 @@ def run_phase3b2_walkforward(
             },
         )
     else:
+        # N-111: A re-render may only describe a trial the registry already records. Emitting a
+        # verdict artifact under an unregistered trial_id would understate the multiple-testing
+        # budget with a fabricated hash chain, so it fails closed instead.
         existing_trials = [t for t in registry.get_trials() if t.trial_id == trial_id]
-        if existing_trials:
-            trial_record = existing_trials[-1]
-        else:
-            trial_record = TrialRecord(
-                seq=registry.total_trial_count,
-                trial_id=trial_id,
-                hypothesis=hypothesis,
-                rationale=rationale,
-                partition=PartitionRole.VALIDATION,
-                canonical_params=trial_params,
-                fold_spec_fingerprint=fold_spec_fp,
-                dataset_fingerprint=dataset.snapshot.content_fingerprint,
-                criteria_version=criteria.version,
-                timestamp_utc=ts_utc,
-                record_hash="RE_RENDER_UNREGISTERED",
-                prev_hash="0"*64,
-                sharpe_ratio=None,
-                partition_spec=partition_spec,
-                execution_config={
-                    "execution_latency_sessions": 1,
-                    "statutory_costs_enforced": True,
-                    "strict_decimal_accounting": True,
-                    "point_in_time_universe": True,
-                    "zero_data_fabrication": True,
-                    "security_master_fingerprint": sec_master.fingerprint,
-                },
+        if not existing_trials:
+            raise ValueError(
+                f"record_trial=False requested for unregistered trial_id '{trial_id}'; "
+                f"register the trial before evaluating it (AGENTS.md §8.2, Finding N-111)."
             )
+        trial_record = existing_trials[-1]
 
     total_trial_count_n = registry.total_trial_count
 
@@ -903,31 +906,33 @@ def run_phase3b2_walkforward(
         "profit_factor": is_profit_factor,
     }
 
-    val_start_eq = is_end_eq
-    val_end_eq = val_snapshots[-1].total_portfolio_value if val_snapshots else val_start_eq
-    val_ret = (val_end_eq - val_start_eq) / val_start_eq
-    val_sessions = len(val_snapshots)
-    val_cagr = compute_compounded_annualized_return(val_ret, session_count=val_sessions, sessions_per_year=250) if val_sessions > 0 else Decimal("0.00")
-    val_maxdd = max((s.max_drawdown for s in val_snapshots), default=Decimal("0.00"))
-    val_trades = [t for t in closed_trades if t["exit_date"] >= fold_val.test_start]
-    val_wins = [t for t in val_trades if t["net_pnl"] > Decimal("0.00")]
-    val_win_rate = (Decimal(len(val_wins)) / Decimal(len(val_trades))) if val_trades else Decimal("0.00")
-    val_gross_profit = sum(t["gross_pnl"] for t in val_trades if t["gross_pnl"] > Decimal("0.00"))
-    val_gross_loss = sum(abs(t["gross_pnl"]) for t in val_trades if t["gross_pnl"] < Decimal("0.00"))
-    val_profit_factor = (val_gross_profit / val_gross_loss) if val_gross_loss > Decimal("0.00") else Decimal("0.00")
+    validation_metrics: Optional[Dict[str, Any]] = None
+    if not in_sample_only:
+        val_start_eq = is_end_eq
+        val_end_eq = val_snapshots[-1].total_portfolio_value if val_snapshots else val_start_eq
+        val_ret = (val_end_eq - val_start_eq) / val_start_eq
+        val_sessions = len(val_snapshots)
+        val_cagr = compute_compounded_annualized_return(val_ret, session_count=val_sessions, sessions_per_year=250) if val_sessions > 0 else Decimal("0.00")
+        val_maxdd = max((s.max_drawdown for s in val_snapshots), default=Decimal("0.00"))
+        val_trades = [t for t in closed_trades if t["exit_date"] >= fold_val.test_start]
+        val_wins = [t for t in val_trades if t["net_pnl"] > Decimal("0.00")]
+        val_win_rate = (Decimal(len(val_wins)) / Decimal(len(val_trades))) if val_trades else Decimal("0.00")
+        val_gross_profit = sum(t["gross_pnl"] for t in val_trades if t["gross_pnl"] > Decimal("0.00"))
+        val_gross_loss = sum(abs(t["gross_pnl"]) for t in val_trades if t["gross_pnl"] < Decimal("0.00"))
+        val_profit_factor = (val_gross_profit / val_gross_loss) if val_gross_loss > Decimal("0.00") else Decimal("0.00")
 
-    validation_metrics = {
-        "fold": "Fold 1 (Validation)",
-        "window": f"{fold_val.test_start} .. {fold_val.test_end}",
-        "sessions": val_sessions,
-        "start_equity": val_start_eq,
-        "end_equity": val_end_eq,
-        "cagr": val_cagr,
-        "max_drawdown": val_maxdd,
-        "closed_trades": len(val_trades),
-        "win_rate": val_win_rate,
-        "profit_factor": val_profit_factor,
-    }
+        validation_metrics = {
+            "fold": "Fold 1 (Validation)",
+            "window": f"{fold_val.test_start} .. {fold_val.test_end}",
+            "sessions": val_sessions,
+            "start_equity": val_start_eq,
+            "end_equity": val_end_eq,
+            "cagr": val_cagr,
+            "max_drawdown": val_maxdd,
+            "closed_trades": len(val_trades),
+            "win_rate": val_win_rate,
+            "profit_factor": val_profit_factor,
+        }
 
     # 12. Evaluate Verdicts via evaluate_verdicts() (AGENTS.md §9.1, §9.3, Findings H-102, H-104, H-110, H-111, N-105)
     # Compute every verdict bundle metric from actual run state:
@@ -1047,6 +1052,23 @@ def run_phase3b2_walkforward(
         )
     )
 
+    # H-114 / §67 Condition 5: report the observed circuit deviation counts as evidence, not as an
+    # assertion that enforcement happened. A missing limit is counted as a deviation of the same kind.
+    buy_uc_violating = sum(
+        1 for f in buy_fills
+        if f.effective_upper_circuit_limit is not None
+        and f.executed_price is not None
+        and f.executed_price >= f.effective_upper_circuit_limit
+    )
+    buy_uc_missing_limit = sum(1 for f in buy_fills if f.effective_upper_circuit_limit is None)
+    sell_lc_violating = sum(
+        1 for f in sell_fills
+        if f.effective_lower_circuit_limit is not None
+        and f.executed_price is not None
+        and f.executed_price <= f.effective_lower_circuit_limit
+    )
+    sell_lc_missing_limit = sum(1 for f in sell_fills if f.effective_lower_circuit_limit is None)
+
     min_latency_observed = min((f.latency_sessions for f in all_fills), default=1)
 
     # CRIT-STAT-05: Annualized Portfolio Turnover
@@ -1064,7 +1086,7 @@ def run_phase3b2_walkforward(
     # When fewer than 2 independent out-of-sample validation folds exist (N_val < 2),
     # omit walk_forward_positive_fold_ratio from extra_metrics so CRIT-OVERFIT-03 evaluates
     # honestly to NOT RUN (and disclose N_val = 1 in the report).
-    num_val_folds = 1 if (validation_metrics is not None) else 0
+    num_val_folds = 0 if in_sample_only else (1 if (validation_metrics is not None) else 0)
     if num_val_folds >= 2:
         walk_forward_positive_fold_ratio: Optional[Decimal] = (
             Decimal("1.00") if validation_metrics["cagr"] > Decimal("0") else Decimal("0.00")
@@ -1091,6 +1113,16 @@ def run_phase3b2_walkforward(
                 if b is not None:
                     yr_band_isins.add(isin)
 
+        # H-112 residual: name the symbols the band union actually covers instead of typing them.
+        yr_band_symbols = set()
+        for isin in yr_band_isins:
+            for s in yr_sessions:
+                sym_int = sec_master.resolve_symbol(isin, s)
+                if sym_int is not None:
+                    yr_band_symbols.add(sym_int.symbol)
+                    break
+        yr_band_symbols_sorted = sorted(yr_band_symbols)
+
         yr_trades = [t for t in closed_trades if t["exit_date"].year == yr]
         yr_wins = [t for t in yr_trades if t["net_pnl"] > Decimal("0.00")]
         yr_win_rate = (Decimal(len(yr_wins)) / Decimal(len(yr_trades))) if yr_trades else Decimal("0.00")
@@ -1113,6 +1145,7 @@ def run_phase3b2_walkforward(
             "year": yr,
             "sessions": len(yr_sessions),
             "band_covered_isins": len(yr_band_isins),
+            "band_covered_symbols": yr_band_symbols_sorted,
             "zero_ticket_sessions": yr_zero_ticket_sessions,
             "tickets_emitted": yr_emitted,
             "tickets_filled": yr_filled,
@@ -1123,7 +1156,9 @@ def run_phase3b2_walkforward(
             "profit_factor": yr_profit_factor,
             "max_drawdown": yr_maxdd,
             "coverage_notes": (
-                f"Band-constrained: price band evidence restricted to F&O dynamic flexing anchor names (INFY, RELIANCE); cash names rejected/skipped per §5.3 fail-closed invariants ({yr_filled} fills executed)"
+                f"Band-constrained: price band evidence restricted to dynamic flexing anchor names "
+                f"({', '.join(yr_band_symbols_sorted) if yr_band_symbols_sorted else 'none'}); "
+                f"cash names rejected/skipped per §5.3 fail-closed invariants ({yr_filled} fills executed)"
                 if yr in (2022, 2023)
                 else f"Cash universe coverage: {len(yr_band_isins)} scrips supported by daily sec_list price band records ({yr_filled} fills executed)"
             ),
@@ -1160,6 +1195,12 @@ def run_phase3b2_walkforward(
         "traded_eq_resolution_pct": traded_eq_resolution_pct,
         "prohibit_buy_at_upper_circuit": prohibit_buy_at_uc,
         "prohibit_sell_at_lower_circuit": prohibit_sell_at_lc,
+        "upper_circuit_buy_judged_fills": len(buy_fills),
+        "upper_circuit_buy_violating_fills": buy_uc_violating,
+        "upper_circuit_buy_missing_limit_fills": buy_uc_missing_limit,
+        "lower_circuit_sell_judged_fills": len(sell_fills),
+        "lower_circuit_sell_violating_fills": sell_lc_violating,
+        "lower_circuit_sell_missing_limit_fills": sell_lc_missing_limit,
         "max_volume_participation": max_vol_participation,
         "min_daily_turnover_crore": min_daily_turnover_cr,
         "execution_latency_sessions": min_latency_observed,
@@ -1171,7 +1212,12 @@ def run_phase3b2_walkforward(
     else:
         extra_m["walk_forward_validation_folds_count"] = num_val_folds
         extra_m["walk_forward_not_run_reason"] = (
-            f"Only N_val = {num_val_folds} validation fold evaluated; minimum 2 independent out-of-sample validation folds required for stability ratio (§8.3, Finding N-108)."
+            "In-sample-only exploratory run: the 2024 Validation fold is frozen and was not evaluated "
+            "(§66.5 Condition 1). No out-of-sample stability ratio is computable."
+            if in_sample_only
+            else (
+                f"Only N_val = {num_val_folds} validation fold evaluated; minimum 2 independent out-of-sample validation folds required for stability ratio (§8.3, Finding N-108)."
+            )
         )
 
     if last_summary is not None:
@@ -1243,7 +1289,13 @@ def run_phase3b2_walkforward(
                 f"| {m['fold']} | {m['window']} | {m['sessions']} | ₹{m['start_equity']:,.2f} | ₹{m['end_equity']:,.2f} | "
                 f"{m['cagr']*100:.2f}% | {m['max_drawdown']*100:.2f}% | {m['closed_trades']} | {m['win_rate']*100:.2f}% | {m['profit_factor']:.4f} |"
             )
-        if num_val_folds < 2:
+        if in_sample_only:
+            extra_md.extend([
+                "",
+                "> [!NOTE]",
+                "> **In-Sample-Only Disclosure (§66.5 Condition 1)**: This exploratory run evaluated 2022-01-03..2023-12-29 only. The 2024 Validation fold is frozen and was not evaluated, so `CRIT-OVERFIT-03` is `NOT RUN` and no result here is out-of-sample evidence.",
+            ])
+        elif num_val_folds < 2:
             extra_md.extend([
                 "",
                 "> [!NOTE]",
@@ -1256,6 +1308,10 @@ def run_phase3b2_walkforward(
         fills_2022_2023 = diag_2022.get("tickets_filled", 0) + diag_2023.get("tickets_filled", 0)
         fills_2024 = diag_2024.get("tickets_filled", 0)
         band_isins_2024 = diag_2024.get("band_covered_isins", 0)
+        band_symbols_2022_2023 = sorted(
+            set(diag_2022.get("band_covered_symbols", [])) | set(diag_2023.get("band_covered_symbols", []))
+        )
+        band_symbols_2022_2023_text = ", ".join(band_symbols_2022_2023) if band_symbols_2022_2023 else "none"
 
         extra_md.extend([
             "",
@@ -1263,7 +1319,7 @@ def run_phase3b2_walkforward(
             "",
             "> [!NOTE]",
             "> Price band coverage across 2022–2024 reflects historical exchange report availability:",
-            f"> - **2022–2023**: Band-constrained. Price band evidence is restricted to F&O anchor names (INFY, RELIANCE) via the dynamic flexing framework (±10% initial limits). Cash-universe names without price band reports are rejected/skipped per §5.3 fail-closed invariants ({fills_2022_2023} fills executed).",
+            f"> - **2022–2023**: Band-constrained. Price band evidence is restricted to dynamic flexing anchor names ({band_symbols_2022_2023_text}) via the ±10% initial limits. Cash-universe names without price band reports are rejected/skipped per §5.3 fail-closed invariants ({fills_2022_2023} fills executed).",
             f"> - **2024**: Cash-universe coverage ({band_isins_2024} scrips) supported by daily `sec_list` price band records ({fills_2024} fills executed).",
             f"> - **Universe Integrity & Gap Filtering**: {continuous_instruments_passed} continuous active instruments evaluated out of {total_valid_isins} valid ISINs ({unexplained_gap_refusals} instruments refused due to unexplained missing sessions per §6.3 fail-closed invariants).",
             "",
@@ -1325,14 +1381,38 @@ def main() -> int:
     parser.add_argument("--trial-id", type=str, default="TRIAL-PHASE3B2-SWING-BASELINE-003", help="Trial ID for registry")
     parser.add_argument("--max-sessions", type=int, default=None, help="Cap sessions for fast diagnostic runs")
     parser.add_argument("--no-record-trial", action="store_true", help="Re-render reports without appending a new row to trial registry")
+    parser.add_argument(
+        "--in-sample-only",
+        action="store_true",
+        help="Evaluate 2022-01-03..2023-12-29 only; the 2024 Validation fold is never evaluated (§66.5 Condition 1)",
+    )
+    parser.add_argument(
+        "--trim-threshold",
+        type=Decimal,
+        default=None,
+        help="Enable automated winner trim when a position's close weight exceeds this fraction (e.g. 0.095)",
+    )
+    parser.add_argument("--hypothesis", type=str, default=None, help="TrialRegistry hypothesis (required for a new trial)")
+    parser.add_argument("--rationale", type=str, default=None, help="TrialRegistry rationale naming the parameter change")
     args = parser.parse_args()
 
+    window_label = (
+        "2022-01-03 .. 2023-12-29 (In-Sample only; 2024 Validation FROZEN)"
+        if args.in_sample_only
+        else "2022-01-03 .. 2024-12-31 (In-Sample: 2022-2023, Validation: 2024)"
+    )
     print("=" * 80)
     print("SIGNAL ATLAS CORE — PHASE 3B-2b WALK-FORWARD STRATEGY RUNNER")
-    print("Evaluation Window: 2022-01-03 .. 2024-12-31 (In-Sample: 2022-2023, Validation: 2024)")
+    print(f"Evaluation Window: {window_label}")
     print("Holdout Partition: 2025-01-01 .. 2026-11-11 (STRICTLY SEALED)")
     print("Valuation Basis:   MARK_TO_MARKET (Audit §64 H-103)")
     print("=" * 80)
+
+    run_kwargs: Dict[str, Any] = {}
+    if args.hypothesis is not None:
+        run_kwargs["hypothesis"] = args.hypothesis
+    if args.rationale is not None:
+        run_kwargs["rationale"] = args.rationale
 
     res = run_phase3b2_walkforward(
         snapshot_path=args.snapshot_path,
@@ -1341,6 +1421,9 @@ def main() -> int:
         trial_id=args.trial_id,
         max_sessions=args.max_sessions,
         record_trial=not args.no_record_trial,
+        in_sample_only=args.in_sample_only,
+        max_position_weight_trim_threshold=args.trim_threshold,
+        **run_kwargs,
     )
 
     print("\n--- 1. TRIAL REGISTRY REGISTRATION (Rule 3.2, §8.2) ---")

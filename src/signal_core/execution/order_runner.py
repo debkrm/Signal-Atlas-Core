@@ -96,6 +96,7 @@ class DailySignalCandidate:
     product: OrderProduct = OrderProduct.DELIVERY
     allow_partial_fill: bool = False
     metadata: Optional[Mapping[str, Any]] = None
+    sell_quantity: Optional[int] = None
 
     def __post_init__(self) -> None:
         if (
@@ -370,6 +371,19 @@ class DailyTPlus1OrderRunner:
                     "no open held position found in Portfolio (naked short selling prohibited in cash delivery)."
                 )
 
+            if candidate.sell_quantity is not None:
+                if (
+                    isinstance(candidate.sell_quantity, bool)
+                    or not isinstance(candidate.sell_quantity, int)
+                    or candidate.sell_quantity <= 0
+                ):
+                    raise OrderRunnerError(
+                        f"sell_quantity must be a positive integer when supplied, got {candidate.sell_quantity!r}"
+                    )
+                sell_qty = min(candidate.sell_quantity, pos.quantity)
+            else:
+                sell_qty = pos.quantity
+
             intent = OrderIntent(
                 instrument_id=candidate.instrument_id,
                 signal_date=candidate.signal_date,
@@ -377,7 +391,7 @@ class DailyTPlus1OrderRunner:
                 side=candidate.side,
                 order_type=candidate.order_type,
                 product=candidate.product,
-                quantity=pos.quantity,
+                quantity=sell_qty,
                 allow_partial_fill=candidate.allow_partial_fill,
                 metadata=candidate.metadata,
             )

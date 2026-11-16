@@ -303,6 +303,29 @@ class Position:
                 self._instrument_id = action.new_isin
             return None
 
+    def record_merger_cash_settlement_pnl(self, cash_amount: Decimal, fractional_cost_basis: Decimal) -> Decimal:
+        """
+        Books the realized gain or loss on a merger cash-in-lieu settlement (Finding N-112).
+
+        The fractional slice's cost basis was already removed in apply_corporate_action; the
+        consideration received is a sale of that slice, so realized PnL moves by
+        (cash_amount - removed book basis) and the ledger identity stays exact.
+        """
+        if (
+            isinstance(cash_amount, bool)
+            or not isinstance(cash_amount, Decimal)
+            or not cash_amount.is_finite()
+            or isinstance(fractional_cost_basis, bool)
+            or not isinstance(fractional_cost_basis, Decimal)
+            or not fractional_cost_basis.is_finite()
+        ):
+            raise LedgerValidationError(
+                f"Merger settlement amounts must be finite Decimal, got {cash_amount!r}, {fractional_cost_basis!r}"
+            )
+        settlement_pnl = cash_amount - fractional_cost_basis
+        self._realized_net_pnl += settlement_pnl
+        return settlement_pnl
+
     def close_delisting(self, delisting_price: Decimal) -> Tuple[Decimal, Decimal]:
         """
         Closes an open position upon delisting/settlement at delisting_price (Finding H-98).

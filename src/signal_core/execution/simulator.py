@@ -15,6 +15,8 @@ Enforces structural realism for Indian equities per AGENTS.md Rule 5 and Rule 7:
    - Legal open fills below Upper Circuit are executed even if session High reaches circuit later.
    - Rejects BUY when fill reference price >= Upper Circuit limit, or on whole-day lock (O=H=L=C).
    - Rejects SELL/stop when fill reference price <= Lower Circuit limit, or on whole-day lock.
+   - Rejects any post-slippage BUY executed at/above the effective upper limit and any SELL executed
+     at/below the effective lower limit, so a bar opening one tick below circuit can never fill at it (§5.3, Finding H-114).
 4. Liquidity & Volume Participation Cap:
    - Enforces min_daily_turnover_crore threshold from criteria (REJECTED_INSUFFICIENT_TURNOVER).
    - Caps order fills at configured fraction (e.g. 3.0%) of actual session volume.
@@ -455,6 +457,26 @@ class ExecutionFillSimulator:
                 executed_price = min_sell_price
             else:
                 executed_price = raw_adjusted_price
+
+        # Invariant 9b: Post-Slippage Circuit Band Rejection (Finding H-114, §5.3)
+        # Interior clamping can leave the execution price exactly at the band edge, where ask/bid
+        # depth is zero. Such an execution is impossible and must reject, never fill at the limit.
+        if order.side == OrderSide.BUY and effective_upper is not None and executed_price >= effective_upper:
+            return self._create_rejected_result(
+                order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_UPPER_CIRCUIT,
+                f"Executed price ({executed_price}) is at or above Upper Circuit limit ({effective_upper}); zero ask liquidity",
+                circuit_evidence_present=circuit_evidence,
+                effective_upper_circuit_limit=effective_upper,
+                effective_lower_circuit_limit=effective_lower,
+            )
+        if order.side == OrderSide.SELL and effective_lower is not None and executed_price <= effective_lower:
+            return self._create_rejected_result(
+                order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_LOWER_CIRCUIT,
+                f"Executed price ({executed_price}) is at or below Lower Circuit limit ({effective_lower}); zero bid liquidity",
+                circuit_evidence_present=circuit_evidence,
+                effective_upper_circuit_limit=effective_upper,
+                effective_lower_circuit_limit=effective_lower,
+            )
 
         # Check limit boundary after slippage
         if order.order_type == OrderType.LIMIT:

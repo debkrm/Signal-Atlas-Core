@@ -50,7 +50,7 @@ from signal_core.execution.order_runner import (
     DailySignalCandidate,
     DailyTPlus1OrderRunner,
 )
-from signal_core.execution.simulator import ExecutionFillSimulator
+from signal_core.execution.simulator import ExecutionFillSimulator, FillStatus
 from signal_core.portfolio.portfolio import Portfolio
 from signal_core.reporting.verdicts import VerdictStatus, evaluate_verdicts
 from signal_core.storage.calendar import load_anchored_nse_trading_calendar
@@ -421,9 +421,21 @@ def test_h111_fill_at_uc_fails_crit_exec_03(tmp_path: Path):
         write_verdict_files=False,
     )
 
+    # H-114: the simulator now rejects the fill instead of clamping it onto the limit, so no
+    # violating fill reaches the criterion and the producer evidence reports the observed count.
+    breach_tickets = [
+        t for s in res_breach.session_summaries for t in s.tickets
+        if t.fill_result is not None and t.fill_result.order.side == OrderSide.BUY
+        and t.fill_result.fill_date.isoformat() == target_d
+    ]
+    assert any(
+        t.fill_result.status == FillStatus.REJECTED_UPPER_CIRCUIT for t in breach_tickets
+    ), [(t.fill_result.status.value, str(t.fill_result.executed_price)) for t in breach_tickets]
+
     eval_exec3 = next(
         e for e in res_breach.verdict_report.evaluations if e.criterion_id == "CRIT-EXEC-03"
     )
-    assert eval_exec3.status == VerdictStatus.FAIL
-    assert eval_exec3.computed_value == "False"
+    assert eval_exec3.status == VerdictStatus.PASS
+    assert eval_exec3.computed_value == "True"
+    assert "0 of " in eval_exec3.evidence
 
