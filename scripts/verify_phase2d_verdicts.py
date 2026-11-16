@@ -588,6 +588,27 @@ def verify_gate_2d5_tier_a_report_generation() -> bool:
     return True
 
 
+def verify_gate_2d6_reference_manifest_integrity() -> bool:
+    """Gate 2D-6: Every current manifest row's byte_count/sha256 matches the artifact on disk (H-118)."""
+    print("\n--- Gate 2D-6: Reference Manifest Per-Artifact Digest Verification ---")
+    from signal_core.storage.reference_integrity import (
+        ManifestIntegrityError,
+        verify_manifest_artifacts,
+    )
+
+    try:
+        summary = verify_manifest_artifacts()
+    except ManifestIntegrityError as exc:
+        print(f"[FAIL] Reference manifest attestation does not match the committed corpus: {exc}")
+        return False
+
+    print(
+        f"[PASS] Gate 2D-6: {summary['verified']} current manifest artifact(s) recomputed and matched; "
+        f"{summary['superseded']} superseded row(s) are history at a replaced path (Finding H-118)."
+    )
+    return True
+
+
 def main() -> int:
     print("=" * 80)
     print("SIGNAL ATLAS — PHASE 2D AUTOMATED VERDICT ENGINE & DECISION AUDIT")
@@ -600,6 +621,7 @@ def main() -> int:
         verify_gate_2d3_synthetic_fixture_end_to_end(),
         verify_gate_2d4_adversarial_fail_closed(),
         verify_gate_2d5_tier_a_report_generation(),
+        verify_gate_2d6_reference_manifest_integrity(),
     ]
 
     if all(checks):

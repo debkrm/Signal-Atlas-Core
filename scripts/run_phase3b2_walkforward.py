@@ -59,7 +59,7 @@ from signal_core.contracts.exchange_series import (
     ExchangeSeries,
 )
 from signal_core.contracts.order_types import OrderSide
-from signal_core.contracts.price_band import PriceBandRecord
+from signal_core.contracts.price_band import PriceBandRecord, is_price_band_sourced
 from signal_core.contracts.price_bar import PriceBar
 from signal_core.contracts.universe import UniverseSchedule
 from signal_core.execution.order_runner import (
@@ -147,6 +147,8 @@ class Phase3B2WalkForwardRunResult:
     in_sample_metrics: Optional[Dict[str, Any]] = None
     validation_metrics: Optional[Dict[str, Any]] = None
     coverage_diagnostics: Optional[Dict[str, Any]] = None
+    registry_evaluated_trial_count: int = 0
+    trial_sharpe_variance: Optional[Decimal] = None
 
 
 def build_historical_dataset_from_raw_bhavcopy(
@@ -878,6 +880,19 @@ def run_phase3b2_walkforward(
     ).hexdigest() if daily_returns else None
     observation_count = len(daily_returns)
 
+    # H-119: the pre-registered row keeps `sharpe_ratio=None` (Rule 3.2), so the computed outcome is
+    # appended as a linked evaluation after the metrics exist. The row is never rewritten and
+    # evaluated_trial_count rises with the number of scored trials.
+    if record_trial and returns_digest is not None:
+        registry.append_trial_evaluation(
+            trial_id=trial_id,
+            sharpe_ratio=annualized_sharpe(daily_returns),
+            returns_digest=returns_digest,
+            observation_count=observation_count,
+            evaluated_at_utc=ts_utc,
+            max_drawdown=max_drawdown,
+        )
+
     try:
         sig_report = evaluate_strategy_significance(
             returns=daily_returns if daily_returns else [Decimal("0.00")],
@@ -1173,15 +1188,32 @@ def run_phase3b2_walkforward(
             "profit_factor": yr_profit_factor,
             "max_drawdown": yr_maxdd,
             "coverage_notes": (
-                f"Band-constrained: price band evidence restricted to dynamic flexing anchor names "
-                f"({', '.join(yr_band_symbols_sorted) if yr_band_symbols_sorted else 'none'}); "
-                f"cash names rejected/skipped per §5.3 fail-closed invariants ({yr_filled} fills executed)"
+                f"Band-ineligible (CA-3(c)): no sourced NSE price-band report exists for {yr}; "
+                f"dynamic flexing anchor names ({', '.join(yr_band_symbols_sorted) if yr_band_symbols_sorted else 'none'}) "
+                f"carry only ±10% derived limits and cash names are rejected/skipped per §5.3 fail-closed "
+                f"invariants ({yr_filled} fills executed); circuit criteria are NOT RUN for these sessions"
                 if yr in (2022, 2023)
-                else f"Cash universe coverage: {len(yr_band_isins)} scrips supported by daily sec_list price band records ({yr_filled} fills executed)"
+                else f"Cash universe coverage: {len(yr_band_isins)} scrips supported by the attested 2024-01-16 "
+                f"sec_list snapshot applied as static bands ({yr_filled} fills executed)"
             ),
         }
 
     total_valid_isins = continuous_instruments_passed + unexplained_gap_refusals
+
+    # CA-3(c): no sourced 2022-01-03..2024-01-15 NSE price-band report exists in the corpus (and the
+    # exchange serves no dated historical sec_list), so circuit-prohibition compliance cannot be
+    # asserted over sessions in that span. The criteria are NOT RUN rather than PASS on the
+    # interpolated 3-symbol band stub; no band is synthesized (§6.3, §10.8).
+    unsourced_band_sessions = [s for s in sessions_to_run if not is_price_band_sourced(s)]
+    circuit_band_coverage_note: Optional[str] = None
+    if unsourced_band_sessions:
+        circuit_band_coverage_note = (
+            f"{len(unsourced_band_sessions)} of {len(sessions_to_run)} evaluated session(s) "
+            f"({unsourced_band_sessions[0].isoformat()}..{unsourced_band_sessions[-1].isoformat()}) have "
+            f"no sourced NSE price-band report; the only attested report is sec_list_20240116.csv. "
+            f"Circuit-prohibition compliance cannot be asserted over unsourced sessions, so this "
+            f"criterion is NOT RUN rather than PASS on an interpolated band (CA-3(c), §6.3, §10.8)."
+        )
 
     last_summary = session_summaries[-1] if session_summaries else None
     extra_m = {
@@ -1214,18 +1246,25 @@ def run_phase3b2_walkforward(
         "traded_eq_resolution_pct": traded_eq_resolution_pct,
         "prohibit_buy_at_upper_circuit": prohibit_buy_at_uc,
         "prohibit_sell_at_lower_circuit": prohibit_sell_at_lc,
-        "upper_circuit_buy_judged_fills": len(buy_fills),
-        "upper_circuit_buy_violating_fills": buy_uc_violating,
-        "upper_circuit_buy_missing_limit_fills": buy_uc_missing_limit,
-        "lower_circuit_sell_judged_fills": len(sell_fills),
-        "lower_circuit_sell_violating_fills": sell_lc_violating,
-        "lower_circuit_sell_missing_limit_fills": sell_lc_missing_limit,
+        "unsourced_band_sessions": len(unsourced_band_sessions),
         "max_volume_participation": max_vol_participation,
         "min_daily_turnover_crore": min_daily_turnover_cr,
         "execution_latency_sessions": min_latency_observed,
         "valuation_basis": "MARK_TO_MARKET",
         "coverage_diagnostics": coverage_diagnostics,
     }
+    if circuit_band_coverage_note is not None:
+        extra_m["circuit_band_coverage_note"] = circuit_band_coverage_note
+    else:
+        extra_m.update({
+            "upper_circuit_buy_judged_fills": len(buy_fills),
+            "upper_circuit_buy_violating_fills": buy_uc_violating,
+            "upper_circuit_buy_missing_limit_fills": buy_uc_missing_limit,
+            "lower_circuit_sell_judged_fills": len(sell_fills),
+            "lower_circuit_sell_violating_fills": sell_lc_violating,
+            "lower_circuit_sell_missing_limit_fills": sell_lc_missing_limit,
+        })
+
     if walk_forward_positive_fold_ratio is not None:
         extra_m["walk_forward_positive_fold_ratio"] = walk_forward_positive_fold_ratio
     else:
@@ -1286,6 +1325,8 @@ def run_phase3b2_walkforward(
         report_dict["total_valid_isins"] = total_valid_isins
         report_dict["returns_digest"] = returns_digest
         report_dict["observation_count"] = observation_count
+        report_dict["unsourced_band_sessions"] = len(unsourced_band_sessions)
+        report_dict["circuit_band_coverage_note"] = circuit_band_coverage_note
 
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(report_dict, f, indent=2)
@@ -1340,8 +1381,8 @@ def run_phase3b2_walkforward(
             "",
             "> [!NOTE]",
             "> Price band coverage across 2022–2024 reflects historical exchange report availability:",
-            f"> - **2022–2023**: Band-constrained. Price band evidence is restricted to dynamic flexing anchor names ({band_symbols_2022_2023_text}) via the ±10% initial limits. Cash-universe names without price band reports are rejected/skipped per §5.3 fail-closed invariants ({fills_2022_2023} fills executed).",
-            f"> - **2024**: Cash-universe coverage ({band_isins_2024} scrips) supported by daily `sec_list` price band records ({fills_2024} fills executed).",
+            f"> - **2022–2023**: Band-ineligible (CA-3(c)). No sourced NSE price-band report exists; only the dynamic flexing anchor names ({band_symbols_2022_2023_text}) carry ±10% derived limits. Cash-universe names without price band reports are rejected/skipped per §5.3 fail-closed invariants ({fills_2022_2023} fills executed), and `CRIT-EXEC-03`/`-04` are `NOT RUN` over these sessions.",
+            f"> - **2024**: Cash-universe coverage ({band_isins_2024} scrips) supported by the attested 2024-01-16 `sec_list` snapshot applied as static bands ({fills_2024} fills executed).",
             f"> - **Universe Integrity & Gap Filtering**: {continuous_instruments_passed} continuous active instruments evaluated out of {total_valid_isins} valid ISINs ({unexplained_gap_refusals} instruments refused due to unexplained missing sessions per §6.3 fail-closed invariants).",
             "",
             "| Year | Sessions | Band-Covered ISINs | Zero-Ticket Sessions | Tickets Emitted | Tickets Filled | Tickets Rejected | Closed Trades | CAGR | Win Rate | Profit Factor | Max Drawdown | Coverage Notes |",
@@ -1354,6 +1395,12 @@ def run_phase3b2_walkforward(
                 f"{diag['cagr']*100:.2f}% | {diag['win_rate']*100:.2f}% | {diag['profit_factor']:.4f} | {diag['max_drawdown']*100:.2f}% | "
                 f"{diag['coverage_notes']} |"
             )
+        if circuit_band_coverage_note is not None:
+            extra_md.extend([
+                "",
+                "> [!WARNING]",
+                f"> **Price Band Sourcing (CA-3(c))**: {circuit_band_coverage_note}",
+            ])
         extra_md.append("")
 
         with open(md_path, "w", encoding="utf-8") as f:
@@ -1389,7 +1436,27 @@ def run_phase3b2_walkforward(
         in_sample_metrics=in_sample_metrics,
         validation_metrics=validation_metrics,
         coverage_diagnostics=coverage_diagnostics,
+        registry_evaluated_trial_count=registry.evaluated_trial_count,
+        trial_sharpe_variance=registry.compute_trial_sharpe_variance(),
     )
+
+
+def describe_stats_not_run_reason(
+    evaluated_trial_count: int,
+    trial_sharpe_variance: Optional[Decimal],
+) -> str:
+    """Names the input that actually blocks DSR, instead of a count comparison (Finding H-119)."""
+    if evaluated_trial_count < 2:
+        return (
+            f"evaluated_trial_count={evaluated_trial_count} < minimum 2 scored trials required "
+            f"for DSR variance (§8.2, Finding H-119)"
+        )
+    if trial_sharpe_variance is None or trial_sharpe_variance <= Decimal("0.00"):
+        return (
+            f"trial Sharpe variance={trial_sharpe_variance} is not strictly positive; DSR is "
+            f"undefined (§8.2, Finding H-119)"
+        )
+    return "DSR/haircut result unavailable from the significance report"
 
 
 def main() -> int:
@@ -1451,6 +1518,7 @@ def main() -> int:
     print(f"Trial ID:               {res.trial_record.trial_id}")
     print(f"Registry Sequence:       #{res.trial_record.seq}")
     print(f"Total Trial Count (N):   {res.total_trial_count_n}")
+    print(f"Evaluated Trials (N_eval): {res.registry_evaluated_trial_count}")
     print(f"Append-Before-Read Check: PASS (sharpe_ratio was None when appended)")
     print(f"Fold Spec Fingerprint:   {res.trial_record.fold_spec_fingerprint}")
     print(f"Dataset Fingerprint:     {res.trial_record.dataset_fingerprint}")
@@ -1479,14 +1547,23 @@ def main() -> int:
         print(f"Mean Realized R:         NOT RUN / INSUFFICIENT DATA")
     print(f"Total Statutory Costs:   ₹{res.total_statutory_costs:,.2f}")
     print(f"Annualized Sharpe:       {res.annualized_sharpe:.4f}")
+    # H-119: print the input that actually blocks the computation, not a count comparison the
+    # output itself contradicts. DSR needs >= 2 scored trials with positive Sharpe variance;
+    # the haircut needs N > 1. Both reasons are distinct and both are derived from the registry.
+    stats_not_run_reason = describe_stats_not_run_reason(
+        res.registry_evaluated_trial_count, res.trial_sharpe_variance
+    )
+
     if res.total_trial_count_n > 1 and res.deflated_sharpe is not None:
-        print(f"Deflated Sharpe Ratio:   {res.deflated_sharpe:.4f} (N={res.total_trial_count_n})")
+        print(f"Deflated Sharpe Ratio:   {res.deflated_sharpe:.4f} (N={res.total_trial_count_n}, N_eval={res.registry_evaluated_trial_count})")
     else:
-        print(f"Deflated Sharpe Ratio:   NOT RUN / INVALID (N={res.total_trial_count_n} < minimum 2 required per AGENTS.md §8.2)")
+        print(f"Deflated Sharpe Ratio:   NOT RUN / INVALID ({stats_not_run_reason})")
     if res.total_trial_count_n > 1 and res.haircut_sharpe is not None:
-        print(f"Haircut Sharpe Ratio:    {res.haircut_sharpe:.4f} (N={res.total_trial_count_n})")
+        print(f"Haircut Sharpe Ratio:    {res.haircut_sharpe:.4f} (N={res.total_trial_count_n}, N_eval={res.registry_evaluated_trial_count})")
+    elif res.total_trial_count_n <= 1:
+        print(f"Haircut Sharpe Ratio:    NOT RUN / INVALID (N={res.total_trial_count_n} <= 1: no multiple-testing penalty to apply)")
     else:
-        print(f"Haircut Sharpe Ratio:    NOT RUN / INVALID (N={res.total_trial_count_n} < minimum 2 required per AGENTS.md §8.2)")
+        print(f"Haircut Sharpe Ratio:    NOT RUN / INVALID ({stats_not_run_reason})")
 
     if res.in_sample_metrics:
         m = res.in_sample_metrics

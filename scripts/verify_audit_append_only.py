@@ -324,12 +324,35 @@ def check_verdict_tags() -> bool:
     return all_ok
 
 
+def check_reference_manifest_integrity() -> bool:
+    """Recomputes every current manifest row's byte_count/sha256 against the corpus (Finding H-118)."""
+    print("--- Gate W0.5-5: Reference Manifest Per-Artifact Digest Verification (§10.5) ---")
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    from signal_core.storage.reference_integrity import (
+        ManifestIntegrityError,
+        verify_manifest_artifacts,
+    )
+
+    try:
+        summary = verify_manifest_artifacts()
+    except ManifestIntegrityError as exc:
+        print(f"[FAIL] Reference manifest attestation does not match the committed corpus: {exc}\n")
+        return False
+
+    print(
+        f"[PASS] Gate W0.5-5: {summary['verified']} current artifact(s) match their manifest "
+        f"byte_count and sha256; {summary['superseded']} superseded row(s) skipped as history.\n"
+    )
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Wave 0.5 Repository Foundation Gate Verification")
     parser.add_argument("--check-audit-only", action="store_true", help="Run audit append-only check only")
     parser.add_argument("--check-scripts-only", action="store_true", help="Run verification scripts only")
     parser.add_argument("--check-suite-only", action="store_true", help="Run pytest suite check only")
     parser.add_argument("--check-tags-only", action="store_true", help="Run verdict tags check only")
+    parser.add_argument("--check-reference-only", action="store_true", help="Run reference manifest integrity check only")
     args = parser.parse_args()
 
     print("=" * 80)
@@ -337,7 +360,7 @@ def main() -> int:
     print(f"Target: AGENTS.md §11.1, §12.3, §12.4 Compliance")
     print("=" * 80 + "\n")
 
-    run_all = not (args.check_audit_only or args.check_scripts_only or args.check_suite_only or args.check_tags_only)
+    run_all = not (args.check_audit_only or args.check_scripts_only or args.check_suite_only or args.check_tags_only or args.check_reference_only)
 
     results = []
     if run_all or args.check_audit_only:
@@ -351,6 +374,9 @@ def main() -> int:
 
     if run_all or args.check_tags_only:
         results.append(check_verdict_tags())
+
+    if run_all or args.check_reference_only:
+        results.append(check_reference_manifest_integrity())
 
     print("=" * 80)
     if all(results):

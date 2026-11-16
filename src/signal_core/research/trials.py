@@ -14,7 +14,7 @@ Implements the multi-hypothesis trial accounting protocol per AGENTS.md Rule 8.2
 
 from dataclasses import dataclass
 import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import os
@@ -46,6 +46,10 @@ class RegistryTamperedError(TrialRegistryError):
 class DuplicateTrialError(TrialRegistryError):
     """Raised when duplicate trial_id or out-of-order sequence is attempted."""
     pass
+
+
+class TrialEvaluationError(TrialRegistryError):
+    """Raised when a post-evaluation outcome record is invalid or conflicts with the registry."""
 
 
 def _canonicalize_value(val: Any) -> Any:
@@ -240,6 +244,63 @@ class TrialRecord:
             raise RegistryTamperedError(f"Malformed record structure in trial registry: {err}") from err
 
 
+@dataclass(frozen=True, slots=True)
+class TrialEvaluation:
+    """
+    Append-only post-evaluation outcome for a pre-registered trial (Finding H-119).
+
+    Rule 3.2 requires the trial to be registered with `sharpe_ratio=None` before metrics are
+    read, so the computed outcome cannot live on the original row. It is appended here instead,
+    linked by `trial_id` and the row's `record_hash`, leaving rows 1..N immutable while
+    `TrialRegistry.evaluated_trial_count` rises with the number of scored trials.
+    """
+    trial_id: str
+    record_hash: str
+    sharpe_ratio: Decimal
+    returns_digest: str
+    observation_count: int
+    evaluated_at_utc: str
+    prev_eval_hash: str
+    eval_hash: str
+    max_drawdown: Optional[Decimal] = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.trial_id, bool) or not isinstance(self.trial_id, str) or not self.trial_id.strip():
+            raise TrialEvaluationError(f"trial_id must be a non-empty string, got {self.trial_id!r}")
+        for name in ("record_hash", "prev_eval_hash", "eval_hash"):
+            val = getattr(self, name)
+            if not isinstance(val, str) or len(val) != 64:
+                raise TrialEvaluationError(f"{name} must be a 64-hex digest, got {val!r}")
+        for name in ("sharpe_ratio", "max_drawdown"):
+            val = getattr(self, name)
+            if val is not None:
+                if isinstance(val, bool) or not isinstance(val, Decimal) or not val.is_finite():
+                    raise TrialEvaluationError(f"{name} must be a finite Decimal, got {val!r}")
+        if isinstance(self.observation_count, bool) or not isinstance(self.observation_count, int) or self.observation_count < 0:
+            raise TrialEvaluationError(
+                f"observation_count must be a non-negative integer, got {self.observation_count!r}"
+            )
+        if (
+            isinstance(self.returns_digest, bool)
+            or not isinstance(self.returns_digest, str)
+            or not self.returns_digest.strip()
+        ):
+            raise TrialEvaluationError(f"returns_digest must be a non-empty string, got {self.returns_digest!r}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "trial_id": self.trial_id,
+            "record_hash": self.record_hash,
+            "sharpe_ratio": str(self.sharpe_ratio),
+            "max_drawdown": str(self.max_drawdown) if self.max_drawdown is not None else None,
+            "returns_digest": self.returns_digest,
+            "observation_count": self.observation_count,
+            "evaluated_at_utc": self.evaluated_at_utc,
+            "prev_eval_hash": self.prev_eval_hash,
+            "eval_hash": self.eval_hash,
+        }
+
+
 class TrialRegistry:
     """
     Append-only, tamper-evident cryptographic trial ledger with external head anchor.
@@ -248,11 +309,14 @@ class TrialRegistry:
     def __init__(self, file_path: Union[str, Path]) -> None:
         self._path = Path(file_path)
         self._manifest_path = self._path.with_name(self._path.name + ".manifest")
+        self._evaluation_path = self._path.with_name(self._path.name + ".evaluations")
         self._records: List[TrialRecord] = []
         self._trial_ids: set[str] = set()
+        self._evaluations: Dict[str, TrialEvaluation] = {}
 
         if self._path.exists():
             self._load_and_verify()
+        self._load_evaluations()
 
     @property
     def file_path(self) -> Path:
@@ -261,6 +325,10 @@ class TrialRegistry:
     @property
     def manifest_path(self) -> Path:
         return self._manifest_path
+
+    @property
+    def evaluation_path(self) -> Path:
+        return self._evaluation_path
 
     @property
     def total_trial_count(self) -> int:
@@ -274,8 +342,12 @@ class TrialRegistry:
 
     @property
     def evaluated_trial_count(self) -> int:
-        """Number of trials with evaluated, non-None Sharpe ratios."""
-        return sum(1 for r in self._records if r.sharpe_ratio is not None)
+        """Number of trials carrying a Sharpe ratio, from the row or an appended evaluation."""
+        return sum(
+            1
+            for r in self._records
+            if r.sharpe_ratio is not None or r.trial_id in self._evaluations
+        )
 
     def get_trials(self) -> Tuple[TrialRecord, ...]:
         return tuple(self._records)
@@ -433,13 +505,103 @@ class TrialRegistry:
         self._records = temp_records
         self._trial_ids = temp_trial_ids
 
+    def _load_evaluations(self) -> None:
+        """Loads and verifies the append-only post-evaluation sidecar (Finding H-119)."""
+        parsed: Dict[str, TrialEvaluation] = {}
+        if not self._evaluation_path.exists():
+            self._evaluations = parsed
+            return
+
+        raw_bytes = self._evaluation_path.read_bytes()
+        if raw_bytes and not raw_bytes.endswith(b"\n"):
+            raise RegistryTamperedError(
+                f"Evaluation file {self._evaluation_path} is corrupted: missing trailing newline."
+            )
+
+        by_id = {r.trial_id: r for r in self._records}
+        prev_hash = GENESIS_PREV_HASH
+        last_ts: Optional[datetime.datetime] = None
+
+        for line_num, line_str in enumerate(raw_bytes.decode("utf-8").splitlines(), start=1):
+            if not line_str.strip():
+                continue
+            try:
+                data = json.loads(line_str)
+            except Exception as e:
+                raise RegistryTamperedError(
+                    f"Evaluation line {line_num}: malformed JSON: {e}"
+                ) from e
+            if not isinstance(data, dict):
+                raise RegistryTamperedError(f"Evaluation line {line_num}: record must be an object")
+
+            stored_hash = data.get("eval_hash")
+            payload = {k: v for k, v in data.items() if k != "eval_hash"}
+            if stored_hash != _compute_record_hash(payload):
+                raise RegistryTamperedError(
+                    f"Evaluation line {line_num}: tampered eval_hash for trial {data.get('trial_id')!r}"
+                )
+
+            try:
+                raw_max_dd = data.get("max_drawdown")
+                rec = TrialEvaluation(
+                    trial_id=str(data["trial_id"]),
+                    record_hash=str(data["record_hash"]),
+                    sharpe_ratio=Decimal(str(data["sharpe_ratio"])),
+                    max_drawdown=Decimal(str(raw_max_dd)) if raw_max_dd is not None else None,
+                    returns_digest=str(data["returns_digest"]),
+                    observation_count=data["observation_count"],
+                    evaluated_at_utc=str(data["evaluated_at_utc"]),
+                    prev_eval_hash=str(data["prev_eval_hash"]),
+                    eval_hash=str(stored_hash),
+                )
+            except (KeyError, TypeError, ValueError, InvalidOperation) as err:
+                raise RegistryTamperedError(
+                    f"Evaluation line {line_num}: malformed evaluation record: {err}"
+                ) from err
+
+            if rec.prev_eval_hash != prev_hash:
+                raise RegistryTamperedError(
+                    f"Evaluation line {line_num}: broken evaluation chain for trial '{rec.trial_id}'."
+                )
+            trial = by_id.get(rec.trial_id)
+            if trial is None:
+                raise RegistryTamperedError(
+                    f"Evaluation line {line_num}: trial '{rec.trial_id}' is not registered."
+                )
+            if trial.record_hash != rec.record_hash:
+                raise RegistryTamperedError(
+                    f"Evaluation line {line_num}: evaluation for '{rec.trial_id}' links record_hash "
+                    f"{rec.record_hash}, but the registered row hashes to {trial.record_hash}."
+                )
+            if rec.trial_id in parsed:
+                raise TrialEvaluationError(
+                    f"Evaluation line {line_num}: trial '{rec.trial_id}' already scored; the ledger is append-only."
+                )
+
+            try:
+                rec_ts = datetime.datetime.fromisoformat(rec.evaluated_at_utc.replace("Z", "+00:00"))
+            except Exception as e:
+                raise RegistryTamperedError(
+                    f"Evaluation line {line_num}: invalid evaluated_at_utc '{rec.evaluated_at_utc}': {e}"
+                ) from e
+            if last_ts is not None and rec_ts < last_ts:
+                raise RegistryTamperedError(
+                    f"Evaluation line {line_num}: non-monotonic evaluated_at_utc."
+                )
+            last_ts = rec_ts
+            prev_hash = rec.eval_hash
+            parsed[rec.trial_id] = rec
+
+        self._evaluations = parsed
+
     def verify_integrity(self) -> bool:
         """
         Re-reads the file from disk and rigorously verifies the complete cryptographic hash chain
-        and authoritative external head manifest.
+        and authoritative external head manifest, then the evaluation sidecar.
         Raises RegistryTamperedError or DuplicateTrialError on any anomaly.
         """
         self._load_and_verify()
+        self._load_evaluations()
         return True
 
     def append_trial(
@@ -653,8 +815,112 @@ class TrialRegistry:
         return record
 
     def get_trial_sharpes(self) -> Tuple[Decimal, ...]:
-        """Returns tuple of all evaluated (non-None) Sharpe ratios recorded across trials."""
-        return tuple(r.sharpe_ratio for r in self._records if r.sharpe_ratio is not None)
+        """Returns the Sharpe ratio of every scored trial, in registration order."""
+        sharpes: List[Decimal] = []
+        for r in self._records:
+            eval_rec = self._evaluations.get(r.trial_id)
+            if eval_rec is not None:
+                sharpes.append(eval_rec.sharpe_ratio)
+            elif r.sharpe_ratio is not None:
+                sharpes.append(r.sharpe_ratio)
+        return tuple(sharpes)
+
+    def get_evaluation(self, trial_id: str) -> Optional[TrialEvaluation]:
+        """Returns the appended outcome for a trial, or None when it has not been scored."""
+        return self._evaluations.get(trial_id)
+
+    def append_trial_evaluation(
+        self,
+        trial_id: str,
+        sharpe_ratio: Decimal,
+        returns_digest: str,
+        observation_count: int,
+        evaluated_at_utc: str,
+        max_drawdown: Optional[Decimal] = None,
+    ) -> TrialEvaluation:
+        """
+        Appends a computed outcome for an already-registered trial (Finding H-119).
+
+        The original registry row is never rewritten: the outcome is a separate append-only line
+        linked by `trial_id` and the row's `record_hash`. One outcome per trial; re-scoring a trial
+        requires registering a new one, so the multiple-testing budget cannot be silently reused.
+        """
+        trial = next((r for r in self._records if r.trial_id == trial_id), None)
+        if trial is None:
+            raise TrialEvaluationError(
+                f"Cannot score unregistered trial '{trial_id}'; register it before evaluation (§8.2, Finding N-111)."
+            )
+        if trial_id in self._evaluations:
+            raise TrialEvaluationError(
+                f"Trial '{trial_id}' already has an appended evaluation; the ledger is append-only."
+            )
+
+        if isinstance(sharpe_ratio, bool) or not isinstance(sharpe_ratio, Decimal) or not sharpe_ratio.is_finite():
+            raise TrialEvaluationError(f"sharpe_ratio must be a finite Decimal, got {sharpe_ratio!r}")
+        if max_drawdown is not None and (
+            isinstance(max_drawdown, bool) or not isinstance(max_drawdown, Decimal) or not max_drawdown.is_finite()
+        ):
+            raise TrialEvaluationError(f"max_drawdown must be a finite Decimal, got {max_drawdown!r}")
+
+        try:
+            curr_ts = datetime.datetime.fromisoformat(evaluated_at_utc.replace("Z", "+00:00"))
+        except Exception as e:
+            raise TrialEvaluationError(
+                f"evaluated_at_utc '{evaluated_at_utc}' is not a valid ISO-8601 string: {e}"
+            ) from e
+
+        prev_hash = GENESIS_PREV_HASH
+        if self._evaluations:
+            last_eval = list(self._evaluations.values())[-1]
+            prev_hash = last_eval.eval_hash
+            try:
+                prev_ts = datetime.datetime.fromisoformat(last_eval.evaluated_at_utc.replace("Z", "+00:00"))
+            except Exception as e:
+                raise TrialEvaluationError(f"Previous evaluation timestamp is invalid: {e}") from e
+            if curr_ts < prev_ts:
+                raise TrialEvaluationError(
+                    f"Non-monotonic evaluated_at_utc '{evaluated_at_utc}' precedes '{last_eval.evaluated_at_utc}'."
+                )
+
+        if self._evaluation_path.exists():
+            disk_lines = [l for l in self._evaluation_path.read_bytes().decode("utf-8").splitlines() if l.strip()]
+            if len(disk_lines) != len(self._evaluations):
+                raise RegistryTamperedError(
+                    f"Concurrent modification of {self._evaluation_path}: on-disk {len(disk_lines)} "
+                    f"evaluation(s) vs in-memory {len(self._evaluations)}."
+                )
+
+        payload: Dict[str, Any] = {
+            "trial_id": trial_id,
+            "record_hash": trial.record_hash,
+            "sharpe_ratio": str(sharpe_ratio),
+            "max_drawdown": str(max_drawdown) if max_drawdown is not None else None,
+            "returns_digest": returns_digest,
+            "observation_count": observation_count,
+            "evaluated_at_utc": evaluated_at_utc,
+            "prev_eval_hash": prev_hash,
+        }
+        eval_hash = _compute_record_hash(payload)
+        record = TrialEvaluation(
+            trial_id=trial_id,
+            record_hash=trial.record_hash,
+            sharpe_ratio=sharpe_ratio,
+            max_drawdown=max_drawdown,
+            returns_digest=returns_digest,
+            observation_count=observation_count,
+            evaluated_at_utc=evaluated_at_utc,
+            prev_eval_hash=prev_hash,
+            eval_hash=eval_hash,
+        )
+
+        self._evaluation_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._evaluation_path.open("a", encoding="utf-8", newline="\n") as f:
+            f.write(json.dumps(record.to_dict(), separators=(",", ":")) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+
+        self._evaluations[trial_id] = record
+        return record
 
     def compute_trial_sharpe_variance(self) -> Decimal:
         """

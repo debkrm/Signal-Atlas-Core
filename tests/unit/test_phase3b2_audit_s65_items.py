@@ -350,7 +350,7 @@ def test_h110_band_coverage_diagnostics_structure(tmp_path: Path):
     cov = data["coverage_diagnostics"]
     assert "2022" in cov
     assert "coverage_notes" in cov["2022"]
-    assert "Band-constrained" in cov["2022"]["coverage_notes"]
+    assert "Band-ineligible" in cov["2022"]["coverage_notes"]
 
     # Check Markdown report has disclosure section
     md_path = out_dir / "phase3b2_swing_baseline_2022_2024_verdict.md"
@@ -359,7 +359,9 @@ def test_h110_band_coverage_diagnostics_structure(tmp_path: Path):
         md_text = f.read()
 
     assert "## Band Coverage Diagnostics & Disclosure (Audit §65 H-110)" in md_text
-    assert "Band-constrained" in md_text
+    # CA-3(c): the disclosure now states ineligibility rather than implying sourced bands.
+    assert "Band-ineligible" in md_text
+    assert "Price Band Sourcing (CA-3(c))" in md_text
 
 
 def test_h111_fill_at_uc_fails_crit_exec_03(tmp_path: Path):
@@ -432,10 +434,12 @@ def test_h111_fill_at_uc_fails_crit_exec_03(tmp_path: Path):
         t.fill_result.status == FillStatus.REJECTED_UPPER_CIRCUIT for t in breach_tickets
     ), [(t.fill_result.status.value, str(t.fill_result.executed_price)) for t in breach_tickets]
 
+    # CA-3(c): the fixture window is 2022, which has no sourced price-band report, so the criterion
+    # is NOT RUN — the rejection above is the behavioural assertion, not a verdict PASS.
     eval_exec3 = next(
         e for e in res_breach.verdict_report.evaluations if e.criterion_id == "CRIT-EXEC-03"
     )
-    assert eval_exec3.status == VerdictStatus.PASS
-    assert eval_exec3.computed_value == "True"
-    assert "0 of " in eval_exec3.evidence
+    assert eval_exec3.status == VerdictStatus.NOT_RUN
+    assert eval_exec3.computed_value is None
+    assert "no sourced NSE price-band report" in eval_exec3.evidence
 

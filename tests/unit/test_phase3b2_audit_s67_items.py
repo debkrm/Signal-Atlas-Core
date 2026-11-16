@@ -130,8 +130,8 @@ def test_h114_sell_at_lower_circuit_is_rejected():
 
 def test_h114_runner_evidence_reports_observed_violation_count(tmp_path: Path):
     """
-    H-114 (evidence half): CRIT-EXEC-03/04 evidence is formatted from the observed counts,
-    not from a constant claiming enforcement.
+    H-114 (evidence half) / CA-3(c): the 2022 fixture window has no sourced price-band report, so
+    the run's circuit criteria are NOT RUN with that reason rather than PASS on the band stub.
     """
     snap_p = make_synthetic_snapshot(tmp_path, num_sessions=80)
     res = run_phase3b2_walkforward(
@@ -144,14 +144,12 @@ def test_h114_runner_evidence_reports_observed_violation_count(tmp_path: Path):
     )
     exec3 = next(e for e in res.verdict_report.evaluations if e.criterion_id == "CRIT-EXEC-03")
     exec4 = next(e for e in res.verdict_report.evaluations if e.criterion_id == "CRIT-EXEC-04")
-    import re
-
-    # The trend fixture produces buys but no exits, so EXEC-03 is judged on a non-empty set while
-    # EXEC-04 fails on an empty set; both report their observed counts instead of claiming enforcement.
-    assert exec3.status == VerdictStatus.PASS
-    assert re.match(r"^\d+ of \d+ judged BUY fill\(s\)", exec3.evidence), exec3.evidence
-    assert exec3.evidence.startswith("0 of 2 "), exec3.evidence
-    assert re.match(r"^\d+ of \d+ judged SELL fill\(s\)", exec4.evidence), exec4.evidence
+    # CA-3(c): the fixture evaluates 2022 sessions, which have no attested sec_list report, so the
+    # circuit criteria are out of scope and say why instead of claiming enforcement.
+    assert exec3.status == VerdictStatus.NOT_RUN
+    assert exec4.status == VerdictStatus.NOT_RUN
+    assert "no sourced NSE price-band report" in exec3.evidence
+    assert "no sourced NSE price-band report" in exec4.evidence
     assert "Simulator strictly enforces" not in exec3.evidence
     assert "Simulator strictly enforces" not in exec4.evidence
 

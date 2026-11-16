@@ -584,7 +584,22 @@ def evaluate_verdicts(
     val_buy_uc = results_bundle.get("prohibit_buy_at_upper_circuit")
     buy_uc_judged = results_bundle.get("upper_circuit_buy_judged_fills")
     buy_uc_violations = results_bundle.get("upper_circuit_buy_violating_fills")
-    if val_buy_uc is not None and buy_uc_judged is not None and buy_uc_violations is not None:
+    # CA-3(c): an evaluation window containing sessions with no sourced price-band report cannot
+    # substantiate a circuit claim, so the criterion is NOT RUN even if counts are supplied.
+    buy_uc_band_note = results_bundle.get("circuit_band_coverage_note")
+    if isinstance(buy_uc_band_note, str) and buy_uc_band_note.strip():
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-EXEC-03",
+            category="Execution Realism",
+            metric_name="Upper Circuit BUY Prohibition",
+            computed_value=None,
+            threshold_value=str(active_criteria.prohibit_buy_at_upper_circuit),
+            comparator="==",
+            status=VerdictStatus.NOT_RUN,
+            evidence=buy_uc_band_note,
+            is_binding=True,
+        ))
+    elif val_buy_uc is not None and buy_uc_judged is not None and buy_uc_violations is not None:
         status = VerdictStatus.PASS if val_buy_uc is True else VerdictStatus.FAIL
         buy_uc_missing = results_bundle.get("upper_circuit_buy_missing_limit_fills", 0)
         buy_uc_evidence = (
@@ -635,7 +650,20 @@ def evaluate_verdicts(
     val_sell_lc = results_bundle.get("prohibit_sell_at_lower_circuit")
     sell_lc_judged = results_bundle.get("lower_circuit_sell_judged_fills")
     sell_lc_violations = results_bundle.get("lower_circuit_sell_violating_fills")
-    if val_sell_lc is not None and sell_lc_judged is not None and sell_lc_violations is not None:
+    sell_lc_band_note = results_bundle.get("circuit_band_coverage_note")
+    if isinstance(sell_lc_band_note, str) and sell_lc_band_note.strip():
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-EXEC-04",
+            category="Execution Realism",
+            metric_name="Lower Circuit SELL Prohibition",
+            computed_value=None,
+            threshold_value=str(active_criteria.prohibit_sell_at_lower_circuit),
+            comparator="==",
+            status=VerdictStatus.NOT_RUN,
+            evidence=sell_lc_band_note,
+            is_binding=True,
+        ))
+    elif val_sell_lc is not None and sell_lc_judged is not None and sell_lc_violations is not None:
         status = VerdictStatus.PASS if val_sell_lc is True else VerdictStatus.FAIL
         sell_lc_missing = results_bundle.get("lower_circuit_sell_missing_limit_fills", 0)
         sell_lc_evidence = (

@@ -2,14 +2,14 @@
   "criteria_version": "1.1.1",
   "criteria_fingerprint": "CRIT-FPR-V1-28f7e7ad7418ca079b4154e08c29e8d89b2d096b464179aabafd3040f9e3c523",
   "calendar_fingerprint": "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad",
-  "timestamp_utc": "2026-11-16T10:59:00.911905+00:00",
+  "timestamp_utc": "2026-11-16T13:46:01.285971+00:00",
   "evaluation_start_date": "2022-01-03",
   "evaluation_end_date": "2023-12-29",
   "overall_verdict": "NO-GO",
   "summary_counts": {
-    "PASS": 16,
+    "PASS": 14,
     "FAIL": 3,
-    "NOT_RUN": 5
+    "NOT_RUN": 7
   },
   "evaluations": [
     {
@@ -104,22 +104,22 @@
       "criterion_id": "CRIT-EXEC-03",
       "category": "Execution Realism",
       "metric_name": "Upper Circuit BUY Prohibition",
-      "computed_value": "True",
+      "computed_value": null,
       "threshold_value": "True",
       "comparator": "==",
-      "status": "PASS",
-      "evidence": "0 of 17 judged BUY fill(s) executed at or above the effective Upper Circuit limit and 0 carried no limit (zero such fills permitted, \u00a75.3, Finding H-114).",
+      "status": "NOT RUN",
+      "evidence": "494 of 494 evaluated session(s) (2022-01-03..2023-12-29) have no sourced NSE price-band report; the only attested report is sec_list_20240116.csv. Circuit-prohibition compliance cannot be asserted over unsourced sessions, so this criterion is NOT RUN rather than PASS on an interpolated band (CA-3(c), \u00a76.3, \u00a710.8).",
       "is_binding": true
     },
     {
       "criterion_id": "CRIT-EXEC-04",
       "category": "Execution Realism",
       "metric_name": "Lower Circuit SELL Prohibition",
-      "computed_value": "True",
+      "computed_value": null,
       "threshold_value": "True",
       "comparator": "==",
-      "status": "PASS",
-      "evidence": "0 of 15 judged SELL fill(s) executed at or below the effective Lower Circuit limit and 0 carried no limit (zero such fills permitted, \u00a75.3, Finding H-114).",
+      "status": "NOT RUN",
+      "evidence": "494 of 494 evaluated session(s) (2022-01-03..2023-12-29) have no sourced NSE price-band report; the only attested report is sec_list_20240116.csv. Circuit-prohibition compliance cannot be asserted over unsourced sessions, so this criterion is NOT RUN rather than PASS on an interpolated band (CA-3(c), \u00a76.3, \u00a710.8).",
       "is_binding": true
     },
     {
@@ -279,7 +279,7 @@
   ],
   "metadata": {
     "binding_criteria_count": 23,
-    "binding_failed_count": 7,
+    "binding_failed_count": 9,
     "unverified_provenance_gating_applied": true
   },
   "coverage_diagnostics": {
@@ -301,7 +301,7 @@
       "win_rate": "0",
       "profit_factor": "0E+2",
       "max_drawdown": "0.03536251901441910174202916810",
-      "coverage_notes": "Band-constrained: price band evidence restricted to dynamic flexing anchor names (HDFC, INFY, RELIANCE); cash names rejected/skipped per \u00a75.3 fail-closed invariants (20 fills executed)"
+      "coverage_notes": "Band-ineligible (CA-3(c)): no sourced NSE price-band report exists for 2022; dynamic flexing anchor names (HDFC, INFY, RELIANCE) carry only \u00b110% derived limits and cash names are rejected/skipped per \u00a75.3 fail-closed invariants (20 fills executed); circuit criteria are NOT RUN for these sessions"
     },
     "2023": {
       "year": 2023,
@@ -321,7 +321,7 @@
       "win_rate": "0.4",
       "profit_factor": "1.202894128000227101755780449",
       "max_drawdown": "0.04115480800453974531801802628",
-      "coverage_notes": "Band-constrained: price band evidence restricted to dynamic flexing anchor names (HDFC, INFY, RELIANCE); cash names rejected/skipped per \u00a75.3 fail-closed invariants (12 fills executed)"
+      "coverage_notes": "Band-ineligible (CA-3(c)): no sourced NSE price-band report exists for 2023; dynamic flexing anchor names (HDFC, INFY, RELIANCE) carry only \u00b110% derived limits and cash names are rejected/skipped per \u00a75.3 fail-closed invariants (12 fills executed); circuit criteria are NOT RUN for these sessions"
     },
     "2024": {
       "year": 2024,
@@ -337,7 +337,7 @@
       "win_rate": "0.00",
       "profit_factor": "0.00",
       "max_drawdown": "0.00",
-      "coverage_notes": "Cash universe coverage: 0 scrips supported by daily sec_list price band records (0 fills executed)"
+      "coverage_notes": "Cash universe coverage: 0 scrips supported by the attested 2024-01-16 sec_list snapshot applied as static bands (0 fills executed)"
     }
   },
   "in_sample_metrics": {
@@ -358,5 +358,7 @@
   "unexplained_gap_refusals": 17,
   "total_valid_isins": 196,
   "returns_digest": "RET-V1-cf90af33f29e4684206b9f02f62638aae6fd54d22d529b89ae5061b95dd5acc7",
-  "observation_count": 493
+  "observation_count": 493,
+  "unsourced_band_sessions": 494,
+  "circuit_band_coverage_note": "494 of 494 evaluated session(s) (2022-01-03..2023-12-29) have no sourced NSE price-band report; the only attested report is sec_list_20240116.csv. Circuit-prohibition compliance cannot be asserted over unsourced sessions, so this criterion is NOT RUN rather than PASS on an interpolated band (CA-3(c), \u00a76.3, \u00a710.8)."
 }

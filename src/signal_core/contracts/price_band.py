@@ -30,6 +30,19 @@ class PriceBandPublicationSource(str, Enum):
     NSE_SURVEILLANCE_CIRCULAR = "NSE_SURVEILLANCE_CIRCULAR"      # Framework stage bands (ASM/GSM/ESM)
 
 
+# CA-3(c): the committed corpus contains exactly one attested NSE daily price-band report
+# (data/reference/sec_list_20240116.csv). NSE serves no historical dated sec_list files — dated
+# paths return 404 and the live endpoint always returns the current session's file — so sessions
+# before this date have no sourced band observation and cannot be treated as band-judged.
+# Sessions from this date use the attested static-band snapshot.
+SOURCED_PRICE_BAND_START = datetime.date(2024, 1, 16)
+
+
+def is_price_band_sourced(as_of: datetime.date) -> bool:
+    """True only when a committed, attested price-band observation covers `as_of`."""
+    return as_of >= SOURCED_PRICE_BAND_START
+
+
 FORBIDDEN_CHARACTERS = (",", ";", "\n", "\r", "\t")
 
 

@@ -1,12 +1,12 @@
 # Signal Atlas — Automated Go/No-Go Research Verdict Report
 
 - **Overall Decision:** `NO-GO`
-- **Evaluated At (UTC):** `2026-11-16T10:59:00.911905+00:00`
+- **Evaluated At (UTC):** `2026-11-16T13:46:01.285971+00:00`
 - **Evaluation Window:** `2022-01-03` to `2023-12-29`
 - **Criteria Version:** `1.1.1`
 - **Criteria Fingerprint:** `CRIT-FPR-V1-28f7e7ad7418ca079b4154e08c29e8d89b2d096b464179aabafd3040f9e3c523`
 - **Calendar Fingerprint:** `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad`
-- **Summary Counts:** `PASS=16`, `FAIL=3`, `NOT RUN=5` (Total=24)
+- **Summary Counts:** `PASS=14`, `FAIL=3`, `NOT RUN=7` (Total=24)
 
 ## Detailed Criteria Evaluation Matrix
 
@@ -20,8 +20,8 @@
 | CRIT-STAT-05 | Risk & Performance | Annual Portfolio Turnover | `<= 12.0` | `0.59` | **PASS** | YES | Computed annual portfolio turnover: 0.59x. |
 | CRIT-EXEC-01 | Execution Realism | Volume Participation Cap | `<= 0.03` | `0.0000` | **PASS** | YES | Peak session volume participation observed: 0.0000. |
 | CRIT-EXEC-02 | Execution Realism | Min Traded Value (Cr) | `>= 5.0` | `644.39` | **PASS** | YES | Minimum average daily traded turnover observed: ₹644.39 Cr. |
-| CRIT-EXEC-03 | Execution Realism | Upper Circuit BUY Prohibition | `True` | `True` | **PASS** | YES | 0 of 17 judged BUY fill(s) executed at or above the effective Upper Circuit limit and 0 carried no limit (zero such fills permitted, §5.3, Finding H-114). |
-| CRIT-EXEC-04 | Execution Realism | Lower Circuit SELL Prohibition | `True` | `True` | **PASS** | YES | 0 of 15 judged SELL fill(s) executed at or below the effective Lower Circuit limit and 0 carried no limit (zero such fills permitted, §5.3, Finding H-114). |
+| CRIT-EXEC-03 | Execution Realism | Upper Circuit BUY Prohibition | `True` | `—` | **NOT RUN** | YES | 494 of 494 evaluated session(s) (2022-01-03..2023-12-29) have no sourced NSE price-band report; the only attested report is sec_list_20240116.csv. Circuit-prohibition compliance cannot be asserted over unsourced sessions, so this criterion is NOT RUN rather than PASS on an interpolated band (CA-3(c), §6.3, §10.8). |
+| CRIT-EXEC-04 | Execution Realism | Lower Circuit SELL Prohibition | `True` | `—` | **NOT RUN** | YES | 494 of 494 evaluated session(s) (2022-01-03..2023-12-29) have no sourced NSE price-band report; the only attested report is sec_list_20240116.csv. Circuit-prohibition compliance cannot be asserted over unsourced sessions, so this criterion is NOT RUN rather than PASS on an interpolated band (CA-3(c), §6.3, §10.8). |
 | CRIT-EXEC-05 | Execution Realism | Execution Latency (Sessions) | `>= 1` | `1` | **PASS** | YES | Orders execute at session T+1 following signal calculation at session T close. |
 | CRIT-SURV-01 | Surveillance Realism | Surveillance Exit Constraints Enforced | `ENFORCED / VERIFIED` | `NOT_RUN` | **NOT RUN** | YES | Authoritative surveillance coverage absent for held securities: ['INE009A01021', 'INE002A01018'] |
 | CRIT-COST-01 | Cost Realism | Statutory Cost Model Enforced | `True` | `True` | **PASS** | YES | Full statutory Indian schedule (STT, NSE turnover, SEBI charges, Stamp Duty, GST with IPFT, brokerage) computed. |
@@ -51,12 +51,15 @@
 
 > [!NOTE]
 > Price band coverage across 2022–2024 reflects historical exchange report availability:
-> - **2022–2023**: Band-constrained. Price band evidence is restricted to dynamic flexing anchor names (HDFC, INFY, RELIANCE) via the ±10% initial limits. Cash-universe names without price band reports are rejected/skipped per §5.3 fail-closed invariants (32 fills executed).
-> - **2024**: Cash-universe coverage (0 scrips) supported by daily `sec_list` price band records (0 fills executed).
+> - **2022–2023**: Band-ineligible (CA-3(c)). No sourced NSE price-band report exists; only the dynamic flexing anchor names (HDFC, INFY, RELIANCE) carry ±10% derived limits. Cash-universe names without price band reports are rejected/skipped per §5.3 fail-closed invariants (32 fills executed), and `CRIT-EXEC-03`/`-04` are `NOT RUN` over these sessions.
+> - **2024**: Cash-universe coverage (0 scrips) supported by the attested 2024-01-16 `sec_list` snapshot applied as static bands (0 fills executed).
 > - **Universe Integrity & Gap Filtering**: 179 continuous active instruments evaluated out of 196 valid ISINs (17 instruments refused due to unexplained missing sessions per §6.3 fail-closed invariants).
 
 | Year | Sessions | Band-Covered ISINs | Zero-Ticket Sessions | Tickets Emitted | Tickets Filled | Tickets Rejected | Closed Trades | CAGR | Win Rate | Profit Factor | Max Drawdown | Coverage Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 2022 | 248 | 3 | 227 | 20 | 20 | 0 | 10 | -3.46% | 0.00% | 0.0000 | 3.54% | Band-constrained: price band evidence restricted to dynamic flexing anchor names (HDFC, INFY, RELIANCE); cash names rejected/skipped per §5.3 fail-closed invariants (20 fills executed) |
-| 2023 | 246 | 3 | 234 | 12 | 12 | 0 | 5 | 0.98% | 40.00% | 1.2029 | 4.12% | Band-constrained: price band evidence restricted to dynamic flexing anchor names (HDFC, INFY, RELIANCE); cash names rejected/skipped per §5.3 fail-closed invariants (12 fills executed) |
-| 2024 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0.00% | 0.00% | 0.0000 | 0.00% | Cash universe coverage: 0 scrips supported by daily sec_list price band records (0 fills executed) |
+| 2022 | 248 | 3 | 227 | 20 | 20 | 0 | 10 | -3.46% | 0.00% | 0.0000 | 3.54% | Band-ineligible (CA-3(c)): no sourced NSE price-band report exists for 2022; dynamic flexing anchor names (HDFC, INFY, RELIANCE) carry only ±10% derived limits and cash names are rejected/skipped per §5.3 fail-closed invariants (20 fills executed); circuit criteria are NOT RUN for these sessions |
+| 2023 | 246 | 3 | 234 | 12 | 12 | 0 | 5 | 0.98% | 40.00% | 1.2029 | 4.12% | Band-ineligible (CA-3(c)): no sourced NSE price-band report exists for 2023; dynamic flexing anchor names (HDFC, INFY, RELIANCE) carry only ±10% derived limits and cash names are rejected/skipped per §5.3 fail-closed invariants (12 fills executed); circuit criteria are NOT RUN for these sessions |
+| 2024 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0.00% | 0.00% | 0.0000 | 0.00% | Cash universe coverage: 0 scrips supported by the attested 2024-01-16 sec_list snapshot applied as static bands (0 fills executed) |
+
+> [!WARNING]
+> **Price Band Sourcing (CA-3(c))**: 494 of 494 evaluated session(s) (2022-01-03..2023-12-29) have no sourced NSE price-band report; the only attested report is sec_list_20240116.csv. Circuit-prohibition compliance cannot be asserted over unsourced sessions, so this criterion is NOT RUN rather than PASS on an interpolated band (CA-3(c), §6.3, §10.8).
