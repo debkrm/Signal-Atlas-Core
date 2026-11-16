@@ -7428,3 +7428,197 @@ So: freeze the family at `N = 5`, record Trial #5 as the null it was (done), clo
 Seven probe scripts (`probe_h123.py`, `probe_h122.py`, `probe_h122b.py`, `probe_h122c.py`, `probe_n127.py`, `probe_n127b.py`, `probe_wiring.py`, plus `probe_t5_null.py`) ran from `/tmp/s72`, outside the repository, and are disposable. Tampering was done only on `tempfile` copies of `data/trials` and `data/reference`; the committed registry, sidecar, anchors, manifest and corpus were read and never written. `git status` was empty at the start and end of the round; registry bytes were re-hashed before and after (`0a64ad3c…`, 7994 B). `evaluate_verdicts` was called with in-memory bundles only. No holdout partition was read. `CURRENT_STAGE_OF_WORK.md` was not edited.
 
 **Not measured, and not claimed:** whether a repository call site other than `run_phase3b2_walkforward.py` can construct a bundle without window keys (the public API was attacked, not every call site); whether a stop order implemented per ruling 1 would raise or lower this family's expectancy (it is not implemented, and I did not simulate one); whether `ema_200` yields the 27 crossovers my index-level reconstruction found once the engine's subsegment partitioning and ADTV filters apply; and any DSR at `N_eval ≥ 2`, which remains NOT RUN.
+---
+
+## §73 — Audit of `5176bc5..9171464` (H-124, protective stops, N-128, N-129)
+
+**Scope audited:** `9171464` ("Give the ATR multiple one owner and arm a real protective stop"), diff `5176bc5..9171464`, 15 files, +1,204 / −41. Tree clean, `HEAD = 9171464`, tag `feat-s72-9171464`. Holdout `2025-01-01..2026-11-11` not read; the 2024 validation fold not evaluated (`validation_folds_count = 0` on both diagnostic artifacts, window `2022-01-03..2023-12-29`).
+
+### 73.1 Baseline re-measured at `9171464`
+
+| Item | Measurement |
+|---|---|
+| `scripts/verify_audit_append_only.py` | exit **0**, `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| W0.5-1 | `[PASS]` audit report append-only, 100 % |
+| W0.5-2 | `[PASS] All 8 verification scripts passed exit 0` — 9 `scripts/verify_*.py` exist; the gate discovers all and excludes only itself. Each run individually: 9/9 exit 0 |
+| W0.5-4 | audit tags intact including `audit-s72-05806aee` |
+| W0.5-5 | `[PASS] 46 current artifact(s) match … 19 superseded row(s) skipped` |
+| pytest | **465 passed in 79.47 s, 0 skipped, 0 xfailed** (450 before this commit + the 15 in `tests/unit/test_phase3b2_audit_s72_items.py`) |
+| G2A-6.6 | `N=5, N_eval=1, sidecar_present=True` |
+| G2A-6.7 | `1 scored trial(s) agree with their verdict artifacts` |
+| G2A-6.8a/b/c | `[PASS]` pin equals committed manifest sha256 `0290d02b…`; witness-key removal refused; nulled artifact Sharpe refused |
+| Registry bytes | `trial_registry.jsonl` 7,994 B sha256 `0a64ad3c…`; manifest 327 B `0290d02b…` (= criteria pin); sidecar 556 B `ddc8c63b…` — unchanged before and after every probe |
+
+No threshold moved: `configs/go_no_go_criteria.yaml` `1.1.1 → 1.1.2` adds only `expected_trial_registry_manifest_sha256`; the diff contains no numeric change, and the regenerated `phase2d` artifact differs only in `criteria_version`, `criteria_fingerprint` and the restatement note.
+
+### 73.2 H-124 — **CLOSED**
+
+| Claim | Measurement |
+|---|---|
+| One construction point | `DailyTPlus1OrderRunner(` appears once in production code (`scripts/run_phase3b2_walkforward.py:173`, inside `build_authoritative_runner`); every other occurrence is a test |
+| `k` reaches the sizing engine | `order_runner.py:418-425` passes `atr_stop_multiple=self._atr_stop_multiple` to `calculate_atr_r_multiple_position_size`. Measured on the same trade: `risk_per_share` **101.7778360** at `k=2.0` and **152.6667540** at `k=3.0` — ratio 1.5, i.e. `k × ATR` with ATR ≈ 50.9 |
+| The row describes the run | Both diagnostic artifacts carry `atr_stop_multiple` = `2.0` / `3.0`; the CLI value reaches `trial_params` from `runner.atr_stop_multiple` |
+| Fail-closed on divergence | Probe (strategy reporting `9.9`, runner at `2.0`): `REFUSED ValueError: atr_stop_multiple mismatch: strategy holds 9.9 but the authoritative runner sizes from 2.0` |
+
+Residual, named rather than implied: (a) the risk leg still cannot bind on this tape — `q_risk < q_weight ⟺ ATR/price > 0.125/k`, and measured ATR is 1.96–2.14 %, so quantity is identical at both multiples (42/60/59/47/59 in both runs) and only the stop price and the R denominator move; the implementer's own test documents this. (b) **Trial #5's registry row still records `atr_stop_multiple = "3.0"` while the engine that produced it sized at `2.0`.** The code is fixed; the historical row is not, and §10.1 requires an append with a restatement reference, not an edit. It is carried into the work order.
+
+### 73.3 Protective stop engine — probes at the declared seam
+
+`evaluate_protective_stops` → `run_candidate` → `ExecutionFillSimulator` (`STOP_LOSS`, `simulator.py:275-296`) → `Portfolio.process_fill`. One fill path (§7.4). Fixed `k=2.0`, ATR 50 ⇒ stop 900.000, entry filled 1000.70, quantity 20.
+
+| Probe | Expected | Measured |
+|---|---|---|
+| Armed at the T+1 fill | stop persisted, quantity = filled | `{'INE002A01018': ('900.000', 20, '50.00')}`, position 20 |
+| Gap through (`open 850 < stop`) | fill at **open** | `FILLED 849.40` (open − slippage), stop retired |
+| Intraday breach (`low 880`) | fill at **stop** | `FILLED 899.35`, not the low |
+| Not reached (`low 910`) | no fill, still armed | `UNTRIGGERED`, stop retained, position 20 |
+| §5.3 frozen bid (`open 870 == lower 870`) | **no fill**, defer | `REJECTED_LOWER_CIRCUIT` (`sellers trapped`), `deferred=1, circuit_deferred=1`, stop retained |
+| Locked 0-range session (h=l=895) | **no fill**, defer | `REJECTED_LOWER_CIRCUIT` (`Locked 0-range session`), stop retained |
+| Deferral is retried | fills next session | `REJECTED_LOWER_CIRCUIT → FILLED 859.40` |
+| Missing bar or band | no fill, pending | `0 tickets`, `skipped_no_bar=1`, `NO_BAR_OR_BAND`, stop retained |
+| Full signal exit | stop cancelled | `FILLED 1009.30`, position 0, no stops |
+| SELL rejected (unfilled) | stop **kept** | `REJECTED_LOWER_CIRCUIT`, stop retained, position 20 |
+| 1:2 split | stop/qty rescaled | `(900.000, 20) → (450.0000, 40)` |
+
+This closes §72.5 item 2 at the declared seam, and it does so with the §5.3 constraint built in rather than around it: the frozen-bid and locked-session cases defer instead of filling, and the deferral is counted. Both diagnostic runs show `protective_stop_exits` 5 and 2 with `protective_stop_circuit_deferrals = 0`, so the §5.3 branch is exercised only by the synthetic probe, not by the corpus.
+
+One further measured property, needed for the R discussion: the exit price of a stop is adverse to the stop (`1785.62 → 1784.35`), and the 1R denominator is `k × ATR` from the **signal close**, not the fill, so a gap-up entry makes a full stop worse than −1R by construction. That is disclosed in the ledger (`risk_per_share` beside `entry_price`/`stop_price`) and is not a defect.
+
+### 73.4 H-125 (HIGH) — protection is retired, not re-armed, on every path that leaves quantity open
+
+**Measured.** Buy 20, stop 900 armed. Trim 5 (`MAX_POSITION_WEIGHT_TRIM`): `FILLED 5`, `residual_position = 15`, `protective_stops = {}`. Next session's bar gaps to 850 — a 5.6 % fall through where the stop would have been — and `evaluate_protective_stops` produces **0 tickets**, because there is nothing to evaluate. The residual 15 shares are unprotected for the rest of the hold.
+
+Cause: `order_runner.py:591-593` retires the stop on **any** filled SELL, and `604-607` cancels on `FILLED` **or** `PARTIALLY_FILLED` for the stop itself. The comment calls the trim an exit; a trim is not an exit for the shares it leaves behind.
+
+Same defect class, reachable by data rather than by flag:
+- **Merger** (`scripts/run_phase3b2_walkforward.py:709-712`): the position is converted into the acquirer's ISIN and `cancel_protective_stop(ca.isin)` runs, with no re-arm on the successor. The new position is unprotected from the ex-date onward.
+- **ISIN transition**: identical treatment. The rationale given (a new identity has no ATR history) argues against carrying the *old* price level; it does not argue for holding the position with no stop at all.
+- **Partial stop fill**: cancels the remainder. Not reachable today (`allow_partial_fill` is left `False` for the stop candidate, so a volume-cap breach rejects and defers instead), but the branch is written to discard protection.
+
+Nothing in the committed tree is invalidated: `--trim-threshold` defaults to `None`, both diagnostics ran at `None`, and `Trial #6`'s pre-registration sets it to `None`. The defect is latent, and it is latent in exactly the feature §72 ruling 1 asked for. `tests/unit/test_phase3b2_audit_s72_items.py` covers the *signal* exit only (`test_signal_exit_cancels_the_open_protective_stop`); no test covers a trim, a merger or a partial fill, so the suite is green on the behaviour that is wrong.
+
+### 73.5 N-128 — **CLOSED** at the declared probe, with a named residual
+
+| Attack | Result |
+|---|---|
+| P1 baseline copy | `LOADED N=5 N_eval=1 verify=True` |
+| P2 strip `evaluation_count` + `head_eval_hash` | `REFUSED RegistryTamperedError` (`no evaluation witness`), digest no longer equals the pin |
+| P3 erase both ledger files **and** strip the keys | `REFUSED` (same message) — the §72 bypass is gone |
+| P4 erase both ledger files **and delete** the manifest | `REFUSED` (`Missing authoritative manifest anchor … for non-empty registry`) |
+| P5 delete the manifest only | `REFUSED` (same) |
+| P6 coordinated erase with a nulled artifact Sharpe | `REFUSED` (manifest anchor) |
+| P7 edit a witnessed value (`last_trial_id`) | `REFUSED` (`Registry head trial_id mismatch`) |
+| P8 erase both ledger files + rewrite the manifest with an **explicit** `evaluation_count = 0` | **`LOADED N=5 N_eval=0 verify=True`**; digest no longer equals the pin |
+
+So the witness now has a root outside itself, and every removal path the finding named fails closed. The residual is P8, and it is not a return of N-128: a *consistent* rewrite that supplies a witnessed zero is still accepted by `TrialRegistry`, and is caught only by `G2A-6.8a` because the manifest bytes and therefore the digest move. That is the design — the root is a human criteria pin, checked by the gate — and it holds at every consumer that gates on `N_eval` today. It does not hold for a future consumer that reads `evaluated_trial_count` outside the gate (a live service, a notebook), so the load path's indifference is recorded as a decision for the next round rather than as a finding.
+
+### 73.6 N-129 — **CLOSED** for new runs; the historical figure reproduced at the SHA that produced it
+
+Arithmetic, recomputed from artifact bytes (not from the script's own tally):
+
+| Artifact | `mean_net_expectancy` | recomputed `Σ net/len` | `total_statutory_costs` | recomputed Σ | `net = gross + dividends − costs` |
+|---|---|---|---|---|---|
+| `k=2.0` | `-1929.206094265468125` | **identical** | `3502.0475082474900` | **identical** | 16/16 rows |
+| `k=3.0` | `-2194.130204710324133333333333` | **identical** | `3282.6530706548620` | **identical** | 15/15 rows |
+
+The MD ledger line matches the JSON (`16 closed round trip(s); mean net expectancy -1929.206094265468125; … ₹3,502.05`), exit reasons reconcile (`SIGNAL_EXIT=11, STOP_LOSS=5`), and `realized_r` equals `net_pnl / (risk_per_share × quantity)` on every row.
+
+The historical claim is also true, which §72 could not establish: at `5176bc5` in a detached worktree, the no-stop engine on the same window produced **15 trades, Σ net `−33,818.4576065035710`, mean `−2,254.5638404335714`**, end equity `975,192.29` — the delivery note's `−₹2,254.56` to the paise. N-129 was an accountability gap, not an arithmetic error, and it is now closed for anything the engine writes from `9171464` onward. What remains true is that `trial_005`'s committed artifact has no ledger: that figure is reproducible only from `5176bc5`, because `9171464` changed the exit rule and the return series.
+
+### 73.7 N-130 (MEDIUM) — the sweep path is unregistered, and it was used to decide the next trial
+
+`--no-record-trial` runs a full evaluation with new parameter values, writes an artifact that names a **registered** `trial_id` (`TRIAL-PHASE3B2-SWING-ATR3-005`), carries no marker that it was unregistered, and leaves no row in the registry. Two such sweeps (`k=2.0`, `k=3.0`) were executed, their numbers are quoted in the delivery note as the basis for the next decision, and the registry still reads `N=5, N_eval=1`. Under §8.2 every parameter variation must be recorded with its rationale; a variation whose outcome is already known to the person choosing the next trial is precisely what the total-count obligation exists to disclose.
+
+**E-2 (my error).** §71.6.4 instructed the holdout spend itself to run `--no-record-trial`, i.e. my own pre-registration told the implementer to evaluate a fold without appending a row. That instruction is void from this section: a holdout spend is the most scored evaluation the project will run and must append. Until the flag is restricted, every later round inherits the hole I wrote into §71.
+
+**E-3 (supersession, not error).** §72.6 ruling 2 reason 2 argued that a second scored trial would "manufacture `N_eval`" because Trial #5's `returns_digest` duplicated trial #4's. With stops armed that reason no longer holds: the diagnostics carry distinct digests (`RET-V1-f7923f67…` at `k=2.0`, `RET-V1-3424a503…` at `k=3.0`) and a genuinely different trade path (16 and 15 closed round trips versus #5's 15, 5 and 2 stop exits). The ruling stands on the reasons that survive — Gate A, breadth, and now the diagnostics' own negativity — and the duplicate-series argument is withdrawn as evidence.
+
+### 73.8 Verdicts for the phases this commit touches
+
+| Phase | Verdict | Basis |
+|---|---|---|
+| 3B-2b execution realism / single engine | **PASS at the declared probes** | one fill path; gap, breach, §5.3 deferral, locked session, retry, missing-bar and split rescale all measured |
+| 3B-2b holding-period realism (§13.2) | **FAIL (H-125)** | a trimmed, merged or transitioned position holds quantity with no protective order; measured 15 unprotected shares and 0 stop tickets on a 5.6 % gap |
+| Phase 2A anti-overfitting integrity | **PARTIAL** | N-128 and N-129 closed; N-130 open, and two swept variations sit outside the registry that the DSR depends on |
+| Phase 3B-2b strategy verdict | **NO-GO, unchanged** | both `k` diagnostics negative on every input a gate reads |
+| 2024 validation fold / holdout | **SEALED, unspent** | `validation_folds_count = 0`; no artifact reaches past 2023-12-29 |
+
+### 73.9 Ordered work order
+
+1. **Close H-125 — re-arm instead of retire.** On a partial SELL, reduce the stop's quantity to the residual and leave it armed; on merger/ISIN transition, arm a new stop on the successor ISIN from its own ATR (or record the position as explicitly unprotected with a counted flag, never silently); on a partially filled stop, keep the residual armed. Probe (must fail closed before the item closes): buy 20, trim 5, then a next-session bar gapping through the old stop must produce exactly one stop fill for **15** shares; and a merger must leave either an armed stop on the new ISIN or a non-zero `unprotected_positions` counter in the artifact. Serves §13.2.
+2. **Close N-130 — make the sweep path either registered or refused.** `--no-record-trial` must require a `trial_id` that already exists in the registry **and** an artifact whose `annualized_sharpe` agrees with that row (the gate's own rule), otherwise exit non-zero; artifacts written on that path must carry `recorded: false`. Probe: a run at a `k` with no registry row must exit non-zero, not write an artifact that impersonates `TRIAL-PHASE3B2-SWING-ATR3-005`. Serves §8.2 and §9.1.
+3. **Record the two diagnostics (seq 6, seq 7) or declare them void — one of the two, in a commit.** §8.2 does not permit them to stay outside the registry now that they have been read and cited. Appending them moves `N 5 → 7`, `N_eval 1 → 3`, requires the criteria manifest pin to be re-derived in the same commit (any append rewrites the manifest), and must carry the disclosure that they were executed off-registry on 2026-11-16 and recorded post hoc. Serves §8.2.
+4. **Restate Trial #5's `atr_stop_multiple` by append.** The row says `3.0`; the engine sized at `2.0` (H-124). A restatement record naming `05806ae`/`5176bc5` and the corrected value, never an edit. Serves §9.1, §10.1.
+5. **Decide whether `TrialRegistry` itself must consult the criteria pin** (P8 in 73.5). Either wire the pin into the load path, or record in the criteria file that the pin is a gate-only check. Serves Phase 2A.
+6. **Source NSE price bands for 2022–2023.** This is the only item that can make any future trial verdictable; see 73.10.
+
+### 73.10 Ruling — what seq 6 is, and why no stop trial should be registered next
+
+**The measured situation, first, because the ruling follows from it.** Both diagnostics are negative on every input a gate reads:
+
+| | `k=2.0` | `k=3.0` |
+|---|---|---|
+| closed round trips | 16 | 15 |
+| mean net expectancy | `−₹1,929.21` (Σ `−₹30,867.30`) | `−₹2,194.13` (Σ `−₹32,911.95`) |
+| 95 % CI on the mean | `[−₹3,436, −₹422]`, t = −2.73 | `[−₹3,927, −₹461]`, t = −2.72 |
+| mean realised R | −0.4951 (SE 0.2805, t = −1.77) | −0.3750 (SE 0.2088, t = −1.80) |
+| profit factor | `0.2333870345891165454946023353` | `0.2196894186937231779821936150` |
+| Sharpe / max drawdown | `−0.6268` / 3.82 % | `−0.6755` / 4.02 % |
+| stop exits / signal exits | 5 / 11 | 2 / 13 |
+| end equity | `₹978,143.43` | `₹976,098.80` |
+
+The difference between the two multiples is **`₹264.92` = 0.25 standard errors** (Welch s.e. `₹1,073.92`). On this tape `k` cannot be distinguished at all: per-trade dispersion is `≈₹2,978`, so a 95 % interval on the *difference* spans roughly `±₹2,300`. **Any future trial that selects a stop multiple "because it scored better" is selecting noise, and it will bank a trial in exchange for nothing.**
+
+**Ruling A — do not register a stop-geometry trial.** Three independent grounds. (i) §71.6.2 Gate A's contract is net expectancy per closed round trip > 0 and ≥ 10 trades; both diagnostics fail it at 15–16 trades, so the family's stop branch is stopped by the same rule that stopped Trial #6. (ii) The interaction the hypothesis was about — a stop changes which trades survive — is measured and *harmful*: stops convert 5 of 16 exits into realised losses at `k=2.0` and cut the win rate to 12.5 %, and the 2.0× arm ends `₹2,044.63` *better* in equity while closing one more trade — a difference no sample this size can own. (iii) The `k` sweep is 0.25 SE wide, so a `k=1.5` / `k=4.0` / trailing-stop sequence would spend four or five trials to describe a null.
+
+**Ruling B — the entries, not the exits, are what is failing, and breadth is what binds.** Measured in the same artifacts: 179 continuous instruments pass the gap filter out of 196 valid ISINs, but only **3 are band-eligible in 2022–2023** (HDFC, INFY, RELIANCE — dynamic-flexing anchors only, since no sourced NSE price-band report exists before 2024-01-16), and only **2 of them ever trade** (RELIANCE `INE002A01018`, INFY `INE009A01021`) for **29 fills** in 493 sessions. `CRIT-STAT-01` wants ≥ 100 closed trades; the tape yields 15–16. Every gate that decides this family's fate — `CRIT-EXEC-03/04`, `CRIT-PROV-01`, `CRIT-STAT-01`, and any DSR that means anything — is blocked on **sourced 2022–2023 band history**, not on a stop multiple or a 200-day EMA.
+
+**Ruling C — what seq 6 is, exactly.** Per §72.5 item 5, the stop hypothesis was reserved for `seq 6` and it must not be smuggled into a spent id. It also must not be executed prospectively now, because both arms are already known. The next step, in this order:
+
+1. Close H-125 (work order item 1). A trial run with `--trim-threshold` set would otherwise measure a book whose residual exposure has no stop, which is the same class of error as H-124: the run would not test the strategy it names.
+2. Close N-130 (item 2), so no further variation can be executed off-registry.
+3. Append `seq 6` = `k=2.0` and `seq 7` = `k=3.0` as **recorded post-hoc**, using the parameters and the measured metrics already in hand, with this disclosure verbatim: *"Executed unregistered on 2026-11-16 under `--no-record-trial`; recorded post hoc because its result was used to decide the next trial (Audit §73.7, N-130). It is not prospective evidence."* The stop-hypothesis family is then recorded as tested and falsified at both multiples, `N = 7`, `N_eval = 3`, and `CRIT-OVERFIT-02` moves from NOT RUN to **FAIL** — both observed Sharpes are negative, and no negative Sharpe can clear a deflated threshold, so this costs the project nothing it did not already owe.
+4. Then, and only then, `seq 8` is available for a **breadth** hypothesis — and its shape is fixed by what has already been measured, not by what would flatter the result:
+
+```
+trial_id:  TRIAL-PHASE3B2-BREADTH-008
+N = 8, N_eval = expected 4 (scored: yes)
+canonical_params: strategy_id = SWING-TREND-EQ-V1, fast_indicator = sma_20,
+                  slow_indicator = sma_50, allocation_weight = "0.0800",
+                  atr_stop_multiple = "2.0"   (the arm with the better equity curve is
+                                               the better-performing arm; that is
+                                               selection, so k is frozen at the
+                                               pre-existing 2.0 and NOT re-optimised),
+                  max_position_weight_trim_threshold = "None",
+                  policy = APPROVED_EQ_ONLY_POLICY,
+                  universe = every continuous EQ instrument whose session T price band
+                             is sourced and attested as of T (no interpolation, no static
+                             carry-forward past its attested date, §6.5/§10.5)
+Hypothesis (verbatim): "Replacing the ±10 % dynamic-flexing anchor universe (3 names in
+2022-2023) with every EQ instrument that carries a sourced price band on the session it is
+traded raises in-sample net expectancy per closed round trip above zero and lifts the closed
+trade count above 100, because the 2022-2023 sample was restricted to three large-cap names
+by band provenance rather than by signal quality, and the same entry and exit rules applied
+to a 30-100 name cross-section produce independent observations instead of 15."
+Falsified if: net expectancy ≤ 0, OR profit factor ≤ 1.20 (the baseline's own best
+sub-period), OR fewer than 100 closed trades (recorded as NOT RUN for CRIT-STAT-01, not as
+a null experiment — the run would then be a coverage measurement, and its N_eval is still
+incremented because the Sharpe was computed and read).
+Not permitted: any change to allocation_weight, the cost schedule, the slippage model, the
+calendar, or the exit side; any second change inside the trial; any re-run of the same
+trial_id with a different value.
+Precondition, blocking: NSE price-band reports (or an attested equivalent) for
+2022-01-03..2023-12-31 present in Bronze with byte-exact payloads, a manifest row and a
+walkable window. Without that precondition the trial must not be registered, because it
+would spend N on 3 names and prove nothing.
+```
+
+5. Do not spend the 2024 fold on any of this. Gate B (§71.6.4) still requires two trials at net expectancy ≥ +0.20 R and PF ≥ 1.20; nothing measured this round is within an order of magnitude of that.
+
+**What would falsify this ruling.** A stop-geometry trial at a multiple outside `[2.0, 3.0]` that clears Gate A with ≥ 10 closed trades *and* a per-trade mean more than 2 standard errors from the two measured here — on a tape of the same 3 names. If that appears, the claim "no k is distinguishable at this sample size" was wrong. Conversely, if a future breadth run with sourced bands still yields fewer than 100 closed trades, the binding constraint was the signal's scarcity rather than the band data, and Ruling B was wrong.
+
+### 73.11 Probe hygiene and what was not measured
+
+Eight probe scripts (`probe_stops.py`, `probe_n128.py`, `probe_n128_p8.py`, `probe_n129.py`, `probe_h124_guard.py`, plus the two diagnostic runs) executed from `%TEMP%\s73`, outside the repository; two artifacts were written to `run_k2`/`run_k3` there and are not committed. `git status` was empty at the start and end of the round; the registry (`0a64ad3c…`, 7,994 B), its manifest (`0290d02b…`), sidecar and anchor were read and re-hashed, never written, and no trial row was appended. Tampering was done on `tempfile` copies only. The `5176bc5` reproduction used a detached `git worktree` outside the repository tree, removed after measurement. No holdout partition was read. `CURRENT_STAGE_OF_WORK.md` was not edited.
+
+**Not measured, and not claimed:** whether H-125 is reachable in the committed 2022–2023 tape (no trim was enabled and no merger touched a held name in either diagnostic; the defect is reachable by flag and by data, not demonstrated on the committed run); whether a stop charged against the 2.5–5 % volume cap would strand a position to the end of the window (0 volume-cap rejections in both runs); whether the pin should live in the registry load path (P8 shows it does not today); and any DSR at `N_eval ≥ 2`, which remains NOT RUN until 73.9 item 3 is committed.
