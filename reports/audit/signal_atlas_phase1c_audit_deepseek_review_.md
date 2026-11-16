@@ -6535,3 +6535,132 @@ Items 1–3 are what make Trial #4+ reportable. Items 4–5 are honesty of the a
 Probes ran as scratch files (`.p_s66a.py`…`.p_s66c.py`) plus inline snippets against `aff86d8` through the public API. Three full executions and one instrumented execution were performed into `/tmp/s66`, `/tmp/s66b`, each with a copied `trial_registry.jsonl` **and** its `.manifest`; those runs appended audit trials in `/tmp` only, so the committed registry gained no row and no committed verdict file was overwritten. The one private access was reading `SecurityMaster._price_bands` / `_price_band_intervals` to count coverage directly, and `Portfolio.apply_corporate_actions_for_session` was wrapped in one probe to bypass the MERGER row — disclosed in H-113 rather than hidden. All scratch files were deleted; the only working-tree change is this section.
 
 **Not measured, and not claimed:** the 2024 result still has no out-of-sample partner and none is possible until the holdout is ingested; the derived ±10% flexing band remains an approximation of NSE's framework and fills were not re-priced against published 2024 band files; the corporate-action corpus was not compared against NSE's published action history; the hardcoded F&O anchor intervals (three from 2015, one from 2017) remain unverified against their publications; the 2,749 cash-universe band intervals dated 2024-01-16 were not traced to individual `sec_list` records — their source descriptors were read but not audited; and no claim is made about per-name attribution inside 2024. `CRIT-OVERFIT-02`, `CRIT-SURV-01`, `CRIT-PROV-01` and `CRIT-INFO-01` remain `NOT RUN` for the reasons they state.
+---
+
+## §67 — Commit `c5ccbce` (tag `feat-s66-c5ccbce`): §66.7 remediation, and whether Trial #4 may begin
+
+### 67.1 Baseline re-measured at `c5ccbce`
+
+| Gate | Result |
+|---|---|
+| `python -m pytest -q` | **406 passed**, exit 0, 0 skipped, 0 xfailed |
+| `scripts/verify_audit_append_only.py` | exit 0; 0 deleted lines in tree/index and across all commits; `ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Working tree | clean at `c5ccbce` before this section was written |
+| Diffstat `c5ccbce` alone | 11 files, **+721 / −172** (the range `aff86d8..c5ccbce` additionally carries my §66, +146) |
+| Criteria file | untouched — not in the diffstat; all 24 thresholds still the ones Trial #2 and #3 were judged under |
+| Trial registry | **3 rows**, unchanged; `CRIT-OVERFIT-01` reports `N = 3` |
+| Holdout seal | `2025-01-01 .. 2026-11-11`, `HOLDOUT` access raises `HoldoutSealedError` |
+
+**The regenerated artifact reproduces to a single leaf.** Re-rendering `c5ccbce` with `record_trial=False` against a copy of the committed registry gives **292 leaves, 1 differing: `/timestamp_utc`**. This is strictly better than §66's 3-leaf result: because the re-render keeps the registry at three rows, even the `N = 3` evidence leaf now matches. The artifact is deterministic and the trial budget was genuinely not spent — `data/trials/trial_registry.jsonl` still holds exactly three rows after the run.
+
+**Scorecard: `PASS 17 / FAIL 2 / NOT RUN 5`, overall `NO-GO`.** The drop from 18 to 17 is the correct outcome of N-108 and is the one change in this round that *reduces* the pass count; it is the audit's own request being honoured, not a regression. `CRIT-DATA-02` still `PASS` on telemetry with **176 instruments passed, 20 refused, 196 total**, and `CRIT-OVERFIT-02` / `CRIT-SURV-01` / `CRIT-PROV-01` / `CRIT-INFO-01` remain `NOT RUN` with named inputs.
+
+### 67.2 The §66.7 work order, measured
+
+**1. H-112 — typed counts in the disclosure. CLOSED for the counts, PARTIAL for the sentence.** Every count is now interpolated from `coverage_diagnostics`: the Markdown reads `(32 fills executed)` for 2022–2023 and `(367 fills executed)` / `(125 scrips)` for 2024, all three equal to their table cells, and the strings `(22 fills`, `(86 fills`, `185 scrips` are gone. Probe: overriding the diagnostics and re-rendering moves the prose with it, and `test_h112_disclosure_counts_interpolated_from_diagnostics` asserts prose-equals-table plus the absence of the old literals.
+
+The residual is in the words around the numbers. The 2022–2023 note still reads *"restricted to F&O anchor names (INFY, RELIANCE)"* — a hardcoded enumeration of two names beside a table column reading **3**. Probing the production band union for 2022 and 2023 gives `{INE001A01036, INE002A01018, INE009A01021}` — HDFC, RELIANCE, INFY. So the same paragraph now undercounts by omitting **HDFC**, which is not a cosmetic omission: HDFC is the name whose merger §66 made H-113 about, and a reader is told it was never tradable before 2024. Accept: format the names from the union, or state the count and drop the parenthetical.
+
+**2. N-110 — full-year band coverage. CLOSED.** `band_covered_isins` is now the union over every session's universe in the year. 2024 moves **91 → 125**, 2022 and 2023 stay at 3, and all three match the probe that records `get_price_band` results from inside the coverage loop. The number is now a measurement. The 125 against 196 universe members is explained by bands resolving only from 2024-01-16, which the disclosure does state.
+
+**3. N-108 — single-fold degeneracy. CLOSED.** `walk_forward_positive_fold_ratio` is omitted from the bundle at `N_val < 2`, so `CRIT-OVERFIT-03` evaluates to `NOT RUN` with `computed_value None` and the evidence *"Only N_val = 1 validation fold evaluated; minimum 2 independent out-of-sample validation folds required for stability ratio (§8.3, Finding N-108)."* A Markdown note carries the same disclosure and `validation_folds_count: 1` is written into the JSON. The 1/1 ratio is no longer printable as a stability claim. This is the honest outcome and it costs a PASS, which is the right direction.
+
+**4. H-113 — fractional merger settlement. CLOSED at the mechanism, with two residuals (N-112, N-115).** `Position.apply_corporate_action` returns `(fractional_shares, fractional_cost_basis)` for a `MERGER`, allocates `(qty × 42) // 25 = 45` whole shares to `INE040A01034`, and `Portfolio` re-keys the position and posts a `MERGER_CASH_IN_LIEU` ledger entry. The acceptance probe I set in §66.6 was *"a completed run holding `INE001A01036` across 2023-07-13"*, and it now passes on a live run rather than a fixture: with `fail_closed_on_unexplained=False` the run completes all **742 sessions** to 2024-12-30, held **27 HDFC shares** on 2023-07-13, and posts exactly **one** cash-in-lieu entry — `₹595.17` for `0.36` fractional shares at an implied `₹1,653.25`. The `CorporateActionError` that made §66's flip probe crash is gone.
+
+Two things it does not yet do, recorded as N-112 and N-115 below: the settlement price is book value because the corpus's merger row carries no consideration price, and the fractional slice is additionally booked as a zero-gross *closed trade* dated a session before the ledger entry.
+
+**5. N-109 — producer-driven circuit test. CLOSED.** `test_h111_fill_at_uc_fails_crit_exec_03` now drives `run_phase3b2_walkforward` over a doctored corpus and asserts `CRIT-EXEC-03 FAIL` on the returned `VerdictReport`. The copied expression is gone. Running the same probe independently: `FAIL`, **2 buy fills, 0 with a missing limit, 1 filled at exactly its upper limit**. The test is genuine — and what it caught is H-114.
+
+**6. Budget preservation. CLOSED.** Registry at 3 rows before and after the re-render; `N = 3` in `CRIT-OVERFIT-01`. Zero trial budget was spent on cleanup, as claimed.
+### 67.3 New findings
+
+**H-114 (HIGH, §5.3 / §7.4) — the authoritative simulator fills a BUY at the upper circuit, and the criterion's evidence text claims it cannot.** The doctored corpus of the N-109 test puts a bar with `open = UC − 0.05`, `high = UC`, `close = UC − 0.10`. The engine fills that BUY at **`1375.00` when the effective upper circuit limit is `1375.00`** — a fill at the limit, which §5.3 forbids without qualification ("Never simulate a BUY fill at the High if the High equals the Upper Circuit limit; ask depth is zero"). The criterion catches it and returns `FAIL`, which is correct, but the evidence string printed beside that FAIL reads:
+
+> `Simulator strictly enforces zero BUY fills when price equals Upper Circuit band (§5.3).`
+
+The run's own fill list disproves the sentence on the same page. So the system detects the breach it should have prevented, and then asserts it prevented it. Two defects in one: the execution path does not clamp or reject at the derived band, and the evidence string is a constant rather than a statement about the computed count.
+
+This is latent on the committed corpus only because 2022–2023 traded 32 fills across three names, so no entry ever approached its limit; it is entirely reachable by real bars (a name that opens within a tick of its ceiling and runs into the freeze). Trial #4+ on a 2022–2023 window with real breadth will hit it. **Accept:** the fill path rejects (or clamps to below-limit) any BUY at `price >= effective_upper_circuit_limit` and any SELL at `price <= effective_lower_circuit_limit`, the count of such rejections is exported, and the `CRIT-EXEC-03` / `-04` evidence is formatted from the number of deviating fills that were actually found. The existing producer test then becomes a guard rather than a demonstration.
+
+**N-111 (MEDIUM, §8.2) — `--no-record-trial` is broken for any unregistered trial, and the broken branch is a fail-open by design.** Re-rendering works only because `TRIAL-PHASE3B2-SWING-BASELINE-003` already exists and is looked up. Pass any *new* `trial_id` with `record_trial=False` and the run dies:
+
+```
+TypeError: TrialRecord.__init__() got an unexpected keyword argument 'partition_spec'
+```
+
+The fallback constructs a record with `record_hash="RE_RENDER_UNREGISTERED"`, `prev_hash="0"*64` and `seq=registry.total_trial_count` — which is also off by one, since the next trial's sequence is `total + 1`. Had the constructor signature matched, the effect would have been to emit a complete verdict artifact for a trial the registry never recorded, reporting `trial_count_n = 3` for what is really trial #4 — understating the multiple-testing budget in the artifact that computes it. The crash is the better of the two available behaviours, but it is a crash in a documented flag, not a decision. **Accept:** `record_trial=False` requires the `trial_id` to be present in the registry and raises a typed registry error otherwise; the synthesized `TrialRecord` with a fabricated hash is deleted.
+
+**N-112 (MEDIUM, §13.2 / §9.1) — the merger's cash-in-lieu is settled at book value, so the fractional leg has zero PnL by construction.** `Portfolio` posts `cash_amount = frac_shares × action.delisting_price` *if that attribute is set*, else `frac_cost_basis`. The corpus's only MERGER row has **`delisting_price: None`**, so production always takes the fallback: the observed entry credits `₹595.17`, which is exactly `total_cost_basis / 126` — the book value of 0.36 shares, indistinguishable from a settlement price only because it *is* the book value. A merger consideration is a price; a settlement at cost basis silently guarantees that closing the fractional entitlement can never gain or lose, and if the acquirer had gapped between announcement and credit the ledger would book a gain or loss of zero.
+
+The test hides this rather than exposing it: `test_h113_stock_merger_fractional_cash_in_lieu` asserts `cash_entry.amount == expected_frac_cash` computed from `total_cost_basis`, then asserts `equity_after == equity_before` — value-neutrality that is true *only because* cash was set to book. `CURRENT_STAGE_OF_WORK.md` reports this as "Preserves cash and portfolio equity continuity to the exact sub-paisa (verified diff 0.00)", which is the tautology restated as a verification. **Accept:** the merger row carries a consideration price, the ledger credits `frac_shares × consideration`, and the test asserts equity moves by `(consideration − book) × fraction`; a merger with no consideration price fails closed rather than settling at book.
+
+**N-113 (MEDIUM, §14.4) — the test that "verifies the merger through the runner" does not run the runner.** `test_h113_fail_closed_false_does_not_crash_on_hdfc_merger` never calls `run_phase3b2_walkforward`; it builds a `Portfolio`, buys 27 shares and calls `portfolio.apply_corporate_actions_for_session(2023-07-13, actions)` directly. Its name and docstring — *"Running with fail_closed_on_unexplained=False over a period including the HDFC merger … exercises the held-position merger"* — describe an integration it does not perform, and `CURRENT_STAGE_OF_WORK.md` cites it for the "through session 400" claim. The claim itself is true; I ran the live probe and it completes 742 sessions with a real held position and one posting. The test, however, does not support it, and would also pass if the runner's gap filter refused HDFC forever. **Accept:** the test drives the runner with the flag off and asserts the posting on the run's own ledger.
+
+**N-115 (LOW) — the fractional slice is double-represented, and dated a session early.** The runner keeps its own `open_lots` book alongside the `Portfolio`, and its merger branch appends a closed-trade record:
+
+```
+{isin: INE001A01036, exit_date: 2023-07-12, quantity: 0.36,
+ entry_price: 2777.45, exit_price: 2777.45, net_pnl: -0.8960, total_costs: 0.8960}
+```
+
+Three problems. It reports the settlement as a **trade with zero gross PnL and no proceeds**, while the ledger separately credits `₹595.17` — so `total_trades` grows by one, the win-rate denominator grows by one, and a guaranteed loss of the allocated charges enters the profit factor for a slice that was settled, not traded. Its `exit_date` is `2023-07-12`, one session before the ledger's `2023-07-13`, because the runner applies `actions_today` on the session *preceding* the ex-date while `Portfolio` applies them on the ex-date. And the two books now compute the same economic event independently (§7.4). **Accept:** one book applies corporate actions, on one date; the fractional settlement appears as a cash entry and a cost-basis adjustment, not as a closed trade.
+
+**Carried, not introduced here:** `CRIT-DATA-02`'s `or continuous_instruments_passed > 0` disjunct (§66 R-66-A) is unchanged; corporate-action ledger entries still pass `circuit_evidence_present=True` where the field is meaningless (pre-existing convention across all such entries); and `CRIT-EXEC-03`'s evidence-string defect is pre-existing but is now load-bearing because H-114 makes it visibly false.
+### 67.4 Verdict
+
+| Phase | §66 | Verdict at `c5ccbce` | Basis |
+|---|---|---|---|
+| Phase 2D Tier-A gating | NO-GO | **NO-GO** (unchanged) | pin untouched; `CRIT-PROV-01 NOT RUN` |
+| Phase 3B-1 | GO | **GO stands** | 406 tests, no regression |
+| Phase 3B-2a | GO | **GO stands** | counters unchanged |
+| Phase 3B-2b — truth-pass release condition | MET | **MET** (unchanged) | 17 of 17 PASSes computed; the 18th was withdrawn deliberately |
+| Phase 3B-2b — certified baseline artifact | Trial #3 certified | **Trial #3 certified; re-render reproduces to 1 leaf** | `/timestamp_utc` only, 292 leaves, registry still N=3 |
+| **§66.7 cleanup** | — | **COMPLETE WITH RESIDUALS** | H-112 counts, N-108, N-110, N-109, H-113 mechanism all closed; N-112/N-113/N-115 residuals named |
+| Phase 3B-2b — strategy evidence | not established | **STILL NOT ESTABLISHED** | unchanged; 2024-wide, no confirmatory window |
+| Publication / GO-oriented claims | blocked | **STILL BLOCKED** | `PROV-01` unattested, no surveillance intervals, holdout empty and sealed |
+| **Trial #4+ strategy experiments** | authorized, exploratory | **UNBLOCKED — may begin** | conditions below, plus one new discard rule from H-114 |
+
+**Is the baseline cleanup complete?** Yes, in the sense §66.7 defined it: the five remediation items are closed at the probe each named, the scorecard moved only in the direction the audit asked (18 → 17 PASS by withdrawing a degenerate one), the artifact reproduces to one leaf, and the registry is still at three rows with zero budget spent. What is not complete is the economics around the merger — it settles at book value (N-112) — and the execution engine's circuit guard, which does not exist (H-114). Neither invalidates the baseline verdict; neither can be argued away later.
+
+**Trial #4 may begin, on these terms** — §66.5's four conditions stand unchanged, with one addition:
+
+1. **Exploratory, in-sample only**, on 2022-01-03..2023-12-29. The 2024 fold stays frozen for a single confirmation of the final configuration. No result of Trial #4+ is out-of-sample evidence and none can support a GO.
+2. **Registered before evaluation**, rationale naming the parameters that differ from Trial #3.
+3. **DSR / haircut over the total trial count** at selection time; `N = 3` is already spent for zero parameter variation and must appear in that count.
+4. **No confirmatory evaluation exists.** The holdout has no ingested data; `NOT RUN` on `SURV-01` / `PROV-01` is structural.
+5. **New, from H-114:** any run in which `CRIT-EXEC-03` or `CRIT-EXEC-04` evaluates `FAIL` is a run in which a fill landed on a circuit limit or a limit went missing, and its PnL is not reportable. Discard it, do not tune around it. Because HDFC is refused in the honest configuration, Trial #4's evaluation will not exercise the merger path at all — H-113/N-112 affect diagnostics and the flip configuration, not the trial result.
+
+With three band-covered names before 2024-01-16, Trial #4's most valuable output is not a profit factor; it is the demonstration that the pipeline now records honest coverage per year and can therefore tell a reader *why* a 2022–2023 window with 461 zero-ticket sessions out of 494 is not evidence.
+
+### 67.5 What would falsify this verdict
+
+- If a probe found a BUY fill below its effective upper limit in every reachable configuration, H-114's "reachable by real bars" limb would be wrong: falsified by one such fill at the limit, which I produced with a doctored bar whose `open` was one tick under the band.
+- If `CRIT-EXEC-03`'s evidence string were formatted from the observed deviation count, the second half of H-114 would be wrong.
+- If `record_trial=False` with an unregistered `trial_id` produced a verdict artifact rather than a `TypeError`, N-111 would be wrong in the other direction — and worse.
+- If the merger row carried a consideration price and the ledger credited market value, N-112 would be wrong: falsified by `delisting_price` being non-`None` and by an equity change equal to `(consideration − book) × fraction`.
+- If `test_h113_fail_closed_false_does_not_crash_on_hdfc_merger` contained a `run_phase3b2_walkforward` call, N-113 would be wrong.
+- If the 2022–2023 disclosure note named three ISINs, or named none, H-112's residual would be wrong: measured union is HDFC, RELIANCE, INFY.
+- If the regenerated artifact differed in any leaf other than `/timestamp_utc`, the determinism claim would be wrong: measured 1 of 292.
+
+### 67.6 Ordered work order
+
+1. **H-114** — reject or clamp BUY fills at or beyond the effective upper limit and SELL fills at or beyond the lower limit inside the authoritative simulator; export the deviation count; format the `EXEC-03` / `-04` evidence from it. This is the only item that can corrupt a Trial #4 result.
+2. **N-111** — make `record_trial=False` refuse an unknown `trial_id` with a typed registry error, and delete the fabricated-hash `TrialRecord` branch (which also carries `seq` off by one).
+3. **N-112** — put a consideration price on the merger row, settle the fraction at that price, fail closed when it is absent, and replace the `equity_after == equity_before` assertion with the delta the settlement implies.
+4. **N-115** — one book applies corporate actions, on one date; the fractional settlement becomes a cash entry plus cost-basis restatement instead of a zero-gross closed trade.
+5. **N-113** — drive `test_h113_fail_closed_false_does_not_crash_on_hdfc_merger` through `run_phase3b2_walkforward` with the flag off and assert the posting on the run's ledger.
+6. **H-112 residual** — interpolate or drop the `(INFY, RELIANCE)` enumeration in the 2022–2023 note, which currently omits HDFC against a table reading 3.
+7. **`CRIT-DATA-03`** — the untouched §66.7 item 6: record how the daily universe was derived at T and fail closed when it cannot be shown to predate the open.
+8. **CA-3** — bands for 2022–2023, or declare the window unsimulatable. Still the item that decides whether a three-year claim can ever be made.
+9. **`CRIT-OVERFIT-02`** — emit the returns digest so DSR/haircut is computable at selection time.
+10. **CA-1 / N-106 / N-107** — carried from §66: corporate-action corpus breadth, `DATA-05` at exchange resolution, `EXEC-05` latency and slippage parameters.
+
+Items 1–3 are the precondition for reporting any Trial #4 result. Item 6 is a one-line honesty fix. Items 7–9 remain what stands between this repository and a three-year claim.
+
+### 67.7 Probe hygiene
+
+Probes ran as scratch files (`.p_s67a.py`…`.p_s67c.py`) against `c5ccbce` through the public API: three full executions plus two synthetic-corpus runs, all into `/tmp/s67`, `/tmp/s67b`, `/tmp/s67c`, each with a copied registry **and** manifest, so no committed registry row was added and no committed verdict file was overwritten. Private access: `CashLedger.record_merger_cash_in_lieu` and `Portfolio.apply_corporate_actions_for_session` were wrapped to observe the posting and the pre-action holding, and `SecurityMaster.get_price_band` was wrapped with a frame lookup to attribute band resolutions to the coverage loop. Nothing was mocked to make a probe pass; the two figure-two observations (the UC fill, the `TypeError`) are unmodified behaviour. All scratch files were deleted; the only working-tree change is this section.
+
+**Note to the implementer (§11.3):** `CURRENT_STAGE_OF_WORK.md` currently describes the §66 items as "implemented & verified locally" without a §67 citation, and states "Preserves cash and portfolio equity continuity to the exact sub-paisa (verified diff 0.00)", which is N-112's tautology. The correct wording after this round cites §67 at `c5ccbce` for what this section calls closed, and does not describe the equity-preservation assertion as a verification. I have not edited that file.
+
+**Not measured, and not claimed:** whether the ±10% dynamic flexing band matches NSE's 2022–2023 framework on any session; per-name attribution inside 2024; the 2,749 cash-universe band intervals dated 2024-01-16 were not traced to individual `sec_list` records; the merger consideration price is not in the corpus, so no market-value settlement was tested; and nothing behind the holdout was read. `CRIT-OVERFIT-02`, `CRIT-SURV-01`, `CRIT-PROV-01` and `CRIT-INFO-01` remain `NOT RUN` for the reasons they state.
