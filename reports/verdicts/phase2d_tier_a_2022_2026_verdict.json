@@ -1,6 +1,6 @@
 {
-  "criteria_version": "1.1.5",
-  "criteria_fingerprint": "CRIT-FPR-V1-ab9cb73420030184287f2b92eff7f756c7c6fcfa6863eab0dc748929cf4d8320",
+  "criteria_version": "1.1.6",
+  "criteria_fingerprint": "CRIT-FPR-V1-0371c9b5324b91a9899f1a91101d37c927542a281f5329e7f18d2f4f8739c791",
   "calendar_fingerprint": "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad",
   "timestamp_utc": "2026-11-16T10:00:00+00:00",
   "evaluation_start_date": "2022-01-03",
@@ -9,7 +9,7 @@
   "summary_counts": {
     "PASS": 3,
     "FAIL": 0,
-    "NOT_RUN": 20
+    "NOT_RUN": 22
   },
   "evaluations": [
     {
@@ -26,7 +26,7 @@
     {
       "criterion_id": "CRIT-STAT-01",
       "category": "Risk & Performance",
-      "metric_name": "Total Completed Trades",
+      "metric_name": "Total Completed Trades (Liquidated Book)",
       "computed_value": null,
       "threshold_value": ">= 100",
       "comparator": ">=",
@@ -37,7 +37,7 @@
     {
       "criterion_id": "CRIT-STAT-02",
       "category": "Risk & Performance",
-      "metric_name": "Profit Factor",
+      "metric_name": "Profit Factor (Liquidated Book)",
       "computed_value": null,
       "threshold_value": ">= 1.50",
       "comparator": ">=",
@@ -48,12 +48,12 @@
     {
       "criterion_id": "CRIT-STAT-03",
       "category": "Risk & Performance",
-      "metric_name": "Max Single Position Weight",
+      "metric_name": "Max Single Position Weight (At Entry)",
       "computed_value": null,
       "threshold_value": "<= 0.10",
       "comparator": "<=",
       "status": "NOT RUN",
-      "evidence": "Metric 'max_single_position_weight' not provided in results bundle.",
+      "evidence": "Metric 'max_single_position_weight' (entry-time notional / equity at entry) not provided in results bundle; a hold-period mark cannot be gated under an entry-time name (\u00a776.13 Ruling 2).",
       "is_binding": true
     },
     {
@@ -200,6 +200,17 @@
       "is_binding": true
     },
     {
+      "criterion_id": "CRIT-DATA-07",
+      "category": "Universe Integrity",
+      "metric_name": "Dataset Instrument Resolution Pct",
+      "computed_value": null,
+      "threshold_value": ">= 100.0%",
+      "comparator": ">=",
+      "status": "NOT RUN",
+      "evidence": "Metric 'dataset_instrument_resolution_pct' not provided in results bundle; dataset completeness is not the same quantity as traded-row resolution (\u00a776.9 N-140).",
+      "is_binding": true
+    },
+    {
       "criterion_id": "CRIT-DATA-06",
       "category": "Calendar Integrity",
       "metric_name": "Calendar Fingerprint Anchor",
@@ -244,6 +255,17 @@
       "is_binding": true
     },
     {
+      "criterion_id": "CRIT-OVERFIT-04",
+      "category": "Anti-Overfitting",
+      "metric_name": "Haircut Sharpe Ratio",
+      "computed_value": null,
+      "threshold_value": ">= 1.25",
+      "comparator": ">=",
+      "status": "NOT RUN",
+      "evidence": "Metric 'haircut_sharpe_ratio' not provided in results bundle.",
+      "is_binding": true
+    },
+    {
       "criterion_id": "CRIT-OVERFIT-03",
       "category": "Walk-Forward Stability",
       "metric_name": "Positive Out-of-Sample Folds Ratio",
@@ -267,9 +289,9 @@
     }
   ],
   "metadata": {
-    "binding_criteria_count": 22,
-    "binding_failed_count": 19,
+    "binding_criteria_count": 24,
+    "binding_failed_count": 21,
     "unverified_provenance_gating_applied": true,
-    "restatement_note": "Restatement 2026-11-17 (Audit \u00a775.10 items 3-4): supersedes the 1.1.4 restatement recorded under Audit \u00a774.10 Ruling D, the 1.1.3 restatement recorded under Audit \u00a773.9 items 3-4, the 1.1.2 restatement recorded under Audit \u00a772 N-128, the 1.1.1 restatement recorded under Audit \u00a768.6 item 3 (H-115), and the 2026-11-14T16:45:00+00:00 artifact before those. Criteria version 1.1.5 changes no PASS/FAIL threshold: it adds entry_rank_indicator = mom_63 (the 63-session trailing return ranks the session's qualifying entries instead of the ISIN alphabet choosing them), min_entry_notional = 25000 (an entry below it is a named no-trade) and min_fill_notional = 5000 (a BUY fill below it is refused, never booked; exits are exempt because a frozen exit is an unbounded hold). Both enter the criteria fingerprint, so the fingerprint moves with them. seq 9 (TRIAL-PHASE3B2-RANKED-009) was then registered and executed under these values, which rewrites the trials manifest the pin names; the registry now reads N = 9, N_eval = 5. Provenance remains CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and every Tier-A verdict is unchanged."
+    "restatement_note": "Restatement 2026-11-17 (Audit \u00a776.16 items 1-6): supersedes the 1.1.5 restatement recorded under Audit \u00a775.10 items 3-4, the 1.1.4 restatement recorded under \u00a774.10 Ruling D, the 1.1.3 one under \u00a773.9 items 3-4, the 1.1.2 one under \u00a772 N-128, the 1.1.1 one under \u00a768.6 item 3 (H-115), and the 2026-11-14T16:45:00+00:00 artifact before those. Criteria version 1.1.6 changes no numeric PASS/FAIL threshold. It (i) excludes expected_trial_registry_manifest_sha256 from the criteria fingerprint, so appending a trial and re-pinning the manifest no longer invalidates the anchor a verdict cites, while the pin stays mandatory in the loader and is still enforced by Gate G2A-6.8a (N-139); (ii) gates min_haircut_sharpe_ratio = 1.25 as CRIT-OVERFIT-04 instead of leaving a committed threshold unenforced (N-141); (iii) evaluates CRIT-STAT-01 and CRIT-STAT-02 on the liquidated book, with the closed-only pair and the PF sensitivity to the largest winners retained as disclosures on the same rows (Ruling 1); (iv) evaluates CRIT-STAT-03 at trade entry, as its own definition says, with the hold-period maximum reported and not gated (Ruling 2); (v) wires CRIT-DATA-05 to the H-54 traded-row measure and adds CRIT-DATA-07 dataset completeness at 100.0%, so 196 / 211 = 92.8910% fails closed until the 15 unresolved instruments are accounted for (Ruling 3, N-140); and (vi) attributes every ticket rejection by side and reason, so a refused SELL is visible (N-142). The trials manifest pin is unchanged at 3326b1b2... with N = 9, N_eval = 5, and no trial was appended or scored in this commit. Provenance remains CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and every Tier-A verdict is unchanged."
   }
 }

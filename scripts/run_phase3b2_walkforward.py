@@ -375,6 +375,13 @@ def liquidate_open_book(
             return None
         return sum(t["net_pnl"] for t in trades) / Decimal(len(trades))
 
+    def _profit_factor_ex_top(trades: Sequence[Mapping[str, Any]], k: int) -> Optional[Decimal]:
+        """PF with the k largest winners removed (Audit §76.12 Ruling 1 condition (iv))."""
+        if k >= len(trades):
+            return None
+        ordered = sorted(trades, key=lambda t: t["gross_pnl"], reverse=True)
+        return _profit_factor(ordered[k:])
+
     liquidated = list(closed_trades) + rows
 
     return {
@@ -388,6 +395,12 @@ def liquidate_open_book(
         "closed_only_mean_net_expectancy": _expectancy(closed_trades),
         "liquidated_profit_factor": _profit_factor(liquidated),
         "liquidated_mean_net_expectancy": _expectancy(liquidated),
+        # Audit §76.12 Ruling 1 condition (iv): a PF published without its sensitivity is a number
+        # that cannot be read. 1.6440 -> 1.4812 without the single largest winner -> 1.2939 without
+        # the top three, on seq 9.
+        "liquidated_pf_ex_top_1": _profit_factor_ex_top(liquidated, 1),
+        "liquidated_pf_ex_top_3": _profit_factor_ex_top(liquidated, 3),
+        "liquidated_trade_count": len(liquidated),
         "closed_net_pnl": sum(t["net_pnl"] for t in closed_trades),
     }
 
@@ -660,6 +673,9 @@ def run_phase3b2_walkforward(
 
     uuid_to_isin: Dict[str, str] = {}
     refused_transition_uuids: Set[str] = set()
+    # Audit §76.9 N-140: name every dataset instrument that never resolved, with the reason, so
+    # "92.891%" stops hiding whether the 15 were illiquid shells or names the strategy wanted.
+    unresolved_dataset_instruments: List[Dict[str, str]] = []
 
     for u, sym in dataset.symbols_by_instrument.items():
         if (isinstance(u, str) and u in sec_master.registered_isins) or (isinstance(u, str) and u.startswith("INE")):
@@ -673,6 +689,15 @@ def run_phase3b2_walkforward(
         e_isin = sec_master.resolve_isin_by_symbol(sym, max_d, "EQ")
         if s_isin is not None and e_isin is not None and s_isin != e_isin:
             refused_transition_uuids.add(u)
+            unresolved_dataset_instruments.append({
+                "instrument_id": u,
+                "symbol": sym,
+                "reason": "ISIN_TRANSITION_WITHIN_DATASET_SPAN",
+                "detail": (
+                    f"symbol resolves to {s_isin} on {min_d.isoformat()} and {e_isin} on "
+                    f"{max_d.isoformat()}; identity cannot be stitched across differing ISINs (§10.4)"
+                ),
+            })
             continue
 
         # Identity resolution, not universe membership: a snapshot UUID may carry a symbol that was
@@ -690,6 +715,15 @@ def run_phase3b2_walkforward(
         if isin is None:
             raise ValueError(f"Failed to resolve authentic ISIN for symbol {sym} (UUID {u})")
         uuid_to_isin[u] = isin
+
+    # Audit §76.9 N-140 / Ruling 3: dataset completeness is its own statistic, with its own
+    # threshold. It is the share of the research dataset's *instruments* that resolved to an
+    # authoritative ISIN — 196 / 211 on the dev corpus — not the H-54 traded-row measure below.
+    dataset_instrument_count = len(dataset.symbols_by_instrument)
+    resolved_dataset_instrument_count = len(uuid_to_isin)
+    dataset_instrument_resolution_pct = (
+        (Decimal(resolved_dataset_instrument_count) / Decimal(dataset_instrument_count)) * Decimal("100")
+    ) if dataset_instrument_count else Decimal("0.00")
 
     # Re-index price bars by (isin, trade_date) and by isin
     bars_by_isin_date: Dict[Tuple[str, datetime.date], PriceBar] = {}
@@ -1480,7 +1514,9 @@ def run_phase3b2_walkforward(
 
     # 12. Evaluate Verdicts via evaluate_verdicts() (AGENTS.md §9.1, §9.3, Findings H-102, H-104, H-110, H-111, N-105)
     # Compute every verdict bundle metric from actual run state:
-    max_single_pos_weight = max(
+    # Audit §76.13 Ruling 2: the hold-period mark is now a non-gating disclosure. The criterion reads
+    # the entry-time weight computed below, where its committed definition puts it.
+    max_hold_pos_weight = max(
         (p.market_value / snap.total_portfolio_value
          for snap in portfolio.snapshots
          for p in snap.positions
@@ -1499,6 +1535,29 @@ def run_phase3b2_walkforward(
     # N-105 (CRIT-EXEC-02): 20-session trailing ADTV prior to trade entry for entry fills
     buy_fills = [f for f in all_fills if f.order.side == OrderSide.BUY and f.filled_quantity > 0]
     sell_fills = [f for f in all_fills if f.order.side == OrderSide.SELL and f.filled_quantity > 0]
+
+    # Audit §76.13 Ruling 2: CRIT-STAT-03 is "maximum single-stock capital allocation at trade
+    # entry", so it is measured there: executed entry notional over the portfolio equity that funded
+    # it. Equity is the fill session's own snapshot, falling back to the latest prior one.
+    snapshots_by_date = {s.as_of_date: s for s in portfolio.snapshots}
+    snapshot_dates_sorted = sorted(snapshots_by_date)
+    entry_weights: List[Decimal] = []
+    entry_weight_unpriced = 0
+    for f in buy_fills:
+        if f.executed_price is None:
+            entry_weight_unpriced += 1
+            continue
+        eq_snapshot = snapshots_by_date.get(f.fill_date)
+        if eq_snapshot is None:
+            prior_dates = [d for d in snapshot_dates_sorted if d <= f.fill_date]
+            eq_snapshot = snapshots_by_date[prior_dates[-1]] if prior_dates else None
+        if eq_snapshot is None or eq_snapshot.total_portfolio_value <= Decimal("0"):
+            entry_weight_unpriced += 1
+            continue
+        entry_weights.append(
+            (f.executed_price * Decimal(f.filled_quantity)) / eq_snapshot.total_portfolio_value
+        )
+    max_entry_pos_weight = max(entry_weights, default=Decimal("0.0"))
 
     entry_adtvs_cr: List[Decimal] = []
     for f in buy_fills:
@@ -1569,9 +1628,29 @@ def run_phase3b2_walkforward(
         and not has_synthetic_band
     )
 
+    # Audit §76.9 N-140: CRIT-DATA-05 is the H-54 traded-ROW measure — traded EQ bhavcopy rows that
+    # carry an authoritative identity — and not the share of dataset instruments that resolved. The
+    # two quantities were conflated for seq 6-9, which is why the criterion read 92.8910% (a loader
+    # property) under a name that measures traded rows.
+    traded_rows_total = 0
+    traded_rows_resolved = 0
+    for _u, _bars in dataset.prices_by_instrument.items():
+        _n = sum(1 for _b in _bars if _b.trade_date in sessions_to_run_set)
+        traded_rows_total += _n
+        if _u in uuid_to_isin:
+            traded_rows_resolved += _n
     traded_eq_resolution_pct = (
-        (Decimal(len(uuid_to_isin)) / Decimal(len(dataset.symbols_by_instrument))) * Decimal("100")
-    ) if dataset.symbols_by_instrument else Decimal("0.00")
+        (Decimal(traded_rows_resolved) / Decimal(traded_rows_total)) * Decimal("100")
+    ) if traded_rows_total else Decimal("0.00")
+
+    # Audit §76.11 N-142: every refusal attributed by side and reason, so a refused SELL
+    # (involuntary hold) is visible and the reason counts sum to `tickets_rejected`.
+    total_rejections_by_side_and_reason: Dict[str, Dict[str, int]] = {}
+    for _s in session_summaries:
+        for _side, _reasons in (_s.rejections_by_side_and_reason or {}).items():
+            _side_map = total_rejections_by_side_and_reason.setdefault(_side, {})
+            for _reason, _count in _reasons.items():
+                _side_map[_reason] = _side_map.get(_reason, 0) + _count
 
     # H-111 (CRIT-EXEC-03 & CRIT-EXEC-04): Enforce against fill.effective_upper_circuit_limit / effective_lower_circuit_limit
     prohibit_buy_at_uc = bool(
@@ -1673,6 +1752,14 @@ def run_phase3b2_walkforward(
                     break
         yr_band_symbols_sorted = sorted(yr_band_symbols)
 
+        # Audit §76.11 N-142: refusals attributed by side and by reason, per year.
+        yr_rejections: Dict[str, Dict[str, int]] = {}
+        for _s in yr_summaries:
+            for _side, _reasons in (_s.rejections_by_side_and_reason or {}).items():
+                _side_map = yr_rejections.setdefault(_side, {})
+                for _reason, _count in _reasons.items():
+                    _side_map[_reason] = _side_map.get(_reason, 0) + _count
+
         yr_trades = [t for t in closed_trades if t["exit_date"].year == yr]
         yr_wins = [t for t in yr_trades if t["net_pnl"] > Decimal("0.00")]
         yr_win_rate = (Decimal(len(yr_wins)) / Decimal(len(yr_trades))) if yr_trades else Decimal("0.00")
@@ -1708,6 +1795,7 @@ def run_phase3b2_walkforward(
             "tickets_emitted": yr_emitted,
             "tickets_filled": yr_filled,
             "tickets_rejected": yr_rejected,
+            "rejections_by_side_and_reason": yr_rejections,
             "closed_trades": len(yr_trades),
             "cagr": yr_cagr,
             "win_rate": yr_win_rate,
@@ -1752,10 +1840,32 @@ def run_phase3b2_walkforward(
         "trial_count_n": total_trial_count_n,
         "deflated_sharpe_ratio": dsr_val,
         "haircut_sharpe_ratio": haircut_sr,
-        "total_trades": len(closed_trades),
-        "profit_factor": profit_factor,
+        # Audit §76.12 Ruling 1: from 1.1.6 `total_trades` and `profit_factor` ARE the liquidated
+        # book, so the gate and the equity curve describe the same book. The closed-only pair is
+        # carried beside them as disclosure and is never gated.
+        "total_trades": liquidation["liquidated_trade_count"],
+        "profit_factor": liquidated_profit_factor,
         "max_portfolio_drawdown": max_drawdown,
-        "max_single_position_weight": max_single_pos_weight,
+        # Audit §76.13 Ruling 2: the gated value is the entry-time weight; the hold-period maximum is
+        # reported beside it and never gated.
+        "max_single_position_weight": max_entry_pos_weight,
+        "max_hold_period_position_weight": max_hold_pos_weight,
+        "entry_weight_unpriced_fills": entry_weight_unpriced,
+        "liquidated_pf_ex_top_1": liquidation["liquidated_pf_ex_top_1"],
+        "liquidated_pf_ex_top_3": liquidation["liquidated_pf_ex_top_3"],
+        "closed_only_profit_factor": profit_factor,
+        "closed_only_trade_count": len(closed_trades),
+        "evaluated_trial_count": registry.evaluated_trial_count,
+        # Audit §76.9 N-140 / Ruling 3: two coverage quantities, two thresholds.
+        "traded_eq_resolution_pct": traded_eq_resolution_pct,
+        "traded_eq_rows_total": traded_rows_total,
+        "traded_eq_rows_resolved": traded_rows_resolved,
+        "dataset_instrument_resolution_pct": dataset_instrument_resolution_pct,
+        "dataset_instrument_resolution_numerator": resolved_dataset_instrument_count,
+        "dataset_instrument_resolution_denominator": dataset_instrument_count,
+        "unresolved_dataset_instruments": unresolved_dataset_instruments,
+        # Audit §76.11 N-142.
+        "rejections_by_side_and_reason": total_rejections_by_side_and_reason,
         "returns_digest": returns_digest,
         "observation_count": observation_count,
         "cagr": cagr,
@@ -1769,7 +1879,6 @@ def run_phase3b2_walkforward(
         "unexplained_gap_refusals": unexplained_gap_refusals,
         "continuous_instruments_passed": continuous_instruments_passed,
         "total_valid_isins": total_valid_isins,
-        "traded_eq_resolution_pct": traded_eq_resolution_pct,
         "prohibit_buy_at_upper_circuit": prohibit_buy_at_uc,
         "prohibit_sell_at_lower_circuit": prohibit_sell_at_lc,
         "unsourced_band_sessions": len(unsourced_band_sessions),
@@ -1877,6 +1986,26 @@ def run_phase3b2_walkforward(
         report_dict["return_moments"] = return_moments
         # Audit §74.10 Ruling D: what an unbanded session was allowed to do in this run.
         report_dict["band_policy"] = runner.band_policy.value
+        # Audit §76.12 Ruling 1 / §76.13 Ruling 2 / §76.9 N-140 / §76.11 N-142 disclosures.
+        report_dict["max_hold_period_position_weight"] = str(max_hold_pos_weight)
+        report_dict["entry_weight_unpriced_fills"] = entry_weight_unpriced
+        report_dict["liquidated_trade_count"] = liquidation["liquidated_trade_count"]
+        report_dict["liquidated_pf_ex_top_1"] = (
+            str(liquidation["liquidated_pf_ex_top_1"])
+            if liquidation["liquidated_pf_ex_top_1"] is not None else None
+        )
+        report_dict["liquidated_pf_ex_top_3"] = (
+            str(liquidation["liquidated_pf_ex_top_3"])
+            if liquidation["liquidated_pf_ex_top_3"] is not None else None
+        )
+        report_dict["traded_eq_resolution_pct"] = str(traded_eq_resolution_pct)
+        report_dict["traded_eq_rows_total"] = traded_rows_total
+        report_dict["traded_eq_rows_resolved"] = traded_rows_resolved
+        report_dict["dataset_instrument_resolution_pct"] = str(dataset_instrument_resolution_pct)
+        report_dict["dataset_instrument_resolution_numerator"] = resolved_dataset_instrument_count
+        report_dict["dataset_instrument_resolution_denominator"] = dataset_instrument_count
+        report_dict["unresolved_dataset_instruments"] = unresolved_dataset_instruments
+        report_dict["rejections_by_side_and_reason"] = total_rejections_by_side_and_reason
         report_dict["lot_ledger_cash_residual"] = str(lot_ledger_cash_residual)
         report_dict["lot_ledger_cash_tolerance"] = str(cash_reconciliation_tolerance)
         report_dict["unsourced_band_sessions"] = len(unsourced_band_sessions)
@@ -1993,6 +2122,9 @@ def run_phase3b2_walkforward(
                 f"> **Price Band Sourcing (CA-3(c))**: {circuit_band_coverage_note}",
             ])
 
+        unresolved_text = ", ".join(
+            f"{item['symbol']} ({item['reason']})" for item in unresolved_dataset_instruments
+        ) if unresolved_dataset_instruments else "none"
         exit_reason_text = ", ".join(
             f"{k}={v}" for k, v in sorted(ledger_exit_reasons.items())
         ) if ledger_exit_reasons else "none"
@@ -2026,6 +2158,30 @@ def run_phase3b2_walkforward(
             f"₹{liquidated_equity_identity_residual:,.4f} (tolerance ₹{cash_reconciliation_tolerance}).",
             "> The liquidation is a diagnostic computed through the same slippage and statutory-cost "
             "models as every fill: no ledger entry, no fill and no `closed_trades` row is produced.",
+            f"> PF sensitivity: {liquidation['liquidated_pf_ex_top_1']} without the single largest "
+            f"winner, {liquidation['liquidated_pf_ex_top_3']} without the top three; "
+            f"`CRIT-STAT-01`/`-02` are evaluated on the liquidated book over "
+            f"{liquidation['liquidated_trade_count']} round trip(s) (Audit §76.12 Ruling 1).",
+            "",
+            "## Concentration and Refusals (Audit §76.13 Ruling 2, §76.11 N-142)",
+            "",
+            f"> Maximum single-position weight **at trade entry** {max_entry_pos_weight:.4f} "
+            f"(gated by `CRIT-STAT-03`); maximum hold-period weight {max_hold_pos_weight:.4f} "
+            f"(non-gating disclosure, §76.13). {entry_weight_unpriced} BUY fill(s) carried no "
+            f"executed price or no equity snapshot and were excluded from the entry weight.",
+            f"> Tickets rejected: {total_rejected}. By side and reason: "
+            f"{json.dumps(total_rejections_by_side_and_reason, sort_keys=True)}.",
+            "",
+            "## Coverage: Rows versus Instruments (Audit §76.9 N-140, Ruling 3)",
+            "",
+            f"> Traded EQ rows resolved ({traded_rows_resolved} / {traded_rows_total}) = "
+            f"**{traded_eq_resolution_pct:.4f}%** — this is `CRIT-DATA-05` and the H-54 measure.",
+            f"> Dataset instruments resolved ({resolved_dataset_instrument_count} / "
+            f"{dataset_instrument_count}) = **{dataset_instrument_resolution_pct:.4f}%** — this is "
+            f"`CRIT-DATA-07` (dataset completeness). The two are different quantities with different "
+            f"thresholds and are never reported under each other's name.",
+            f"> Unresolved dataset instruments: "
+            f"> Unresolved dataset instruments: {unresolved_text}.",
             "",
         ])
         extra_md.append("")

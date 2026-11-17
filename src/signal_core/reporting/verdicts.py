@@ -371,12 +371,27 @@ def evaluate_verdicts(
     # -------------------------------------------------------------------------
     # Section A: Statistical & Risk Limits (§9.2)
     # -------------------------------------------------------------------------
-    # A1: Total Trades (min_total_trades, Finding H-71)
+    # A1: Total Round Trips — the LIQUIDATED book (min_total_trades, Audit §76.12 Ruling 1, 1.1.6)
+    # The bundle's `total_trades` is now defined as the de-censored count: closed round trips plus the
+    # open positions marked out at the window-end close. A trend system's losers close at their stop
+    # while its winners are still open, so gating the closed ledger understates the book the equity
+    # curve describes (seq 9: 193 closed, 205 liquidated). The closed-only pair stays on the same row
+    # as disclosure and is never gated. This is one definition, not a second path: there is no
+    # fallback to a censored count.
+    closed_book_note = ""
+    closed_n_raw = results_bundle.get("closed_only_trade_count")
+    val_closed_pf = _to_decimal(results_bundle.get("closed_only_profit_factor"))
+    if closed_n_raw is not None:
+        closed_book_note = f" Closed-only book retained as disclosure: {closed_n_raw} round trip(s)"
+        if val_closed_pf is not None:
+            closed_book_note += f" at PF {val_closed_pf:.4f}"
+        closed_book_note += "."
+
     if trades_parse_error is not None:
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-STAT-01",
             category="Risk & Performance",
-            metric_name="Total Completed Trades",
+            metric_name="Total Completed Trades (Liquidated Book)",
             computed_value=str(val_trades_raw),
             threshold_value=f">= {active_criteria.min_total_trades}",
             comparator=">=",
@@ -389,19 +404,22 @@ def evaluate_verdicts(
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-STAT-01",
             category="Risk & Performance",
-            metric_name="Total Completed Trades",
+            metric_name="Total Completed Trades (Liquidated Book)",
             computed_value=str(parsed_total_trades),
             threshold_value=f">= {active_criteria.min_total_trades}",
             comparator=">=",
             status=status,
-            evidence=f"Recorded {parsed_total_trades} executed round-trip trades in evaluation window.",
+            evidence=(
+                f"{parsed_total_trades} round trip(s) on the de-censored book (closed trades plus "
+                f"positions marked out at the window-end close).{closed_book_note} §76.12 Ruling 1."
+            ),
             is_binding=True,
         ))
     else:
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-STAT-01",
             category="Risk & Performance",
-            metric_name="Total Completed Trades",
+            metric_name="Total Completed Trades (Liquidated Book)",
             computed_value=None,
             threshold_value=f">= {active_criteria.min_total_trades}",
             comparator=">=",
@@ -410,26 +428,40 @@ def evaluate_verdicts(
             is_binding=True,
         ))
 
-    # A2: Profit Factor (min_profit_factor)
+    # A2: Profit Factor — the LIQUIDATED book (min_profit_factor, Audit §76.12 Ruling 1, 1.1.6)
+    # `profit_factor` is the de-censored ratio; the sensitivity to the largest winners is printed on
+    # the same row, because a PF that clears its bar only while its best trade is inside the set has
+    # no margin (seq 9: 1.6440 -> 1.4812 -> 1.2939).
     val_pf = _to_decimal(results_bundle.get("profit_factor"))
     if val_pf is not None:
         status = VerdictStatus.PASS if val_pf >= active_criteria.min_profit_factor else VerdictStatus.FAIL
+        val_pf_ex1 = _to_decimal(results_bundle.get("liquidated_pf_ex_top_1"))
+        val_pf_ex3 = _to_decimal(results_bundle.get("liquidated_pf_ex_top_3"))
+        sensitivity = ""
+        if val_pf_ex1 is not None and val_pf_ex3 is not None:
+            sensitivity = (
+                f" Sensitivity: {val_pf_ex1:.4f} without the single largest winner, "
+                f"{val_pf_ex3:.4f} without the top three."
+            )
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-STAT-02",
             category="Risk & Performance",
-            metric_name="Profit Factor",
+            metric_name="Profit Factor (Liquidated Book)",
             computed_value=f"{val_pf:.4f}",
             threshold_value=f">= {active_criteria.min_profit_factor}",
             comparator=">=",
             status=status,
-            evidence=f"Computed gross profit / gross loss ratio: {val_pf:.4f}.",
+            evidence=(
+                f"Liquidated gross profit / gross loss ratio: {val_pf:.4f}.{sensitivity}"
+                f"{closed_book_note} §76.12 Ruling 1."
+            ),
             is_binding=True,
         ))
     else:
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-STAT-02",
             category="Risk & Performance",
-            metric_name="Profit Factor",
+            metric_name="Profit Factor (Liquidated Book)",
             computed_value=None,
             threshold_value=f">= {active_criteria.min_profit_factor}",
             comparator=">=",
@@ -438,31 +470,47 @@ def evaluate_verdicts(
             is_binding=True,
         ))
 
-    # A3: Single Position Weight Cap (max_single_position_weight)
+    # A3: Single Position Weight Cap AT TRADE ENTRY (max_single_position_weight, §76.13 Ruling 2)
+    # The committed definition says "at trade entry". Measuring the hold-period mark under that name
+    # tested something else: seq 9's 0.1291 was a name that appreciated after entry with trim=None,
+    # while every entry weight was at or below 0.10. The hold-period maximum is printed as a
+    # non-gating disclosure on this row rather than silently kept as the gate.
     val_weight = _to_decimal(results_bundle.get("max_single_position_weight"))
+    hold_weight = _to_decimal(results_bundle.get("max_hold_period_position_weight"))
+    hold_note = (
+        f" Hold-period maximum position weight (non-gating disclosure): {hold_weight:.4f}."
+        if hold_weight is not None else ""
+    )
     if val_weight is not None:
         status = VerdictStatus.PASS if val_weight <= active_criteria.max_single_position_weight else VerdictStatus.FAIL
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-STAT-03",
             category="Risk & Performance",
-            metric_name="Max Single Position Weight",
+            metric_name="Max Single Position Weight (At Entry)",
             computed_value=f"{val_weight:.4f}",
             threshold_value=f"<= {active_criteria.max_single_position_weight}",
             comparator="<=",
             status=status,
-            evidence=f"Maximum single position capital allocation observed: {val_weight:.4f}.",
+            evidence=(
+                f"Maximum executed entry notional / portfolio equity at entry: {val_weight:.4f}."
+                f"{hold_note} §76.13 Ruling 2."
+            ),
             is_binding=True,
         ))
     else:
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-STAT-03",
             category="Risk & Performance",
-            metric_name="Max Single Position Weight",
+            metric_name="Max Single Position Weight (At Entry)",
             computed_value=None,
             threshold_value=f"<= {active_criteria.max_single_position_weight}",
             comparator="<=",
             status=VerdictStatus.NOT_RUN,
-            evidence="Metric 'max_single_position_weight' not provided in results bundle.",
+            evidence=(
+                "Metric 'max_single_position_weight' (entry-time notional / equity at entry) not "
+                "provided in results bundle; a hold-period mark cannot be gated under an entry-time "
+                "name (§76.13 Ruling 2)."
+            ),
             is_binding=True,
         ))
 
@@ -1028,6 +1076,62 @@ def evaluate_verdicts(
             is_binding=True,
         ))
 
+    # D5b: Dataset Instrument Resolution Pct (min_dataset_instrument_resolution_pct)
+    # Audit §76.9 N-140 / Ruling 3: dataset completeness is its own binding criterion. The row
+    # measure in D5 asks whether every traded bar carries an identity; this asks whether the research
+    # universe captured every instrument at all (196 / 211 = 92.8910%, 15 never resolved). They fail
+    # or pass independently, and neither may be reported under the other's name.
+    val_dsres = _to_decimal(results_bundle.get("dataset_instrument_resolution_pct"))
+    ds_num = results_bundle.get("dataset_instrument_resolution_numerator")
+    ds_den = results_bundle.get("dataset_instrument_resolution_denominator")
+    unresolved_list = results_bundle.get("unresolved_dataset_instruments")
+    unresolved_note = ""
+    if isinstance(unresolved_list, (list, tuple)) and unresolved_list:
+        unresolved_note = (
+            f" {len(unresolved_list)} unresolved dataset instrument(s) are named with their exclusion "
+            f"reason in the artifact's coverage diagnostics."
+        )
+    if val_dsres is not None:
+        status = (
+            VerdictStatus.PASS
+            if val_dsres >= active_criteria.min_dataset_instrument_resolution_pct
+            else VerdictStatus.FAIL
+        )
+        ratio_note = (
+            f" ({ds_num} of {ds_den} dataset instrument(s))"
+            if ds_num is not None and ds_den is not None else ""
+        )
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-DATA-07",
+            category="Universe Integrity",
+            metric_name="Dataset Instrument Resolution Pct",
+            computed_value=f"{val_dsres:.4f}%",
+            threshold_value=f">= {active_criteria.min_dataset_instrument_resolution_pct}%",
+            comparator=">=",
+            status=status,
+            evidence=(
+                f"Research-dataset instruments resolved to an authoritative ISIN: {val_dsres:.4f}%"
+                f"{ratio_note}; an instrument that never resolved never entered the universe, so a "
+                f"missing share cannot support a breadth claim (§13.4, §76.9 N-140).{unresolved_note}"
+            ),
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-DATA-07",
+            category="Universe Integrity",
+            metric_name="Dataset Instrument Resolution Pct",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_dataset_instrument_resolution_pct}%",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence=(
+                "Metric 'dataset_instrument_resolution_pct' not provided in results bundle; dataset "
+                "completeness is not the same quantity as traded-row resolution (§76.9 N-140)."
+            ),
+            is_binding=True,
+        ))
+
     # D6: Calendar Identity Fingerprint Anchor (Residual R-6, Finding H-64, Residual R-4)
     cal_fp_match = (active_cal.fingerprint == active_criteria.expected_calendar_fingerprint)
     eval_start_dt = active_criteria.min_binding_evaluation_start_date
@@ -1319,6 +1423,60 @@ def evaluate_verdicts(
             comparator=">=",
             status=VerdictStatus.NOT_RUN,
             evidence="Metric 'deflated_sharpe_ratio' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # F2b: Haircut Sharpe Ratio (min_haircut_sharpe_ratio, Audit §76.10 N-141, 1.1.6)
+    # The threshold sat in the criteria file and inside the fingerprint while nothing evaluated it, so
+    # a committed gate was unenforced and seq 9's computed haircut was 0.000000. It is now binding: a
+    # Sharpe that survives no multiple-testing haircut is not evidence (§8.2), and a threshold that is
+    # not computed is not a gate (§9.1). NOT RUN when the estimator could not produce a value (N_eval <
+    # 2), never PASS on an absent statistic.
+    val_hc = _to_decimal(results_bundle.get("haircut_sharpe_ratio"))
+    n_eval_raw = results_bundle.get("evaluated_trial_count")
+    n_eval_val: Optional[int] = None
+    if isinstance(n_eval_raw, int) and not isinstance(n_eval_raw, bool):
+        n_eval_val = n_eval_raw
+    if val_hc is not None and (n_eval_val is None or n_eval_val >= 2):
+        status = (
+            VerdictStatus.PASS
+            if val_hc >= active_criteria.min_haircut_sharpe_ratio
+            else VerdictStatus.FAIL
+        )
+        eval_note = f" at N_eval = {n_eval_val}" if n_eval_val is not None else ""
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-OVERFIT-04",
+            category="Anti-Overfitting",
+            metric_name="Haircut Sharpe Ratio",
+            computed_value=f"{val_hc:.4f}",
+            threshold_value=f">= {active_criteria.min_haircut_sharpe_ratio}",
+            comparator=">=",
+            status=status,
+            evidence=(
+                f"Haircut Sharpe Ratio {val_hc:.4f}{eval_note} against min_haircut_sharpe_ratio "
+                f"{active_criteria.min_haircut_sharpe_ratio} ({active_criteria.haircut_variant}); a "
+                f"Sharpe that survives no multiple-testing haircut is not evidence (§8.2, N-141)."
+            ),
+            is_binding=True,
+        ))
+    else:
+        blocked_reason = (
+            f"Metric 'haircut_sharpe_ratio' not provided in results bundle."
+            if val_hc is None
+            else (
+                f"Only N_eval = {n_eval_val} scored trial(s) in the registry; the haircut needs at "
+                f"least 2 to estimate a trial-count adjustment (§8.2, N-141)."
+            )
+        )
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-OVERFIT-04",
+            category="Anti-Overfitting",
+            metric_name="Haircut Sharpe Ratio",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_haircut_sharpe_ratio}",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence=blocked_reason,
             is_binding=True,
         ))
 

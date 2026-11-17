@@ -275,6 +275,10 @@ class SwingSessionExecutionSummary:
     # of being skipped, so this separates "no band, filled" from "no band, frozen bar".
     unbanded_tickets_submitted: int = 0
     locked_bar_refusals: int = 0
+    # Audit §76.11 N-142: refusals are attributed, not just counted. A SELL refused for turnover
+    # (or a frozen bid) extends a hold involuntarily, and that has to be visible per side and per
+    # reason rather than disappearing into a single total.
+    rejections_by_side_and_reason: Optional[Mapping[str, Mapping[str, int]]] = None
 
     def __len__(self) -> int:
         return len(self.tickets)
@@ -312,6 +316,30 @@ class SwingSessionExecutionSummary:
         if extra_metrics:
             bundle.update(extra_metrics)
         return bundle
+
+
+def tabulate_rejections(tickets: Sequence[Any]) -> Mapping[str, Mapping[str, int]]:
+    """
+    Counts refused tickets by order side and by the status that refused them (Audit §76.11 N-142).
+
+    A refusal is not an accounting detail: a SELL refused for turnover or a frozen bid extends a hold
+    involuntarily (§5.3), so it has to be attributable per side. The counts sum to
+    `tickets_rejected` because the same `REJECTED_*` status test decides both.
+    """
+    rejections: Mapping[str, Mapping[str, int]] = {}
+    for ticket in tickets:
+        status = ticket.status
+        if status is None:
+            continue
+        reason = status.value if hasattr(status, "value") else str(status)
+        if not reason.startswith("REJECTED_"):
+            continue
+        side = ticket.candidate.side
+        side_name = side.value if hasattr(side, "value") else str(side)
+        side_map = dict(rejections.get(side_name, {}))
+        side_map[reason] = side_map.get(reason, 0) + 1
+        rejections[side_name] = side_map
+    return rejections
 
 
 def execute_swing_strategy_session(
@@ -492,6 +520,9 @@ def execute_swing_strategy_session(
         latest_market_prices=latest_market_prices,
     )
 
+    # Audit §76.11 N-142: every refusal attributed by side and reason.
+    rejections = tabulate_rejections(tickets)
+
     tickets_emitted = len(tickets)
     tickets_filled = sum(
         1 for t in tickets
@@ -530,4 +561,5 @@ def execute_swing_strategy_session(
         active_protective_stops=stop_result.active_stop_count,
         unbanded_tickets_submitted=unbanded_submitted,
         locked_bar_refusals=locked_bar_refusals,
+        rejections_by_side_and_reason=rejections,
     )

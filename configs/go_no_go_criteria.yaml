@@ -4,6 +4,21 @@
 # Never modify thresholds post-hoc after inspecting backtest results.
 
 metadata:
+  # 1.1.6 (2026-11-17): no numeric threshold changed. Audit §76.16 items 1-6 are definition changes,
+  # each committed here with a restatement note naming what moved:
+  #   N-139 — `expected_trial_registry_manifest_sha256` is excluded from `criteria_fingerprint`
+  #           (an append moves it by construction, so the anchor no longer describes a pin that only
+  #           existed before the run). The pin stays mandatory in the loader and is still enforced by
+  #           Gate G2A-6.8a.
+  #   N-141 — `min_haircut_sharpe_ratio` is now gated as `CRIT-OVERFIT-04` instead of sitting in
+  #           this file unenforced.
+  #   Ruling 1 — `CRIT-STAT-01` (>= 100) and `CRIT-STAT-02` (PF >= 1.50) are evaluated on the
+  #           liquidated book; the closed-only pair is retained as disclosure on the same row.
+  #   Ruling 2 — `CRIT-STAT-03` (<= 0.10) is evaluated at trade entry, as its own comment says; the
+  #           hold-period maximum is a non-gating disclosure.
+  #   Ruling 3 / N-140 — `min_traded_eq_resolution_pct` is wired to the H-54 traded-row measure, and
+  #           dataset completeness gets its own binding threshold,
+  #           `min_dataset_instrument_resolution_pct: 100.0`.
   # 1.1.5 (2026-11-17): no threshold changed. Version bumped because Audit §75.10 items 3 and 4 add
   # three pre-registered inputs, all of them criteria fields so they sit inside the fingerprint a
   # verdict cites: `entry_rank_indicator` (the cross-sectional entry rank seq 9 tests), and
@@ -14,8 +29,8 @@ metadata:
   # 1.1.3 re-pinned the trials manifest after Audit §73.9 items 3 and 4 appended seq 6/7 (N = 7,
   # N_eval = 3); 1.1.2 added that pin (Audit §72 N-128); 1.1.1 recorded the pin move that followed
   # the corporate_actions.jsonl restatement (Audit §68.6 item 3, H-115, N-112).
-  version: "1.1.5"
-  effective_date: "2026-11-16"
+  version: "1.1.6"
+  effective_date: "2026-11-17"
   market: "NSE_CASH_EQUITY"
   currency: "INR"
 
@@ -151,6 +166,12 @@ market_data_and_accounting_invariants:
   # Minimum required point-in-time symbol->ISIN resolution for actively traded EQ scrips per session (Finding H-54, Audit §41.3)
   # Audit measurement: 2,390,165 / 2,390,165 traded EQ rows across all 1,195 daily Bhavcopy sessions resolve 100.0000% with 0 failures
   min_traded_eq_resolution_pct: "100.0"
+  # Audit §76.9 N-140 / Ruling 3: dataset completeness is a different quantity from row resolution —
+  # the share of the research dataset's *instruments* that resolved to an authoritative ISIN at all.
+  # Measured 196 / 211 = 92.8910% on EXP-DEV-2022-2024-V2, so this fails closed until the 15
+  # unresolved instruments are named and accounted for. Wiring it here keeps the row measure and the
+  # completeness measure from impersonating each other (§9.1).
+  min_dataset_instrument_resolution_pct: "100.0"
   strict_decimal_accounting_required: true
   # Fail closed on unexplained gaps in price series
   fail_closed_on_unexplained_gaps: true

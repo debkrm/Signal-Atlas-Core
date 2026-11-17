@@ -87,6 +87,11 @@ def test_verdict_report_reproducibility():
         "point_in_time_universe": True,
         "zero_data_fabrication": True,
         "traded_eq_resolution_pct": Decimal("100.0"),
+        # 1.1.6: a complete bundle also carries dataset completeness (CRIT-DATA-07) and the
+        # multiple-testing haircut Sharpe (CRIT-OVERFIT-04), so neither is NOT RUN here.
+        "dataset_instrument_resolution_pct": Decimal("100.0"),
+        "haircut_sharpe_ratio": Decimal("1.30"),
+        "evaluated_trial_count": 10,
         "data_provenance_status": "VERIFIED / EXCHANGE_ATTESTED",
         "trial_count_n": 10,
         "deflated_sharpe_ratio": Decimal("0.98"),
@@ -299,9 +304,13 @@ def test_synthetic_fixture_end_to_end_regression():
         "traded_eq_resolution_pct": Decimal("100.0"),
         "data_provenance_status": meta["source_provenance_status"],  # CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED
         "trial_count_n": 4,
-        "deflated_sharpe_ratio": Decimal("0.9650"),
-        "walk_forward_positive_fold_ratio": Decimal("0.85"),
-        # circuit_verified_pnl is omitted because synthetic fixture does not contain real band limits
+        "deflated_sharpe_ratio": Decimal("0.9650"),            "walk_forward_positive_fold_ratio": Decimal("0.85"),
+            # 1.1.6: every synthetic instrument resolves inside the fixture, and the haircut Sharpe
+            # is computable from the fixture's own DSR and trial count, so neither is NOT RUN.
+            "dataset_instrument_resolution_pct": Decimal("100.0"),
+            "haircut_sharpe_ratio": Decimal("1.30"),
+            "evaluated_trial_count": 10,
+            # circuit_verified_pnl is omitted because synthetic fixture does not contain real band limits
     }
 
     report = evaluate_verdicts(synthetic_bundle)

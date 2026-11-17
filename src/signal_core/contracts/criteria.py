@@ -141,6 +141,13 @@ class GoNoGoCriteria:
     min_entry_notional: Decimal = Decimal("25000")
     min_fill_notional: Decimal = Decimal("5000")
 
+    # Audit §76.9 / Ruling 3 (criteria 1.1.6): the two coverage statistics are distinct quantities
+    # and each gets its own pre-registered threshold. `min_traded_eq_resolution_pct` is the H-54 row
+    # measure (traded bhavcopy rows that carry an authoritative identity); this one is dataset
+    # completeness (research-dataset instruments that resolved to an ISIN at all). A universe missing
+    # 7.1% of its instruments cannot support a breadth claim (§13.4), so it fails closed.
+    min_dataset_instrument_resolution_pct: Decimal = Decimal("100.0")
+
     # Market data and accounting invariants (§10.8, Audit §40.5, Finding H-54, H-61, H-62, H-64, H-72)
     min_binding_evaluation_start_date: datetime.date = datetime.date(2022, 1, 3)
     min_traded_eq_resolution_pct: Decimal = Decimal("100.0")
@@ -353,6 +360,10 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
             mda.get("min_traded_eq_resolution_pct", "100.0"),
             "min_traded_eq_resolution_pct",
         ),
+        min_dataset_instrument_resolution_pct=_to_decimal(
+            mda.get("min_dataset_instrument_resolution_pct", "100.0"),
+            "min_dataset_instrument_resolution_pct",
+        ),
         # H-72: pinned manifest fingerprint
         expected_manifest_fingerprint=raw_manifest_fingerprint,
         expected_trial_registry_manifest_sha256=raw_trials_pin,
@@ -386,19 +397,33 @@ def _canonical_criteria_value(value: Any) -> Any:
     raise CriteriaValidationError(f"Unsupported type in criteria fingerprint: {type(value).__name__}")
 
 
+# Audit §76.8 N-139: fields that are witnesses of the ledger's own head state, not thresholds.
+# `expected_trial_registry_manifest_sha256` must move whenever a trial is appended (the manifest it
+# hashes is rewritten by that append), so including it made every artifact's fingerprint describe a
+# pin that only existed before its own run — unverifiable by any reader who loads the committed
+# criteria. seq 6 through seq 9 all cite fingerprints no committed file produces. The pin stays
+# mandatory in the loader and is still enforced by Gate G2A-6.8a; it simply no longer hashes itself
+# into the anchor a verdict cites.
+FINGERPRINT_EXCLUDED_FIELDS: tuple[str, ...] = ("expected_trial_registry_manifest_sha256",)
+
+
 def compute_criteria_fingerprint(criteria: GoNoGoCriteria) -> str:
     """
     Computes a deterministic content fingerprint of the criteria in force (Audit §33 H-39).
 
     A trial record must identify a run by the thresholds that judged it, not by a hand-maintained
     version string: editing a threshold without bumping `metadata.version` must change the
-    fingerprint. Every field of GoNoGoCriteria is included, including the statutory cost schedule.
+    fingerprint. Every threshold field of GoNoGoCriteria is included, including the statutory cost
+    schedule; the trials-manifest pin is excluded because an append moves it by construction
+    (Audit §76.8 N-139).
     """
     if not isinstance(criteria, GoNoGoCriteria):
         raise CriteriaValidationError(
             f"criteria must be GoNoGoCriteria, got {type(criteria).__name__}"
         )
     payload = _canonical_criteria_value(criteria)
+    for name in FINGERPRINT_EXCLUDED_FIELDS:
+        payload.pop(name, None)
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return CRITERIA_FINGERPRINT_PREFIX + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
