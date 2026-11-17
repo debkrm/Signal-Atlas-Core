@@ -962,6 +962,123 @@ def probe_n166() -> None:
     assert rel not in dirty_source_paths(), f"{rel} is still dirty after cleanup"
 
 
+def probe_n167() -> None:
+    """
+    An ignored directory and an ignored rootdir `conftest.py` are invisible to the dirty set (N-167).
+
+    `git status --ignored=matching` reports an ignored directory once, as ``dir/``, and enumerates nothing
+    inside it; `dirty_source_paths()` drops every entry that ends in ``/`` and keeps ignored files only
+    under `src/`, `scripts/` and `tests/`. A directory under `tests/` holding a failing test, and a
+    rootdir `conftest.py` pytest loads for every run, are therefore code the suite executes while git
+    calls the tree clean. The probe asserts the defect with §82.8's instruments -- the dirty set, the
+    forged row naming HEAD, and pytest's own verdict -- and must fail, then be replaced by a closure
+    probe, once both shapes are covered.
+    """
+    import datetime
+    import shutil
+    import subprocess
+
+    from verify_audit_append_only import (
+        GREEN_CACHE_SCHEME,
+        dirty_source_paths,
+        discovered_verification_scripts,
+        select_gate_plan,
+        source_tree_hash_at_commit,
+    )
+
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(REPO_ROOT), capture_output=True, text=True
+    ).stdout.strip()
+    head_hash = source_tree_hash_at_commit(head)
+    assert head_hash
+    verifiers = discovered_verification_scripts()
+    # Relative to whatever this working copy already holds, never to an empty set: a probe that requires a
+    # clean tree reports its own edit as a failure (§82.6 / N-166).
+    baseline_dirty = dirty_source_paths()
+
+    hidden_dir = "tests/unit/n167_hidden"
+    hidden_test = f"{hidden_dir}/test_hidden.py"
+    root_conftest = "conftest.py"
+    exclude = REPO_ROOT / ".git" / "info" / "exclude"
+    original = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
+    assert not (REPO_ROOT / hidden_dir).exists(), f"{hidden_dir} already exists"
+    assert not (REPO_ROOT / root_conftest).exists(), f"{root_conftest} already exists"
+    try:
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        rules = original + ("" if not original or original.endswith("\n") else "\n")
+        exclude.write_text(rules + f"{hidden_dir}/\n{root_conftest}\n", encoding="utf-8")
+
+        # Shape one: an ignored directory holding a collected failing test.
+        (REPO_ROOT / hidden_dir).mkdir(parents=True)
+        (REPO_ROOT / hidden_test).write_text(
+            "def test_hidden() -> None:\n    assert False\n", encoding="utf-8"
+        )
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--no-renames"], cwd=str(REPO_ROOT),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        ).stdout
+        assert hidden_dir not in status and "conftest" not in status, status
+        dirty = dirty_source_paths()
+        assert hidden_test not in dirty and not any(p.startswith(hidden_dir) for p in dirty), (
+            f"the dirty set now covers an ignored directory ({dirty}); re-measure N-167 and close N-165"
+        )
+        assert set(dirty) == set(baseline_dirty), (
+            f"an ignored directory changed the dirty set: {sorted(set(dirty) - set(baseline_dirty))}"
+        )
+        collected = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", hidden_dir], cwd=str(REPO_ROOT),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        assert collected.returncode != 0, (
+            f"the ignored directory is not collected or not failing: {collected.stdout[-300:]}"
+        )
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        forged = {
+            "source_tree_hash": head_hash,
+            "source_tree_scheme": GREEN_CACHE_SCHEME,
+            "suite_count": 536,
+            "verify_exits": {script: 0 for script in verifiers},
+            "utc": (now - datetime.timedelta(minutes=5)).isoformat(),
+            "gate_sha": head,
+        }
+        plan, used, reason = select_gate_plan(head_hash, [forged], now, head_commit=head)
+        assert plan == "reuse" and used is not None, (
+            f"the forged row is no longer a valid hit on a clean tree: {plan} — {reason}"
+        )
+
+        # Shape two: an ignored rootdir conftest.py, which pytest imports for every run below it.
+        (REPO_ROOT / root_conftest).write_text(
+            "def pytest_configure(config):\n    raise RuntimeError('n167 root conftest')\n",
+            encoding="utf-8",
+        )
+        dirty = dirty_source_paths()
+        assert root_conftest not in dirty, (
+            f"the dirty set now covers an ignored rootdir conftest.py: {dirty}"
+        )
+        run = subprocess.run(
+            [
+                sys.executable, "-m", "pytest", "-q",
+                "tests/unit/test_phase3b2_audit_s80_items.py::"
+                "test_n160_source_tree_hash_is_the_object_id_git_stores",
+            ],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        assert run.returncode != 0, (
+            f"the ignored conftest.py is not loaded by pytest: {run.stdout[-300:]}"
+        )
+    finally:
+        shutil.rmtree(REPO_ROOT / hidden_dir, ignore_errors=True)
+        (REPO_ROOT / root_conftest).unlink(missing_ok=True)
+        if original:
+            exclude.write_text(original, encoding="utf-8")
+        elif exclude.is_file():
+            exclude.unlink()
+    assert not (REPO_ROOT / hidden_dir).exists(), f"{hidden_dir} still present after cleanup"
+    assert not (REPO_ROOT / root_conftest).exists(), f"{root_conftest} still present after cleanup"
+    assert not any("n167" in path for path in dirty_source_paths()), "N-167 scratch file is still dirty"
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -981,6 +1098,7 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-164": probe_n164,
     "N-165": probe_n165,
     "N-166": probe_n166,
+    "N-167": probe_n167,
 }
 
 

@@ -119,9 +119,11 @@ has exactly three legal outcomes:
 Anything else is: a modified or rewritten row, a row whose `gate_sha` tree projects another hash, or a
 duplicate append. Such a row is reported and not repaired.
 
-A file that git ignores is invisible to the dirty set while pytest still collects it, so a local
-`.git/info/exclude` rule can make a green row certify a failing test (§82.5, N-165). CI clones carry no
-local excludes; a local gate that prints `reused green` over an ignored path is not evidence.
+A path that git ignores is invisible to `git status` while pytest still collects it, so a local
+`.git/info/exclude` rule can make a green row certify a failing test. The ignored-*file* form is guarded
+since `f6dc7da` (§83.3); an ignored *directory* (git reports `dir/` once and enumerates nothing inside)
+and an ignored rootdir `conftest.py` are not, so `reused green` over either is not evidence (§83.4,
+N-167). CI clones carry no local excludes.
 
 If you re-pin a frozen volume digest or change a config you do not own, say so in the section, state
 why, and list it in the work order for ratification (§79.7 is the precedent).

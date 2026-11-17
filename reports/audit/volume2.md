@@ -1021,3 +1021,166 @@ are unchanged from §81.
   N-165 is broader than stated. Its measurement is a local `info/exclude`.
 - If CI carries a local exclude file, or `core.excludesFile` is set in the CI image, the claim that CI is
   immune to N-165 is wrong.
+
+---
+
+## §83 — Audit of `1a20255` (tag `feat-s82-1a20255`): the file is guarded, the directory is not
+
+`1a20255` is the work log and a cache row on top of `f6dc7da`; both commits project source tree
+`06732f11…`, so the repair is the parent's and the audited commit is the one that records it. The
+plain gate at this SHA selects `full` with *"the record for this source tree was written at f6dc7da,
+not at the commit being verified (1a2025530…)"* — the §82 key, still working.
+
+### 83.1 Baseline re-measured at `1a20255`
+
+| Instrument | Result at `1a20255` |
+|---|---|
+| `verify_audit_append_only.py --force-full` | **exit 0** — `ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| pytest | **536 passed** in 129.19 s; 0 skipped, 0 xfailed (W0.5-3 PASS) |
+| `scripts/verify_*.py` discovered / executed | 9 / 9, every exit 0 (W0.5-2 PASS) |
+| W0.5-1 / 1b / 1c | PASS — append-only; 2 volumes; INDEX reproduces at 82 section rows |
+| W0.5-4 / W0.5-5 | PASS — all tags; 46 current / 22 superseded manifest rows |
+| Probes at the audited SHA | 18 / 18 `PASS` (N-167 registered in this section takes the count to 19) |
+| Findings ledger | 25 rows / 18 ids |
+| Criteria / config | 1.1.9; the commit's diff is `CURRENT_STAGE_OF_WORK.md` and the cache only |
+| Source tree | `06732f11…` at both `f6dc7da` and `1a20255` |
+
+### 83.2 N-166 — `CLOSED`
+
+One untracked source file no longer changes either consumer's verdict. In a clean clone with
+`tests/unit/test_s83_untracked.py` (`assert False`) present:
+
+| Instrument | With the untracked file | After removal |
+|---|---|---|
+| `dirty_source_paths()` | `['tests/unit/test_s83_untracked.py']` | `[]` |
+| `verify_audit_findings.py` | **exit 0** — `ALL 18 FINDING PROBE(S) PASSED` | — |
+| §80 tree test | **1 passed** | — |
+| `probe_audit_findings.py N-160` | **exit 0**, stdout exactly `PASS N-160` | — |
+
+The `cat-file` request that raised for a path HEAD lacks is gone, and `probe_n160` now asserts an
+implication (every source path git reports is in the dirty set) instead of equality against a set
+collected with different flags. It also compares no bytes for a dirty path, which is what made the
+right verdict depend on the working copy's contents.
+
+One assertion was removed and it is named rather than implied: the tree test used to require that a
+path in the dirty set differs **byte-for-byte** from its blob. On an LF checkout a mode-only change
+carries the blob's exact bytes, so that was a Windows fact dressed as an invariant; it is replaced by
+an unconditional blob-oid identity check on a clean text path, which is the stronger claim the digest
+actually needs. No gate decision reads working-copy bytes — `main()` decides on the dirty path *set* —
+so nothing that was guarded became unguarded.
+
+The `core.autocrlf=false` checkout the work log cites was reproduced from a fresh clone of this
+commit: no committed text file contains CRLF (the only text file that does, `.pytest_cache/README.md`,
+is written by the pytest run in that clone), the §80 test file is **7 passed**, and `probe N-160`
+prints `PASS`. The measurements the rework replaced were the developer's machine; the ones it kept hold
+on a Linux-shaped checkout.
+
+The §82.4 diagnostic nit is also closed by measurement. Removing `.decode()` from the parent line now
+fails as `FAIL N-160: HEAD's parent b'f6dc7da…' is not a commit in this repository`, `probe_n164` exits
+1 naming `parent = git("rev-parse", f"{head}^").strip()`, and both print `PASS` when restored — so
+N-164's closure still fails the moment it should, with a reason a human can read.
+
+### 83.3 N-165 — `PARTIAL`; the ledger row stays `OPEN`
+
+The fix guards the shape §82.5 measured and not the shape beside it. Both were attacked in the clone,
+end to end, with the forged row naming HEAD as the instrument:
+
+**File form — closed.** `tests/unit/test_s83_ignored.py` listed in `.git/info/exclude`: `git status`
+does not report it, `dirty_source_paths()` returns `['tests/unit/test_s83_ignored.py']`, the gate
+selects `full` with *"1 source path(s) differ from HEAD"*, exits **1**, and the cache row count is
+unchanged (10 → 10): nothing is recorded. Removing `--ignored=matching` makes `probe_n165` exit 1 with
+*"an ignored-but-collected test file is still invisible to the dirty set"*; restoring it returns
+`PASS`. The closure instrument has teeth.
+
+**Directory form — open.** A whole ignored directory under `tests/` holding one failing test:
+
+```
+$ echo 'tests/unit/n165_dir/' >> .git/info/exclude
+$ git status --porcelain
+                                        # empty: git reports nothing and the file is not enumerated
+$ python -c "...print(dirty_source_paths())"
+[]                                      # the gate's only view of the working copy
+$ python -m pytest -q tests/unit/n165_dir/test_d.py
+1 failed                                # the suite it would certify
+$ python scripts/verify_audit_append_only.py    # with a row forged to name HEAD
+[INFO] Source-tree hash 06732f11… — this commit's own tree was green
+[INFO] reused green at 1a2025530… (536 passed)
+OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)   exit 0
+```
+
+That is N-165's metric — *a recorded green run is not reused when the suite it would certify is red
+because of a collected file git does not report* — still violated, so N-165 cannot be closed. The
+mechanism is visible in the landed code: `git status --ignored=matching` reports an ignored directory
+once, as `dir/`, and enumerates nothing inside it, and `dirty_source_paths()` drops every entry that
+ends in `/` before the `.py`-and-root filters run.
+
+**Rootdir `conftest.py` — open, narrower.** An ignored `conftest.py` at the repository root is not dirty
+either (`[]`), because ignored files are kept only under `src/`, `scripts/` and `tests/`, and pytest
+imports the rootdir conftest regardless of `testpaths = ["tests"]`. In the clone with one that raises in
+`pytest_configure`: pytest exits 3 and the gate selects reuse, but exits **1** anyway — because W0.5-2's
+probes invoke pytest and the broken conftest fails them. That catch is an accident of the probes' own
+subprocesses, not a decision the gate makes: an ignored conftest that changes outcomes without erroring
+a probe's pytest run would certify green.
+
+The ledger has no `PARTIAL` status (`OPEN → {CLOSED, ACCEPTED}`), and accepting a false green on the
+maintainer's behalf is not the auditor's call, so N-165 stays `OPEN` with this measurement as its
+history and the remaining mechanism registered as N-167. §14.4's pattern is worth naming: a guard was
+added beside the unguarded shape — `.py` files are covered, directories are not — and `probe_n165`
+passes because it hides a *file*, so the acceptance instrument is narrower than the metric it cites.
+
+### 83.4 N-167 (`MEDIUM`, new) — an ignored directory hides a whole collected test
+
+Metric: an ignored path that pytest collects is dirty state, whatever shape git reports it in.
+Threshold: an ignored directory under a collected root, and an ignored rootdir `conftest.py`, make the
+dirty set non-empty and the gate refuse to reuse or record. Measured today: `dirty_source_paths()` is
+`[]` in both cases (above), and a forged row naming HEAD reuses green while `pytest` fails.
+
+Fix direction: when an ignored entry ends in `/` and sits under `src/`, `scripts/` or `tests/`,
+enumerate it (`git ls-files --others --ignored --exclude-standard -- <dir>`) and keep the `.py` files
+found there; add a rootdir `conftest.py` (and pytest configuration files) to the always-dirty set. The
+cost is a full run for a directory of ignored scratch `.py` files under those roots — the fail-closed
+direction the gate has chosen since §81.
+
+`probe_n167` asserts the defect through the same instruments and passes while it stands; it must fail,
+then be replaced by a closure probe, once both shapes are covered. It is written against the working
+copy's own dirty set rather than an empty one after the first run of it failed on its own uncommitted
+edit — the N-166 lesson applies to the probes as well as to the tests.
+
+### 83.5 Phase verdicts and residuals
+
+| Phase / claim | Verdict at `1a20255` | Residuals named |
+|---|---|---|
+| `§12.3` repository gate machinery | **GO** — 536 passed, 9/9 verifiers, `--force-full` exit 0 | N-167 (ignored directory, ignored conftest), N-165 carried `OPEN` |
+| N-166 | **CLOSED** — both consumers hold with an untracked file present | — |
+| N-165 | **PARTIAL** — file form closed and mutation-tested; directory and conftest forms open | N-167 |
+| N-162 / N-163 / N-164 | remain **CLOSED** — key unchanged; decode mutant still fails; tree test still mutation-sensitive | N-164 nit closed (§83.2) |
+| `§80.13` items 3-5 | **PREPARED, NOT EXECUTED** — unchanged since §81.7 | A1, A2, A4 open by design |
+| Criteria / trials / holdout | **UNTOUCHED** — 1.1.9, diff is the work log and the cache, no trial or validation artifact | N-152 `ACCEPTED`, N-150 `OPEN` |
+
+The implementer's work log states N-165/N-166 stay `OPEN` because closure rows belong to the auditor,
+and cites no verdict it does not have (§11.3). Its residual list — an ignored non-`.py` artifact — is
+true and incomplete: the directory and rootdir-conftest shapes it did not measure are N-167. That is a
+new finding with its own measurement, not an edit to the log.
+
+### 83.6 Work order
+
+1. **Cover the shapes git does not enumerate** (N-167). Enumerate ignored directories under collected
+   roots and keep the `.py` files inside; treat an ignored rootdir `conftest.py` as dirty. Probe:
+   `probe_audit_findings.py N-167` must fail at the fixing commit, and the full suite must go red over an
+   ignored directory the way it already goes red over an ignored file. Serves `§12.3`.
+2. **Carry items 4-6 of §82.8 unchanged** — A1 sourcing with per-year provenance, `WARMUP_NOT_GATABLE`
+   plus a gating-mode probe, and pre-2022 pin relaxation as a computed gate. Serves Phase 3B-2 / `§10.8`.
+
+Nothing else in §82.8 survives as work: items 1-3 are implemented, and item 1 is now measured as partial
+rather than done.
+
+### 83.7 What would falsify this verdict
+
+- If an ignored directory under `tests/` appears in `dirty_source_paths()` at a later commit, the
+  PARTIAL verdict is stale in the direction of being too harsh, and N-167 is fixed.
+- If the gate ever exits non-zero over the directory-only configuration measured in §83.3, the false
+  green it records is stale.
+- If `verify_audit_findings.py` goes red with one untracked source file present, N-166 is not closed.
+- If removing `.decode()` leaves `probe_n160` passing, N-164 has regressed through the §83.2 rework.
+- If any gate decision turns out to read working-copy bytes, removing the byte-inequality assertion was a
+  widening rather than a correction; today `main()` decides on the dirty path set.
