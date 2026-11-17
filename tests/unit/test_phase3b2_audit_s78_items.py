@@ -290,6 +290,12 @@ def test_green_cache_reuses_only_an_identical_fresh_source_tree():
 def test_findings_ledger_rows_carry_executable_probes():
     ledger = (REPO_ROOT / "reports" / "audit" / "findings.jsonl").read_text(encoding="utf-8")
     rows = [json.loads(line) for line in ledger.splitlines() if line.strip()]
+    # Audit §79.9: the ledger is append-only per finding, so a closure is a later row with the same
+    # id and the latest row is authoritative.
+    latest = {}
+    for row in rows:
+        latest[row["id"]] = row
+    rows = list(latest.values())
     ids = [row["id"] for row in rows]
     assert len(ids) == len(set(ids))
     for expected in ("N-148", "N-149", "N-150", "N-151", "N-152", "N-153"):

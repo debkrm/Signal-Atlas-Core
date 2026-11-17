@@ -13,7 +13,14 @@ volumes:
   - path: reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md
     sections: "1-78"
     line_count: 8442
-    sha256: 7c7760f72820f19527af2032f04b3b93aa3c69c1e5523d6ee9194161a193b0ba
+    # Audit §79.7 (N-154): the pin was 7c7760f72820f195…, which is the digest of a Windows working
+    # copy, not of anything the repository stores. `git cat-file blob HEAD:<path>` yields
+    # f4ca03d58466bebb…, and no line-ending re-encoding of it reproduces 7c7760f (measured:
+    # c4250635 for all-CRLF; b7b5e959/ab7571ed/4149b6d3 for the three plausible mixed cuts). A plain
+    # `git checkout` therefore failed this gate and the committed frozen-volume test on every clone.
+    # The pin is corrected to the stored bytes; the volume itself is untouched. Durable fix (work
+    # order item 3): mark reports/audit/** as -text, or hash the blob rather than the working file.
+    sha256: f4ca03d58466bebb55e8ec0dcb30bc80847a47de3e86879c657117e8022bc7ff
     frozen: true
     base_commit: 82e3ef0
 

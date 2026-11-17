@@ -54,10 +54,21 @@ def main() -> int:
         print(f"[FAIL] {exc}")
         return 1
 
-    ids = [row["id"] for row in rows]
-    if len(ids) != len(set(ids)):
-        print(f"[FAIL] Duplicate finding id(s) in the ledger: {ids}")
-        return 1
+    # Audit §79.9 (N-157): the ledger is append-only, so a closure is an appended row carrying the
+    # same id, the new status and the section that measured it. The last row per id is authoritative
+    # and earlier rows remain as history. Two rows with the same id *and* the same status are still a
+    # duplicate and still fail closed, and a closure must cite its section (§9.1, §11.3).
+    latest: dict = {}
+    for row in rows:
+        previous = latest.get(row["id"])
+        if previous is not None and previous["status"] == row["status"]:
+            print(f"[FAIL] Duplicate finding id {row['id']} with status {row['status']}")
+            return 1
+        if row["status"] == "CLOSED" and not isinstance(row.get("closed_in_section"), int):
+            print(f"[FAIL] {row['id']} is marked CLOSED without an integer 'closed_in_section' citation")
+            return 1
+        latest[row["id"]] = row
+    rows = list(latest.values())
 
     failures = 0
     for row in rows:
