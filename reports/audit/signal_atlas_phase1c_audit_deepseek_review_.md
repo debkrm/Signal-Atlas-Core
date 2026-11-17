@@ -8265,3 +8265,178 @@ All probes ran in-process from the repository root. Two temporary mutations of `
 ### 77.17 What would falsify this verdict
 
 If the 15 refusals turn out to be an artefact of the *interval table* rather than of the market — i.e. `cash_equity_symbol_intervals.csv` contradicts the bhavcopy's own ISIN column on those dates — then the identity debt is a security-master bug, not a documentation debt, the exclusion is self-inflicted, and 77.11's work order collapses into a data-repair task with no attestation requirement. Conversely, if a full attested transition table is added and `CRIT-DATA-05` *still* reads below 100% on a fresh run, then the row-denominator in `run_phase3b2_walkforward.py` counts something other than traded rows (for example, bars for instruments that never traded in-window) and N-146 is the real defect, not the universe.
+## 78. Audit of `adb16bd..780ac4b` — identity now resolves at 211/211, and the fix is scoped to exactly the 211 instruments it was measured on
+
+### 78.1 Baseline re-measured at `780ac4b`
+
+`python scripts/verify_audit_append_only.py` → **exit 0**, `ALL REPOSITORY FOUNDATION GATES PASSED (100%)`: W0.5-1 append-only PASS; W0.5-2 all **8** discovered `verify_*.py` exit 0; W0.5-3 **513 passed in 101.77 s, 0 skipped, 0 xfailed**; W0.5-4 all sign-off and audit tags resolve; W0.5-5 **46 current artifacts** match byte_count/sha256 with **20 superseded** rows skipped (19 before — the corporate-actions restatement adds one).
+
+Change under review is `780ac4b` alone, tag `feat-s77-780ac4b` (21 implementer files plus my §77 append, +1,261/−90). Criteria **1.1.7**; the trials pin is unchanged at `3326b1b2…` and the diff touches no registry or trials-manifest row, so **N = 9, N_eval = 5** stands and the 2024 validation fold stays unspent (`validation_folds_count 0`). Only three bindings were added (`min_liquidated_pf_ex_top_1 1.40`, `min_positive_is_fold_ratio 0.75`, `min_fold_liquidated_pf 1.30`) and every pre-existing numeric threshold is byte-identical — verified by diff, and by the suite's own assertion that 100 / 1.50 / 0.95 / 1.25 / 0.10 / 100.0 / 0.80 did not move.
+
+### 78.2 N-145 — **CLOSED as a resolution defect**, on live measurement
+
+A 12-session run through the real entry point (`run_phase3b2_walkforward`, isolated temp registry — no trial row, N unchanged) reports:
+
+| Measurement | Value |
+|---|---|
+| dataset instruments resolved | **211 / 211 = 100.0000%** |
+| `unresolved_dataset_instruments` | **[]** |
+| window traded-EQ rows | **2,435 / 2,435 = 100.0000%** |
+| `CRIT-DATA-07` / `CRIT-DATA-05` | **PASS** / **PASS** |
+| success master transition events | **15** (COCHINSHIP's split-derived row + 14 corpus rows) |
+
+The refusal arm still fails closed on live state: `360ONE`, which carries two ISINs (`INE466L01020` → `INE466L01038`, 2023-03-02) and no transition row, is refused with `ISIN_TRANSITION_UNDOCUMENTED`, while `TCS` resolves as one segment. The arm that matters for §77.11 is that identity is resolved **per session**, not re-keyed wholesale: the resolver partitions bars at the first successor session and refuses when the documented effective date is more than five days from that session (`IDENTITY_BOUNDARY_TOLERANCE_DAYS`), which is what lets TATASTEEL's 2022-07-28 ex-date coexist with a 2022-07-29 first successor session.
+
+**The 1:1 ratio is correct, and I measured it rather than accepting the comment.** The dataset's convention is `SPLIT_BONUS_ADJUSTED`, so an identity change is price-neutral: the last old-identity close and first new-identity close must differ only by that day's market move. They do, at all twelve boundaries:
+
+| Symbol | boundary | close → close | implied move |
+|---|---|---|---|
+| VTL | 2022-03-25 | 539.95 → 543.15 | +0.59% |
+| JUBLFOOD | 2022-04-20 | 546.20 → 551.70 | +1.01% |
+| BAJAJFINSV | 2022-09-14 | 1,784.75 → 1,805.35 | +1.15% |
+| IRB | 2023-02-22 | 29.745 → **34.05** | **+14.47%** |
+| HAL | 2023-09-28 | 1,918.85 → 1,889.15 | −1.55% |
+| NESTLEIND | 2024-01-05 | 2,711.64 → 2,666.40 | −1.67% |
+| PERSISTENT | 2024-03-28 | 4,049.825 → 3,984.55 | −1.61% |
+| CANBK | 2024-05-15 | 113.31 → 119.00 | +5.02% |
+| BDL | 2024-05-27 | 1,523.05 → 1,544.85 | +1.43% |
+| VBL (2nd) | 2024-09-12 | 627.66 → 645.60 | +2.86% |
+| DRREDDY | 2024-10-28 | 1,302.94 → 1,311.50 | +0.66% |
+| MAZDOCK | 2024-12-27 | 2,364.875 → 2,317.40 | −2.01% |
+
+A 10:1 split bridged at 1:1 on an unadjusted series would print −90% here. Nothing does, so the row ratio and the series convention agree — see N-153 for the one boundary that does not look like a market move.
+
+### 78.3 N-144 — **PARTIAL**, and the gap is the additive-fix pattern §14.4 exists for
+
+| Bundle | `CRIT-STAT-01` |
+|---|---|
+| 193 + closed 193 + 12 liquidated positions | **FAIL** — "Censored book passed as the de-censored count" |
+| 205 + closed 193 + 12 positions | **PASS** |
+| 205 vs declared `liquidated_trade_count` 193 | **FAIL** |
+| 205 + closed 193 + **11** positions | **FAIL** (reconciliation bites on an under-count) |
+| **193 + closed 193, `liquidated_open_positions` omitted** | **PASS 193** — see N-148 |
+| **193 alone** | **PASS 193** — see N-148 |
+
+The reconciliation is right where it applies and inert where the evidence is missing. §14.4's test is exactly this: a consumer that cannot produce the de-censored book must fail, not be exempted from the check by omitting the column that triggers it.
+
+### 78.4 N-146 — **CLOSED**
+
+| Bundle | `CRIT-DATA-05` |
+|---|---|
+| window `100.0`, archive `93.1867` | **PASS** `100.0000%`, evidence names the archive figure as a separate measurement |
+| window `93.1867`, archive `100.0` | **FAIL** `93.1867%` — the archive number cannot rescue the window row |
+| archive only, window absent | **NOT RUN** — never substitutes |
+| window `100.0` + 101,508/101,508 rows | **PASS**, row counts printed |
+
+The archive figure never appears as this row's `computed_value`, and `CRIT-DATA-07` stays independent (dataset `100.0` with window `93.1867` still PASSes DATA-07). **Residual:** in the regenerated Tier-A artifact `CRIT-DATA-05` is now `NOT RUN` (that generator supplies no window metric) and the archive resolution appears only in its evidence text. So the archive-wide measurement gates nothing anywhere. That is defensible — it is not the criterion's quantity — but it is now an unbound statistic and the artifact's PASS count fell from 3 to 2 for that reason, which a reader should not mistake for a regression.
+
+### 78.5 N-147 — **CLOSED**
+
+The generated markdown carries `Unresolved dataset instruments` **exactly once**, and the new `## In-Sample Fold Stability (Audit §77.13)` block prints all four folds with their ratio and their NOT RUN reason.
+
+### 78.6 `CRIT-OVERFIT-05` — **CLOSED** as a binding row
+
+`1.4000 → PASS`, `1.3999 → FAIL`, `1.4812 (seq 9) → PASS`, `1.3000 → FAIL`, absent `→ NOT RUN`. The threshold is read from `min_liquidated_pf_ex_top_1` and the row is binding, so the margin §77.12 item 4 pre-registered is now enforced instead of being a sentence in a report.
+
+### 78.7 `CRIT-OVERFIT-03` / `CRIT-OVERFIT-06` — **PARTIAL** (see N-149, N-150)
+
+`CRIT-OVERFIT-03` reads the anchors correctly and reports them honestly: 3/4 positive → **PASS 0.7500**; 2/4 → **FAIL 0.5000**; all-empty → **NOT RUN** with the "no closed or liquidated trade exited" reason rather than a fabricated 0.0000; a fold with positive expectancy but PF below the 1.30 floor does not count. The four fold ends, the exit-date partition and the expansion rule are what §77.13 specified, and the run's own artifact prints all four (all NOT RUN in a 12-session window, correctly, because nothing exited).
+
+`CRIT-OVERFIT-06` carries the moved 0.80 out-of-sample definition and reports `0.80 → PASS`, `0.79 → FAIL`, absent → NOT RUN. Both ids exist once, `CRIT-OVERFIT-01..06` are all distinct, and the evaluation set is **27 rows** with no duplicate id.
+
+But the fold *set* is not pinned and the validation-fold minimum is not enforced. Details in 78.8–78.9.
+
+### 78.8 N-148 (new, MEDIUM) — the basis check is disarmed by omitting its own evidence
+
+`verdicts.py` reconciles only when `liquidated_open_positions` is a list/tuple, and only compares `total_trades` to `closed_only_trade_count + len(...)` when both exist. Measured: `{total_trades: 193, closed_only_trade_count: 193}` → **PASS 193**, labelled "de-censored"; `{total_trades: 193}` → **PASS 193**. The check catches a producer that reports all three and mis-states them, and exempts a producer that reports fewer. Since the runner always supplies the list, the live path is covered — but the criterion's guarantee is conditional on the data it is auditing, which is the same shape as N-144 itself.
+
+The closure test is a fail-closed default: a bundle that supplies `total_trades` without the means to reconcile it (no `liquidated_open_positions` and no `liquidated_trade_count`) reports **NOT RUN** with the reason named, so an incomplete bundle can neither pass on the label nor be silently exempted.
+
+### 78.9 N-149 (new, MEDIUM) — `CRIT-OVERFIT-03` accepts any fold set, including one fold
+
+The ratio is `positives / len(fold_rows)`, and `fold_rows` is whatever the bundle sends. Measured, all **PASS**:
+
+| Bundle | Result |
+|---|---|
+| two folds, both positive | **PASS 1.0000** |
+| one fold, positive | **PASS 1.0000** |
+| no folds at all, self-declared `positive_is_fold_ratio: 0.75` | **PASS 0.7500** |
+
+So a producer can satisfy a criterion whose contract is "3 of 4 anchored folds" by reporting one good fold, or by asserting the ratio outright. The pre-registration in §77.13 names four specific ends; the row must require exactly those four (by label or `fold_end`), reject a bundle that supplies fewer or different ends, and treat a producer-supplied ratio without per-fold rows as **NOT RUN** rather than trusting it.
+
+### 78.10 N-150 (new, MEDIUM) — `CRIT-OVERFIT-06` passes on a single validation fold
+
+`{walk_forward_positive_fold_ratio: 1.00, walk_forward_validation_folds_count: 1}` → **PASS 1.0000**. The two-fold minimum appears only in the NOT RUN reason ("Only N_val = 1 validation fold evaluated…"), so the gate enforces ≥ 2 folds exactly when the ratio is absent. This is the definition §77.13 moved rather than withdrew, so the gap is inherited — but it is now load-bearing in a new place: it is the row that will certify (or refuse) the 2024 validation fold, and as written one fold cannot clear it but one fold plus a favourable ratio can. The fix is small and local: when `walk_forward_validation_folds_count` is present and `< 2`, the row is NOT RUN regardless of the ratio.
+
+### 78.11 N-151 (new, HIGH) — 100% resolution is scoped to the 211 instruments that were in the dataset, not to the market
+
+The 12 appended rows are a **hand-written list** in `scripts/derive_2022_2024_corpora.py`, one per symbol that happened to need an identity at 2022-01-03..2024-12-31. The committed interval table is far larger than that: it contains **286 symbols with more than one ISIN**, and of those **272 still have no transition row** — AAKASH, ADANIPOWER, BAJFINANCE, BEML, COFORGE, CAMS, HDFCLIQUID, ICICIBANKN, IPCALAB, JBCHEPHARM, KOTAKBANK, MCX, PCBL, SHRIRAMFIN, TATAINVEST and 257 others. Those instruments are invisible today only because they are not among the 211 the dataset carries, or because their transition falls outside the window.
+
+That is why the fix is real but bounded: `211 / 211` is a statement about one corpus, not about identity resolution. Any expansion of the dataset — the 2018-04..2021-12 ingestion §77.14 recommends, a new listing, a wider universe filter — re-enters the same refusal path, and `CRIT-DATA-05` returns to FAIL by construction with findings that look like strategy failures rather than documentation gaps. The corpus already demonstrates the mechanism: 286 multi-ISIN symbols against 15 documented transitions.
+
+The remedy is a generator, not a list: build the transition table from `cash_equity_symbol_intervals.csv` for **every** symbol with more than one interval, carry each row's attestation status, and let the runner refuse only what is genuinely undocumented *and* attested-as-unknown. That converts a per-trial patch into an invariant, and it is a precondition for the corpus extension, not a cleanup.
+
+### 78.12 N-152 (new, LOW) — the transition rows cite the corpus itself as their source
+
+Every one of the twelve rows carries `circular_ref: UNATTESTED_NSE_INTERVAL_TABLE_<SYMBOL>_<DATE>` and `provenance: CONTENT_IDENTIFIED_ONLY`, and its `description` says "per cash_equity_symbol_intervals.csv". The only witness for the identity change is the table the change was derived from. Structurally that is an improvement — two identities and a date are now first-class, effective-dated facts — but §5.4's requirement is an attested cause, and a self-reference is not attestation. §77.11's second half therefore stands open: no row names an NSE circular, a scheme document or a registrar record, and none states the share ratio the transition implied. The correct label is the one it has (`CONTENT_IDENTIFIED_ONLY`); the correct description of the corpus is "documented, unverified", and it must not be reported as verified identity.
+
+### 78.13 N-153 (new, MEDIUM) — IRB prints a one-day +14.47% / −12.80% spike at its identity boundary
+
+IRB's closes around 2023-02-22 read `29.185, 28.875, 28.410, 29.745, 34.05, 29.70, 28.00, 29.40, 29.30`. The boundary bar is **+14.47%** and the next session gives it back at **−12.80%** — a two-day round trip that sits at the **99.87th percentile** of IRB's own absolute daily moves (n = 742, max 18.24%), on the one date where its identity changes, with no committed corporate-action row for IRB at all. Either IRB really re-rated and immediately unwound (possible: the 2023-02-22 IRB Infrastructure Trust demerger), or the series carries an unadjusted corporate-action artefact around a demerger the corpus does not record. The corpus cannot distinguish the two, and the strategy sees the spike: ATR(14), the 63-session momentum rank and the 3×ATR stop all price it.
+
+This is not a defect in the identity work — the identity segment is correct and the 1:1 ratio is right for an adjusted series. It is a reminder that "adjusted" is only as complete as the corporate-action table, and IRB is the first instrument where a boundary move is large enough to see.
+
+### 78.14 Senior Quant Researcher — should seq 10 run now, or is pre-2022 ingestion required first?
+
+**Decision: do not spend the trial on 2022–2023. Ingest 2018-04..2021-12 first, and generate the full transition table (78.11) before that ingestion, not after it.**
+
+The reasoning is arithmetic plus one scoping fact, not preference:
+
+1. **Two of seq 10's binding gates cannot move on this window.** DSR ≥ 0.95 at N = 10, N_eval = 6 needs annualized Sharpe **2.314** at T = 493; the haircut ≥ 1.25 needs **1.765**; seq 9 measured **0.873**. atr_stop_multiple 3.0 is an exit-geometry change worth tenths of a percent per round trip (0.57pp → 0.29pp of cost), not a 2.6× Sharpe. A run whose verdict is decided before it starts is not an experiment — it is a forfeit that also raises N and therefore raises the bar for every subsequent trial (N = 10 → E[max SR] 1.068 from 1.031).
+2. **T is the only lever that is both large and legitimate.** Extending the in-sample to 2018-04..2023-12 takes T from 493 to roughly 1,470 and drops the DSR bar from 2.314 to ~1.78 while leaving 2024 as confirmation. It also adds the 2018-19 NBFC/IL&FS stress and the 2020 COVID crash — the two regimes a long-only SMA(20/50) trend follower is most likely to fail, and the most informative evidence available anywhere in this repository.
+3. **§10.8 already binds the project to 2018-04-01.** The corpus starting 2022-01-03 is an unexcused deviation from the criteria document, not a design choice. Until it is closed, every verdict is computed on 40% of the window the project declared.
+4. **The ingestion is the stress test for 78.11.** Ten years of symbols will surface far more than 15 identity transitions. Running seq 10 first means discovering that after the trial, with N already spent, in the form of a DATA-05 FAIL that looks like a data-quality surprise.
+
+What I would do, in order, and what each step buys:
+
+- **Step 0 (days, no trial):** generate the transition table for all 286 multi-ISIN symbols from the interval table (78.11); fix N-148/149/150; bind `CRIT-OVERFIT-06` to `validation_folds_count >= 2`.
+- **Step 1 (the real work):** ingest 2018-04..2021-12 Bhavcopy, Bronze-first, with manifests and the calendar; verify 1,400+ sessions with zero synthesised bars and zero unexplained gaps (§6.3). This is a data-integrity project, not a strategy project; budget weeks, not days.
+- **Step 2:** register seq 10 **once**, with the same single change (`atr_stop_multiple 2.0 → 3.0`), the same frozen parameters, and the same gate list — but on the extended in-sample, N = 10, N_eval = 6, DSR bar recomputed from the actual T. One trial, one verdict, and for the first time a bar the strategy could plausibly clear.
+- **Step 3:** only if seq 10 clears every gate does the 2024 fold open as a single-shot confirmation.
+
+The honest alternative, if the pre-2022 archive cannot be obtained: **do not run seq 10 at all.** Declare the project NO-GO on certification grounds — "no candidate can be certified at T = 493 with nine trials recorded" — keep the 2024 fold sealed, and stop generating trials, because each additional in-sample trial raises the bar that no in-sample trial can reach. A NO-GO that names the sample size as its binding constraint is a better research result than a fourth parameter variant dressed as a new hypothesis.
+
+### 78.15 Principal Systems Architect — engineering and governance plan
+
+Four changes, ordered by leverage, each verifiable by the gate rather than by prose.
+
+**(a) Archive the audit log without touching it.** Do not split, move or rewrite `reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md` — every §N is a citation target and the append-only gate compares it to HEAD. Instead, **declare a volume boundary and freeze volume 1 byte-for-byte**: §78 becomes the first section of `reports/audit/volume2.md`, and a committed `configs/audit_volumes.yaml` records, per volume, `path`, `first_section`, `last_section`, `line_count`, `sha256`, `frozen`. `verify_audit_append_only.py` iterates that manifest: a frozen volume must hash exactly (a stronger check than "no removed line"), the active volume keeps the line-prefix check. Each volume gets its own baseline commit SHA, so `git log --follow` and every existing citation keep working. Expected effect: agents open a 2,000-line active volume instead of 8,200 lines, with no rule change and no historical edit. Add a regenerable `reports/audit/INDEX.md` (section → volume → line range → finding ids) produced by a script, never hand-edited — it is a convenience, not a source of truth.
+
+**(b) Stop re-running the suite for prose.** The gate's cost is 513 tests plus 8 verifiers (~100 s) for a commit that changed one markdown file. Add a **source-tree green cache**: `verify_audit_append_only.py` computes `SOURCE_TREE_HASH = sha256` over every tracked file *except* `reports/audit/**`, `docs/**`, `CURRENT_STAGE_OF_WORK.md`, and records, in an append-only `data/reference/source_tree_green.jsonl`, `{hash, suite_count, pytest_seconds, verify_exits, utc, gate_sha}`. On a commit whose diff touches only the excluded paths, the gate reuses the recorded result **only if** the hash matches and prints the SHA it reused, e.g. `reused green at 780ac4b (513 passed)`. Any source change produces an unknown hash and forces the full run; `--force-full` exists for the human. This is not a skipped test: it is the same computation for an identical source tree, and it fails closed on an unrecognised hash. Belt and braces: a full run is mandatory on any commit that creates a sign-off tag, and once per day regardless of diff.
+
+**(c) Make findings executable, and generate the section text.** The recurring cost in this repo is that findings live in prose and acceptance lives in the auditor's memory; §77's "additive fix" findings (N-144 → N-148, and now N-149/N-150) are the same defect appearing three times because each round re-derives its own probe. Introduce an auditor-owned, append-only **`reports/audit/findings.jsonl`**, one row per finding: `id`, `section`, `severity`, `status`, `metric`, `threshold`, `probe` (a shell command with an expected exit code and a required stdout regex), `phase`, `closed_by`. Then `scripts/verify_audit_findings.py` executes every `OPEN` finding's probe and prints PASS/FAIL — findings closure becomes a gate computation (§9.1) instead of a paragraph, the implementer can run the auditor's acceptance test before committing, and a fix that only works on the new path fails the old path's probe by construction. Generate §N from the probe output (`scripts/render_audit_section.py`) so numbers are never transcribed by hand: both of my last two sections contained transcription errors I had to catch (a count of 13 names, a 33%→13% stop-share), and generated text cannot.
+
+**(d) Bound the round count per phase.** One round per commit range is right, but nothing currently stops a phase from consuming ten rounds. Put a budget in `configs/audit_volumes.yaml` (`max_rounds_per_phase: 4`); when it is exhausted, every open finding must be either fixed or explicitly **accepted as a named residual with an owner and a trigger** in the phase's section. That is a governance decision, not a code change, and it prevents the audit log from growing faster than the system does.
+
+**What I would not do:** split the test suite for speed before measuring where the 100 s goes (it is likely dataset construction, which a per-corpus cache fixes with no test changes); add a coverage gate; or let the auditor's prose remain the only record of what was measured.
+
+### 78.16 Ordered work order
+
+1. **N-151 — generate identity transitions for all 286 multi-ISIN symbols** from the interval table, with attestation status per row. Probe: `resolve_instrument_identity_segments` over the full symbol list resolves every documented pair and refuses only rows flagged unverified; a corpus extension to 2018-2021 produces **zero** `ISIN_TRANSITION_UNDOCUMENTED` refusals for symbols whose two identities are both in the table. Serves §5.4, §10.4, §13.1.
+2. **N-149 — pin the fold set.** Require the four committed ends (2022-06-30, 2022-12-30, 2023-06-30, 2023-12-29); reject a bundle with fewer, different, or self-declared-ratio-only evidence. Probe: one positive fold **FAILs**, two folds **FAILs**, ratio-without-rows **NOT RUN**. Serves §8.3.
+3. **N-150 — enforce the validation-fold minimum.** `walk_forward_validation_folds_count < 2` → NOT RUN regardless of the ratio. Probe: `{ratio 1.00, count 1}` → NOT RUN; `{ratio 1.00, count 2}` → PASS. Serves §8.3, §14.5.
+4. **N-148 — fail closed when the basis cannot be reconciled.** `total_trades` without `liquidated_open_positions` or `liquidated_trade_count` → NOT RUN. Probe: `{total_trades: 193, closed_only_trade_count: 193}` → NOT RUN, and `{total_trades: 193}` → NOT RUN. Serves §9.1.
+5. **N-153 — explain IRB's boundary spike.** Cross-check the 2023-02-22 and 2023-02-23 bhavcopy closes against the series, and either add the demerger row the corpus is missing or record the artifact as a data finding with its effect on ATR and momentum. Probe: every instrument's boundary-day return is within its own 99th percentile of daily moves, or is explained by a committed CA row. Serves §6.3, §7.
+6. **N-152 — attest the transition rows** (NSE circular / scheme document per row, with content hash) or keep them `CONTENT_IDENTIFIED_ONLY` and stop describing identity as resolved. Probe: a row promoted to `VERIFIED` names a circular whose hash is in the manifest. Serves §6.5.
+7. **78.14 Step 1 — pre-2022 ingestion** to the §10.8 binding window start. Probe: ≥ 1,400 in-sample sessions, zero synthesised rows, DSR bar reported from the actual T. Serves §10.8, §8.2.
+8. **Only then seq 10**, once, on the extended window.
+
+### 78.17 Probe hygiene, and not measured
+
+All probes ran in-process from the repository root; the only state written was a temporary verdict/registry directory under the system temp path, so **no trial row was created** and N stayed 9. No committed data, criteria, registry or artifact file was modified; `git status` was clean before and after. The dataset probe loaded the committed snapshot read-only through the same `resolve_or_build_historical_dataset` the runner uses, enumerated the 15 transition events from the live `SecurityMaster`, and measured the twelve boundary returns directly rather than trusting the `SPLIT_BONUS_ADJUSTED` label. Two of my probe attempts aborted on their own defects (a float passed where the bundle requires exact `Decimal`, and an attribute name guessed wrong), both fixed before the reported measurements; neither touched the repository.
+
+**Not measured, and not claimed:** whether any of the twelve transition rows corresponds to the real corporate action (the corpus asserts two identities and a date; 78.11 shows it is not the only such pair by a wide margin); whether IRB's spike is market or artefact (N-153 is a flag, not a conclusion — it needs a bhavcopy cross-check); the full 743-session run's `CRIT-DATA-05` (my run covered 2,435 rows over 12 sessions, not 101,508); what the 2024 fold would show; and the performance of a strategy that could trade the 272 still-undocumented symbols.
+
+### 78.18 What would falsify this verdict
+
+If a symbol outside the 211 — say KOTAKBANK, which has two ISINs and no transition row — is present in the dataset and resolves to 100%, then `resolve_instrument_identity_segments` is consulting something other than the 15-event table and N-151 is overstated. If `{total_trades: 193, closed_only_trade_count: 193}` in fact reports NOT RUN on the committed code path rather than PASS, my N-148 probe measured a different function than the one the runner calls, and the finding is mine, not theirs. And if the 2018-04..2021-12 corpus is ingested and the transition refusals stay at zero without new rows, then the interval table's 286 multi-ISIN symbols are mostly outside the dataset's symbol filter and 78.11's severity should drop to LOW — the measurement that decides it is the refusal count on the first extended run.
