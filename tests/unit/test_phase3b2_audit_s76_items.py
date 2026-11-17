@@ -246,8 +246,13 @@ def test_n142_refused_sell_is_tabulated_under_its_side_and_reason():
 
 
 def test_criteria_1_1_6_changes_no_numeric_threshold():
+    """1.1.6 moved definitions only. 1.1.7 (Audit §77) adds two bindings; both asserted below."""
     crit = _criteria()
-    assert crit.version == "1.1.6"
+    assert crit.version == "1.1.7"
+    assert crit.min_positive_is_fold_ratio == Decimal("0.75")
+    assert crit.min_fold_liquidated_pf == Decimal("1.30")
+    assert crit.min_liquidated_pf_ex_top_1 == Decimal("1.40")
+    assert crit.min_positive_walk_forward_fold_ratio == Decimal("0.80")
     assert crit.min_total_trades == 100
     assert crit.min_profit_factor == Decimal("1.50")
     assert crit.min_deflated_sharpe_ratio == Decimal("0.95")
@@ -276,7 +281,7 @@ def test_short_walkforward_emits_the_s76_disclosures(tmp_path):
             encoding="utf-8"
         )
     )
-    assert art["criteria_version"] == "1.1.6"
+    assert art["criteria_version"] == "1.1.7"
     ids = {e["criterion_id"] for e in art["evaluations"]}
     assert {"CRIT-DATA-07", "CRIT-OVERFIT-04"} <= ids
 

@@ -82,7 +82,10 @@ def build_tier_a_results_bundle(
 
     # 2. Compute traded EQ resolution percentage and derive archive end date dynamically
     bhavcopy_manifest_file = REPO_ROOT / "data" / "reference" / "bhavcopy_archive_manifest.jsonl"
-    traded_eq_resolution_pct = None
+    # Audit §77.15 item 2 (N-146): this is the ARCHIVE-WIDE resolution over every archived session,
+    # not `CRIT-DATA-05`'s window measure. It is emitted under its own key so the same criterion id
+    # never carries two denominators.
+    archive_traded_eq_resolution_pct = None
     archive_dates: list[datetime.date] = []
     if bhavcopy_manifest_file.is_file():
         total_traded_rows = 0
@@ -98,7 +101,7 @@ def build_tier_a_results_bundle(
 
         expected_total_rows = int(bhavcopy_manifest_entry.get("total_traded_eq_rows", 0))
         if expected_total_rows > 0:
-            traded_eq_resolution_pct = (
+            archive_traded_eq_resolution_pct = (
                 Decimal(str(total_traded_rows)) / Decimal(str(expected_total_rows))
             ) * Decimal("100")
 
@@ -124,11 +127,25 @@ def build_tier_a_results_bundle(
         # not a threshold, and they enter the criteria fingerprint, so the committed artifact is
         # restated rather than left describing a criteria version that no longer governs.
         "restatement_note": (
-            "Restatement 2026-11-17 (Audit §76.16 items 1-6): supersedes the 1.1.5 restatement "
+            "Restatement 2026-11-17 (Audit §77.15 items 1-6): supersedes the §76.16 items 1-6 "
+            "restatement recorded above, the 1.1.5 restatement "
             "recorded under Audit §75.10 items 3-4, the 1.1.4 restatement recorded under §74.10 "
             "Ruling D, the 1.1.3 one under §73.9 items 3-4, the 1.1.2 one under §72 N-128, the 1.1.1 "
             "one under §68.6 item 3 (H-115), and the 2026-11-14T16:45:00+00:00 artifact before those. "
-            "Criteria version 1.1.6 changes no numeric PASS/FAIL threshold. It (i) excludes "
+            "Criteria version 1.1.7 changes no existing numeric PASS/FAIL threshold. It (i) adds "
+            "CRIT-OVERFIT-05, min_liquidated_pf_ex_top_1 = 1.40, so a liquidated PF that needs its "
+            "single largest winner to clear 1.50 is a FAIL rather than a sentence beside the row "
+            "(§77.12 item 4); and (ii) re-points CRIT-OVERFIT-03 at the anchored expanding in-sample "
+            "folds — four partitions of one run's own ledger ending 2022-06-30, 2022-12-30, "
+            "2023-06-30 and 2023-12-29, gated by min_positive_is_fold_ratio = 0.75 and "
+            "min_fold_liquidated_pf = 1.30 — with the previous validation-fold definition moving "
+            "unchanged to CRIT-OVERFIT-06, so min_positive_walk_forward_fold_ratio = 0.80 stays "
+            "enforced (§77.13). Both new rows are NOT RUN on this Tier-A bundle, which carries no "
+            "trade ledger to partition. This artifact also stops reporting an archive-wide bhavcopy "
+            "resolution under CRIT-DATA-05's key: that statistic now travels as "
+            "archive_traded_eq_resolution_pct, because CRIT-DATA-05 is the evaluation window's "
+            "traded-row measure and the two denominators are not interchangeable (§77.15 item 2, "
+            "N-146). Under 1.1.6 it (i) excluded "
             "expected_trial_registry_manifest_sha256 from the criteria fingerprint, so appending a "
             "trial and re-pinning the manifest no longer invalidates the anchor a verdict cites, "
             "while the pin stays mandatory in the loader and is still enforced by Gate G2A-6.8a "
@@ -148,9 +165,11 @@ def build_tier_a_results_bundle(
         ),
     }
 
-    # Traded EQ resolution percentage is dynamically populated only when computed from manifest
-    if traded_eq_resolution_pct is not None:
-        bundle["traded_eq_resolution_pct"] = traded_eq_resolution_pct
+    # Archive-wide resolution is dynamically populated only when computed from the manifest. It is a
+    # different quantity from `CRIT-DATA-05` (which counts window traded rows on a run's own dataset),
+    # so it never travels under that criterion's key (Audit §77.15 item 2, N-146).
+    if archive_traded_eq_resolution_pct is not None:
+        bundle["archive_traded_eq_resolution_pct"] = archive_traded_eq_resolution_pct
 
     # System invariants and execution metrics (Findings H-73, H-75):
     # Invariant flags (strict Decimal, gap fail-closed, PIT universe, zero fabrication, statutory costs)

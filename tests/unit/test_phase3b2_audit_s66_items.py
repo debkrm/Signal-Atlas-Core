@@ -90,8 +90,12 @@ def test_h112_disclosure_counts_interpolated_from_diagnostics(tmp_path: Path):
 
 def test_n108_single_fold_degeneracy_evaluates_not_run(tmp_path: Path):
     """
-    N-108: When fewer than 2 independent validation folds exist (N_val = 1),
-    CRIT-OVERFIT-03 evaluates to NOT RUN with N_val = 1 disclosed.
+    N-108: When fewer than 2 independent validation folds exist (N_val = 1), the out-of-sample
+    validation-fold ratio evaluates to NOT RUN with N_val = 1 disclosed.
+
+    Criteria 1.1.7 (Audit §77.13) re-pointed CRIT-OVERFIT-03 at the anchored in-sample folds; this
+    N-108 measurement moved unchanged to CRIT-OVERFIT-06, so the probe follows the definition rather
+    than being withdrawn.
     """
     snap_p = make_synthetic_snapshot(tmp_path, num_sessions=50)
     reg_p = tmp_path / "trial_reg.jsonl"
@@ -106,13 +110,13 @@ def test_n108_single_fold_degeneracy_evaluates_not_run(tmp_path: Path):
         write_verdict_files=True,
     )
 
-    eval_of3 = next(
-        e for e in res.verdict_report.evaluations if e.criterion_id == "CRIT-OVERFIT-03"
+    eval_of6 = next(
+        e for e in res.verdict_report.evaluations if e.criterion_id == "CRIT-OVERFIT-06"
     )
-    assert eval_of3.status == VerdictStatus.NOT_RUN
-    assert eval_of3.computed_value is None
-    assert "N_val = 1" in eval_of3.evidence
-    assert "minimum 2 independent" in eval_of3.evidence
+    assert eval_of6.status == VerdictStatus.NOT_RUN
+    assert eval_of6.computed_value is None
+    assert "N_val = 1" in eval_of6.evidence
+    assert "minimum 2 independent" in eval_of6.evidence
 
     # Check Markdown report discloses N_val = 1
     md_path = out_dir / "phase3b2_swing_baseline_2022_2024_verdict.md"

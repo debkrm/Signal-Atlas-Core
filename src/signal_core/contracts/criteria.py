@@ -112,10 +112,22 @@ class GoNoGoCriteria:
     max_annual_turnover: Decimal
     min_positive_walk_forward_fold_ratio: Decimal
 
+    # Audit §77.13 (criteria 1.1.7): in-sample stability, computed from a single run's own ledger.
+    # Four anchored expanding folds inside the in-sample window are partitioned by exit date; a fold
+    # counts as positive only if its closed-book net expectancy is > 0 AND its liquidated profit
+    # factor clears `min_fold_liquidated_pf`. No re-fitting and no re-running, so the four partitions
+    # are one trial, not four (§8.2).
+    min_positive_is_fold_ratio: Decimal
+    min_fold_liquidated_pf: Decimal
+
     # Risk & drawdown limits
     max_portfolio_drawdown: Decimal
     max_drawdown_duration_sessions: int
     min_profit_factor: Decimal
+    # Audit §77.12 item 4 (criteria 1.1.7): a profit factor that clears 1.50 only while its single
+    # largest winner is inside the set has no margin. seq 9 measures 1.6440 liquidated and 1.4812
+    # without its best trade, so the pre-registered margin is a separate, binding threshold.
+    min_liquidated_pf_ex_top_1: Decimal
     max_single_position_weight: Decimal
 
     # Execution & liquidity realism
@@ -339,9 +351,12 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         min_total_trades=int(anti_ov["min_total_trades"]),
         max_annual_turnover=_to_decimal(anti_ov["max_annual_turnover"], "max_annual_turnover"),
         min_positive_walk_forward_fold_ratio=_to_decimal(anti_ov["min_positive_walk_forward_fold_ratio"], "min_positive_walk_forward_fold_ratio"),
+        min_positive_is_fold_ratio=_to_decimal(anti_ov["min_positive_is_fold_ratio"], "min_positive_is_fold_ratio"),
+        min_fold_liquidated_pf=_to_decimal(anti_ov["min_fold_liquidated_pf"], "min_fold_liquidated_pf"),
         max_portfolio_drawdown=_to_decimal(risk["max_portfolio_drawdown"], "max_portfolio_drawdown"),
         max_drawdown_duration_sessions=int(risk["max_drawdown_duration_sessions"]),
         min_profit_factor=_to_decimal(risk["min_profit_factor"], "min_profit_factor"),
+        min_liquidated_pf_ex_top_1=_to_decimal(risk["min_liquidated_pf_ex_top_1"], "min_liquidated_pf_ex_top_1"),
         max_single_position_weight=_to_decimal(risk["max_single_position_weight"], "max_single_position_weight"),
         max_volume_participation_cap=_to_decimal(exec_liq["max_volume_participation_cap"], "max_volume_participation_cap"),
         min_daily_turnover_crore=_to_decimal(exec_liq["min_daily_turnover_crore"], "min_daily_turnover_crore"),

@@ -92,6 +92,19 @@ def test_verdict_report_reproducibility():
         "dataset_instrument_resolution_pct": Decimal("100.0"),
         "haircut_sharpe_ratio": Decimal("1.30"),
         "evaluated_trial_count": 10,
+        # 1.1.7: a complete bundle also carries the ex-top-1 liquidity margin (CRIT-OVERFIT-05) and the
+        # four anchored in-sample folds (CRIT-OVERFIT-03), so neither is NOT RUN here.
+        "liquidated_pf_ex_top_1": Decimal("1.45"),
+        "is_folds": [
+            {"label": "IS-F1", "fold_end": "2022-06-30", "closed_net_expectancy": Decimal("120.00"),
+             "liquidated_profit_factor": Decimal("1.60")},
+            {"label": "IS-F2", "fold_end": "2022-12-30", "closed_net_expectancy": Decimal("90.00"),
+             "liquidated_profit_factor": Decimal("1.55")},
+            {"label": "IS-F3", "fold_end": "2023-06-30", "closed_net_expectancy": Decimal("60.00"),
+             "liquidated_profit_factor": Decimal("1.45")},
+            {"label": "IS-F4", "fold_end": "2023-12-29", "closed_net_expectancy": Decimal("40.00"),
+             "liquidated_profit_factor": Decimal("1.40")},
+        ],
         "data_provenance_status": "VERIFIED / EXCHANGE_ATTESTED",
         "trial_count_n": 10,
         "deflated_sharpe_ratio": Decimal("0.98"),
@@ -310,6 +323,19 @@ def test_synthetic_fixture_end_to_end_regression():
             "dataset_instrument_resolution_pct": Decimal("100.0"),
             "haircut_sharpe_ratio": Decimal("1.30"),
             "evaluated_trial_count": 10,
+            # 1.1.7: the fixture claims a complete ledger, so it also states the ex-top-1 margin and the
+            # four anchored in-sample folds rather than leaving two criteria NOT RUN it can support.
+            "liquidated_pf_ex_top_1": Decimal("1.45"),
+            "is_folds": [
+                {"label": "IS-F1", "fold_end": "2022-06-30", "closed_net_expectancy": Decimal("120.00"),
+                 "liquidated_profit_factor": Decimal("1.60")},
+                {"label": "IS-F2", "fold_end": "2022-12-30", "closed_net_expectancy": Decimal("90.00"),
+                 "liquidated_profit_factor": Decimal("1.55")},
+                {"label": "IS-F3", "fold_end": "2023-06-30", "closed_net_expectancy": Decimal("60.00"),
+                 "liquidated_profit_factor": Decimal("1.45")},
+                {"label": "IS-F4", "fold_end": "2023-12-29", "closed_net_expectancy": Decimal("40.00"),
+                 "liquidated_profit_factor": Decimal("1.40")},
+            ],
             # circuit_verified_pnl is omitted because synthetic fixture does not contain real band limits
     }
 
@@ -833,15 +859,24 @@ def test_tier_a_report_omitted_engine_output_falsifier():
     assert rep_mut.summary_counts == rep.summary_counts
     assert rep_mut.overall_verdict == rep.overall_verdict
 
-    # 5. Falsifier check: removing traded_eq_resolution_pct turns CRIT-DATA-05 to NOT RUN
-    bundle_no_cov = dict(bundle)
-    bundle_no_cov.pop("traded_eq_resolution_pct", None)
-    rep_no_cov = evaluate_verdicts(bundle_no_cov)
-    eval_cov = next(e for e in rep_no_cov.evaluations if e.criterion_id == "CRIT-DATA-05")
+    # 5. Falsifier check (Audit §77.15 item 2, N-146): the archive-wide bhavcopy figure is a different
+    # denominator and must not satisfy CRIT-DATA-05, which counts the evaluation window's own traded
+    # rows. The criterion is NOT RUN on this bundle and PASSes only when its own key is supplied.
+    assert "archive_traded_eq_resolution_pct" in bundle
+    eval_cov = next(e for e in rep.evaluations if e.criterion_id == "CRIT-DATA-05")
     assert eval_cov.status == VerdictStatus.NOT_RUN
     assert "not provided in results bundle" in eval_cov.evidence
-    assert rep_no_cov.summary_counts.get("PASS", 0) < rep.summary_counts.get("PASS", 0), (
-        "Removing traded_eq_resolution_pct must reduce the number of PASS criteria"
+    assert "archive_traded_eq_resolution_pct" in eval_cov.evidence
+
+    bundle_window_cov = dict(bundle)
+    bundle_window_cov["traded_eq_resolution_pct"] = bundle["archive_traded_eq_resolution_pct"]
+    rep_window_cov = evaluate_verdicts(bundle_window_cov)
+    eval_window_cov = next(
+        e for e in rep_window_cov.evaluations if e.criterion_id == "CRIT-DATA-05"
+    )
+    assert eval_window_cov.status == VerdictStatus.PASS
+    assert rep_window_cov.summary_counts.get("PASS", 0) == rep.summary_counts.get("PASS", 0) + 1, (
+        "Supplying traded_eq_resolution_pct must add exactly one PASS criterion"
     )
 
     # 6. N-66 acceptance probe: adding a fourth valid PASS does not break derivation assertions

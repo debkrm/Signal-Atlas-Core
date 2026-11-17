@@ -21,7 +21,7 @@ def test_load_committed_go_no_go_criteria():
     criteria = load_go_no_go_criteria()
 
     assert isinstance(criteria, GoNoGoCriteria)
-    assert criteria.version == "1.1.6"
+    assert criteria.version == "1.1.7"
     assert criteria.market == "NSE_CASH_EQUITY"
     assert criteria.currency == "INR"
 

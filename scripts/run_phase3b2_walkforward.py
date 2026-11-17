@@ -57,6 +57,7 @@ from signal_core.contracts.dataset import PriceConvention
 from signal_core.contracts.exchange_series import (
     APPROVED_EQ_ONLY_POLICY,
     ExchangeSeries,
+    InstrumentListingInterval,
 )
 from signal_core.contracts.order_types import OrderProduct, OrderSide
 from signal_core.contracts.price_band import PriceBandRecord, is_price_band_sourced
@@ -405,6 +406,149 @@ def liquidate_open_book(
     }
 
 
+def compute_in_sample_fold_stability(
+    closed_trades: Sequence[Mapping[str, Any]],
+    liquidation_rows: Sequence[Mapping[str, Any]],
+    anchor_start: datetime.date,
+    fold_ends: Sequence[datetime.date],
+    min_fold_profit_factor: Decimal,
+) -> Dict[str, Any]:
+    """
+    Anchored expanding in-sample folds from ONE run's own ledger (Audit §77.13, criteria 1.1.7).
+
+    Each fold ends at a committed date and includes every trade that exited between the anchor and
+    that date, so the folds expand: entries may precede a fold start, and nothing is re-fitted or
+    re-run — four partitions of one run, not four trials (§8.2). A fold counts as positive only if its
+    closed-book net expectancy is > 0 AND its liquidated profit factor is at least the committed floor;
+    a fold with no losing trade reports `liquidated_profit_factor` as None rather than an invented
+    unbounded value, and therefore cannot count as positive.
+    """
+    liquidated_rows = list(closed_trades) + list(liquidation_rows)
+    folds: List[Dict[str, Any]] = []
+    positives = 0
+
+    for index, fold_end in enumerate(fold_ends, start=1):
+        fold_closed = [t for t in closed_trades if anchor_start <= t["exit_date"] <= fold_end]
+        fold_all = [t for t in liquidated_rows if anchor_start <= t["exit_date"] <= fold_end]
+        gains = sum(t["gross_pnl"] for t in fold_all if t["gross_pnl"] > Decimal("0.00"))
+        losses = sum(abs(t["gross_pnl"]) for t in fold_all if t["gross_pnl"] < Decimal("0.00"))
+        profit_factor = (gains / losses) if losses > Decimal("0.00") else None
+        expectancy = (
+            sum(t["net_pnl"] for t in fold_closed) / Decimal(len(fold_closed))
+            if fold_closed else None
+        )
+
+        cumulative = Decimal("0.00")
+        peak = Decimal("0.00")
+        max_drawdown = Decimal("0.00")
+        for row in sorted(fold_all, key=lambda r: (r["exit_date"], str(r.get("isin", "")))):
+            cumulative += row["net_pnl"]
+            peak = max(peak, cumulative)
+            max_drawdown = max(max_drawdown, peak - cumulative)
+
+        is_positive = (
+            expectancy is not None
+            and expectancy > Decimal("0")
+            and profit_factor is not None
+            and profit_factor >= min_fold_profit_factor
+        )
+        if is_positive:
+            positives += 1
+        folds.append({
+            "label": f"IS-F{index}",
+            "fold_end": fold_end.isoformat(),
+            "closed_trade_count": len(fold_closed),
+            "liquidated_trade_count": len(fold_all),
+            "closed_net_expectancy": expectancy,
+            "liquidated_profit_factor": profit_factor,
+            "cumulative_net_drawdown": max_drawdown,
+            "is_positive": is_positive,
+        })
+
+    return {
+        "anchor_start": anchor_start.isoformat(),
+        "fold_ends": [d.isoformat() for d in fold_ends],
+        "min_fold_liquidated_pf": min_fold_profit_factor,
+        "folds": folds,
+        "positive_fold_count": positives,
+        "positive_is_fold_ratio": (
+            Decimal(positives) / Decimal(len(fold_ends)) if fold_ends else Decimal("0.00")
+        ),
+    }
+
+
+# Audit §77.11 / §77.15 item 1 (N-145): the calendar of an identity boundary is tolerated to sit
+# within five calendar days of the first session that traded under the successor ISIN. TATASTEEL's
+# split ex-date is 2022-07-28 while the successor ISIN's first session is 2022-07-29, so an exact
+# match would refuse a transition the corpus documents; anything wider would accept a row describing
+# a different event.
+IDENTITY_BOUNDARY_TOLERANCE_DAYS = 5
+
+
+def resolve_instrument_identity_segments(
+    symbol: str,
+    bars: Sequence[PriceBar],
+    sec_master: Any,
+    reference_isin: str,
+) -> Tuple[Optional[Tuple[Tuple[str, datetime.date, datetime.date], ...]], Optional[Tuple[str, str]]]:
+    """
+    Resolves a dataset instrument's identity per session (Audit §77.11, N-145).
+
+    Returns `(segments, None)` where each segment is `(isin, first_bar_date, last_bar_date)` and the
+    bars of one instrument partition across the ISINs that were in force, or `(None, (reason, detail))`
+    when the corpus cannot document an identity change and the instrument must be refused.
+
+    Two cases are deliberately not splits:
+    - A symbol rename whose earlier label is absent from the interval table resolves to no label, not
+      to a second ISIN. Those bars keep the reference identity the fallback chain already assigned
+      (pre-existing behaviour, measured at §68), because nothing here documents a second security.
+    - A single identity across the span stays a single segment even when some sessions resolve to no
+      label.
+    """
+    ordered = sorted(bars, key=lambda b: b.trade_date)
+    resolved = [(b.trade_date, sec_master.resolve_isin_by_symbol(symbol, b.trade_date, "EQ")) for b in ordered]
+    distinct = {isin for _d, isin in resolved if isin is not None}
+
+    if len(distinct) <= 1:
+        isin = next(iter(distinct)) if distinct else reference_isin
+        return ((isin, ordered[0].trade_date, ordered[-1].trade_date),), None
+
+    segments: List[List[Any]] = []
+    for trade_date, isin in resolved:
+        if isin is None:
+            return None, (
+                "ISIN_TRANSITION_WITHOUT_INTERVAL_COVERAGE",
+                f"{symbol} resolves to more than one ISIN but not on {trade_date.isoformat()}; "
+                f"identity cannot be resolved per session (§10.4)",
+            )
+        if not segments or segments[-1][0] != isin:
+            segments.append([isin, trade_date, trade_date])
+        else:
+            segments[-1][2] = trade_date
+
+    transitions = sec_master.isin_transitions
+    for (old_isin, _of, _ol), (new_isin, first_new, _nl) in zip(segments, segments[1:]):
+        event = next(
+            (t for t in transitions if t.old_isin == old_isin and t.new_isin == new_isin),
+            None,
+        )
+        if event is None:
+            return None, (
+                "ISIN_TRANSITION_UNDOCUMENTED",
+                f"{symbol} changes identity {old_isin} -> {new_isin} on {first_new.isoformat()} "
+                f"with no effective-dated ISIN_TRANSITION row in the corporate-action table (§10.4)",
+            )
+        gap_days = abs((event.effective_date - first_new).days)
+        if gap_days > IDENTITY_BOUNDARY_TOLERANCE_DAYS:
+            return None, (
+                "ISIN_TRANSITION_EFFECTIVE_DATE_MISMATCH",
+                f"{symbol} trades under {new_isin} from {first_new.isoformat()} but the documented "
+                f"transition takes effect {event.effective_date.isoformat()} ({gap_days} days apart)",
+            )
+
+    return tuple((isin, first, last) for isin, first, last in segments), None
+
+
 def build_historical_dataset_from_raw_bhavcopy(
     raw_dirs: Optional[Sequence[Path]] = None,
     target_series: Sequence[str] = ("EQ",),
@@ -672,32 +816,29 @@ def run_phase3b2_walkforward(
     apply_share_ratios = price_convention is not PriceConvention.SPLIT_BONUS_ADJUSTED
 
     uuid_to_isin: Dict[str, str] = {}
+    # Audit §77.11 / §77.15 item 1 (N-145): identity is resolved per session through the committed
+    # interval table and its documented ISIN transitions, not from the dataset's own span. An
+    # instrument whose bars cross a verified transition keeps a continuous adjusted series (H-127)
+    # but each bar is keyed by the ISIN that was actually in force that session, so a price-band,
+    # symbol or corporate-action lookup never sees an identity that did not exist yet. Splitting the
+    # key is not stitching: each ISIN's sequence contains only that ISIN's own sessions (§10.4).
+    identity_segments: Dict[str, Tuple[Tuple[str, datetime.date, datetime.date], ...]] = {}
+    isin_symbol_label: Dict[str, str] = {}
     refused_transition_uuids: Set[str] = set()
+    documented_transition_count = 0
     # Audit §76.9 N-140: name every dataset instrument that never resolved, with the reason, so
     # "92.891%" stops hiding whether the 15 were illiquid shells or names the strategy wanted.
     unresolved_dataset_instruments: List[Dict[str, str]] = []
 
     for u, sym in dataset.symbols_by_instrument.items():
+        instrument_bars = dataset.prices_by_instrument.get(u, ())
         if (isinstance(u, str) and u in sec_master.registered_isins) or (isinstance(u, str) and u.startswith("INE")):
             uuid_to_isin[u] = u
-            continue
-
-        # Finding H-109, H-116: Refuse UUIDs whose history spans an ISIN transition across the
-        # dataset's own span, never the evaluated window, so no evaluation flag can weaken
-        # identity validation (§10.4, §6.3).
-        s_isin = sec_master.resolve_isin_by_symbol(sym, min_d, "EQ")
-        e_isin = sec_master.resolve_isin_by_symbol(sym, max_d, "EQ")
-        if s_isin is not None and e_isin is not None and s_isin != e_isin:
-            refused_transition_uuids.add(u)
-            unresolved_dataset_instruments.append({
-                "instrument_id": u,
-                "symbol": sym,
-                "reason": "ISIN_TRANSITION_WITHIN_DATASET_SPAN",
-                "detail": (
-                    f"symbol resolves to {s_isin} on {min_d.isoformat()} and {e_isin} on "
-                    f"{max_d.isoformat()}; identity cannot be stitched across differing ISINs (§10.4)"
-                ),
-            })
+            if instrument_bars:
+                first_bar = min(b.trade_date for b in instrument_bars)
+                last_bar = max(b.trade_date for b in instrument_bars)
+                identity_segments[u] = ((u, first_bar, last_bar),)
+                isin_symbol_label.setdefault(u, sym)
             continue
 
         # Identity resolution, not universe membership: a snapshot UUID may carry a symbol that was
@@ -706,15 +847,71 @@ def run_phase3b2_walkforward(
         # full-span last session. The span anchor is required, not dead: measured at §68, removing it
         # makes --in-sample-only fail to resolve UNITDSPR (UUID 436d2da1) because that label does not
         # exist at any 2022-2023 date. Resolution is independent of the evaluation flag.
-        isin = (
+        reference_isin = (
             sec_master.resolve_isin_by_symbol(sym, datetime.date(2024, 1, 16), "EQ")
             or sec_master.resolve_isin_by_symbol(sym, eval_start, "EQ")
             or sec_master.resolve_isin_by_symbol(sym, eval_end, "EQ")
             or sec_master.resolve_isin_by_symbol(sym, max_d, "EQ")
         )
-        if isin is None:
+        if reference_isin is None:
             raise ValueError(f"Failed to resolve authentic ISIN for symbol {sym} (UUID {u})")
-        uuid_to_isin[u] = isin
+        if not instrument_bars:
+            uuid_to_isin[u] = reference_isin
+            continue
+
+        segments, refusal = resolve_instrument_identity_segments(
+            symbol=sym,
+            bars=instrument_bars,
+            sec_master=sec_master,
+            reference_isin=reference_isin,
+        )
+        if refusal is not None:
+            # Fail closed: an identity change the corpus cannot document is not resolved by guessing
+            # (§10.4, §6.3). The instrument is named with its reason and excluded.
+            refused_transition_uuids.add(u)
+            unresolved_dataset_instruments.append({
+                "instrument_id": u,
+                "symbol": sym,
+                "reason": refusal[0],
+                "detail": refusal[1],
+            })
+            continue
+        identity_segments[u] = segments
+        uuid_to_isin[u] = segments[-1][0]
+        documented_transition_count += len(segments) - 1
+        for seg_isin, _first, _last in segments:
+            isin_symbol_label.setdefault(seg_isin, sym)
+
+    # Audit §77.11: a bar sequence may only be truncated at a session where the ISIN itself was
+    # superseded or began. Those sessions are verified identity boundaries, so the continuity audit
+    # classifies them as explained (VERIFIED_ISIN_TRANSITION / OUTSIDE_VERIFIED_LISTING_INTERVAL)
+    # instead of an unexplained gap — the price series is complete, the identity is what changed.
+    transitions_by_old_isin: Dict[str, Any] = {t.old_isin: t for t in sec_master.isin_transitions}
+    transitions_by_new_isin: Dict[str, Any] = {t.new_isin: t for t in sec_master.isin_transitions}
+    identity_listing_intervals: Dict[str, InstrumentListingInterval] = {}
+    for seg_isin, label in isin_symbol_label.items():
+        inbound = transitions_by_new_isin.get(seg_isin)
+        outbound = transitions_by_old_isin.get(seg_isin)
+        if inbound is None and outbound is None:
+            continue
+        identity_listing_intervals[seg_isin] = InstrumentListingInterval(
+            instrument_id=seg_isin,
+            symbol=label,
+            isin=seg_isin,
+            listing_date=inbound.effective_date if inbound is not None else None,
+            superseded_by_isin=outbound.new_isin if outbound is not None else None,
+            transition_date=outbound.effective_date if outbound is not None else None,
+        )
+
+    def isin_at(instrument_id: str, session: datetime.date) -> Optional[str]:
+        """Point-in-time identity of a dataset instrument on a session (§77.11)."""
+        segments = identity_segments.get(instrument_id)
+        if not segments:
+            return uuid_to_isin.get(instrument_id)
+        for seg_isin, first_bar, last_bar in segments:
+            if first_bar <= session <= last_bar:
+                return seg_isin
+        return None
 
     # Audit §76.9 N-140 / Ruling 3: dataset completeness is its own statistic, with its own
     # threshold. It is the share of the research dataset's *instruments* that resolved to an
@@ -729,10 +926,12 @@ def run_phase3b2_walkforward(
     bars_by_isin_date: Dict[Tuple[str, datetime.date], PriceBar] = {}
     bars_by_isin: Dict[str, List[PriceBar]] = defaultdict(list)
     for u, raw_bars in dataset.prices_by_instrument.items():
-        isin = uuid_to_isin.get(u)
-        if not isin:
+        if u not in identity_segments:
             continue
         for b in raw_bars:
+            isin = isin_at(u, b.trade_date)
+            if not isin:
+                continue
             pbar = PriceBar(
                 instrument_id=isin,
                 trade_date=b.trade_date,
@@ -770,7 +969,7 @@ def run_phase3b2_walkforward(
         raw_uuids = dataset.universe_schedule.get_universe_for_date(d)
         eligible_isins: List[str] = []
         for u in raw_uuids:
-            isin = uuid_to_isin.get(u)
+            isin = isin_at(u, d)
             if not isin:
                 continue
             sym_interval = sec_master.resolve_symbol(isin, d)
@@ -793,6 +992,7 @@ def run_phase3b2_walkforward(
                 expected_calendar_sessions=sessions_to_run,
                 actual_price_bars=run_bars,
                 fail_closed_on_unexplained=fail_closed_on_unexplained,
+                listing_interval=identity_listing_intervals.get(isin),
             )
             for f in feats:
                 features_by_isin_date[(isin, f.trade_date)] = f
@@ -1316,6 +1516,22 @@ def run_phase3b2_walkforward(
     liquidation_slippage_cost = liquidation["slippage_cost"]
     liquidated_profit_factor = liquidation["liquidated_profit_factor"]
     liquidated_mean_net_expectancy = liquidation["liquidated_mean_net_expectancy"]
+
+    # Audit §77.13 / §77.15 item 6: the in-sample stability statistic. Four anchored expanding folds
+    # ending on dates committed before this run, partitioned from the ledger above by exit date.
+    IN_SAMPLE_FOLD_ENDS: Tuple[datetime.date, ...] = (
+        datetime.date(2022, 6, 30),
+        datetime.date(2022, 12, 30),
+        datetime.date(2023, 6, 30),
+        datetime.date(2023, 12, 29),
+    )
+    is_fold_stats = compute_in_sample_fold_stability(
+        closed_trades=closed_trades,
+        liquidation_rows=liquidation_rows,
+        anchor_start=sessions_to_run[0],
+        fold_ends=IN_SAMPLE_FOLD_ENDS,
+        min_fold_profit_factor=criteria.min_fold_liquidated_pf,
+    )
 
     # The identity the probe asks for, stated in the ledger's own terms so it can be exact:
     # realized PnL + dividends received + the open book marked to market, less that book's cost
@@ -1853,6 +2069,10 @@ def run_phase3b2_walkforward(
         "entry_weight_unpriced_fills": entry_weight_unpriced,
         "liquidated_pf_ex_top_1": liquidation["liquidated_pf_ex_top_1"],
         "liquidated_pf_ex_top_3": liquidation["liquidated_pf_ex_top_3"],
+        # Audit §77.13: the anchored expanding in-sample folds, as rows, so the criterion can print
+        # each fold rather than trusting a scalar the artifact cannot break down.
+        "is_folds": is_fold_stats["folds"],
+        "positive_is_fold_ratio": is_fold_stats["positive_is_fold_ratio"],
         "closed_only_profit_factor": profit_factor,
         "closed_only_trade_count": len(closed_trades),
         "evaluated_trial_count": registry.evaluated_trial_count,
@@ -1998,6 +2218,13 @@ def run_phase3b2_walkforward(
             str(liquidation["liquidated_pf_ex_top_3"])
             if liquidation["liquidated_pf_ex_top_3"] is not None else None
         )
+        # Audit §77.13: every fold value is a Decimal that must survive JSON as a string, never as a
+        # binary float (§6.4).
+        report_dict["is_folds"] = [
+            {k: (str(v) if isinstance(v, Decimal) else v) for k, v in fold.items()}
+            for fold in is_fold_stats["folds"]
+        ]
+        report_dict["positive_is_fold_ratio"] = str(is_fold_stats["positive_is_fold_ratio"])
         report_dict["traded_eq_resolution_pct"] = str(traded_eq_resolution_pct)
         report_dict["traded_eq_rows_total"] = traded_rows_total
         report_dict["traded_eq_rows_resolved"] = traded_rows_resolved
@@ -2180,8 +2407,27 @@ def run_phase3b2_walkforward(
             f"{dataset_instrument_count}) = **{dataset_instrument_resolution_pct:.4f}%** — this is "
             f"`CRIT-DATA-07` (dataset completeness). The two are different quantities with different "
             f"thresholds and are never reported under each other's name.",
-            f"> Unresolved dataset instruments: "
             f"> Unresolved dataset instruments: {unresolved_text}.",
+            "",
+            "## In-Sample Fold Stability (Audit §77.13)",
+            "",
+            f"> {is_fold_stats['positive_fold_count']} of {len(is_fold_stats['folds'])} anchored "
+            f"expanding in-sample fold(s) met both conditions: closed-book net expectancy > 0 and "
+            f"liquidated PF >= {criteria.min_fold_liquidated_pf} "
+            f"(ratio **{is_fold_stats['positive_is_fold_ratio']:.4f}** against `CRIT-OVERFIT-03`'s "
+            f"{criteria.min_positive_is_fold_ratio}).",
+            "> The folds share one run: anchored at "
+            f"{is_fold_stats['anchor_start']}, ending "
+            f"{', '.join(is_fold_stats['fold_ends'])}, partitioned by exit date. No re-fit and no "
+            "re-run, so the four partitions are one trial and the 2024 validation fold is not spent.",
+            "> " + " | ".join(
+                f"{fold['label']} to {fold['fold_end']}: closed net expectancy "
+                f"{fold['closed_net_expectancy'] if fold['closed_net_expectancy'] is not None else 'NOT RUN'}, "
+                f"liquidated PF "
+                f"{fold['liquidated_profit_factor'] if fold['liquidated_profit_factor'] is not None else 'NOT RUN'}, "
+                f"{'positive' if fold['is_positive'] else 'not positive'}"
+                for fold in is_fold_stats["folds"]
+            ),
             "",
         ])
         extra_md.append("")

@@ -387,6 +387,32 @@ def evaluate_verdicts(
             closed_book_note += f" at PF {val_closed_pf:.4f}"
         closed_book_note += "."
 
+    # Audit §77.15 item 4 (N-144): `total_trades` is *labelled* the de-censored book and nothing checked
+    # that it is one, so a bundle carrying the censored 193 passed under a "de-censored" label. When the
+    # bundle also states the closed-only count and the liquidated positions, the three must reconcile.
+    liquidated_positions = results_bundle.get("liquidated_open_positions")
+    liquidated_declared = results_bundle.get("liquidated_trade_count")
+    stat01_basis_error: Optional[str] = None
+    if (
+        parsed_total_trades is not None
+        and closed_n_raw is not None
+        and isinstance(liquidated_positions, (list, tuple))
+    ):
+        expected_total = int(closed_n_raw) + len(liquidated_positions)
+        if parsed_total_trades != expected_total:
+            stat01_basis_error = (
+                f"Censored book passed as the de-censored count: total_trades = {parsed_total_trades} while "
+                f"closed_only_trade_count ({closed_n_raw}) + {len(liquidated_positions)} liquidated open "
+                f"position(s) = {expected_total}. The count must be the liquidated book, and a bundle that "
+                f"cannot produce it reports NOT RUN (§76.12 Ruling 1, N-144)."
+            )
+    if stat01_basis_error is None and parsed_total_trades is not None and liquidated_declared is not None:
+        if int(liquidated_declared) != parsed_total_trades:
+            stat01_basis_error = (
+                f"total_trades = {parsed_total_trades} disagrees with liquidated_trade_count = "
+                f"{liquidated_declared} on the same bundle (N-144)."
+            )
+
     if trades_parse_error is not None:
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-STAT-01",
@@ -397,6 +423,18 @@ def evaluate_verdicts(
             comparator=">=",
             status=VerdictStatus.FAIL,
             evidence=trades_parse_error,
+            is_binding=True,
+        ))
+    elif parsed_total_trades is not None and stat01_basis_error is not None:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-STAT-01",
+            category="Risk & Performance",
+            metric_name="Total Completed Trades (Liquidated Book)",
+            computed_value=str(parsed_total_trades),
+            threshold_value=f">= {active_criteria.min_total_trades}",
+            comparator=">=",
+            status=VerdictStatus.FAIL,
+            evidence=stat01_basis_error,
             is_binding=True,
         ))
     elif parsed_total_trades is not None:
@@ -1049,30 +1087,54 @@ def evaluate_verdicts(
         ))
 
     # D5: Traded EQ Bhavcopy Resolution Pct (min_traded_eq_resolution_pct)
+    # Audit §77.15 item 2 (N-146): this criterion has ONE denominator — traded EQ bhavcopy rows inside
+    # the evaluation window that resolved to an authoritative ISIN. An archive-wide count over every
+    # archived session is a different quantity and is reported under its own key,
+    # `archive_traded_eq_resolution_pct`; it is never this row's value.
     val_res = _to_decimal(results_bundle.get("traded_eq_resolution_pct"))
+    archive_res = _to_decimal(results_bundle.get("archive_traded_eq_resolution_pct"))
+    window_rows_total = results_bundle.get("traded_eq_rows_total")
+    window_rows_resolved = results_bundle.get("traded_eq_rows_resolved")
+    window_note = (
+        f" ({window_rows_resolved} of {window_rows_total} window row(s))"
+        if window_rows_resolved is not None and window_rows_total is not None
+        else ""
+    )
+    archive_note = (
+        f" Archive-wide bhavcopy resolution over every archived session is a separate measurement, "
+        f"reported as archive_traded_eq_resolution_pct = {archive_res:.4f}% and never as this row."
+        if archive_res is not None
+        else ""
+    )
     if val_res is not None:
         status = VerdictStatus.PASS if val_res >= active_criteria.min_traded_eq_resolution_pct else VerdictStatus.FAIL
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-DATA-05",
             category="Universe Integrity",
-            metric_name="Traded EQ Resolution Pct",
+            metric_name="Traded EQ Row Resolution Pct (Evaluation Window)",
             computed_value=f"{val_res:.4f}%",
             threshold_value=f">= {active_criteria.min_traded_eq_resolution_pct}%",
             comparator=">=",
             status=status,
-            evidence=f"Active traded EQ scrips resolved to authoritative ISINs: {val_res:.4f}% (§41.3, Finding H-54).",
+            evidence=(
+                f"Traded EQ bhavcopy rows inside the evaluation window that carry an authoritative "
+                f"identity: {val_res:.4f}%{window_note} (§41.3, Finding H-54).{archive_note}"
+            ),
             is_binding=True,
         ))
     else:
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-DATA-05",
             category="Universe Integrity",
-            metric_name="Traded EQ Resolution Pct",
+            metric_name="Traded EQ Row Resolution Pct (Evaluation Window)",
             computed_value=None,
             threshold_value=f">= {active_criteria.min_traded_eq_resolution_pct}%",
             comparator=">=",
             status=VerdictStatus.NOT_RUN,
-            evidence="Metric 'traded_eq_resolution_pct' not provided in results bundle.",
+            evidence=(
+                "Metric 'traded_eq_resolution_pct' (window traded-EQ rows) not provided in results "
+                f"bundle.{archive_note}"
+            ),
             is_binding=True,
         ))
 
@@ -1480,14 +1542,149 @@ def evaluate_verdicts(
             is_binding=True,
         ))
 
-    # F3: Walk-Forward Stability Ratio (positive folds >= min_positive_walk_forward_fold_ratio)
+    # F3: Anchored in-sample fold stability (min_positive_is_fold_ratio, Audit §77.13, criteria 1.1.7)
+    # Four expanding folds inside the in-sample window, partitioned by exit date from ONE run's own
+    # ledger. A fold is positive only if its closed-book net expectancy is > 0 AND its liquidated
+    # profit factor clears min_fold_liquidated_pf. There is no re-fit and no re-run, so the four
+    # partitions stay one trial (§8.2) and the 2024 validation fold is neither spent nor required.
+    is_folds_raw = results_bundle.get("is_folds")
+    fold_rows = (
+        [f for f in is_folds_raw if isinstance(f, Mapping)]
+        if isinstance(is_folds_raw, (list, tuple))
+        else []
+    )
+    is_ratio: Optional[Decimal] = None
+    is_ratio_evidence = ""
+    if fold_rows:
+        positives = 0
+        computable_folds = 0
+        fold_details: List[str] = []
+        for fold in fold_rows:
+            fold_exp = _to_decimal(fold.get("closed_net_expectancy"))
+            fold_pf = _to_decimal(fold.get("liquidated_profit_factor"))
+            if fold_exp is not None or fold_pf is not None:
+                computable_folds += 1
+            fold_positive = (
+                fold_exp is not None
+                and fold_exp > Decimal("0")
+                and fold_pf is not None
+                and fold_pf >= active_criteria.min_fold_liquidated_pf
+            )
+            if fold_positive:
+                positives += 1
+            fold_details.append(
+                f"{fold.get('label', 'fold')} (exits to {fold.get('fold_end', 'NOT RUN')}): closed net "
+                f"expectancy {fold_exp if fold_exp is not None else 'NOT RUN'}, liquidated PF "
+                f"{fold_pf if fold_pf is not None else 'NOT RUN'} -> "
+                f"{'positive' if fold_positive else 'not positive'}"
+            )
+        if computable_folds == 0:
+            # An empty fold is not a failing fold: with no closed or liquidated trade exiting inside
+            # any anchored fold the ratio cannot be computed, so it is NOT RUN rather than 0.0000
+            # FAIL (§9.3). A run whose folds hold trades but no positive ones still FAILs.
+            is_ratio_evidence = (
+                f"No closed or liquidated trade exited inside any of the {len(fold_rows)} anchored "
+                f"expanding in-sample fold(s), so the positive-fold ratio cannot be computed (NOT RUN): "
+                + "; ".join(fold_details) + "."
+            )
+        else:
+            is_ratio = Decimal(positives) / Decimal(len(fold_rows))
+            is_ratio_evidence = (
+                f"{positives} of {len(fold_rows)} anchored expanding in-sample fold(s) met both conditions "
+                f"(closed-book net expectancy > 0 and liquidated PF >= {active_criteria.min_fold_liquidated_pf}): "
+                + "; ".join(fold_details) + "."
+            )
+    else:
+        is_ratio = _to_decimal(results_bundle.get("positive_is_fold_ratio"))
+        if is_ratio is not None:
+            is_ratio_evidence = (
+                f"Positive-fold ratio {is_ratio:.4f} over the anchored expanding in-sample folds supplied "
+                f"by the producer (no per-fold rows in the bundle, so the fold detail is NOT RUN)."
+            )
+
+    if is_ratio is not None:
+        status = (
+            VerdictStatus.PASS
+            if is_ratio >= active_criteria.min_positive_is_fold_ratio
+            else VerdictStatus.FAIL
+        )
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-OVERFIT-03",
+            category="Walk-Forward Stability",
+            metric_name="Positive Anchored In-Sample Folds Ratio",
+            computed_value=f"{is_ratio:.4f}",
+            threshold_value=f">= {active_criteria.min_positive_is_fold_ratio}",
+            comparator=">=",
+            status=status,
+            evidence=is_ratio_evidence,
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-OVERFIT-03",
+            category="Walk-Forward Stability",
+            metric_name="Positive Anchored In-Sample Folds Ratio",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_positive_is_fold_ratio}",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence=is_ratio_evidence or (
+                "Neither 'is_folds' nor 'positive_is_fold_ratio' is present: metric not provided in "
+                "results bundle. The in-sample fold statistic is computed from the run's own trade "
+                "ledger (§77.13)."
+            ),
+            is_binding=True,
+        ))
+
+    # F3b: Liquidated profit factor with the single largest winner removed
+    # (min_liquidated_pf_ex_top_1, Audit §77.12 item 4, criteria 1.1.7). A PF that clears 1.50 only
+    # while its best trade is inside the set has no margin, and the margin is now its own binding row
+    # rather than a sentence beside CRIT-STAT-02.
+    val_pf_ex1 = _to_decimal(results_bundle.get("liquidated_pf_ex_top_1"))
+    if val_pf_ex1 is not None:
+        status = (
+            VerdictStatus.PASS
+            if val_pf_ex1 >= active_criteria.min_liquidated_pf_ex_top_1
+            else VerdictStatus.FAIL
+        )
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-OVERFIT-05",
+            category="Anti-Overfitting",
+            metric_name="Liquidated Profit Factor Ex-Top-1 Winner",
+            computed_value=f"{val_pf_ex1:.4f}",
+            threshold_value=f">= {active_criteria.min_liquidated_pf_ex_top_1}",
+            comparator=">=",
+            status=status,
+            evidence=(
+                f"Liquidated profit factor recomputed without its single largest winner: "
+                f"{val_pf_ex1:.4f} against min_liquidated_pf_ex_top_1 "
+                f"{active_criteria.min_liquidated_pf_ex_top_1} (§77.12 item 4)."
+            ),
+            is_binding=True,
+        ))
+    else:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-OVERFIT-05",
+            category="Anti-Overfitting",
+            metric_name="Liquidated Profit Factor Ex-Top-1 Winner",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_liquidated_pf_ex_top_1}",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence="Metric 'liquidated_pf_ex_top_1' not provided in results bundle.",
+            is_binding=True,
+        ))
+
+    # F3c: Out-of-sample validation-fold ratio (min_positive_walk_forward_fold_ratio). The 1.1.7
+    # redefinition moved this measurement off CRIT-OVERFIT-03, which now reads the in-sample folds;
+    # it moves here unchanged rather than being withdrawn, so the 0.80 threshold stays enforced.
     val_wf = _to_decimal(results_bundle.get("walk_forward_positive_fold_ratio"))
     wf_reason = results_bundle.get("walk_forward_not_run_reason")
     wf_n_val = results_bundle.get("walk_forward_validation_folds_count")
     if val_wf is not None:
         status = VerdictStatus.PASS if val_wf >= active_criteria.min_positive_walk_forward_fold_ratio else VerdictStatus.FAIL
         evaluations.append(CriterionEvaluation(
-            criterion_id="CRIT-OVERFIT-03",
+            criterion_id="CRIT-OVERFIT-06",
             category="Walk-Forward Stability",
             metric_name="Positive Out-of-Sample Folds Ratio",
             computed_value=f"{val_wf:.4f}",
@@ -1501,7 +1698,7 @@ def evaluate_verdicts(
         if not wf_reason and wf_n_val is not None:
             wf_reason = f"Only N_val = {wf_n_val} validation fold evaluated; minimum 2 independent out-of-sample validation folds required for stability ratio (§8.3, Finding N-108)."
         evaluations.append(CriterionEvaluation(
-            criterion_id="CRIT-OVERFIT-03",
+            criterion_id="CRIT-OVERFIT-06",
             category="Walk-Forward Stability",
             metric_name="Positive Out-of-Sample Folds Ratio",
             computed_value=None,

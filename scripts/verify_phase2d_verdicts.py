@@ -194,6 +194,20 @@ def verify_gate_2d3_synthetic_fixture_end_to_end() -> bool:
         "dataset_instrument_resolution_pct": Decimal("100.0"),
         "haircut_sharpe_ratio": Decimal("1.30"),
         "evaluated_trial_count": 4,
+        # Criteria 1.1.7 (Audit §77.12 item 4, §77.13): a complete fixture bundle also carries the
+        # ex-top-1 liquidity margin and the four anchored in-sample folds, so neither CRIT-OVERFIT-05
+        # nor CRIT-OVERFIT-03 is a NOT RUN this fixture does not need.
+        "liquidated_pf_ex_top_1": Decimal("1.45"),
+        "is_folds": [
+            {"label": "IS-F1", "fold_end": "2022-06-30", "closed_net_expectancy": Decimal("120.00"),
+             "liquidated_profit_factor": Decimal("1.60")},
+            {"label": "IS-F2", "fold_end": "2022-12-30", "closed_net_expectancy": Decimal("90.00"),
+             "liquidated_profit_factor": Decimal("1.55")},
+            {"label": "IS-F3", "fold_end": "2023-06-30", "closed_net_expectancy": Decimal("60.00"),
+             "liquidated_profit_factor": Decimal("1.45")},
+            {"label": "IS-F4", "fold_end": "2023-12-29", "closed_net_expectancy": Decimal("40.00"),
+             "liquidated_profit_factor": Decimal("1.40")},
+        ],
     }
 
     report = evaluate_verdicts(synthetic_bundle)

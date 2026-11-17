@@ -607,6 +607,11 @@ class SecurityMaster:
             )
         return matches[0] if matches else None
 
+    @property
+    def isin_transitions(self) -> Tuple[ISINTransitionEvent, ...]:
+        """Returns the effective-dated identity transitions known to the master (Audit §77.11)."""
+        return tuple(self._isin_transitions)
+
     def is_delisted(self, isin: str, as_of: datetime.date) -> bool:
         """Returns True if the security was delisted on or prior to date T."""
         _validate_identifier(isin, "isin")
@@ -1368,6 +1373,35 @@ def build_production_security_master(include_cash_universe: bool = True) -> Secu
             if (ca.isin, ca.ex_date) not in existing_ca_keys:
                 corporate_actions.append(ca)
                 existing_ca_keys.add((ca.isin, ca.ex_date))
+
+    # Audit §77.11 / §77.15 item 1 (N-145): an `ISIN_TRANSITION` row in the committed corporate-action
+    # table is an effective-dated identity event, so it must also enter the transition table that
+    # `is_transitioned_out` consults — otherwise the master knows the old ISIN is superseded only for
+    # the one row hardcoded below. The effective date is the successor ISIN's first session in the
+    # committed interval table, falling back to the action's ex-date when the successor has no interval
+    # (an identity the corpus cannot place in time is not silently placed by an ex-date that may be a
+    # session earlier than the switch, as TATASTEEL's 2022-07-28 ex-date is).
+    known_transitions = {(t.old_isin, t.new_isin) for t in isin_transitions}
+    successor_start: Dict[str, datetime.date] = {}
+    for interval in symbol_intervals:
+        current = successor_start.get(interval.isin)
+        if current is None or interval.effective_from < current:
+            successor_start[interval.isin] = interval.effective_from
+    for ca in corporate_actions:
+        if ca.action_type is not CorporateActionType.ISIN_TRANSITION or not ca.old_isin or not ca.new_isin:
+            continue
+        if (ca.old_isin, ca.new_isin) in known_transitions:
+            continue
+        isin_transitions.append(
+            ISINTransitionEvent(
+                old_isin=ca.old_isin,
+                new_isin=ca.new_isin,
+                effective_date=successor_start.get(ca.new_isin, ca.ex_date),
+                reason="ISIN_TRANSITION_RECORDED_IN_CORPUS",
+                circular_ref=ca.circular_ref,
+            )
+        )
+        known_transitions.add((ca.old_isin, ca.new_isin))
 
     return SecurityMaster(
         symbol_intervals=symbol_intervals,

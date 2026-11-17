@@ -164,7 +164,12 @@ def generate_corporate_actions_corpus() -> list[CorporateAction]:
         ratio_denominator=Decimal("100"),
         new_isin="INE214T01019",
         circular_ref="UNATTESTED_NSE_CML_2022_MERGER_MINDTREE",
-        description="MINDTREE Merger into LTIMindtree (73 LTI per 100 MINDTREE)",
+        description=(
+            "MINDTREE Merger into LTIMindtree (73 LTI per 100 MINDTREE); fractional cash-in-lieu priced "
+            "at modelled LTIMindtree ex-date close INR 4742.05 on 2022-11-23, derived from the committed "
+            "2022-2024 Bhavcopy corpus (not an attested registrar settlement rate)"
+        ),
+        delisting_price=Decimal("4742.05"),
         provenance="CONTENT_IDENTIFIED_ONLY",
     ))
     # 7. DELISTING (Cash settlement without new_isin)
@@ -256,7 +261,12 @@ def generate_corporate_actions_corpus() -> list[CorporateAction]:
         ratio_denominator=Decimal("25"),
         new_isin="INE040A01034",
         circular_ref="UNATTESTED_NSE_CML_2023_DELIST_HDFC",
-        description="HDFC Ltd Merger into HDFC Bank (42 HDFCBANK per 25 HDFC)",
+        description=(
+            "HDFC Ltd Merger into HDFC Bank (42 HDFCBANK per 25 HDFC); fractional cash-in-lieu priced at "
+            "modelled HDFCBANK ex-date close INR 1641.10 on 2023-07-13, derived from the committed "
+            "2022-2024 Bhavcopy corpus (not an attested registrar settlement rate)"
+        ),
+        delisting_price=Decimal("1641.10"),
         provenance="CONTENT_IDENTIFIED_ONLY",
     ))
     # 7. DELISTING (Cash settlement)
@@ -357,7 +367,12 @@ def generate_corporate_actions_corpus() -> list[CorporateAction]:
         ratio_denominator=Decimal("20"),
         new_isin="INE092T01019",
         circular_ref="UNATTESTED_NSE_CML_2024_MERGER_IDFC",
-        description="IDFC Ltd Merger into IDFC FIRST Bank (155 IDFCFIRSTB per 100 IDFC)",
+        description=(
+            "IDFC Ltd Merger into IDFC FIRST Bank (155 IDFCFIRSTB per 100 IDFC); fractional cash-in-lieu "
+            "priced at modelled IDFCFIRSTB ex-date close INR 74.19 on 2024-09-27, derived from the "
+            "committed 2022-2024 Bhavcopy corpus (not an attested registrar settlement rate)"
+        ),
+        delisting_price=Decimal("74.19"),
         provenance="CONTENT_IDENTIFIED_ONLY",
     ))
     # 7. DELISTING (Cash settlement without new_isin)
@@ -527,6 +542,50 @@ def generate_corporate_actions_corpus() -> list[CorporateAction]:
             dividend_amount=Decimal(amt_str),
             circular_ref=f"UNATTESTED_NSE_CML_{ex_d.year}_DIV_{sym}",
             description=f"{sym} Cash Dividend INR {amt_str} per share",
+            provenance="CONTENT_IDENTIFIED_ONLY",
+        ))
+
+    # -------------------------------------------------------------------------
+    # ISIN identity transitions recorded by the committed interval table
+    # (Audit §77.11 / N-145)
+    # -------------------------------------------------------------------------
+    # Every symbol that the corpus shows under two ISINs across 2022-2024 gets an explicit,
+    # effective-dated transition row, so the runner can resolve identity point-in-time instead of
+    # refusing the instrument. The date is the first session of the successor ISIN as recorded in
+    # `cash_equity_symbol_intervals.csv`; the price series is already split/bonus adjusted, so the
+    # ratio is 1:1 and carries no share-count claim. What is *not* established here is the real-world
+    # cause and ratio — the corpus asserts two identities and a date, and the reference names the
+    # interval table rather than an NSE circular. That is the documented debt (§6.5), not a claim of
+    # attestation.
+    identity_transitions = [
+        ("INE825A01012", "INE825A01020", "VTL", "2022-03-25"),
+        ("INE797F01012", "INE797F01020", "JUBLFOOD", "2022-04-20"),
+        ("INE918I01018", "INE918I01026", "BAJAJFINSV", "2022-09-14"),
+        ("INE821I01014", "INE821I01022", "IRB", "2023-02-22"),
+        ("INE066F01012", "INE066F01020", "HAL", "2023-09-28"),
+        ("INE239A01016", "INE239A01024", "NESTLEIND", "2024-01-05"),
+        ("INE262H01013", "INE262H01021", "PERSISTENT", "2024-03-28"),
+        ("INE476A01014", "INE476A01022", "CANBK", "2024-05-15"),
+        ("INE171Z01018", "INE171Z01026", "BDL", "2024-05-27"),
+        ("INE200M01021", "INE200M01039", "VBL", "2024-09-12"),
+        ("INE089A01023", "INE089A01031", "DRREDDY", "2024-10-28"),
+        ("INE249Z01012", "INE249Z01020", "MAZDOCK", "2024-12-27"),
+    ]
+    for old_isin, new_isin, sym, ex_d_str in identity_transitions:
+        actions.append(CorporateAction(
+            isin=old_isin,
+            symbol=sym,
+            ex_date=datetime.date.fromisoformat(ex_d_str),
+            action_type=CorporateActionType.ISIN_TRANSITION,
+            ratio_numerator=Decimal("1"),
+            ratio_denominator=Decimal("1"),
+            old_isin=old_isin,
+            new_isin=new_isin,
+            circular_ref=f"UNATTESTED_NSE_INTERVAL_TABLE_{sym}_{ex_d_str.replace('-', '')}",
+            description=(
+                f"{sym} ISIN transition {old_isin} -> {new_isin} per "
+                f"cash_equity_symbol_intervals.csv; share ratio not established by the corpus"
+            ),
             provenance="CONTENT_IDENTIFIED_ONLY",
         ))
 

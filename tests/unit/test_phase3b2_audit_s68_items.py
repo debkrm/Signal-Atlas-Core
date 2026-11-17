@@ -90,11 +90,17 @@ def test_h116_in_sample_universe_uses_full_span_identity_validation(tmp_path: Pa
             encoding="utf-8"
         )
     )
-    # Same identity universe as 2022-2024: 196 valid ISINs (the eval_end-anchored refusal admitted
-    # 203). Gap refusals are window-scoped (17), so 179 instruments are continuous in this window.
-    assert artifact["total_valid_isins"] == 196
-    assert artifact["continuous_instruments_passed"] == 179
+    # Same identity universe as 2022-2024 (H-116): the in-sample result must not depend on where the
+    # window ends. 225 valid ISINs = 208 continuous + 17 gap refusals, and all 211 dataset instruments
+    # resolve to an authoritative ISIN. The count rose from 196 at §68 because instruments whose
+    # identity changed under a documented corporate action are now adjudicated per session (§77.11,
+    # N-145) instead of refused: the committed 15 transitions contribute 29 ISIN sequences
+    # (196 + 29 = 225). Gap refusals stay window-scoped at 17.
+    assert artifact["total_valid_isins"] == 225
+    assert artifact["continuous_instruments_passed"] == 208
     assert artifact["unexplained_gap_refusals"] == 17
+    assert artifact["dataset_instrument_resolution_numerator"] == 211
+    assert artifact["dataset_instrument_resolution_denominator"] == 211
 
     diag = res.coverage_diagnostics
     assert set(diag) == {"2022", "2023", "2024"}
