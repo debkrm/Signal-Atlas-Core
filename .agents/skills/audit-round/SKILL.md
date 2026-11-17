@@ -104,13 +104,24 @@ git status --porcelain data/reference/source_tree_green.json
 git diff data/reference/source_tree_green.json
 ```
 
-The gate hashes the object ids of `HEAD`'s tree, not the bytes of your checkout, and it reuses a
-record only when the tree of the record's `gate_sha` projects to the recorded hash (§80.3, N-160). So a
-post-commit run either prints `reused green at <sha>` — in which case `git status` must report **no
-change** to `source_tree_green.json` — or it runs the heavy gates for a tree no earlier row covers and
-appends exactly **one** row naming the commit you just made. Anything else is a defect, not a result:
-a modified or rewritten row, a row whose `gate_sha` tree projects another hash, or a duplicate append
-is reported and not repaired.
+The gate hashes the object ids of `HEAD`'s tree, not the bytes of your checkout, and it reuses a row
+only when that row was recorded **at the commit being verified** and its tree projects to the recorded
+hash (§80.3, N-160; §81.4 / §82.2, N-162 — a tree is necessary and not sufficient). A post-commit run
+has exactly three legal outcomes:
+
+1. `reused green at <sha>` — and `git status` reports no change to `source_tree_green.json`;
+2. a heavy run for a tree no earlier row covers, ending by appending exactly **one** row naming the
+   commit you just made;
+3. a heavy run for a tree already recorded at another commit (every docs-only commit), naming that
+   commit in `the record for this source tree was written at …` and appending **nothing** — the cost
+   §81.4 accepted, and not a defect.
+
+Anything else is: a modified or rewritten row, a row whose `gate_sha` tree projects another hash, or a
+duplicate append. Such a row is reported and not repaired.
+
+A file that git ignores is invisible to the dirty set while pytest still collects it, so a local
+`.git/info/exclude` rule can make a green row certify a failing test (§82.5, N-165). CI clones carry no
+local excludes; a local gate that prints `reused green` over an ignored path is not evidence.
 
 If you re-pin a frozen volume digest or change a config you do not own, say so in the section, state
 why, and list it in the work order for ratification (§79.7 is the precedent).

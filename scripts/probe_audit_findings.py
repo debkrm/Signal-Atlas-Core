@@ -798,6 +798,133 @@ def probe_n164() -> None:
     assert "is not the tree at gate_sha" not in str(undecoded)
 
 
+def probe_n165() -> None:
+    """
+    A pytest-collected file hidden from git is invisible to the dirty set, so a green row certifies it (N-165).
+
+    `dirty_source_paths()` reads `git status`, which never reports an ignored path, and the reachable ignore
+    rule needs no tracked edit: `.git/info/exclude` (or a global `core.excludesFile`) hides a new test file
+    from git while pytest still collects it. The probe forges a row naming HEAD — §14.3's standing instrument
+    — and asks the gate a question, without ever writing the cache or the artefact.
+    """
+    import datetime
+    import subprocess
+
+    from verify_audit_append_only import (
+        GREEN_CACHE_SCHEME,
+        dirty_source_paths,
+        discovered_verification_scripts,
+        select_gate_plan,
+        source_tree_hash_at_commit,
+    )
+
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(REPO_ROOT), capture_output=True, text=True
+    ).stdout.strip()
+    assert head, "HEAD resolves to no commit"
+    head_hash = source_tree_hash_at_commit(head)
+    assert head_hash
+    verifiers = discovered_verification_scripts()
+
+    rel = "tests/unit/test_n165_ignored_probe.py"
+    temp = REPO_ROOT / rel
+    exclude = REPO_ROOT / ".git" / "info" / "exclude"
+    assert not temp.exists(), f"{temp} already exists; remove it before running N-165"
+    original = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
+    try:
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        exclude.write_text(original + ("" if original.endswith("\n") else "\n") + rel + "\n", encoding="utf-8")
+        temp.write_text("def test_n165_ignored() -> None:\n    assert False\n", encoding="utf-8")
+
+        # git does not report it, so the gate's only view of the working copy is empty.
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--no-renames"], cwd=str(REPO_ROOT),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        ).stdout
+        assert rel not in status, f"git status reports the ignored file: {status}"
+        dirty = dirty_source_paths()
+        assert rel not in dirty, f"the dirty set now reports ignored paths ({dirty}); re-measure N-165"
+
+        # And pytest collects it as a failing test: the suite the gate would certify as green is red.
+        collected = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", str(temp)], cwd=str(REPO_ROOT),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        assert collected.returncode != 0, (
+            f"the ignored probe test is not collected or not failing: {collected.stdout[-300:]}"
+        )
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        forged = {
+            "source_tree_hash": head_hash,
+            "source_tree_scheme": GREEN_CACHE_SCHEME,
+            "suite_count": 536,
+            "verify_exits": {script: 0 for script in verifiers},
+            "utc": (now - datetime.timedelta(minutes=5)).isoformat(),
+            "gate_sha": head,
+        }
+        plan, used, reason = select_gate_plan(head_hash, [forged], now, head_commit=head)
+        assert plan == "reuse" and used is not None, (
+            f"the gate no longer certifies an ignored failing test: {plan} — {reason}"
+        )
+    finally:
+        temp.unlink(missing_ok=True)
+        if original:
+            exclude.write_text(original, encoding="utf-8")
+        elif exclude.is_file():
+            exclude.unlink()
+    assert rel not in dirty_source_paths(), f"{rel} still dirty after cleanup"
+
+
+def probe_n166() -> None:
+    """
+    An untracked source file turns the ledger's N-160 evidence red for a reason that is not N-160 (N-166).
+
+    Including untracked paths in the dirty set (§81.4) made a working copy with one stray scratch file a
+    state the two oldest consumers cannot describe: `probe_n160` requires an empty dirty set, and the §80
+    tree test asks `git cat-file HEAD:<path>` for every dirty path, which raises for a path HEAD lacks. The
+    gate still fails closed through the dirty path, so this is a diagnostics defect: the ledger reports a
+    finding as broken when the finding is intact, and a real regression hides behind that noise.
+    """
+    import subprocess
+
+    rel = "tests/unit/test_n166_untracked_probe.py"
+    temp = REPO_ROOT / rel
+    assert not temp.exists(), f"{temp} already exists; remove it before running N-166"
+    try:
+        temp.write_text("def test_n166_untracked() -> None:\n    assert False\n", encoding="utf-8")
+
+        # Consumer one: the ledger row for N-160.
+        ledger = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "scripts" / "probe_audit_findings.py"), "N-160"],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        assert ledger.returncode != 0, (
+            "probe_n160 now passes over an untracked source file; re-measure N-166"
+        )
+
+        # Consumer two: the §80 tree test, which walks the dirty set and reads each path out of HEAD.
+        tree_test = subprocess.run(
+            [
+                sys.executable, "-m", "pytest", "-q",
+                "tests/unit/test_phase3b2_audit_s80_items.py::test_n160_source_tree_hash_is_the_object_id_git_stores",
+            ],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        assert tree_test.returncode != 0, (
+            "the tree test now survives an untracked source file; re-measure N-166"
+        )
+        assert "cat-file" in tree_test.stdout or "CalledProcessError" in tree_test.stdout or (
+            "FAILED" in tree_test.stdout
+        ), tree_test.stdout[-500:]
+    finally:
+        temp.unlink(missing_ok=True)
+    assert rel not in [p for p in subprocess.run(
+        ["git", "status", "--porcelain", "--no-renames"], cwd=str(REPO_ROOT),
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    ).stdout.splitlines()], f"{rel} still present after cleanup"
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -815,6 +942,8 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-162": probe_n162,
     "N-163": probe_n163,
     "N-164": probe_n164,
+    "N-165": probe_n165,
+    "N-166": probe_n166,
 }
 
 

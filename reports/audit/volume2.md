@@ -821,3 +821,203 @@ report a red commit green. Items 5-7 are the pre-2022 plan and do not start befo
   docs-only case is closed another way; that is the property item 2 must measure.
 - If `min_binding_evaluation_start_date` already permits pre-2022 gating through another key, Ruling 2 is
   redundant and §81.9 should be superseded rather than followed.
+
+---
+
+## §82 — Audit of `c8f56d4` (tag `feat-s81-c8f56d4`): the commit becomes the key
+
+`df382ff` carries the three repairs §81 ordered and `c8f56d4` records the round and a green row. The
+two commits have different git trees (`6f9a2c55…` versus `4515b732…`) because a committed doc and a
+committed cache row are tree objects, but the same **source** tree: `7976b39b…` from both. The newest
+cache row names `df382ff`, not the commit under audit — and, for the first time in this series, that
+difference is the finding rather than the defect.
+
+### 82.1 Baseline re-measured at `c8f56d4`
+
+| Instrument | Result at `c8f56d4` |
+|---|---|
+| `verify_audit_append_only.py --force-full` | **exit 0** — `ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| pytest | **536 passed** in 125.38 s; 0 skipped, 0 xfailed (W0.5-3 PASS) |
+| `scripts/verify_*.py` discovered / executed | 9 / 9, every exit 0 (W0.5-2 PASS) |
+| W0.5-1 / 1b / 1c | PASS — append-only; 2 audit volumes; INDEX reproduces at 81 section rows |
+| W0.5-4 / W0.5-5 | PASS — all tags; 46 current / 22 superseded manifest rows |
+| Probes in scope | `N-160`, `N-161`, `N-162`, `N-163`, `N-164` — every one `PASS`, exit 0 |
+| Findings ledger | 20 rows / 16 ids |
+| Criteria / config | 1.1.9; `configs/` and `data/reference/manifest.jsonl` untouched by the commit (empty diff) |
+| Trees | `c8f56d4` and `df382ff` → source tree `7976b39b…`; newest row records `7976b39b…` at `df382ff`, 536 |
+| Plain gate at this SHA | plan **`full`** — *"the record for this source tree was written at df382ff, not at the commit being verified (c8f56d43…)"* |
+
+The last row is the audit's own teeth: the commit that records a green tree is not certified by that
+tree, and the gate says so in a sentence that names the other commit.
+
+### 82.2 N-162 — `CLOSED`
+
+The key is now the commit. `select_gate_plan` takes `head_commit` as a **keyword-only parameter with no
+default**, resolves it to a full oid through `commit_oid`, and compares that against the oid each row's
+`gate_sha` resolves to. A row for the same tree at another commit is skipped with
+*"the record for this source tree was written at …, not at the commit being verified (…)"*, and a
+caller that cannot name a commit cannot reuse. Both halves were attacked in a scratch clone of this
+repository, not on the tree under audit:
+
+**A. A disjoint child of the audited commit.** A real commit object built with `git commit-tree
+HEAD^{tree}` — same source tree `7976b39b…`, parent `c8f56d4` — was checked out clean. The plain gate
+printed the reason above and ran the heavy gates (`536 passed`, 128 s), then
+*"Source tree 7976b39b… is already recorded; not appending a duplicate row"*, and `git status` on the
+cache showed **no change**. Exit 0, no reuse, no append: the case that made `80ff581` green-at-red is
+gone.
+
+**B. An untracked failing test.** `tests/unit/test_s82_untracked.py` (`assert False`) appears in
+`dirty_source_paths()` as `['tests/unit/test_s82_untracked.py']` — `dirty_source_paths()` now runs
+`git status --untracked-files=all` — and the plane gate selects `full` with *"1 source path(s) differ
+from HEAD"*, exits **1**, and writes no row. The exit came through W0.5-2 rather than through pytest:
+two ledger probes fail on a dirty tree (§82.6, N-166), which is a separate defect, but the reuse
+decision it was measuring is now correct.
+
+The positive direction was measured too: the identical row naming `HEAD` returns `reuse`, so the fix
+refuses the *other commit* rather than the tree. The accepted cost is real and now permanent: a
+same-tree commit neither reuses a row nor gets one, so every docs-only commit runs the heavy gates, and
+the third legal post-commit outcome is *"full run, no row"*. The skill's post-commit paragraph claimed
+only two outcomes; §82.7 corrects it.
+
+Residual, not closed here: a file git **ignores** is still invisible to the dirty set while pytest
+collects it — §82.5, N-165.
+
+### 82.3 N-163 — `CLOSED`
+
+The §80 test no longer reads its own parentage. It selects a divergent commit by the tree it projects
+(`_commit_with_other_tree` walks ancestors until `source_tree_hash_at_commit(sha) != head_hash`), and a
+second fixture builds a real same-tree commit with `git commit-tree`. That is not a rename of the
+assumption, so it was mutated back:
+
+| Tree under test | Test body | Result |
+|---|---|---|
+| Committed `c8f56d4` | `_commit_with_other_tree` | 1 passed |
+| Same-tree child of `c8f56d4` (clean checkout) | `_commit_with_other_tree` | 1 passed |
+| Same-tree child of `c8f56d4` | `other = git rev-parse HEAD^` (mutation) | **1 failed** — `assert (None is not None)` at line 127 |
+| Same-tree child of `c8f56d4` | restored | 1 passed |
+
+The mutant reproduces §81.5's exact failure at the exact commit shape that caused it, and the committed
+test passes there. The suite is now green at a docs-only child (measured in §82.2 A: 536 passed), which
+is the property the round named.
+
+### 82.4 N-164 — `CLOSED`
+
+The parent sha is decoded (`parent = git("rev-parse", f"{head}^").decode().strip()`), and the assertions
+now test refusal *reasons*: a real divergent commit is refused with *"is not the tree at gate_sha"*, while
+the undecoded bytes are refused separately as *"is not a commit"* — with `assert "is not the tree at
+gate_sha" not in str(undecoded)`. Removing the decode is the falsifier, and it was measured:
+
+| Instrument | With `.decode()` | Without `.decode()` |
+|---|---|---|
+| `probe_audit_findings.py N-160` | PASS, exit 0 | **FAIL**, exit 1 |
+| `probe_audit_findings.py N-164` | PASS, exit 0 | **FAIL** — *"probe_n160 does not decode the parent sha"*, exit 1 |
+| restored | PASS, exit 0 | — |
+
+The ledger's N-160 evidence can now fail. One diagnostic nit, recorded not registered: the mutant's
+N-160 failure prints `FAIL N-160: ` with an empty message, because the assertion's message is the
+`None` it compares. Correctness is intact; a human reading that line gets no reason.
+
+### 82.5 N-165 (`MEDIUM`, new) — an ignored file is collected and never seen
+
+`dirty_source_paths()` reads `git status`, which by definition never reports an ignored path, and the
+cheapest ignore rule needs no tracked edit: `.git/info/exclude` is local and untracked. Measured in the
+scratch clone, with a row forged to name HEAD (the standing instrument of §14.3, never written to the
+repository's cache):
+
+```
+$ echo 'tests/unit/test_s82_ignored.py' >> .git/info/exclude
+$ printf 'def test_s82_ignored():\n    assert False\n' > tests/unit/test_s82_ignored.py
+$ git status --porcelain
+ M data/reference/source_tree_green.json          # the forged row only; the test file is invisible
+$ python scripts/verify_audit_append_only.py
+[INFO] Source-tree hash 7976b39b… — this commit's own tree was green
+[INFO] reused green at afc1c2ae… (536 passed) — heavy gates skipped for an identical source tree.
+OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)   exit 0
+$ python -m pytest -q tests/unit/test_s82_ignored.py
+1 failed   exit 1
+```
+
+This is N-162's failure mode with the guard in a different place: the commit key and the untracked set
+are both correct, and a collected red test is still certified green. Reachability is narrower and worth
+stating exactly — a pattern added to the repository's `.gitignore` is a tracked change, so it dirties the
+tree and forces a full run; only a **local** exclude (`info/exclude`, `core.excludesFile`) reaches this,
+and CI clones carry none. The defect is therefore a false green on the machine where a developer is
+hiding a failing test, not a false green in CI.
+
+Fix direction: treat ignored source paths as dirty — `git status --porcelain --ignored=matching`, keep
+those for which `is_source_tree_path` is true. The cost is that a local `data/` scratch file forces a
+full run, which is the fail-closed direction this gate has chosen everywhere else.
+
+### 82.6 N-166 (`LOW`, new) — an untracked file makes two ledger consumers red for the wrong reason
+
+Including untracked paths in the dirty set (§82.2 B) did not update the two consumers that walk that
+set. With one untracked failing test present at `c8f56d4`, in a clone:
+
+```
+[FAIL] N-160 (HIGH, CLOSED): exit 1 (expected 0), stdout regex '^PASS N-160$' did not match
+[FAIL] N-163 (MEDIUM, OPEN): exit 1 (expected 0), stdout regex '^PASS N-163$' did not match
+OVERALL VERDICT: 2 FINDING PROBE(S) FAILED   exit 1
+```
+
+Two distinct mechanisms, both measured directly:
+
+- `probe_n160` requires an empty dirty set and prints the list: `FAIL N-160: ['tests/unit/test_s82_untracked.py']`.
+  The tree being dirty says nothing about whether the cache refuses a foreign-tree row.
+- `test_n160_source_tree_hash_is_the_object_id_git_stores` iterates the dirty set and asks
+  `git cat-file blob HEAD:<path>` for each entry, which raises for a path HEAD does not contain; `probe_n163`
+  runs that whole file, so it inherits the crash.
+
+The direction is right — a dirty tree must not be certified — but the ledger now reports a closed finding
+as broken when it is intact, and a real regression in either probe would hide inside that noise. Fix:
+skip the blob comparison for paths absent from HEAD (they are dirty without needing a blob), and let
+`probe_n160` assert on the row rather than on the tree's cleanliness.
+
+### 82.7 Phase verdicts and residuals
+
+| Phase / claim | Verdict at `c8f56d4` | Residuals named |
+|---|---|---|
+| `§12.3` repository gate machinery | **GO** — 536 passed, 9/9 verifiers, `--force-full` exit 0, reproduced twice | N-165 (local ignored path); N-166 (probe diagnostics) |
+| N-162 | **CLOSED** — disjoint child refused end to end; untracked test forces `full`, exit 1, no row | N-165 is the same class, unguarded |
+| N-163 | **CLOSED** — mutant fails at a same-tree child, committed test passes there | — |
+| N-164 | **CLOSED** — decode removed ⇒ both probes fail | empty failure message (nit) |
+| ``§80.13`` items 3-5 | **PREPARED, NOT EXECUTED** — unchanged since §81.7 | A1, A2, A4 open by design |
+| Criteria / trials / holdout | **UNTOUCHED** — 1.1.9, no config or manifest row in the diff, no trial or validation artifact | N-152 `ACCEPTED`, N-150 `OPEN` |
+
+This round amends the audit procedure, which is the auditor's own file: `.agents/skills/audit-round/SKILL.md`
+stated that reuse depends on "the tree of the record's `gate_sha`" — false since `df382ff` — and named only
+two legal post-commit outcomes. It now names the commit key, the third outcome (full run, no row, reason
+naming the other commit), and the ignored-path caveat, each citing §81.4 / §82.2 / §82.5. Leaving the
+stale sentence would have had a future round re-measure a closed finding from a wrong premise.
+
+### 82.8 Work order
+
+1. **See ignored source paths** (N-165). Add ignored-but-collected source paths to the dirty set. Probe:
+   `probe_audit_findings.py N-165` asserts the defect today and must fail once fixed — then it is replaced
+   by the closure probe asserting that the forged row is refused. Serves `§12.3`.
+2. **Make the ledger state-independent** (N-166). Skip paths absent from HEAD in the §80 tree test; stop
+   requiring an empty dirty set in `probe_n160`. Probe: `probe_audit_findings.py N-166` must fail, and
+   `verify_audit_findings.py` must exit 0 with one untracked file present. Serves `§9.1`.
+3. **Give the N-160 mutant a reason** (nit, same commit as 2). Assert `problem is not None` separately so
+   the failure prints the measured value. Serves `§9.1`.
+4. **Source A1** (§81.8 Ruling 1) — four holiday circulars as Bronze artifacts with per-year provenance;
+   the calendar fingerprint stops standing in for it. Serves Phase 3B-2.
+5. **Label warm-up and guard gating** (§81.8 Ruling 1) — `WARMUP_NOT_GATABLE` plus a gating-mode probe.
+   Serves `§10.8`.
+6. **Make pin relaxation a computed gate** (§81.9 Ruling 2) — pre-2022 pin refused unless the readiness
+   probe exits 0 at the same commit; denominators recomputed from gating `T`. Serves Phase 2D / 3B-2.
+
+Items 1-3 are the gate's own integrity and come before any research work; 4-6 are the pre-2022 plan and
+are unchanged from §81.
+
+### 82.9 What would falsify this verdict
+
+- If a row recorded at another commit with the same source tree is reused at `HEAD`, N-162 is not closed.
+  The clone's disjoint child is that row.
+- If an untracked source file leaves `dirty_source_paths()` empty, or the gate reuses green over it, half B
+  is not closed. Both were measured on a clean checkout with one file added.
+- If the mutated §80 test (`git rev-parse HEAD^`) passes at a same-tree commit, N-163 is not closed.
+- If `probe_n160` still passes with `.decode()` removed, N-164 is not closed.
+- If a repository-tracked ignore rule (`.gitignore`) can hide a collected test without dirtying the tree,
+  N-165 is broader than stated. Its measurement is a local `info/exclude`.
+- If CI carries a local exclude file, or `core.excludesFile` is set in the CI image, the claim that CI is
+  immune to N-165 is wrong.
