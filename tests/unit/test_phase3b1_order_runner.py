@@ -1977,8 +1977,12 @@ def test_n94_allocation_weight_limits_position_size(runner, portfolio):
     """
     Finding N-94 Acceptance Probe (§61.6 Item 7):
     Proves that candidate.allocation_weight actively caps position sizing.
-    With criteria max_single_position_weight = 5%, setting candidate.allocation_weight = 2%
-    restricts the sized position to at most 2% of equity.
+    With criteria max_single_position_weight = 10%, setting candidate.allocation_weight = 3%
+    restricts the sized position to at most 3% of equity.
+
+    Audit §75.10 N-138: the 2% case this probe used to size (₹20,000 of ₹10,00,000) is now below the
+    committed `min_entry_notional` and is refused as a named no-trade before it can be sized. 3% is
+    the smallest weight on this equity that clears the floor, so the N-94 cap is measured above it.
     """
     signal_date = datetime.date(2024, 1, 2)
     target_date = datetime.date(2024, 1, 3)
@@ -1992,7 +1996,7 @@ def test_n94_allocation_weight_limits_position_size(runner, portfolio):
         atr=Decimal("1.00"),  # ATR stop distance small enough that risk doesn't bind before allocation
         session_volume=5000000,
         series="EQ",
-        allocation_weight=Decimal("0.02"),
+        allocation_weight=Decimal("0.03"),
     )
     bar = PriceBar(
         instrument_id="INE002A01018",
@@ -2020,8 +2024,8 @@ def test_n94_allocation_weight_limits_position_size(runner, portfolio):
         explicit_series=ExchangeSeries.EQ,
     )
     assert ticket_2pct.fill_result is not None
-    # 2% of ₹10,00,000 equity = ₹20,000 / ₹100 = 200 shares
-    assert ticket_2pct.fill_result.filled_quantity == 200
+    # 3% of ₹10,00,000 equity = ₹30,000 / ₹100 = 300 shares
+    assert ticket_2pct.fill_result.filled_quantity == 300
 
     # 2. Candidate with default criteria max weight (5%)
     cand_5pct = DailySignalCandidate(
@@ -2059,7 +2063,7 @@ def test_n94_allocation_weight_limits_position_size(runner, portfolio):
         explicit_series=ExchangeSeries.EQ,
     )
     assert ticket_5pct.fill_result is not None
-    # 5% of remaining equity (> ₹9,70,000) = ~480-500 shares > 200 shares!
+    # 5% of remaining equity (> ₹9,70,000) = ~480-500 shares > 300 shares!
     assert ticket_5pct.fill_result.filled_quantity > ticket_2pct.fill_result.filled_quantity
 
 

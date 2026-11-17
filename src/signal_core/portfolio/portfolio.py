@@ -165,18 +165,34 @@ class Portfolio:
         if pos is None or pos.is_closed or pos.quantity <= 0:
             return None
 
-        # Finding H-108: Guard against double-counting adjustments on an already-adjusted series
-        if price_convention == PriceConvention.SPLIT_BONUS_ADJUSTED:
-            if action.action_type in (
-                CorporateActionType.SPLIT,
-                CorporateActionType.BONUS,
-                CorporateActionType.CONSOLIDATION,
-                CorporateActionType.ISIN_TRANSITION,
-            ):
+        # Finding H-108 / Audit §75.4 H-127: when the price convention is SPLIT_BONUS_ADJUSTED the
+        # split/bonus/consolidation ratio is already inside the series, so restating the position by it
+        # would divide an entry price the series never multiplied. A split or bonus on the same ISIN is
+        # then a no-op; a face-value ISIN transition is still a real event, but an identity-only one:
+        # re-key the position 1:1 with quantity, cost basis and average entry price untouched.
+        if price_convention == PriceConvention.SPLIT_BONUS_ADJUSTED and action.action_type in (
+            CorporateActionType.SPLIT,
+            CorporateActionType.BONUS,
+            CorporateActionType.CONSOLIDATION,
+            CorporateActionType.ISIN_TRANSITION,
+        ):
+            if action.action_type == CorporateActionType.ISIN_TRANSITION and not action.new_isin:
                 raise CorporateActionError(
-                    f"Corporate action {action.action_type.value} cannot be restated on an already "
-                    f"SPLIT_BONUS_ADJUSTED price series for {action.isin} (AGENTS.md §10.3, Finding H-108)."
+                    f"ISIN_TRANSITION requires new_isin for {action.isin} (Finding H-86)."
                 )
+            new_isin = action.new_isin
+            if new_isin and new_isin != action.isin:
+                if new_isin in self._positions and self._positions[new_isin] is not pos:
+                    existing_target = self._positions[new_isin]
+                    if not existing_target.is_closed and existing_target.quantity > 0:
+                        raise CorporateActionError(
+                            f"Cannot re-key {action.isin} to {new_isin} on {action.action_type.value}: "
+                            f"target ISIN already has active open position."
+                        )
+                pos.rekey(new_isin)
+                del self._positions[action.isin]
+                self._positions[new_isin] = pos
+            return None
 
         # Finding H-86 & H-96: Re-key the position in self._positions whenever new_isin is specified
         if action.action_type == CorporateActionType.ISIN_TRANSITION:

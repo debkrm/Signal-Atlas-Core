@@ -56,11 +56,21 @@ class DeliverySwingTrendStrategy(Strategy):
         allocation_weight: Optional[Decimal] = None,
         atr_stop_multiple: Decimal = Decimal("2.0"),
         max_position_weight_trim_threshold: Optional[Decimal] = None,
+        entry_rank_indicator: str = "NONE",
     ) -> None:
         self._strategy_id = strategy_id
         self._fast_indicator = fast_indicator
         self._slow_indicator = slow_indicator
         self._atr_stop_multiple = atr_stop_multiple
+
+        # Audit §75.10 N-137: the entry selection rule. NONE preserves the alphabetical order every
+        # prior trial used; mom_63 ranks the session's qualifying entries by trailing return.
+        if entry_rank_indicator not in ("NONE", "mom_63"):
+            raise ValueError(
+                f"Unsupported entry_rank_indicator {entry_rank_indicator!r}; expected 'NONE' or 'mom_63' "
+                f"(Audit §75.10 N-137)."
+            )
+        self._entry_rank_indicator = entry_rank_indicator
 
         # Trial #4 (Finding H-114 scope, §66.5 Condition 1): optional automated winner
         # concentration trim. None (the default) leaves the certified baseline behaviour untouched.
@@ -98,6 +108,7 @@ class DeliverySwingTrendStrategy(Strategy):
             "allocation_weight": str(self._allocation_weight),
             "atr_stop_multiple": str(self._atr_stop_multiple),
             "max_position_weight_trim_threshold": str(self._max_position_weight_trim_threshold),
+            "entry_rank_indicator": self._entry_rank_indicator,
             "policy": "APPROVED_EQ_ONLY_POLICY",
         }
 
@@ -118,6 +129,8 @@ class DeliverySwingTrendStrategy(Strategy):
         reducing it to the strategy allocation weight (§13.2, CRIT-STAT-03).
         """
         intents: list[OrderIntent] = []
+        rank_entries = self._entry_rank_indicator != "NONE"
+        entry_scores: dict[str, Optional[Decimal]] = {}
 
         for isin in sorted(universe):
             inst_features = features.get(isin)
@@ -132,6 +145,8 @@ class DeliverySwingTrendStrategy(Strategy):
                 continue
 
             if close > fast_val and fast_val > slow_val:
+                if rank_entries:
+                    entry_scores[isin] = getattr(inst_features, self._entry_rank_indicator, None)
                 intents.append(
                     OrderIntent(
                         instrument_id=isin,
@@ -204,6 +219,22 @@ class DeliverySwingTrendStrategy(Strategy):
                             metadata={"trim_reason": "MAX_POSITION_WEIGHT"},
                         )
                     )
+
+        # Audit §75.10 N-137 / §13.4: selection is part of the strategy, not a property of the ISIN
+        # alphabet. When an entry rank is configured the session's exits are emitted first — they free
+        # the capital the entries compete for — and the qualifying BUYs are ordered by score,
+        # descending, with an ascending ISIN tie-break. NONE leaves the original order untouched, so
+        # a re-render of a prior trial produces the same intents.
+        if rank_entries:
+            ranked_buys = sorted(
+                (i for i in intents if i.side == OrderSide.BUY),
+                key=lambda i: (
+                    entry_scores.get(i.instrument_id) is None,
+                    -(entry_scores.get(i.instrument_id) or Decimal("0")),
+                    i.instrument_id,
+                ),
+            )
+            intents = [i for i in intents if i.side != OrderSide.BUY] + ranked_buys
 
         return tuple(intents)
 
@@ -440,8 +471,9 @@ def execute_swing_strategy_session(
             latest_market_prices=latest_market_prices,
         )
         tickets.append(ticket)
-        reason = str(ticket.fill_result.rejection_reason) if ticket.fill_result is not None else ""
-        if reason.startswith("Locked 0-range session"):
+        # Audit §75.5 N-134: a locked 0-range session is its own outcome; counting it as an upper- or
+        # lower-circuit hit made a bar with no band at all look like a circuit event.
+        if ticket.status == FillStatus.REJECTED_LOCKED_SESSION:
             locked_bar_refusals += 1
 
     # Audit §72 Ruling 1: armed protective stops are tested against this session's bar too, after

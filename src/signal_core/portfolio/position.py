@@ -311,6 +311,26 @@ class Position:
                 self._instrument_id = action.new_isin
             return None
 
+    def rekey(self, new_isin: str) -> None:
+        """
+        Moves this position onto a successor identity without touching its economics.
+
+        Audit §75.4 H-127: on a SPLIT_BONUS_ADJUSTED series the split/bonus ratio is already in the
+        prices, so a face-value ISIN transition is an identity change only and quantity, cost basis,
+        average entry price and realized PnL must survive it unchanged. Applying the ratio there would
+        divide an entry price the series never multiplied (Finding H-108).
+        """
+        if (
+            isinstance(new_isin, bool)
+            or not isinstance(new_isin, str)
+            or not new_isin.strip()
+            or new_isin != new_isin.strip()
+        ):
+            raise LedgerValidationError(f"new_isin must be a clean non-empty string, got {new_isin!r}")
+        if new_isin == self._instrument_id:
+            return
+        self._instrument_id = new_isin
+
     def record_merger_cash_settlement_pnl(self, cash_amount: Decimal, fractional_cost_basis: Decimal) -> Decimal:
         """
         Books the realized gain or loss on a merger cash-in-lieu settlement (Finding N-112).

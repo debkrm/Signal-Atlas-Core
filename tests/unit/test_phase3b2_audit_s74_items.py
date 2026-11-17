@@ -457,7 +457,8 @@ def test_ruling_d_locked_bar_is_refused_even_without_a_band():
     # high == low is §5.3's actual failure mode: zero depth on one side of the book.
     ticket = _unbanded_buy(runner, _bar(ENTRY_SESSION, "975.00", "975.00", "975.00", "975.00"))
 
-    assert ticket.status == FillStatus.REJECTED_UPPER_CIRCUIT
+    # Audit §75.5 N-134: the locked bar has its own status now; the refusal itself is unchanged.
+    assert ticket.status == FillStatus.REJECTED_LOCKED_SESSION
     assert "Locked 0-range session" in str(ticket.fill_result.rejection_reason)
     assert ticket.fill_result.filled_quantity == 0
     assert portfolio.get_position(ISIN) is None

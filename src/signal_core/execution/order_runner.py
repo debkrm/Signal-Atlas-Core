@@ -446,6 +446,12 @@ class DailyTPlus1OrderRunner:
             if size_result.quantity == 0:
                 return None, size_result
 
+            # Audit §75.10 N-138: a ₹20 fixed brokerage is a different fraction of ₹58 than of
+            # ₹25,000. An entry whose notional cannot carry the round-trip cost is a named no-trade,
+            # not a booked micro-position.
+            if size_result.position_value < self._criteria.min_entry_notional:
+                return None, size_result
+
             intent = OrderIntent.from_position_size_result(
                 instrument_id=candidate.instrument_id,
                 signal_date=candidate.signal_date,
@@ -533,7 +539,11 @@ class DailyTPlus1OrderRunner:
                 realised_risk=None,
                 intended_risk=size_result.risk_amount if size_result else None,
                 is_no_trade=True,
-                no_trade_reason="ZERO_QUANTITY_SIZED",
+                no_trade_reason=(
+                    "BELOW_MIN_ENTRY_NOTIONAL"
+                    if size_result is not None and size_result.quantity > 0
+                    else "ZERO_QUANTITY_SIZED"
+                ),
             )
 
         # Finding H-83 & H-85: Price band evidence is mandatory for BUY entries and SELL exits to verify circuit filters (§5.3)
@@ -583,6 +593,41 @@ class DailyTPlus1OrderRunner:
 
         realised_risk: Optional[Decimal] = None
         intended_risk: Optional[Decimal] = size_result.risk_amount if size_result else None
+
+        # Audit §75.10 N-138: an entry fill that lands below the viability floor is refused instead of
+        # booked, so a micro-fill can neither consume a capital slot nor pay a fixed brokerage order.
+        # Exits are never refused here: a frozen exit is an unbounded hold, not a small trade (§5.3).
+        if (
+            intent.side == OrderSide.BUY
+            and fill_result.status in (FillStatus.FILLED, FillStatus.PARTIALLY_FILLED)
+            and fill_result.executed_price is not None
+            and Decimal(fill_result.filled_quantity) * fill_result.executed_price
+            < self._criteria.min_fill_notional
+        ):
+            executed_notional = Decimal(fill_result.filled_quantity) * fill_result.executed_price
+            fill_result = ExecutionFillResult(
+                order=order,
+                status=FillStatus.REJECTED_BELOW_MIN_NOTIONAL,
+                fill_date=fill_result.fill_date,
+                latency_sessions=fill_result.latency_sessions,
+                filled_quantity=0,
+                unfilled_quantity=order.quantity,
+                executed_price=None,
+                slippage=None,
+                costs=None,
+                circuit_evidence_present=fill_result.circuit_evidence_present,
+                rejection_reason=(
+                    f"Executed notional ₹{executed_notional} is below the committed minimum fill "
+                    f"notional ₹{self._criteria.min_fill_notional} (Audit §75.10 N-138)"
+                ),
+                fill_id=(
+                    f"REJ_MIN_NOTIONAL_{order.order_id}_{fill_result.fill_date}"
+                    if order.order_id
+                    else None
+                ),
+                effective_upper_circuit_limit=fill_result.effective_upper_circuit_limit,
+                effective_lower_circuit_limit=fill_result.effective_lower_circuit_limit,
+            )
 
         if fill_result.status in (FillStatus.FILLED, FillStatus.PARTIALLY_FILLED):
             try:

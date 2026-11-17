@@ -32,6 +32,7 @@ from signal_core.features.indicators import (
     compute_rolling_low,
     compute_rsi,
     compute_sma,
+    compute_trailing_return,
     compute_weekly_trend,
 )
 
@@ -67,6 +68,8 @@ class InstrumentTechnicalFeatures:
     rolling_high_50: Optional[Decimal] = None
     rolling_low_50: Optional[Decimal] = None
     relative_strength_50: Optional[Decimal] = None
+    # Audit §75.11 N-137: 63-session trailing close return, the cross-sectional entry rank.
+    mom_63: Optional[Decimal] = None
 
     @property
     def atr(self) -> Optional[Decimal]:
@@ -210,6 +213,7 @@ class SubsegmentIndicatorEngine:
         lo_20_map = _run_subsegment_indicator(lambda s: compute_rolling_low(s, 20))
         hi_50_map = _run_subsegment_indicator(lambda s: compute_rolling_high(s, 50))
         lo_50_map = _run_subsegment_indicator(lambda s: compute_rolling_low(s, 50))
+        mom_63_map = _run_subsegment_indicator(lambda s: compute_trailing_return(s, 63))
 
         # Relative strength 50 must ALSO be computed strictly per subsegment (zero cross-gap leakage)
         rs_50_map: Dict[datetime.date, Optional[Decimal]] = {}
@@ -251,6 +255,7 @@ class SubsegmentIndicatorEngine:
                     rolling_high_50=hi_50_map.get(dt),
                     rolling_low_50=lo_50_map.get(dt),
                     relative_strength_50=rs_50_map.get(dt),
+                    mom_63=mom_63_map.get(dt),
                 )
             )
 

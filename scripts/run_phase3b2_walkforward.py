@@ -58,7 +58,7 @@ from signal_core.contracts.exchange_series import (
     APPROVED_EQ_ONLY_POLICY,
     ExchangeSeries,
 )
-from signal_core.contracts.order_types import OrderSide
+from signal_core.contracts.order_types import OrderProduct, OrderSide
 from signal_core.contracts.price_band import PriceBandRecord, is_price_band_sourced
 from signal_core.contracts.price_bar import PriceBar
 from signal_core.contracts.universe import UniverseSchedule
@@ -160,6 +160,14 @@ class Phase3B2WalkForwardRunResult:
     # Audit §73.4 H-125: held positions that crossed a merger / ISIN transition and were left with
     # no live stop, so a reader never has to infer protection from silence.
     unprotected_corporate_action_positions: int = 0
+    # Audit §75.8 N-136: the closed-only and the liquidated book side by side, so a reader never has
+    # to guess which one a PF or an expectancy figure was computed on.
+    closed_only_profit_factor: Optional[Decimal] = None
+    closed_only_mean_net_expectancy: Optional[Decimal] = None
+    liquidated_profit_factor: Optional[Decimal] = None
+    liquidated_mean_net_expectancy: Optional[Decimal] = None
+    open_positions_at_end_count: int = 0
+    open_positions_unrealized_pnl: Optional[Decimal] = None
 
 
 def build_authoritative_runner(
@@ -193,6 +201,7 @@ def build_authoritative_runner(
 def carry_protective_stop_across_corporate_action(
     runner: DailyTPlus1OrderRunner,
     action: Any,
+    apply_ratio: bool = True,
 ) -> bool:
     """
     Moves a held position's pending stop onto its successor identity (Audit §73.4 H-125).
@@ -203,14 +212,18 @@ def carry_protective_stop_across_corporate_action(
 
     Audit §74.9 item 4 (N-133): a blank successor leaves the stop armed. The stop is the only
     protection the held lot has, so the refusal must not be the thing that removes it.
+
+    Audit §75.4 H-127: `apply_ratio=False` carries the order across an identity change on an
+    already SPLIT_BONUS_ADJUSTED series, where the ratio is inside the prices and the stop price must
+    not be rescaled — only re-keyed.
     """
     if not action.new_isin:
         return False
     return runner.transfer_protective_stop(
         action.isin,
         action.new_isin,
-        int(action.ratio_numerator),
-        int(action.ratio_denominator),
+        int(action.ratio_numerator) if apply_ratio else 1,
+        int(action.ratio_denominator) if apply_ratio else 1,
     )
 
 
@@ -274,6 +287,109 @@ def restate_lots_across_merger(
         if whole_q > 0:
             open_lots.setdefault(action.new_isin, []).append(lot)
     return frac_basis_total
+
+
+def liquidate_open_book(
+    open_lots: Mapping[str, Sequence[Mapping[str, Any]]],
+    bars_by_isin_date: Mapping[Tuple[str, datetime.date], PriceBar],
+    liquidation_date: datetime.date,
+    simulator: ExecutionFillSimulator,
+    closed_trades: Sequence[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Marks the window-end open book to the final session's close (Audit §75.8 N-136).
+
+    A trend-following system's losers hit their stop and close; its winners are still open when the
+    window ends, so a PF or an expectancy computed on the closed ledger alone is right-tail censored.
+    This values every open lot at the last session's close and charges the exit through the same
+    slippage and statutory-cost models every fill uses, so `liquidated_profit_factor` describes the
+    book the equity curve describes. It is a diagnostic: nothing is posted to the Portfolio ledger,
+    no fill is recorded, and `closed_trades` is not touched.
+
+    A lot with no closing print is counted in `missing_prices` and excluded, never valued at book.
+    """
+    rows: List[Dict[str, Any]] = []
+    missing_prices = 0
+    exit_costs_total = Decimal("0.00")
+    slippage_cost_total = Decimal("0.00")
+    open_unrealized = Decimal("0.00")
+
+    for isin in sorted(open_lots):
+        bar = bars_by_isin_date.get((isin, liquidation_date))
+        for lot in open_lots[isin]:
+            qty = int(lot["quantity"])
+            if qty <= 0:
+                continue
+            if bar is None:
+                missing_prices += 1
+                continue
+            orig_qty = Decimal(lot["original_quantity"])
+            matched_qty = Decimal(qty)
+            close_px = bar.close
+            entry_cost_share = (lot["costs"] * matched_qty) / orig_qty
+            dividend_share = (lot.get("dividends", Decimal("0.00")) * matched_qty) / orig_qty
+            open_unrealized += (
+                (close_px - lot["entry_price"]) * matched_qty - entry_cost_share + dividend_share
+            )
+
+            exit_px = simulator.slippage_model.compute_slippage(
+                reference_price=close_px,
+                quantity=qty,
+                side=OrderSide.SELL,
+                session_volume=bar.volume,
+                average_daily_turnover=None,
+            ).adjusted_price
+            exit_costs = simulator.cost_model.compute_costs(
+                trade_date=liquidation_date,
+                side=OrderSide.SELL,
+                product=OrderProduct.DELIVERY,
+                quantity=qty,
+                price=exit_px,
+                round_to_paise=True,
+            )
+            exit_costs_total += exit_costs.total_charges
+            slippage_cost_total += (close_px - exit_px) * matched_qty
+            rows.append({
+                "isin": isin,
+                "exit_date": liquidation_date,
+                "quantity": qty,
+                "entry_price": lot["entry_price"],
+                "exit_price": exit_px,
+                "gross_pnl": (exit_px - lot["entry_price"]) * matched_qty,
+                "net_pnl": (
+                    (exit_px - lot["entry_price"]) * matched_qty
+                    - entry_cost_share - exit_costs.total_charges + dividend_share
+                ),
+                "total_costs": entry_cost_share + exit_costs.total_charges,
+                "dividends": dividend_share,
+                "exit_reason": "WINDOW_END_LIQUIDATION",
+            })
+
+    def _profit_factor(trades: Sequence[Mapping[str, Any]]) -> Decimal:
+        gains = sum(t["gross_pnl"] for t in trades if t["gross_pnl"] > Decimal("0.00"))
+        losses = sum(abs(t["gross_pnl"]) for t in trades if t["gross_pnl"] < Decimal("0.00"))
+        return (gains / losses) if losses > Decimal("0.00") else Decimal("0.00")
+
+    def _expectancy(trades: Sequence[Mapping[str, Any]]) -> Optional[Decimal]:
+        if not trades:
+            return None
+        return sum(t["net_pnl"] for t in trades) / Decimal(len(trades))
+
+    liquidated = list(closed_trades) + rows
+
+    return {
+        "liquidation_date": liquidation_date,
+        "rows": rows,
+        "missing_prices": missing_prices,
+        "exit_costs": exit_costs_total,
+        "slippage_cost": slippage_cost_total,
+        "open_positions_unrealized_pnl": open_unrealized,
+        "closed_only_profit_factor": _profit_factor(closed_trades),
+        "closed_only_mean_net_expectancy": _expectancy(closed_trades),
+        "liquidated_profit_factor": _profit_factor(liquidated),
+        "liquidated_mean_net_expectancy": _expectancy(liquidated),
+        "closed_net_pnl": sum(t["net_pnl"] for t in closed_trades),
+    }
 
 
 def build_historical_dataset_from_raw_bhavcopy(
@@ -453,6 +569,7 @@ def run_phase3b2_walkforward(
     in_sample_only: bool = False,
     max_position_weight_trim_threshold: Optional[Decimal] = None,
     band_policy: Optional[str] = None,
+    entry_rank_indicator: Optional[str] = None,
 ) -> Phase3B2WalkForwardRunResult:
     """
     Executes the Phase 3B-2b walk-forward backtest and returns Phase3B2WalkForwardRunResult.
@@ -473,6 +590,16 @@ def run_phase3b2_walkforward(
             f"band_policy '{band_policy}' disagrees with the committed criteria "
             f"('{committed_band_policy.value}'); commit the assumption before running it "
             f"(Audit §74.10 Ruling D, AGENTS.md §8.1)."
+        )
+
+    # Audit §75.10 N-137: the entry rank is pre-registered in the criteria for the same reason — it
+    # decides which signal gets a capital slot, so a run may assert it, never choose it.
+    committed_rank_indicator = criteria.entry_rank_indicator
+    if entry_rank_indicator is not None and entry_rank_indicator != committed_rank_indicator:
+        raise ValueError(
+            f"entry_rank_indicator '{entry_rank_indicator}' disagrees with the committed criteria "
+            f"('{committed_rank_indicator}'); commit the assumption before running it "
+            f"(Audit §75.10 N-137, AGENTS.md §8.1)."
         )
 
     # 2. Strict Holdout Containment Check (§8.1, §10.8)
@@ -525,6 +652,12 @@ def run_phase3b2_walkforward(
         )
 
     # Map snapshot UUIDs / symbols -> point-in-time ISINs via SecurityMaster (Finding H-109)
+    # Audit §75.4 H-127: the restatement branch is a function of the price convention. On an already
+    # SPLIT_BONUS_ADJUSTED series a split/bonus/transition ratio is inside the prices, so the position,
+    # the lot book and the pending stop re-key at 1:1; only an UNADJUSTED series takes the ratio.
+    price_convention = getattr(dataset.snapshot, "price_convention", PriceConvention.SPLIT_BONUS_ADJUSTED)
+    apply_share_ratios = price_convention is not PriceConvention.SPLIT_BONUS_ADJUSTED
+
     uuid_to_isin: Dict[str, str] = {}
     refused_transition_uuids: Set[str] = set()
 
@@ -685,6 +818,7 @@ def run_phase3b2_walkforward(
         allocation_weight=allocation_weight,
         atr_stop_multiple=atr_stop_multiple,
         max_position_weight_trim_threshold=max_position_weight_trim_threshold,
+        entry_rank_indicator=committed_rank_indicator,
     )
 
     # 9. Session-by-Session Walk-Forward Simulation Loop
@@ -783,7 +917,7 @@ def run_phase3b2_walkforward(
                 # Audit §72 Ruling 1: a pending stop is denominated in the pre-action price scale.
                 # H-126: when the row also changes identity the carry below owns the rescale AND the
                 # re-key, so rescaling here as well would apply the ratio twice.
-                if not ca.new_isin or ca.new_isin == ca.isin:
+                if apply_share_ratios and (not ca.new_isin or ca.new_isin == ca.isin):
                     runner.adjust_protective_stop_for_split(
                         ca.isin, int(ca.ratio_numerator), int(ca.ratio_denominator)
                     )
@@ -800,8 +934,8 @@ def run_phase3b2_walkforward(
                     open_lots,
                     ca.isin,
                     target_isin,
-                    int(ca.ratio_numerator),
-                    int(ca.ratio_denominator),
+                    int(ca.ratio_numerator) if apply_share_ratios else 1,
+                    int(ca.ratio_denominator) if apply_share_ratios else 1,
                 )
                 if target_isin != ca.isin:
                     identity_carries[ca.isin] = ca
@@ -814,8 +948,8 @@ def run_phase3b2_walkforward(
                     open_lots,
                     ca.isin,
                     ca.new_isin,
-                    int(ca.ratio_numerator),
-                    int(ca.ratio_denominator),
+                    int(ca.ratio_numerator) if apply_share_ratios else 1,
+                    int(ca.ratio_denominator) if apply_share_ratios else 1,
                 )
                 identity_carries[ca.isin] = ca
 
@@ -823,7 +957,14 @@ def run_phase3b2_walkforward(
             # H-125 / H-126: retiring the stop with the old identity left the successor unprotected.
             # A stop that cannot be carried is counted, never silently dropped (AGENTS.md §13.2).
             if old_isin in held_at_session_start:
-                if not carry_protective_stop_across_corporate_action(runner, action):
+                # A merger is a real exchange ratio even on an adjusted series (the convention adjusts
+                # splits and bonuses, not mergers), so only the other identity changes are 1:1 there.
+                if not carry_protective_stop_across_corporate_action(
+                    runner,
+                    action,
+                    apply_ratio=apply_share_ratios
+                    or action.action_type is CorporateActionType.MERGER,
+                ):
                     total_unprotected_ca_positions += 1
             else:
                 runner.cancel_protective_stop(old_isin)
@@ -849,7 +990,7 @@ def run_phase3b2_walkforward(
             latest_market_prices=cur_market_prices,
             corporate_actions=actions_today,
             security_master=sec_master,
-            price_convention=getattr(dataset.snapshot, "price_convention", PriceConvention.SPLIT_BONUS_ADJUSTED),
+            price_convention=price_convention,
         )
         session_summaries.append(summary)
 
@@ -1031,6 +1172,12 @@ def run_phase3b2_walkforward(
             f"but the authoritative runner sizes from {runner.atr_stop_multiple} (Audit §72 H-124)."
         )
     trial_params["atr_stop_multiple"] = str(runner.atr_stop_multiple)
+    # Audit §75.7 N-135: the band policy and the entry rank change what a trade is, so a reader
+    # comparing two rows must see them in the row, not infer them from `criteria_version`.
+    trial_params["unbanded_session_fill_policy"] = runner.band_policy.value
+    trial_params["entry_rank_indicator"] = committed_rank_indicator
+    trial_params["min_entry_notional"] = str(criteria.min_entry_notional)
+    trial_params["min_fill_notional"] = str(criteria.min_fill_notional)
 
     if record_trial:
         trial_record = registry.append_trial(
@@ -1113,6 +1260,49 @@ def run_phase3b2_walkforward(
 
     total_statutory_costs = sum(
         f.costs.total_charges for f in all_fills if f.costs
+    )
+
+    # --- Audit §75.8 N-136: de-censor the window-end book -------------------------------------
+    # `profit_factor` and `mean_net_expectancy` above are computed on the closed ledger alone, from
+    # which a trend system's right tail has been removed. `liquidate_open_book` values the open book
+    # at the final session's close through the same slippage and statutory-cost models as every fill
+    # and reports both books; nothing is posted to the Portfolio ledger and `closed_trades` is not
+    # rewritten.
+    liquidation = liquidate_open_book(
+        open_lots=open_lots,
+        bars_by_isin_date=bars_by_isin_date,
+        liquidation_date=sessions_to_run[-1],
+        simulator=simulator,
+        closed_trades=closed_trades,
+    )
+    liquidation_date = liquidation["liquidation_date"]
+    liquidation_rows = liquidation["rows"]
+    liquidation_missing_prices = liquidation["missing_prices"]
+    liquidation_exit_costs = liquidation["exit_costs"]
+    liquidation_slippage_cost = liquidation["slippage_cost"]
+    liquidated_profit_factor = liquidation["liquidated_profit_factor"]
+    liquidated_mean_net_expectancy = liquidation["liquidated_mean_net_expectancy"]
+
+    # The identity the probe asks for, stated in the ledger's own terms so it can be exact:
+    # realized PnL + dividends received + the open book marked to market, less that book's cost
+    # basis and unpaid buy charges, is the change in equity. `realized_net_pnl` already carries the
+    # merger cash-in-lieu settlement (Finding N-112), so there is no separate merger term here.
+    portfolio_realized_net = sum(pos.realized_net_pnl for pos in portfolio._positions.values())
+    portfolio_open_cost = sum(
+        pos.total_cost_basis + pos.unallocated_buy_charges
+        for pos in portfolio.get_open_positions().values()
+    )
+    portfolio_market_value = final_equity - portfolio.current_cash
+    open_positions_unrealized = portfolio_market_value - portfolio_open_cost
+    liquidated_equity_identity_residual = (
+        portfolio_realized_net + portfolio_dividends + portfolio_market_value
+        - portfolio_open_cost - (final_equity - initial_capital)
+    )
+    assert abs(liquidated_equity_identity_residual) <= Decimal("0.01"), (
+        f"Realized PnL ₹{portfolio_realized_net} + dividends ₹{portfolio_dividends} + open market "
+        f"value ₹{portfolio_market_value} − open cost ₹{portfolio_open_cost} does not equal "
+        f"Δequity ₹{final_equity - initial_capital} "
+        f"(residual ₹{liquidated_equity_identity_residual}, tolerance ₹0.01)"
     )
 
     # Audit §72 N-129: the figures a gate decision rests on must be recomputable from committed
@@ -1706,6 +1896,28 @@ def run_phase3b2_walkforward(
         report_dict["protective_stop_deferrals"] = total_protective_stop_deferrals
         report_dict["protective_stop_circuit_deferrals"] = total_protective_stop_circuit_deferrals
         report_dict["unprotected_corporate_action_positions"] = total_unprotected_ca_positions
+        # Audit §75.8 N-136: both books, named, so a PF or an expectancy is never ambiguous.
+        report_dict["closed_only_profit_factor"] = str(profit_factor)
+        report_dict["closed_only_mean_net_expectancy"] = (
+            str(ledger_net_expectancy) if ledger_net_expectancy is not None else None
+        )
+        report_dict["liquidated_profit_factor"] = str(liquidated_profit_factor)
+        report_dict["liquidated_mean_net_expectancy"] = (
+            str(liquidated_mean_net_expectancy) if liquidated_mean_net_expectancy is not None else None
+        )
+        report_dict["open_positions_at_end_count"] = len(liquidation_rows)
+        report_dict["open_positions_unrealized_pnl"] = str(open_positions_unrealized)
+        report_dict["liquidation_missing_prices"] = liquidation_missing_prices
+        report_dict["liquidation_exit_costs"] = str(liquidation_exit_costs)
+        report_dict["liquidation_slippage"] = str(liquidation_slippage_cost)
+        report_dict["liquidated_equity_identity_residual"] = str(liquidated_equity_identity_residual)
+        report_dict["liquidated_open_positions"] = [
+            {
+                key: (value.isoformat() if isinstance(value, datetime.date) else str(value))
+                for key, value in row.items()
+            }
+            for row in liquidation_rows
+        ]
 
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(report_dict, f, indent=2)
@@ -1798,6 +2010,23 @@ def run_phase3b2_walkforward(
             "> Every row is in `closed_trades` in the JSON artifact, and the two aggregates above "
             "are computed from that array.",
             "",
+            "## Window-End Liquidation (Audit §75.8 N-136)",
+            "",
+            f"> {len(closed_trade_ledger)} closed round trip(s) plus {len(liquidation_rows)} open "
+            f"position(s) liquidated at the {liquidation_date.isoformat()} close "
+            f"({liquidation_missing_prices} unpriced position(s) excluded, never valued at book).",
+            f"> Closed-only PF {profit_factor:.4f} / expectancy "
+            f"{ledger_net_expectancy if ledger_net_expectancy is not None else 'NOT RUN'}; "
+            f"liquidated PF {liquidated_profit_factor:.4f} / expectancy "
+            f"{liquidated_mean_net_expectancy if liquidated_mean_net_expectancy is not None else 'NOT RUN'}. "
+            f"Open-book unrealized ₹{open_positions_unrealized:,.2f}; liquidation exit costs "
+            f"₹{liquidation_exit_costs:,.2f} and exit slippage ₹{liquidation_slippage_cost:,.2f}.",
+            f"> Identity: closed net ₹{total_closed_net_pnl:,.2f} + open unrealized "
+            f"₹{open_positions_unrealized:,.2f} − Δequity ₹{final_equity - initial_capital:,.2f} = "
+            f"₹{liquidated_equity_identity_residual:,.4f} (tolerance ₹{cash_reconciliation_tolerance}).",
+            "> The liquidation is a diagnostic computed through the same slippage and statutory-cost "
+            "models as every fill: no ledger entry, no fill and no `closed_trades` row is produced.",
+            "",
         ])
         extra_md.append("")
 
@@ -1840,6 +2069,12 @@ def run_phase3b2_walkforward(
         protective_stop_exits=total_protective_stop_exits,
         protective_stop_circuit_deferrals=total_protective_stop_circuit_deferrals,
         unprotected_corporate_action_positions=total_unprotected_ca_positions,
+        closed_only_profit_factor=profit_factor,
+        closed_only_mean_net_expectancy=ledger_net_expectancy,
+        liquidated_profit_factor=liquidated_profit_factor,
+        liquidated_mean_net_expectancy=liquidated_mean_net_expectancy,
+        open_positions_at_end_count=len(liquidation_rows),
+        open_positions_unrealized_pnl=open_positions_unrealized,
     )
 
 
@@ -1913,6 +2148,15 @@ def main() -> int:
             "(Audit §74.10 Ruling D)"
         ),
     )
+    parser.add_argument(
+        "--entry-rank-indicator",
+        type=str,
+        default=None,
+        help=(
+            "Assert the pre-registered cross-sectional entry rank (NONE | mom_63). Fails closed when it "
+            "disagrees with the committed criteria (Audit §75.10 N-137)"
+        ),
+    )
     parser.add_argument("--hypothesis", type=str, default=None, help="TrialRegistry hypothesis (required for a new trial)")
     parser.add_argument("--rationale", type=str, default=None, help="TrialRegistry rationale naming the parameter change")
     args = parser.parse_args()
@@ -1948,6 +2192,7 @@ def main() -> int:
         slow_indicator=args.slow_indicator,
         atr_stop_multiple=args.atr_stop_multiple,
         band_policy=args.band_policy,
+        entry_rank_indicator=args.entry_rank_indicator,
         **run_kwargs,
     )
 
@@ -1968,6 +2213,7 @@ def main() -> int:
     print(f"Tickets Rejected:        {res.total_tickets_rejected}")
     print(f"Skipped (Missing Band):  {res.total_skipped_missing_band}")
     print(f"Band Policy:             {res.runner.band_policy.value} (Audit §74.10 Ruling D)")
+    print(f"Entry Rank Indicator:    {res.strategy.parameters.get('entry_rank_indicator')} (Audit §75.10 N-137)")
     print(f"Skipped (Missing Bar):   {res.total_skipped_missing_bar}")
     print(f"Protective Stop Exits:   {res.protective_stop_exits} (deferred by frozen bid §5.3: {res.protective_stop_circuit_deferrals})")
     print(f"Active Stops at End:     {len(res.runner.protective_stops)}")
@@ -1983,6 +2229,25 @@ def main() -> int:
     print(f"Total Closed Trades:     {len(res.closed_trades)}")
     print(f"Win Rate:                {res.win_rate * 100:.2f}%")
     print(f"Profit Factor:           {res.profit_factor:.4f}")
+    # Audit §75.8 N-136: the censored and the de-censored book are printed side by side.
+    if res.liquidated_profit_factor is not None:
+        print(
+            f"  closed-only book:       PF {res.closed_only_profit_factor:.4f} | expectancy "
+            f"₹{res.closed_only_mean_net_expectancy:,.2f}" if res.closed_only_mean_net_expectancy is not None
+            else f"  closed-only book:       PF {res.closed_only_profit_factor:.4f}"
+        )
+        print(
+            f"  liquidated book:        PF {res.liquidated_profit_factor:.4f} | expectancy "
+            f"₹{res.liquidated_mean_net_expectancy:,.2f} over "
+            f"{len(res.closed_trades) + res.open_positions_at_end_count} round trip(s)"
+            if res.liquidated_mean_net_expectancy is not None
+            else f"  liquidated book:        PF {res.liquidated_profit_factor:.4f}"
+        )
+    if res.open_positions_unrealized_pnl is not None:
+        print(
+            f"Open book at end:        {res.open_positions_at_end_count} position(s), "
+            f"unrealized ₹{res.open_positions_unrealized_pnl:,.2f}"
+        )
     print(f"Max Drawdown:            {res.max_drawdown * 100:.2f}%")
     if res.mean_net_expectancy is not None:
         print(f"Mean Net Expectancy:     ₹{res.mean_net_expectancy:,.2f} per closed round trip (committed ledger)")

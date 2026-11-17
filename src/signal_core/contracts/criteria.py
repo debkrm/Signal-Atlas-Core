@@ -134,6 +134,13 @@ class GoNoGoCriteria:
     # bar is locked (high == low), leaving CRIT-EXEC-03/04 NOT RUN on those sessions.
     unbanded_session_fill_policy: str = "STRICT_BAND_REQUIRED"
 
+    # Audit §75.10 items 3 and 4 — pre-registered before seq 9, and inside the same fingerprint:
+    # the cross-sectional entry rank (NONE = the alphabetical order every prior trial used), and the
+    # minimum economically viable order sizes that keep a ₹20 fixed brokerage off a micro-fill.
+    entry_rank_indicator: str = "NONE"
+    min_entry_notional: Decimal = Decimal("25000")
+    min_fill_notional: Decimal = Decimal("5000")
+
     # Market data and accounting invariants (§10.8, Audit §40.5, Finding H-54, H-61, H-62, H-64, H-72)
     min_binding_evaluation_start_date: datetime.date = datetime.date(2022, 1, 3)
     min_traded_eq_resolution_pct: Decimal = Decimal("100.0")
@@ -247,6 +254,24 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
             f"Unsupported unbanded_session_fill_policy: {unbanded_policy!r} (Audit §74.10 Ruling D)."
         )
 
+    # Audit §75.10 N-137 / N-138: the ranking rule and the notional floors change what a trade is, so
+    # they are criteria fields (inside the fingerprint a verdict cites), not run flags.
+    rank_indicator = str(exec_liq.get("entry_rank_indicator", "NONE")).strip()
+    if rank_indicator not in ("NONE", "mom_63"):
+        raise CriteriaValidationError(
+            f"Unsupported entry_rank_indicator: {rank_indicator!r}; expected 'NONE' or 'mom_63' "
+            f"(Audit §75.10 N-137)."
+        )
+    min_entry_notional = _to_decimal(
+        exec_liq.get("min_entry_notional", "25000"), "min_entry_notional"
+    )
+    min_fill_notional = _to_decimal(exec_liq.get("min_fill_notional", "5000"), "min_fill_notional")
+    for _name, _value in (("min_entry_notional", min_entry_notional), ("min_fill_notional", min_fill_notional)):
+        if _value < Decimal("0"):
+            raise CriteriaValidationError(
+                f"{_name} must be non-negative, got {_value} (Audit §75.10 N-138)."
+            )
+
     # N-51: All pinned calendar identity invariants are MANDATORY — missing key fails closed, no silent fallback.
     mda = data.get("market_data_and_accounting_invariants", {})
 
@@ -318,6 +343,9 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         min_execution_latency_sessions=int(exec_liq["min_execution_latency_sessions"]),
         statutory_costs=costs,
         unbanded_session_fill_policy=unbanded_policy,
+        entry_rank_indicator=rank_indicator,
+        min_entry_notional=min_entry_notional,
+        min_fill_notional=min_fill_notional,
         min_binding_evaluation_start_date=datetime.date.fromisoformat(
             str(mda.get("min_binding_evaluation_start_date", "2022-01-03"))
         ),

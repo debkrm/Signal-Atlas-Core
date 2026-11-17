@@ -119,24 +119,25 @@ def build_tier_a_results_bundle(
         "data_provenance_status": prov_status,
         "provenance_attestation_reference": str(bhavcopy_manifest_file),
 
-        # Audit §74.10 Ruling D: criteria 1.1.4 records how an instrument-session without an attested
-        # price band is filled. That is a change in what a fill means, not a threshold, and it enters
-        # the criteria fingerprint, so the committed artifact is restated rather than left describing
-        # a criteria version that no longer governs.
+        # Audit §75.10 items 3-4: criteria 1.1.5 pre-registers the cross-sectional entry rank and the
+        # minimum viable order sizes. They change which signal gets a slot and what a booked trade is,
+        # not a threshold, and they enter the criteria fingerprint, so the committed artifact is
+        # restated rather than left describing a criteria version that no longer governs.
         "restatement_note": (
-            "Restatement 2026-11-17 (Audit §74.10 Ruling D): supersedes the 1.1.3 restatement "
-            "recorded under Audit §73.9 items 3-4, the 1.1.2 restatement recorded under Audit §72 "
-            "N-128, the 1.1.1 restatement recorded under Audit §68.6 item 3 (H-115), and the "
-            "2026-11-14T16:45:00+00:00 artifact before those. Criteria version 1.1.4 changes no "
-            "threshold: it adds unbanded_session_fill_policy = LOCKED_BAR_REFUSAL_ONLY, so an "
-            "instrument-session with no attested band fills unless its bar is locked (high == low, "
-            "zero depth on one side), while CRIT-EXEC-03/-04 remain NOT RUN on unsourced sessions. "
-            "The policy enters the criteria fingerprint, so the fingerprint moves with it. seq 8 "
-            "(TRIAL-PHASE3B2-BREADTH-008) was then registered and executed under that policy on the "
-            "2022-2023 in-sample window, which rewrites the trials manifest the pin names; the "
-            "registry now reads N = 8, N_eval = 4. Provenance remains CONTENT_IDENTIFIED_ONLY / "
-            "SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and every Tier-A verdict is "
-            "unchanged."
+            "Restatement 2026-11-17 (Audit §75.10 items 3-4): supersedes the 1.1.4 restatement "
+            "recorded under Audit §74.10 Ruling D, the 1.1.3 restatement recorded under Audit §73.9 "
+            "items 3-4, the 1.1.2 restatement recorded under Audit §72 N-128, the 1.1.1 restatement "
+            "recorded under Audit §68.6 item 3 (H-115), and the 2026-11-14T16:45:00+00:00 artifact "
+            "before those. Criteria version 1.1.5 changes no PASS/FAIL threshold: it adds "
+            "entry_rank_indicator = mom_63 (the 63-session trailing return ranks the session's "
+            "qualifying entries instead of the ISIN alphabet choosing them), min_entry_notional = "
+            "25000 (an entry below it is a named no-trade) and min_fill_notional = 5000 (a BUY fill "
+            "below it is refused, never booked; exits are exempt because a frozen exit is an "
+            "unbounded hold). Both enter the criteria fingerprint, so the fingerprint moves with "
+            "them. The registry still reads N = 8, N_eval = 4 at this commit; seq 9 "
+            "(TRIAL-PHASE3B2-RANKED-009) is registered and executed under these values. Provenance "
+            "remains CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN "
+            "and every Tier-A verdict is unchanged."
         ),
     }
 

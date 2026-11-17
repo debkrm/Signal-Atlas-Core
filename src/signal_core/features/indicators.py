@@ -115,6 +115,32 @@ def compute_sma(
     return result
 
 
+def compute_trailing_return(
+    records: Sequence[Union[PriceRecordItem, Decimal, int]],
+    lookback: int,
+    price_field: str = "close",
+) -> List[Optional[Decimal]]:
+    """
+    Computes the trailing close-to-close return: (close_t / close_{t-lookback}) - 1.
+
+    Audit §75.11 N-137: the cross-sectional entry rank needs a score known at session t close and
+    built only from prices up to t, so bar t depends on bar t-lookback and nothing later. Returns
+    None until `lookback` prior observations exist (and across a fresh subsegment, where it re-warms).
+    """
+    if isinstance(lookback, bool) or not isinstance(lookback, int) or lookback <= 0:
+        raise IndicatorValidationError(f"Lookback must be a positive integer, got {lookback!r}.")
+
+    series = extract_price_series(records, price_field)
+    n = len(series)
+    result: List[Optional[Decimal]] = [None] * n
+    for i in range(lookback, n):
+        base = series[i - lookback]
+        if base <= Decimal("0"):
+            continue
+        result[i] = ((series[i] / base) - Decimal("1")).quantize(PRECISION_6, rounding=ROUND_HALF_UP)
+    return result
+
+
 def compute_ema(
     records: Sequence[Union[PriceRecordItem, Decimal, int]],
     period: int,

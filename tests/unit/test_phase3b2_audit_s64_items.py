@@ -49,7 +49,7 @@ from signal_core.execution.order_runner import (
 )
 from signal_core.execution.simulator import ExecutionFillSimulator
 from signal_core.portfolio.portfolio import Portfolio
-from signal_core.portfolio.types import CorporateActionError, PortfolioRiskLimitError
+from signal_core.portfolio.types import PortfolioRiskLimitError
 from signal_core.research.containment import (
     HoldoutSealedError,
     PartitionRole,
@@ -296,7 +296,12 @@ def test_h107_h108_portfolio_price_convention_guard_and_dividend_credit():
     )
     portfolio.process_fill(fill)
 
-    # 1. Under SPLIT_BONUS_ADJUSTED, SPLIT raises CorporateActionError
+    # 1. Under SPLIT_BONUS_ADJUSTED, a same-ISIN SPLIT is a no-op
+    # Audit §75.4 H-127 supersedes H-108's fail-closed raise here: the ratio is already inside the
+    # adjusted series, so restating the position by it is the double count H-108 was guarding against.
+    # Refusing the run instead made the trial's survival depend on which names happened to be held.
+    position = portfolio.get_position("INE002A01018")
+    entry_before = position.average_entry_price
     ca_split = CorporateAction(
         isin="INE002A01018",
         action_type=CorporateActionType.SPLIT,
@@ -304,12 +309,13 @@ def test_h107_h108_portfolio_price_convention_guard_and_dividend_credit():
         ratio_numerator=Decimal("2"),
         ratio_denominator=Decimal("1"),
     )
-    with pytest.raises(CorporateActionError, match="cannot be restated on an already SPLIT_BONUS_ADJUSTED"):
-        portfolio.apply_corporate_actions_for_session(
-            session_date=datetime.date(2022, 3, 1),
-            corporate_actions=[ca_split],
-            price_convention=PriceConvention.SPLIT_BONUS_ADJUSTED,
-        )
+    portfolio.apply_corporate_actions_for_session(
+        session_date=datetime.date(2022, 3, 1),
+        corporate_actions=[ca_split],
+        price_convention=PriceConvention.SPLIT_BONUS_ADJUSTED,
+    )
+    assert portfolio.get_position("INE002A01018").quantity == 10
+    assert portfolio.get_position("INE002A01018").average_entry_price == entry_before
 
     # 2. DIVIDEND applies and credits the CashLedger
     init_cash = portfolio.current_cash

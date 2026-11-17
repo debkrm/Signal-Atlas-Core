@@ -292,7 +292,9 @@ def test_circuit_freeze_reference_price_and_locked_bar_e1():
         upper_circuit_limit=None,
     )
     res_locked = simulator.simulate_order(buy_order, obs_locked)
-    assert res_locked.status == FillStatus.REJECTED_UPPER_CIRCUIT
+    # Audit §75.5 N-134: a locked 0-range session is a frozen book, not a circuit hit, so it carries
+    # its own status. The refusal itself is unchanged.
+    assert res_locked.status == FillStatus.REJECTED_LOCKED_SESSION
     assert res_locked.filled_quantity == 0
 
 

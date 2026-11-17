@@ -357,8 +357,9 @@ class ExecutionFillSimulator:
                     effective_lower_circuit_limit=effective_lower,
                 )
             if price_bar.high == price_bar.low:
+                # Audit §75.5 N-134: the reason string already discriminated; the status now does too.
                 return self._create_rejected_result(
-                    order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_UPPER_CIRCUIT,
+                    order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_LOCKED_SESSION,
                     f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); buyers rationed",
                     circuit_evidence_present=circuit_evidence,
                     effective_upper_circuit_limit=effective_upper,
@@ -377,7 +378,7 @@ class ExecutionFillSimulator:
                 )
             if price_bar.high == price_bar.low:
                 return self._create_rejected_result(
-                    order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_LOWER_CIRCUIT,
+                    order, price_bar.trade_date, latency_sessions, FillStatus.REJECTED_LOCKED_SESSION,
                     f"Locked 0-range session (high={price_bar.high} == low={price_bar.low}); sellers trapped",
                     circuit_evidence_present=circuit_evidence,
                     effective_upper_circuit_limit=effective_upper,

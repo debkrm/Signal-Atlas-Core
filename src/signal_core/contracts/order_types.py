@@ -98,6 +98,12 @@ class FillStatus(str, Enum):
     PARTIALLY_FILLED = "PARTIALLY_FILLED"
     REJECTED_UPPER_CIRCUIT = "REJECTED_UPPER_CIRCUIT"
     REJECTED_LOWER_CIRCUIT = "REJECTED_LOWER_CIRCUIT"
+    # Audit §75.5 N-134: a locked 0-range session is a frozen book, not a circuit hit. It has its own
+    # status so a reader counting circuit rejections does not count bars that carried no band at all.
+    REJECTED_LOCKED_SESSION = "REJECTED_LOCKED_SESSION"
+    # Audit §75.10 N-138: an executed notional below the committed viability floor is refused instead
+    # of booked, so a micro-fill never consumes a slot or a ₹20 brokerage order.
+    REJECTED_BELOW_MIN_NOTIONAL = "REJECTED_BELOW_MIN_NOTIONAL"
     REJECTED_VOLUME_CAP = "REJECTED_VOLUME_CAP"
     REJECTED_INSUFFICIENT_TURNOVER = "REJECTED_INSUFFICIENT_TURNOVER"
     REJECTED_INELIGIBLE_SERIES = "REJECTED_INELIGIBLE_SERIES"
