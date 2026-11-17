@@ -267,3 +267,270 @@ The target: `2018-04-01 .. 2021-12-31` NSE Bhavcopy into Bronze, the dev corpus 
 validates this commit printed `523 passed in 102.50s (0:01:42)` at W0.5-3 under `--force-full`. Count,
 skips and xfails stand as reported; only the clock is corrected. §79.1 is left as committed because
 this volume is append-only (§11.1) — the correction is appended, never edited in place (§10.1).
+
+## §80 — Audit of `96d24a1` (tag `feat-s79-e0290b4`): five of six §79 repairs hold, and the green cache still pays for a test it never ran
+
+**Date:** 17 November 2026
+**Commit under review:** `96d24a1` (1 file, +18 lines). The tag `feat-s79-e0290b4` names `e0290b4`, its
+parent; the deliverable is the pair, because `e0290b4` is the fix and `96d24a1` is the cache row it left
+behind.
+**Baseline:** `3119cb2` (§79, tag `audit-s79-67235d97`)
+**Verdicts:** N-154 CLOSED · N-156 CLOSED · N-157 CLOSED · N-158 CLOSED · N-159 CLOSED ·
+N-155 **PARTIAL, held open** · N-152 ACCEPTED (unchanged) · two new findings, one HIGH
+
+### 80.1 Baseline re-measured at `96d24a1`
+
+The suite and every verifier were re-run on this checkout, not read.
+
+| Measurement | Result |
+|---|---|
+| `scripts/verify_audit_append_only.py --force-full` | exit 0, `ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Verifiers | 10 `scripts/verify_*.py` on disk, **9** executed by W0.5-2 (the gate excludes itself), all exit 0 |
+| Test suite | **529 passed, 0 skipped, 0 xfailed** (115.08 s; gate elapsed 116.17 s) |
+| W0.5-5 reference manifest | 46 current artifacts match, 22 superseded rows skipped |
+| W0.5-3 cache | source tree `87f0fd5d…` already recorded; **no append**, and `git status` is clean after the run |
+| `verify_audit_findings.py` | exit 0, 6 ids: 5 probes executed, N-152 carried `ACCEPTED` |
+| TrialRegistry | N = 9, N_eval = 5, manifest 323 B `3326b1b2…`, head `50de55e9…` |
+| Criteria | 1.1.9; Phase 2D artifact fingerprint `CRIT-FPR-V1-7b21f77d…`; every numeric threshold byte-identical to §79.10 |
+| Calendar | `CAL-FPR-V1-af8e309a…`, 2,935 sessions, 2015-01-01 .. 2026-11-11 |
+| 2024 fold / holdout | Partition spec: IS 2018-04-01..2023-12-31, validation 2024-01-01..2024-12-31, holdout 2025-01-01..2026-11-11. No fold was run. The Phase 2D artifact carries no fold field; the only committed `validation_folds_count` is `1`, in the Phase 3B-2 baseline verdict under criteria 1.1.0. No `storage/` tree and no `HOLDOUT_UNLOCK` exist in the repository. |
+
+### 80.2 N-154 — CLOSED
+
+| Measurement | Value |
+|---|---|
+| Working file digest (`compute_volume_digest`) | `f4ca03d58466bebb…`, **8,442** lines, 0 CRLF bytes |
+| The same text re-encoded as CRLF (raw bytes differ) | `f4ca03d58466bebb…`, 8,442 lines |
+| Gate W0.5-1b | PASS against the pin |
+| `.gitattributes` | `reports/audit/** text eol=lf` present |
+
+`f4ca03d5…` is the digest of the blob `git` stores (§79.7 measured it independently), and the canonical
+hash folds CRLF, so the pin is now satisfiable both by the stored bytes and by a Windows working copy
+that holds the same text with CRLF. The committed volume is untouched. The platform dependence that made
+the old pin a property of one machine is gone for line endings. **CLOSED.**
+
+### 80.3 N-155 — PARTIAL: three holes closed, the fourth acceptance condition is not implemented
+
+The three conditions the fix added are real. Measured directly through `green_record_problem`:
+
+| Record | Result |
+|---|---|
+| `verify_exits: {}` | `cache record witnesses 0 verifier(s), not the 9 discovered one(s)` |
+| `suite_count: 1` | `cache record suite_count 1 is below the pinned floor 500` |
+| `gate_sha: "forged"` | `cache record gate_sha 'forged' is not a commit in this repository` |
+| all nine exits 0, `suite_count: 529`, `gate_sha: 96d24a1`, fresh `utc` | **`REUSABLE`** |
+
+That last row is the §79.8 forgery, replayed end to end on a fresh clone of `96d24a1`:
+append `def test_probe_poison_fails(): assert False` to `tests/unit/test_verdicts.py`, compute the tree
+hash with the gate's own `compute_source_tree_hash(source_tree_entries())`, append a row carrying that
+hash, 529, all nine verifier names at 0, `gate_sha: "96d24a1"` and the current time, then run
+`python scripts/verify_audit_append_only.py`. Result: `select_gate_plan` returns **reuse**, the gate
+prints `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)`, exit 0, and `pytest` never
+runs. A tree whose only test evidence is a number the attacker typed still certifies itself.
+
+The missing condition is the fourth bullet of §79.8, quoted there as the acceptance test: *a record must
+bind to a commit that exists and whose tree hash equals the recorded hash (`git rev-parse
+gate_sha^{tree}` plus a file-set digest), so a row written by hand cannot name a tree that was never run.*
+`green_record_problem` resolves `gate_sha` with `git rev-parse --verify` and stops; it never projects a
+tree and never compares one to the recorded hash.
+
+The second measurement says the same thing from the other side. The hash is taken over **working-copy
+bytes**, and this checkout is not the commit: **20** tracked files differ from their committed blobs —
+every one CRLF in the working copy and LF in the blob — including `configs/go_no_go_criteria.yaml`
+(280 CRLF) and nine `reports/verdicts/**` artifacts. Working-copy hash `87f0fd5d…`; the same file set
+hashed from `git cat-file blob` yields **`816783f8…`**, which is exactly what a fresh clone computes. The
+committed row names `87f0fd5d…` and `gate_sha: e0290b4`, so on a clone it is `unknown source-tree hash`
+and the heavy gates run. The row is not reproducible from the commit it is committed in, and it names no
+tree `e0290b4` has. Fail-closed is the right direction for a clone, but a cache that cannot hit on a
+clone is not evidence a clone can reuse. This round's own full run reproduces the same pattern from the
+auditor's side: the row it appends names `96d24a1`, and the commit that carries it will be its child. The
+defect is structural, not a lapse by whoever typed the row.
+
+Held **OPEN** as **N-160** (HIGH). This is not goalpost-moving: the condition is §79.8's own, written
+before the fix existed. What §79.12 item 1 did close stays closed — empty verifier maps, sub-floor suite
+counts, unresolvable `gate_sha`, a 24 h age limit, the two runtime verifiers on reuse, and a full run that
+no longer dirties the tracked cache.
+
+### 80.4 N-156 — CLOSED
+
+Measured on `CRIT-OVERFIT-06` directly:
+
+| Bundle | Status | Computed |
+|---|---|---|
+| `{ratio: 1.00}` | **NOT RUN** | — |
+| `{ratio: 1.00, count: 1}` | **NOT RUN** | — |
+| `{ratio: 1.00, count: 2}` | PASS | 1.0000 |
+| `{ratio: 0.50, count: 2}` | FAIL | 0.5000 |
+| `{count: 2}` (no ratio) | NOT RUN | — |
+| `{ratio: 1.00, count: true}` | NOT RUN | — |
+| `{ratio: 1.00, count: 0}` | NOT RUN | — |
+| `{ratio: 1.00, count: "2"}` | **PASS** | 1.0000 |
+
+The omission bypass is gone: a ratio without a count is no longer evidence, and the two-fold floor is
+read before the ratio is gated. Residual carried as **N-161** (LOW): the fold count is coerced, so the
+*numeric string* `"2"` is accepted where the acceptance said a valid integer. It cannot lower the
+floor — any coerced value still has to clear two — so it cannot reopen N-156, but it is a type leniency
+inside the row that will judge the 2024 fold.
+
+### 80.5 N-157 — CLOSED
+
+| Ledger | `validate_ledger` |
+|---|---|
+| `OPEN → CLOSED (80)` | accepted |
+| `OPEN → ACCEPTED → CLOSED (80)` | accepted |
+| `OPEN → CLOSED → OPEN` | refused: `CLOSED -> OPEN ... not a forward transition` |
+| duplicate `OPEN` | refused: `Duplicate finding id N-999` |
+| `CLOSED` with no `closed_in_section` | refused |
+| the committed 15-row ledger (10 inherited, 5 appended here) | accepted |
+
+One property to name rather than imply: a **first** row for a new id may be `CLOSED`, because there is no
+prior status to transition from. That is how this round registers five closures for findings that were
+raised in §79 and deliberately never entered as `OPEN` (§79.9). It is a closure register, not a
+defect register, and that is what the schema now says. **CLOSED.**
+
+### 80.6 N-158 — CLOSED
+
+| Measurement | Value |
+|---|---|
+| Adjacent identity pairs | **324** |
+| Pairs whose documented `ex_date` equals the successor interval's `effective_from` | **324** |
+| Misaligned | **0** |
+| `TATASTEEL` `ISIN_TRANSITION` date | **2022-07-29** |
+| `TATASTEEL` `SPLIT` date | 2022-07-28 (a price-adjustment claim; changes no series) |
+| A hand-dated row drifted to 2022-07-28 | refused: `documented ISIN_TRANSITION date(s) disagree with the interval table (N-158)` |
+
+The generator no longer skips a documented pair whose date disagrees with the table; it fails. The
+residual from §79.5 stands unchanged as N-152: every transition row is unattested and names the interval
+table that derived it. **CLOSED** as the one-session disagreement; not as evidence that any transition is
+real.
+
+### 80.7 N-159 — CLOSED
+
+| Bundle | Status | Computed |
+|---|---|---|
+| `{205, positions: []}` | **NOT RUN** | — |
+| `{205, positions: 12}` | **NOT RUN** | — |
+| `{205, closed 193, positions 12}` | PASS | 205 |
+| `{205, closed 200, positions 12}` | FAIL | 205 |
+| `{205, closed 193}` (no positions) | NOT RUN | — |
+| `{193, liquidated_trade_count: 193}` | PASS | 193 |
+| `{193}` alone | NOT RUN | — |
+
+The empty-list shape that §79.2 carried as N-159 no longer passes; the declared-count arm is unchanged.
+**CLOSED.**
+
+### 80.8 What the work log now says (§11.3)
+
+`CURRENT_STAGE_OF_WORK.md`'s §79 note opens with `Not audited: no verdict judges this commit` and makes
+no signed-off, verified or closed claim, so §11.3 is not violated by it. Two sentences overstate what was
+measured, and the implementer should append this section's finding rather than rewrite them:
+
+- *`N-154 … cannot recur`* — measured true for line endings only. The cache half of the same defect (a
+  digest over working-copy bytes rather than over the object `git` stores) is N-160 and did recur.
+- *`A cached tree is no longer trusted on its own`* — true for the three conditions that were listed, and
+  false for the fourth condition §79.8 also listed.
+
+### 80.9 §79.13 preconditions: 2018-04-01..2021-12-31 is warm-up only, and three preconditions are not met
+
+Each line below is a measurement on this commit, against the preconditions written in §79.13 before the
+work existed.
+
+| Gate | Measurement | Status |
+|---|---|---|
+| **A1** session grid | `configs/trading_calendar_nse.json` covers 2015-01-01..2026-11-11: **930** sessions in 2018-04-01..2021-12-31 (2018 246, 2019 244, 2020 252, 2021 248), `CAL-FPR-V1-af8e309a…`, 5 non-`FULL` sessions in the window. But **zero holiday circulars for 2018-2021**: all 13 `data/raw/circulars` artifacts are issued 2021-12-10..2026-01-12, and the only one that names an in-window year is the 2022 list. `provenance.sha256` equals the calendar's own CAL-FPR hex — a self-digest, not a source artifact. | **NO** — the grid and counts exist, the per-year provenance does not |
+| **A2** identity for the window | `cash_equity_symbol_intervals.csv`: **4,510** rows, first `effective_from` **2022-01-03**, zero rows before it. N-158 is resolved (§80.6). | **NO** for the window; the table begins where Bronze begins |
+| **A3** surveillance history | `surveillance_intervals.jsonl`: **3** rows, all `SYNTHETIC_FIXTURE_*`, all 2024; **0** in 2018-2021. The alternative form is committed and predates this round: `min_binding_evaluation_start_date: 2022-01-03` in criteria and `BINDING_EVALUATION_START_DATE` in `storage/gating.py`, which forces every pre-2022 verdict to `NOT RUN` (§52.9, H-65). | **Met only in the warm-up form** — the window cannot gate |
+| **A4** dividends | `corporate_actions.jsonl`: **138** `DIVIDEND` rows, 2022-03-29 .. 2024-08-21, **0** in 2018-2021; no maximum-hold bound in `configs/go_no_go_criteria.yaml`. | **NO** |
+
+**Answer to the question this round was asked to settle: no.** The §79.13 preconditions do not authorise
+treating 2018-04-01..2021-12-31 Bronze as gating in-sample material. A1 has no 2018-2021 source artifact,
+A2's identity table starts on 2022-01-03, A4 has no 2018-2021 ex-dates, and A3 is satisfied only by the
+committed declaration that the window is warm-up, which pins the binding start at 2022-01-03.
+
+The ingestion can begin as *warm-up-only capture* under B1 through B9 — the archives are data, and B1-B9
+fail closed per archive — but it cannot extend the binding corpus, and it cannot move C6's DSR
+denominator, because the sessions it adds are `NOT RUN` for gating by the criteria's own pin. The honest
+statement before the work is the one C6 asks for: at a binding window of 2022-01-03..2023-12-31
+(**494** sessions) the DSR bar is unchanged by the extension, so **extending is not the constraint**. A1
+provenance, A2 identity and A4 dividends are the constraints, in that order.
+
+### 80.10 Correction — three of my own numbers
+
+Appended, never edited in place (§10.1).
+
+1. **§79.13 A1 said the calendar carries "zero dates in 2018-2021".** That is true of
+   `calendar_reconciliation_2022_2026.json` and false of the trading calendar, which enumerates 930
+   sessions in the window. What is absent is per-year *source provenance*, not dates. The gate still
+   fails, for the reason A1 gives — a grid that is asserted is not a grid that is sourced — but my
+   sentence was measured on the wrong artifact.
+2. **§79.13 C1's arithmetic is wrong.** `743 + the sessions A1 enumerates` double-counts nothing but
+   adds a year that is not in-sample: 743 is the 2022-2024 archive count (248 + 246 + 249), and 2024 is
+   the validation partition. The extended in-sample total is `930 + 494 = 1,424`, and while
+   `min_binding_evaluation_start_date` is 2022-01-03 the gating T is **494**.
+3. **§79.1 reported "9 verifiers on disk, 8 executed".** There are **10** `scripts/verify_*.py` on disk and
+   **9** executed by W0.5-2, which is what this round's gate printed and what §80.1 records.
+
+### 80.11 Preserved invariants
+
+Criteria 1.1.9 moves no threshold: `min_total_trades 100`, `min_profit_factor 1.50`,
+`min_deflated_sharpe_ratio 0.95`, `min_haircut_sharpe_ratio 1.25`, `max_single_position_weight 0.10`,
+`min_traded_eq_resolution_pct 100.0`, `min_dataset_instrument_resolution_pct 100.0`,
+`min_positive_walk_forward_fold_ratio 0.80`, `min_positive_is_fold_ratio 0.75`,
+`min_fold_liquidated_pf 1.30`, `min_liquidated_pf_ex_top_1 1.40`. The manifest pin is
+`MAN-FPR-V1-23200ba8…` over 46 current and 22 superseded rows and reproduces (W0.5-5). The trial
+registry is unmoved: N = 9, N_eval = 5, manifest `3326b1b2…` at 323 B. The probes of this round and the
+five closures appended by it create no trial row. The 2024 window is still only the validation partition
+in the committed spec, and the holdout is still sealed by a zero token hash with no unlock present.
+
+### 80.12 Verdicts
+
+| Area | Verdict | Basis |
+|---|---|---|
+| Frozen audit volume (N-154) | **GO** | Pin equals the stored blob's digest and a CRLF checkout reproduces it; W0.5-1b PASS |
+| Reporting criteria 1.1.9 (N-156, N-159) | **GO** | Both omission bypasses measured closed, ratio-without-count NOT RUN, positions-without-count NOT RUN; no threshold moved |
+| Identity & corporate actions (N-158) | **GO** for the dated row | 324/324 aligned, drift refused. Carried: N-152 unattested rows |
+| Findings ledger (N-157) | **GO** | Forward transitions enforced, backward and duplicate refused, closures cite a section |
+| Repository gate (§79.12 item 1) | **NO-GO as a closed repair** | N-155 PARTIAL: a hand-written row with a real `gate_sha` retires the suite (N-160), and the committed row is not reproducible from the commit |
+| Certification / seq 10 | **NO-GO, unchanged** | No candidate is certifiable; pre-2022 ingestion is still the unblocking work |
+| 2018-2021 Bronze | **NOT AUTHORISED as gating corpus** | §80.9: A1 provenance, A2 identity, A4 dividends unmet; A3 met only as warm-up |
+
+### 80.13 Work order
+
+Ordered by what each item unblocks. Each names the probe that must fail closed before it closes.
+
+1. **N-160 — make the cache record bind to a tree, not to a directory.** Compute the source-tree hash from
+   git objects (`git cat-file blob`), and require the projected hash of `gate_sha`'s tree to equal the
+   recorded hash. Probe: replay §80.3's forgery with a real `gate_sha`; the plan must be `full` and the
+   suite must run. Second probe: on a fresh clone, the committed row's hash must equal the clone's hash,
+   so a clone can reuse green.
+2. **N-161 — require an integer fold count.** Probe: `{ratio: 1.00, count: "2"}` → NOT RUN;
+   `{ratio: 1.00, count: 2}` stays PASS.
+3. **A1 — source the 2018-2021 grid per year** (serves §10.8, the binding window). Probe: for each of
+   2018, 2019, 2020, 2021 a holiday circular artifact in the manifest whose entries reproduce that
+   year's grid; a missing year fails, and the calendar's provenance hash must be a source digest rather
+   than its own CAL-FPR.
+4. **A4 — dividends inside the window, or a committed maximum hold** (serves §13.2). Probe: every 2018-2021
+   ex-date within the strategy's maximum hold has a row, or the bound prints below the shortest gap
+   between consecutive ex-dates.
+5. **A2 — state how pre-2022 identity is derived** (serves §10.4). Probe: zero unresolved symbols across
+   the extended window, each exception listed with its session count rather than skipped.
+6. **B1-B9 on the captured Bronze, then C1-C6 with §80.10's corrected count**, before any seq 10. Probe:
+   zero unexplained session gaps, zero restatements, and the 2024 fold and holdout still untouched.
+7. **Ratify or revert this round's five ledger closures and their probe implementations** (§79.12 item 6's
+   precedent). Probe: `scripts/verify_audit_findings.py` exit 0 with 11 ids, and each closure row's probe
+   passing on its own.
+
+### 80.14 What would falsify this verdict
+
+- If a hand-written row with a real `gate_sha`, all nine verifier names at 0 and `suite_count: 529` is
+  refused on some path I did not construct, N-160 is wrong. The transcript is four commands: poison a
+  test, hash the tree with the gate's own function, append the row, run the gate.
+- If a clone configured differently computes `87f0fd5d…` rather than `816783f8…`, then the
+  working-copy-only hash is my measurement error and N-160 collapses to the forgery alone.
+- If a 2018-2021 holiday circular artifact exists outside `data/raw/circulars` — for example inside a
+  Bronze blob the manifest does not name as a circular — then A1 is met and §80.9's first row is wrong.
+- If a maximum-hold bound is committed somewhere other than `configs/go_no_go_criteria.yaml`, A4's
+  alternative is satisfied and the dividend gap is not blocking.
+- If `743` is not the 2022-2024 archive count, the §80.10 correction is wrong and C1 stands as written.
+- If `{walk_forward_positive_fold_ratio: 1.00}` with no count can still PASS through a key this round did
+  not construct, N-156's closure is wrong.

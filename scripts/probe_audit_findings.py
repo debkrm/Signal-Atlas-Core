@@ -214,6 +214,204 @@ def probe_n153() -> None:
     assert any(row.action_type.value == "ISIN_TRANSITION" for row in irb_rows), "IRB identity row missing"
 
 
+def probe_n154() -> None:
+    """A frozen volume's pin is a property of the committed text, not of the checkout (N-154)."""
+    import os
+    import tempfile
+
+    import yaml
+
+    from verify_audit_append_only import compute_volume_digest
+
+    config = yaml.safe_load(
+        (REPO_ROOT / "configs" / "audit_volumes.yaml").read_text(encoding="utf-8")
+    )
+    volume = {str(v["path"]): v for v in config["volumes"]}[
+        "reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md"
+    ]
+    path = REPO_ROOT / volume["path"]
+    digest, line_count = compute_volume_digest(path)
+    assert digest == volume["sha256"], f"volume hashes to {digest}, pinned {volume['sha256']}"
+    assert line_count == int(volume["line_count"]), (
+        f"{line_count} line(s), pinned {volume['line_count']}"
+    )
+
+    fd, name = tempfile.mkstemp(suffix=".md")
+    os.close(fd)
+    crlf_copy = Path(name)
+    try:
+        crlf_copy.write_bytes(
+            path.read_text(encoding="utf-8").replace("\n", "\r\n").encode("utf-8")
+        )
+        assert compute_volume_digest(crlf_copy) == (digest, line_count), (
+            "a CRLF checkout of the same text does not reproduce the pin"
+        )
+    finally:
+        crlf_copy.unlink()
+
+    attributes = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "reports/audit/** text eol=lf" in attributes
+
+
+def probe_n156() -> None:
+    """`CRIT-OVERFIT-06` cannot be cleared by a ratio that arrives without its fold count."""
+    ratio_only = _by_id({"walk_forward_positive_fold_ratio": Decimal("1.00")})["CRIT-OVERFIT-06"]
+    assert ratio_only.status.value == "NOT RUN", (
+        f"a ratio with no fold count evaluated {ratio_only.status.value}"
+    )
+    assert ratio_only.computed_value is None
+
+    one = _by_id({
+        "walk_forward_positive_fold_ratio": Decimal("1.00"),
+        "walk_forward_validation_folds_count": 1,
+    })["CRIT-OVERFIT-06"]
+    assert one.status.value == "NOT RUN", one.evidence
+
+    unreadable = _by_id({
+        "walk_forward_positive_fold_ratio": Decimal("1.00"),
+        "walk_forward_validation_folds_count": "two",
+    })["CRIT-OVERFIT-06"]
+    assert unreadable.status.value == "NOT RUN", unreadable.evidence
+
+    two = _by_id({
+        "walk_forward_positive_fold_ratio": Decimal("1.00"),
+        "walk_forward_validation_folds_count": 2,
+    })["CRIT-OVERFIT-06"]
+    assert two.status.value == "PASS", two.evidence
+    assert two.computed_value == "1.0000"
+
+    losing = _by_id({
+        "walk_forward_positive_fold_ratio": Decimal("0.50"),
+        "walk_forward_validation_folds_count": 2,
+    })["CRIT-OVERFIT-06"]
+    assert losing.status.value == "FAIL", losing.evidence
+
+
+def probe_n157() -> None:
+    """The findings ledger records forward transitions only, and every closure cites its section."""
+    import json
+
+    from verify_audit_findings import validate_ledger
+
+    base = {
+        "id": "N-999",
+        "section": 79,
+        "severity": "LOW",
+        "metric": "synthetic row",
+        "phase": "synthetic",
+        "probe": {
+            "command": "python scripts/probe_audit_findings.py N-999",
+            "stdout_regex": "^PASS N-999$",
+        },
+    }
+
+    def row(status: str, **extra) -> dict:
+        entry = dict(base, status=status)
+        entry.update(extra)
+        return entry
+
+    assert validate_ledger([row("OPEN"), row("CLOSED", closed_in_section=80)]) == []
+    assert validate_ledger([row("OPEN"), row("ACCEPTED", residual="carried")]) == []
+    assert validate_ledger(
+        [row("OPEN"), row("ACCEPTED", residual="carried"), row("CLOSED", closed_in_section=80)]
+    ) == []
+
+    backward = validate_ledger([row("OPEN"), row("CLOSED", closed_in_section=80), row("OPEN")])
+    assert backward and "not a forward transition" in backward[0], backward
+
+    duplicate = validate_ledger([row("OPEN"), row("OPEN")])
+    assert duplicate and "Duplicate" in duplicate[0], duplicate
+
+    uncited = validate_ledger([row("OPEN"), row("CLOSED")])
+    assert uncited and "closed_in_section" in uncited[0], uncited
+
+    committed = [
+        json.loads(line)
+        for line in (REPO_ROOT / "reports" / "audit" / "findings.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert validate_ledger(committed) == [], validate_ledger(committed)
+
+
+def probe_n158() -> None:
+    """Every documented identity pair meets its successor interval, and a drifted row is refused."""
+    import dataclasses
+    import datetime
+
+    from derive_2022_2024_corpora import adjacent_identity_pairs, validate_documented_transition_dates
+    from signal_core.storage.security_master import (
+        CorporateActionType,
+        load_cash_universe_symbol_intervals,
+        load_corporate_actions,
+    )
+
+    intervals = load_cash_universe_symbol_intervals()
+    actions = list(load_corporate_actions())
+    pairs = adjacent_identity_pairs(intervals)
+    assert len(pairs) == 324, f"{len(pairs)} adjacent identity pair(s)"
+    assert validate_documented_transition_dates(intervals, actions) == 324
+
+    documented = {
+        (row.old_isin, row.new_isin): row
+        for row in actions
+        if row.action_type is CorporateActionType.ISIN_TRANSITION
+    }
+    misaligned = [
+        (symbol, old_isin, new_isin)
+        for symbol, old_isin, new_isin, effective_from in pairs
+        if documented[(old_isin, new_isin)].ex_date != effective_from
+    ]
+    assert not misaligned, f"{len(misaligned)} pair(s) dated away from the boundary: {misaligned[:3]}"
+
+    tata = next(row for row in documented.values() if row.symbol == "TATASTEEL")
+    assert tata.ex_date == datetime.date(2022, 7, 29), tata.ex_date
+
+    drifted = [
+        dataclasses.replace(tata, ex_date=datetime.date(2022, 7, 28)),
+        *[row for row in actions if row.action_type is not CorporateActionType.ISIN_TRANSITION],
+    ]
+    try:
+        validate_documented_transition_dates(intervals, drifted)
+    except ValueError as exc:
+        assert "N-158" in str(exc), str(exc)
+    else:
+        raise AssertionError("a drifted transition row was accepted instead of refused (N-158)")
+
+
+def probe_n159() -> None:
+    """`CRIT-STAT-01` requires the closed-only count before it reconciles positions."""
+    empty = _by_id({"total_trades": 205, "liquidated_open_positions": []})["CRIT-STAT-01"]
+    assert empty.status.value == "NOT RUN", f"an empty position list evaluated {empty.status.value}"
+    assert empty.computed_value is None
+
+    positions = [{"isin": f"INE00000000{i}", "net_pnl": "1.00"} for i in range(12)]
+    uncounted = _by_id({
+        "total_trades": 205,
+        "liquidated_open_positions": positions,
+    })["CRIT-STAT-01"]
+    assert uncounted.status.value == "NOT RUN", uncounted.evidence
+
+    reconciled = _by_id({
+        "total_trades": 205,
+        "closed_only_trade_count": 193,
+        "liquidated_open_positions": positions,
+    })["CRIT-STAT-01"]
+    assert reconciled.status.value == "PASS", reconciled.evidence
+    assert reconciled.computed_value == "205"
+
+    mismatch = _by_id({
+        "total_trades": 205,
+        "closed_only_trade_count": 200,
+        "liquidated_open_positions": positions,
+    })["CRIT-STAT-01"]
+    assert mismatch.status.value == "FAIL", mismatch.evidence
+
+    declared = _by_id({"total_trades": 193, "liquidated_trade_count": 193})["CRIT-STAT-01"]
+    assert declared.status.value == "PASS", declared.evidence
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -221,6 +419,11 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-151": probe_n151,
     "N-152": probe_n152,
     "N-153": probe_n153,
+    "N-154": probe_n154,
+    "N-156": probe_n156,
+    "N-157": probe_n157,
+    "N-158": probe_n158,
+    "N-159": probe_n159,
 }
 
 
