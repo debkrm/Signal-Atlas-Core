@@ -453,35 +453,52 @@ def probe_n160() -> None:
         "the source-tree hash is not composed of HEAD's blob oids"
     )
 
-    # An uncommitted source change is not certifiable by a recorded tree: it is reported, and the gate
-    # runs the heavy checks instead of reusing one (measured through the same function main() calls).
+    # An uncommitted source change is not certifiable by a recorded tree: every path git reports is in the
+    # dirty set, and the gate runs the heavy checks instead of reusing a row (and refuses to record one).
+    # The implication is asserted rather than equality, and no content is compared for a dirty path, so the
+    # measurement does not depend on how much dirt a working copy holds: an untracked file has no blob in
+    # HEAD (§82.6 / N-166), and a Linux checkout reports mode-only changes whose bytes equal the blob.
     reported = {
         entry.decode("utf-8")[3:]
         for entry in git(
-            "status", "--porcelain", "-z", "--untracked-files=no", "--no-renames"
+            "status", "--porcelain", "-z", "--untracked-files=all", "--no-renames"
         ).split(b"\x00")
         if entry
     }
     dirty = dirty_source_paths()
-    assert dirty == sorted(p for p in reported if is_source_tree_path(p)), dirty
-    # A path in the dirty set must actually differ from its blob: no stat-only noise may force a full run.
-    for rel in dirty:
-        blob = git("cat-file", "blob", f"HEAD:{rel}")
-        disk = (REPO_ROOT / rel).read_bytes()
-        assert disk.replace(b"\r\n", b"\n") != blob.replace(b"\r\n", b"\n"), (
-            f"{rel} is reported dirty but its content is its blob"
-        )
+    assert set(p for p in reported if is_source_tree_path(p)) <= set(dirty), (dirty, reported)
+    assert not any(rel.endswith("/") for rel in dirty), f"a directory is in the dirty set: {dirty}"
 
-    # Find a clean text file whose checkout differs from its blob only by line endings: its entry must
-    # still be the committed blob's oid. A checkout with no CRLF at all satisfies the same digest by
-    # construction (entries are HEAD's tree oids), so the example is a measurement, not the invariant.
-    for rel in sorted(entries):
-        if rel in set(dirty) or not rel.endswith((".py", ".yaml", ".yml", ".json", ".jsonl", ".md")):
-            continue
+    # The digest is composed of the object ids git stores, so a checkout cannot move it. Measured
+    # unconditionally on a clean text path, so the check has teeth on an LF checkout (Ubuntu CI) as well as
+    # on a CRLF one: the bytes may differ by line endings and the oid is still the blob's.
+    text_paths = [
+        rel for rel in sorted(entries)
+        if rel not in set(dirty)
+        and rel.endswith((".py", ".yaml", ".yml", ".json", ".jsonl", ".md"))
+    ]
+    assert text_paths, "no clean text source file to measure"
+    representative = text_paths[0]
+    blob = git("cat-file", "blob", f"HEAD:{representative}")
+    disk = (REPO_ROOT / representative).read_bytes()
+    assert disk.replace(b"\r\n", b"\n") == blob.replace(b"\r\n", b"\n"), (
+        f"{representative} differs from its committed blob by more than line endings"
+    )
+    assert entries[representative] == git("rev-parse", f"HEAD:{representative}").decode().strip(), (
+        f"{representative} does not hash to the blob oid it was committed as"
+    )
+
+    # Where the checkout does hold CRLF for a blob git stored with LF, the two differ on disk and the entry
+    # is still the blob's oid -- that is the property the digest relies on. A checkout with no CRLF at all
+    # (every Linux run) has no such example and needs none: the measurement above stands in its place, and
+    # byte inequality is never asserted as an invariant of a platform.
+    for rel in text_paths:
         disk = (REPO_ROOT / rel).read_bytes()
         if b"\r\n" not in disk:
             continue
         blob = git("cat-file", "blob", f"HEAD:{rel}")
+        if disk == blob:
+            continue
         assert disk.replace(b"\r\n", b"\n") == blob.replace(b"\r\n", b"\n"), (
             f"{rel} differs from its blob by more than line endings"
         )
@@ -535,7 +552,7 @@ def probe_n160() -> None:
     # still not reusable here (N-162). The commit is decoded before it is used (N-164): an undecoded
     # `gate_sha` is refused earlier as a non-commit string, which is not the property under test.
     parent = git("rev-parse", f"{head}^").decode().strip()
-    assert commit_exists(parent)
+    assert commit_exists(parent), f"HEAD's parent {parent!r} is not a commit in this repository"
 
     def commit_with_other_tree() -> str:
         for sha in git("rev-list", "-n", "40", head).decode().split()[1:]:
@@ -545,7 +562,12 @@ def probe_n160() -> None:
 
     other = commit_with_other_tree()
     mismatch = green_record_problem(record(head_hash, gate_sha=other), verifiers, commit_exists)
-    assert mismatch is not None and "is not the tree at gate_sha" in mismatch, mismatch
+    # Asserted separately from the reason it must carry, so the failure prints the measured value instead of
+    # an empty message (§82.4 / §82.8 item 3).
+    assert mismatch is not None, (
+        f"a row naming {other[:8]}, whose tree is not this one, was accepted as evidence"
+    )
+    assert "is not the tree at gate_sha" in mismatch, mismatch
 
     undecoded = green_record_problem(
         record(head_hash, gate_sha=str(other.encode())), verifiers, commit_exists
@@ -800,12 +822,14 @@ def probe_n164() -> None:
 
 def probe_n165() -> None:
     """
-    A pytest-collected file hidden from git is invisible to the dirty set, so a green row certifies it (N-165).
+    A pytest-collected file hidden from git is dirty state, so no green run certifies it (N-165).
 
-    `dirty_source_paths()` reads `git status`, which never reports an ignored path, and the reachable ignore
-    rule needs no tracked edit: `.git/info/exclude` (or a global `core.excludesFile`) hides a new test file
-    from git while pytest still collects it. The probe forges a row naming HEAD — §14.3's standing instrument
-    — and asks the gate a question, without ever writing the cache or the artefact.
+    `git status` never reports an ignored path, and the cheapest ignore rule needs no tracked edit:
+    `.git/info/exclude` (or a global `core.excludesFile`) hides a new test file from git while pytest still
+    collects it. `dirty_source_paths()` now asks for ignored paths (``--ignored=matching``) and keeps the
+    `.py` files under the roots pytest collects from, so the forged row naming HEAD — §14.3's standing
+    instrument, never written to the cache or the artefact — is refused by the same branch an edited file
+    takes in main().
     """
     import datetime
     import subprocess
@@ -815,6 +839,7 @@ def probe_n165() -> None:
         dirty_source_paths,
         discovered_verification_scripts,
         select_gate_plan,
+        should_record_green,
         source_tree_hash_at_commit,
     )
 
@@ -843,9 +868,15 @@ def probe_n165() -> None:
         ).stdout
         assert rel not in status, f"git status reports the ignored file: {status}"
         dirty = dirty_source_paths()
-        assert rel not in dirty, f"the dirty set now reports ignored paths ({dirty}); re-measure N-165"
+        assert rel in dirty, (
+            f"an ignored-but-collected test file is still invisible to the dirty set ({dirty}), so the gate "
+            f"can certify a red suite as green"
+        )
+        # The gate fails closed on it by the same rule as any other uncommitted source path: the heavy gates
+        # run and no row is written. main() only reaches select_gate_plan for a clean working copy.
+        assert should_record_green("full", True, 536, dirty) is False
 
-        # And pytest collects it as a failing test: the suite the gate would certify as green is red.
+        # And pytest collects it as a failing test: the suite the gate would have certified as green is red.
         collected = subprocess.run(
             [sys.executable, "-m", "pytest", "-q", str(temp)], cwd=str(REPO_ROOT),
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -863,9 +894,11 @@ def probe_n165() -> None:
             "utc": (now - datetime.timedelta(minutes=5)).isoformat(),
             "gate_sha": head,
         }
+        # Positive control: the row itself is a valid hit, so what refuses it above is the hidden file and
+        # not a broken fixture. A clean checkout takes this branch; this one does not.
         plan, used, reason = select_gate_plan(head_hash, [forged], now, head_commit=head)
         assert plan == "reuse" and used is not None, (
-            f"the gate no longer certifies an ignored failing test: {plan} — {reason}"
+            f"the forged row is no longer a valid hit on a clean tree: {plan} — {reason}"
         )
     finally:
         temp.unlink(missing_ok=True)
@@ -878,15 +911,18 @@ def probe_n165() -> None:
 
 def probe_n166() -> None:
     """
-    An untracked source file turns the ledger's N-160 evidence red for a reason that is not N-160 (N-166).
+    An untracked source file does not change either ledger consumer's verdict (N-166).
 
     Including untracked paths in the dirty set (§81.4) made a working copy with one stray scratch file a
-    state the two oldest consumers cannot describe: `probe_n160` requires an empty dirty set, and the §80
-    tree test asks `git cat-file HEAD:<path>` for every dirty path, which raises for a path HEAD lacks. The
-    gate still fails closed through the dirty path, so this is a diagnostics defect: the ledger reports a
-    finding as broken when the finding is intact, and a real regression hides behind that noise.
+    state the two oldest consumers could not describe: `probe_n160` required an empty dirty set, and the §80
+    tree test asked `git cat-file HEAD:<path>` for every dirty path, which raises for a path HEAD lacks. The
+    gate failed closed through the dirty path, so the ledger reported a closed finding as broken while the
+    finding was intact -- and a real regression would have hidden inside that noise. With one untracked file
+    present, both consumers must pass and the gate must still refuse to reuse or record over it.
     """
     import subprocess
+
+    from verify_audit_append_only import dirty_source_paths, should_record_green
 
     rel = "tests/unit/test_n166_untracked_probe.py"
     temp = REPO_ROOT / rel
@@ -894,16 +930,23 @@ def probe_n166() -> None:
     try:
         temp.write_text("def test_n166_untracked() -> None:\n    assert False\n", encoding="utf-8")
 
-        # Consumer one: the ledger row for N-160.
+        # The gate fails closed on the file: it is state, and a run over it is never recorded.
+        dirty = dirty_source_paths()
+        assert rel in dirty, f"an untracked source file is invisible to the dirty set: {dirty}"
+        assert should_record_green("full", True, 536, dirty) is False
+
+        # Consumer one: the ledger row for N-160, which described the tree instead of the row.
         ledger = subprocess.run(
             [sys.executable, str(REPO_ROOT / "scripts" / "probe_audit_findings.py"), "N-160"],
             cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
-        assert ledger.returncode != 0, (
-            "probe_n160 now passes over an untracked source file; re-measure N-166"
+        assert ledger.returncode == 0, (
+            f"probe_n160 still fails over an unrelated untracked source file: "
+            f"{(ledger.stdout or '').strip()[-300:]}"
         )
+        assert (ledger.stdout or "").strip() == "PASS N-160", ledger.stdout[-300:]
 
-        # Consumer two: the §80 tree test, which walks the dirty set and reads each path out of HEAD.
+        # Consumer two: the §80 tree test, which walked the dirty set and read each path out of HEAD.
         tree_test = subprocess.run(
             [
                 sys.executable, "-m", "pytest", "-q",
@@ -911,18 +954,12 @@ def probe_n166() -> None:
             ],
             cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
-        assert tree_test.returncode != 0, (
-            "the tree test now survives an untracked source file; re-measure N-166"
+        assert tree_test.returncode == 0, (
+            f"the tree test still fails over an untracked source file: {tree_test.stdout[-800:]}"
         )
-        assert "cat-file" in tree_test.stdout or "CalledProcessError" in tree_test.stdout or (
-            "FAILED" in tree_test.stdout
-        ), tree_test.stdout[-500:]
     finally:
         temp.unlink(missing_ok=True)
-    assert rel not in [p for p in subprocess.run(
-        ["git", "status", "--porcelain", "--no-renames"], cwd=str(REPO_ROOT),
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-    ).stdout.splitlines()], f"{rel} still present after cleanup"
+    assert rel not in dirty_source_paths(), f"{rel} is still dirty after cleanup"
 
 
 PROBES: Dict[str, Callable[[], None]] = {

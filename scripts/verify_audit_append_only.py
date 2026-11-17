@@ -51,6 +51,11 @@ GREEN_CACHE_MAX_AGE = datetime.timedelta(hours=24)
 # §81.4 (N-162): the tree is necessary and not sufficient -- two commits can share a tree while producing
 # different suite outcomes, so reuse also requires the row's `gate_sha` to be the commit being verified.
 GREEN_CACHE_SCHEME = "git-blob-oid-v1"
+# §82.5 (N-165): the roots pytest collects from. An ignored file under one of them is code the suite
+# executes while `git status` calls the tree clean, so it is dirty state even though git hides it. Only
+# `.py` files are taken: a byte-code cache, a build directory or an ignored `data/` artifact cannot
+# change a test outcome on its own, and treating them as dirt would make every local checkout full-run.
+IGNORED_SOURCE_ROOTS = ("src/", "scripts/", "tests/")
 # Audit §79.8 (N-155): a record is evidence only if it witnesses the run it claims. The floor is a
 # pinned minimum, not a default: a row reading `suite_count: 1` used to satisfy the same comparison as
 # a row reading 523. The two runtime verifiers are re-executed even on a cached source tree, because
@@ -299,17 +304,38 @@ def dirty_source_paths() -> List[str]:
 
     Untracked paths are included (`--untracked-files=all`, audit §81.4 / N-162): pytest collects a test
     file that is not in the tree, so `--untracked-files=no` let an untracked `assert False` be reused
-    green. Ignored paths stay excluded, because `git status` does not report them (§9.1).
+    green. Ignored paths are included too when the suite could execute them (§82.5 / N-165): a local
+    `.git/info/exclude` rule hides a new test file from `git status` while pytest still collects it, so
+    "the tree is clean" and "the suite is green" would disagree. Only `.py` files under the roots pytest
+    collects from count, so a byte-code cache or an ignored `data/` artifact does not force the heavy
+    gates; that a local data artifact is invisible here is the residual §82.5 named.
     """
     proc = subprocess.run(
-        ["git", "status", "--porcelain", "-z", "--untracked-files=all", "--no-renames"],
+        [
+            "git", "status", "--porcelain", "-z", "--untracked-files=all",
+            "--ignored=matching", "--no-renames",
+        ],
         cwd=str(REPO_ROOT),
         capture_output=True,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"git status failed: {proc.stderr.decode('utf-8', 'replace').strip()}")
-    paths = [raw.decode("utf-8")[3:] for raw in proc.stdout.split(b"\x00") if raw]
-    return sorted(path for path in paths if is_source_tree_path(path))
+    paths: List[str] = []
+    for raw in proc.stdout.split(b"\x00"):
+        if not raw:
+            continue
+        status = raw[:2].decode("ascii", "replace")
+        path = raw[3:].decode("utf-8")
+        if not is_source_tree_path(path):
+            continue
+        if status == "!!":
+            # An ignored directory is reported once, as `dir/`; nothing under it is enumerated.
+            if path.endswith("/") or not path.endswith(".py"):
+                continue
+            if not any(path.startswith(root) for root in IGNORED_SOURCE_ROOTS):
+                continue
+        paths.append(path)
+    return sorted(set(paths))
 
 
 def source_tree_entries_for_commit(ref: str) -> Optional[List[Tuple[str, str]]]:

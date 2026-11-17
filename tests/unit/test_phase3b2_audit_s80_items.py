@@ -79,22 +79,46 @@ def test_n160_source_tree_hash_is_the_object_id_git_stores():
         if entry
     }
     dirty = gate.dirty_source_paths()
-    assert dirty == sorted(p for p in reported if gate.is_source_tree_path(p))
-    for path in dirty:
-        blob = _git("cat-file", "blob", f"HEAD:{path}")
-        disk = (REPO_ROOT / path).read_bytes()
-        assert disk.replace(b"\r\n", b"\n") != blob.replace(b"\r\n", b"\n")
+    # Every source path git reports uncommitted is in the dirty set; the reverse needs no claim, because
+    # an ignored-but-collected test file is dirty without being reported (N-165). No content is compared
+    # for a dirty path: an untracked file has no blob in HEAD (N-166), and a Linux checkout reports
+    # mode-only changes whose bytes equal the blob, so byte inequality is not an invariant of a platform.
+    assert set(p for p in reported if gate.is_source_tree_path(p)) <= set(dirty), (dirty, reported)
+    assert not any(path.endswith("/") for path in dirty), dirty
 
-    # A clean text path whose checkout holds CRLF while its blob holds LF must hash to the blob's id:
-    # line endings must not move the digest, or a clone could not reuse the row.
-    for path in sorted(entries):
-        if path in set(dirty) or not path.endswith((".py", ".yaml", ".yml", ".json", ".jsonl", ".md")):
-            continue
+    # The digest is composed of the blob oids git stores, so a checkout's line endings cannot move it.
+    # Measured unconditionally on a clean text path, so the check has teeth on an LF checkout (Ubuntu CI)
+    # as well as a CRLF one: the bytes may differ by line endings and the oid is still the blob's.
+    text_paths = [
+        path for path in sorted(entries)
+        if path not in set(dirty)
+        and path.endswith((".py", ".yaml", ".yml", ".json", ".jsonl", ".md"))
+    ]
+    assert text_paths, "no clean text source file to measure"
+    representative = text_paths[0]
+    blob = _git("cat-file", "blob", f"HEAD:{representative}")
+    disk = (REPO_ROOT / representative).read_bytes()
+    assert disk.replace(b"\r\n", b"\n") == blob.replace(b"\r\n", b"\n"), (
+        f"{representative} differs from its committed blob by more than line endings"
+    )
+    assert entries[representative] == _git(
+        "rev-parse", f"HEAD:{representative}"
+    ).decode().strip()
+
+    # Where the checkout does hold CRLF for a blob git stored with LF, the two differ on disk and the entry
+    # is still the blob's oid -- the property the digest relies on. A checkout with no CRLF at all (every
+    # Linux run) has no such example and needs none: the unconditional measurement above stands in its
+    # place, and raw byte equality is never required.
+    for path in text_paths:
         disk = (REPO_ROOT / path).read_bytes()
         if b"\r\n" not in disk:
             continue
         blob = _git("cat-file", "blob", f"HEAD:{path}")
-        assert disk.replace(b"\r\n", b"\n") == blob.replace(b"\r\n", b"\n")
+        if disk == blob:
+            continue
+        assert disk.replace(b"\r\n", b"\n") == blob.replace(b"\r\n", b"\n"), (
+            f"{path} differs from its blob by more than line endings"
+        )
         assert entries[path] == _git("rev-parse", f"HEAD:{path}").decode().strip()
         break
 
