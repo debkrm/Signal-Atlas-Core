@@ -1788,12 +1788,10 @@ def evaluate_verdicts(
     val_wf = _to_decimal(results_bundle.get("walk_forward_positive_fold_ratio"))
     wf_reason = results_bundle.get("walk_forward_not_run_reason")
     wf_n_val = results_bundle.get("walk_forward_validation_folds_count")
-    wf_n_val_int: Optional[int] = None
-    if wf_n_val is not None and not isinstance(wf_n_val, bool):
-        try:
-            wf_n_val_int = int(wf_n_val)
-        except (TypeError, ValueError):
-            wf_n_val_int = None
+    # Audit §80.4 residual N-161: a count is an integer or it is not a count. `int("2")` coerced a
+    # numeric string into a fold count, so a bundle could clear the two-fold floor with a value no
+    # fold loop produced. `True` is not 1 here either.
+    wf_n_val_int: Optional[int] = wf_n_val if isinstance(wf_n_val, int) and not isinstance(wf_n_val, bool) else None
     # Audit §78.10 (N-150): the two-fold minimum lived only in the NOT RUN reason, so one validation
     # fold plus a favourable ratio cleared the row. Below two folds nothing is gated, ratio or not.
     if wf_n_val_int is not None and wf_n_val_int < 2:

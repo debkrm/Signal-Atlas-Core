@@ -37,6 +37,7 @@ from scripts.derive_2022_2024_corpora import (
 )
 from scripts.verify_audit_append_only import (
     GREEN_CACHE_MIN_SUITE_COUNT,
+    GREEN_CACHE_SCHEME,
     compute_volume_digest,
     discovered_verification_scripts,
     green_record_problem,
@@ -89,6 +90,7 @@ def test_n155_forged_green_cache_row_is_not_reusable():
 
     healthy = {
         "source_tree_hash": "h1",
+        "source_tree_scheme": GREEN_CACHE_SCHEME,
         "suite_count": 523,
         "verify_exits": {script: 0 for script in verifiers},
         "utc": (now - datetime.timedelta(hours=1)).isoformat(),
@@ -98,32 +100,47 @@ def test_n155_forged_green_cache_row_is_not_reusable():
     def resolves(sha: str) -> bool:
         return sha == "3119cb2"
 
-    assert green_record_problem(healthy, verifiers, resolves) is None
+    # §80.3 (N-160): the record's hash must be the tree its `gate_sha` contains, so the fixture projects
+    # the same tree from the commit it names.
+    def projects(sha: str):
+        return "h1" if sha == "3119cb2" else None
+
+    assert green_record_problem(healthy, verifiers, resolves, projects) is None
 
     # The §79.8 forgery: no verifier ran, one test supposedly passed, and the sha is a label.
     forged = dict(healthy, verify_exits={}, suite_count=1, gate_sha="forged")
-    assert green_record_problem(forged, verifiers, lambda sha: False) is not None
+    assert green_record_problem(forged, verifiers, lambda sha: False, projects) is not None
 
-    assert green_record_problem(dict(healthy, verify_exits={}), verifiers, resolves) is not None
+    assert green_record_problem(dict(healthy, verify_exits={}), verifiers, resolves, projects) is not None
     partial = {script: 0 for script in verifiers[:1]}
-    assert green_record_problem(dict(healthy, verify_exits=partial), verifiers, resolves) is not None
     assert green_record_problem(
-        dict(healthy, verify_exits={script: 1 for script in verifiers}), verifiers, resolves
+        dict(healthy, verify_exits=partial), verifiers, resolves, projects
     ) is not None
     assert green_record_problem(
-        dict(healthy, suite_count=GREEN_CACHE_MIN_SUITE_COUNT - 1), verifiers, resolves
+        dict(healthy, verify_exits={script: 1 for script in verifiers}), verifiers, resolves, projects
     ) is not None
-    assert green_record_problem(healthy, verifiers, lambda sha: False) is not None
+    assert green_record_problem(
+        dict(healthy, suite_count=GREEN_CACHE_MIN_SUITE_COUNT - 1), verifiers, resolves, projects
+    ) is not None
+    assert green_record_problem(healthy, verifiers, lambda sha: False, projects) is not None
+
+    # A row whose hash is not the tree of the commit it names is not evidence (N-160).
+    assert green_record_problem(dict(healthy, source_tree_hash="h2"), verifiers, resolves, projects) is not None
+    assert green_record_problem(
+        dict(healthy, source_tree_scheme="working-copy-sha256"), verifiers, resolves, projects
+    ) is not None
 
     plan, record, reason = select_gate_plan(
-        "h1", [forged], now, verifier_scripts=verifiers, resolve_commit=lambda sha: False
+        "h1", [forged], now, verifier_scripts=verifiers, resolve_commit=lambda sha: False,
+        project_tree_hash=projects,
     )
     assert plan == "full"
     assert record is None
     assert "suite_count" in reason or "verifier" in reason or "gate_sha" in reason
 
     plan, record, _reason = select_gate_plan(
-        "h1", [healthy], now, verifier_scripts=verifiers, resolve_commit=resolves
+        "h1", [healthy], now, verifier_scripts=verifiers, resolve_commit=resolves,
+        project_tree_hash=projects,
     )
     assert plan == "reuse" and record is healthy
 

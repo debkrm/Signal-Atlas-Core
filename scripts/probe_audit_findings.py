@@ -412,6 +412,164 @@ def probe_n159() -> None:
     assert declared.status.value == "PASS", declared.evidence
 
 
+def probe_n160() -> None:
+    """
+    A green row binds to a git tree: a hand-written hash names no tree that was ever run (N-160).
+
+    Half one: the recorded digest is composed of the object ids git stores, so the CRLF working copy
+    this checkout holds hashes exactly as an LF clone of the same commit. Half two: a row is reusable
+    only when `gate_sha`'s own tree projects to the recorded hash, so the §80.3 forgery is refused.
+    """
+    import datetime
+    import subprocess
+
+    from verify_audit_append_only import (
+        GREEN_CACHE_MIN_SUITE_COUNT,
+        commit_exists,
+        compute_source_tree_hash,
+        dirty_source_paths,
+        discovered_verification_scripts,
+        green_record_problem,
+        is_source_tree_path,
+        select_gate_plan,
+        source_tree_entries,
+        source_tree_entries_for_commit,
+        source_tree_hash_at_commit,
+    )
+
+    def git(*args: str) -> bytes:
+        return subprocess.run(
+            ["git", *args], cwd=str(REPO_ROOT), capture_output=True, check=True,
+        ).stdout
+
+    head = git("rev-parse", "HEAD").decode().strip()
+    head_hash = source_tree_hash_at_commit(head)
+    assert head_hash, f"HEAD {head[:8]} projects no source tree"
+
+    # The digest is HEAD's tree, not this checkout's bytes. A text file whose working copy holds CRLF
+    # while its blob holds LF must hash to the blob's oid, or a clone would compute a different digest.
+    entries = dict(source_tree_entries())
+    assert entries == dict(source_tree_entries_for_commit(head) or {}), (
+        "the source-tree hash is not composed of HEAD's blob oids"
+    )
+
+    # An uncommitted source change is not certifiable by a recorded tree: it is reported, and the gate
+    # runs the heavy checks instead of reusing one (measured through the same function main() calls).
+    reported = set(
+        path.decode()
+        for path in git("diff-index", "--name-only", "-z", "HEAD", "--").split(b"\x00")
+        if path
+    )
+    dirty = dirty_source_paths()
+    assert dirty == sorted(p for p in reported if is_source_tree_path(p)), dirty
+
+    # Find a clean text file whose checkout differs from its blob only by line endings: its entry must
+    # still be the committed blob's oid. A checkout with no CRLF at all satisfies the same digest by
+    # construction (entries are HEAD's tree oids), so the example is a measurement, not the invariant.
+    for rel in sorted(entries):
+        if rel in set(dirty) or not rel.endswith((".py", ".yaml", ".yml", ".json", ".jsonl", ".md")):
+            continue
+        disk = (REPO_ROOT / rel).read_bytes()
+        if b"\r\n" not in disk:
+            continue
+        blob = git("cat-file", "blob", f"HEAD:{rel}")
+        assert disk.replace(b"\r\n", b"\n") == blob.replace(b"\r\n", b"\n"), (
+            f"{rel} differs from its blob by more than line endings"
+        )
+        assert entries[rel] == git("rev-parse", f"HEAD:{rel}").decode().strip(), (
+            f"{rel} holds CRLF on disk yet does not hash to the blob oid {rel} was committed as"
+        )
+        break
+
+    verifiers = discovered_verification_scripts()
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    from verify_audit_append_only import GREEN_CACHE_SCHEME
+
+    def record(tree_hash: str, gate_sha: str = head) -> dict:
+        return {
+            "source_tree_hash": tree_hash,
+            "source_tree_scheme": GREEN_CACHE_SCHEME,
+            "suite_count": max(GREEN_CACHE_MIN_SUITE_COUNT, 529),
+            "verify_exits": {script: 0 for script in verifiers},
+            "utc": (now - datetime.timedelta(minutes=5)).isoformat(),
+            "gate_sha": gate_sha,
+        }
+
+    # Positive control: the tree at HEAD, recorded against HEAD, is reusable.
+    healthy = record(head_hash)
+    assert green_record_problem(healthy, verifiers, commit_exists) is None, (
+        green_record_problem(healthy, verifiers, commit_exists)
+    )
+    plan, used, _reason = select_gate_plan(head_hash, [healthy], now, verifier_scripts=verifiers)
+    assert plan == "reuse" and used is healthy
+
+    # The §80.3 forgery: poison a test, hash the poisoned tree with the gate's own function, and name a
+    # commit that exists. No tree in the repository has that hash, so the row cannot certify itself.
+    entries = dict(source_tree_entries())
+    assert "tests/unit/test_verdicts.py" in entries
+    poisoned = dict(entries)
+    poisoned["tests/unit/test_verdicts.py"] = "0" * 40
+    forged_hash = compute_source_tree_hash(list(poisoned.items()))
+    assert forged_hash != head_hash
+    problem = green_record_problem(record(forged_hash), verifiers, commit_exists)
+    assert problem is not None and "tree" in problem, problem
+    plan, used, _reason = select_gate_plan(
+        forged_hash, [record(forged_hash)], now, verifier_scripts=verifiers
+    )
+    assert plan == "full" and used is None
+
+    # A row that hashes one tree and names another commit is refused as well.
+    parent = git("rev-parse", f"{head}^")
+    assert green_record_problem(
+        record(head_hash, gate_sha=parent), verifiers, commit_exists
+    ) is not None
+
+    # The committed cache rows must be trees of the commits they name, so a clone recomputes the same
+    # digest and can reuse the newest green run.
+    from verify_audit_append_only import load_green_cache
+
+    scheme_rows = [row for row in load_green_cache() if row.get("source_tree_scheme") == GREEN_CACHE_SCHEME]
+    assert scheme_rows, "no cache row was recorded under the git-blob-oid scheme"
+    for row in scheme_rows:
+        sha = str(row.get("gate_sha") or "")
+        assert commit_exists(sha), f"cache row names {sha!r}, which is not a commit"
+        assert source_tree_hash_at_commit(sha) == row.get("source_tree_hash"), (
+            f"cache row for {sha} records {str(row.get('source_tree_hash'))[:12]} but that commit's "
+            f"tree is {str(source_tree_hash_at_commit(sha))[:12]}"
+        )
+
+
+def probe_n161() -> None:
+    """The validation-fold count is an integer, not a string that coerces to one (N-161)."""
+    def overfit_06(**bundle) -> object:
+        return _by_id({
+            "walk_forward_positive_fold_ratio": Decimal("1.00"),
+            **bundle,
+        })["CRIT-OVERFIT-06"]
+
+    numeric_string = overfit_06(walk_forward_validation_folds_count="2")
+    assert numeric_string.status.value == "NOT RUN", (
+        f"a fold count of \"2\" evaluated {numeric_string.status.value}"
+    )
+    assert numeric_string.computed_value is None
+
+    as_float = overfit_06(walk_forward_validation_folds_count=2.0)
+    assert as_float.status.value == "NOT RUN", (
+        f"a fold count of 2.0 evaluated {as_float.status.value}"
+    )
+
+    as_bool = overfit_06(walk_forward_validation_folds_count=True)
+    assert as_bool.status.value == "NOT RUN", f"a fold count of True evaluated {as_bool.status.value}"
+
+    genuine = overfit_06(walk_forward_validation_folds_count=2)
+    assert genuine.status.value == "PASS", genuine.evidence
+    assert genuine.computed_value == "1.0000"
+
+    one = overfit_06(walk_forward_validation_folds_count=1)
+    assert one.status.value == "NOT RUN", one.evidence
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -424,6 +582,8 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-157": probe_n157,
     "N-158": probe_n158,
     "N-159": probe_n159,
+    "N-160": probe_n160,
+    "N-161": probe_n161,
 }
 
 

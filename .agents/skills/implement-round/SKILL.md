@@ -62,6 +62,10 @@ Status words (closed, verified, signed off) may appear only with the cited verdi
 ```
 git status --porcelain                     # protected paths must be absent
 git commit -m "<what changed and why>"     # no Co-Authored-By, no generated-with trailer (§12.7)
+# The gate records green against a commit's tree, not against a working copy (§80.3, N-160), so the full
+# run above recorded nothing. Run it once more on the committed tree and commit the single row it appends.
+python scripts/verify_audit_append_only.py
+git add data/reference/source_tree_green.json && git commit -m "Record the post-commit green source tree."
 git tag feat-s<N>-$(git rev-parse --short HEAD)
 ```
 

@@ -34,6 +34,10 @@ AUDIT_FINDINGS_LEDGER = REPO_ROOT / "reports" / "audit" / "findings.jsonl"
 # log cannot change a computation, so the gate reuses the recorded result for an identical source
 # tree instead of re-running 500 tests. Any path outside the excluded set produces an unknown hash and
 # forces the full run; --force-full exists for the human, and a full run is mandatory once a day.
+# Audit §80.3 / §80.13 item 1 (N-160): the hash is composed of the blob oids in a git tree
+# (`git ls-tree`), not of raw working-copy bytes, and a row is reusable only when the tree of its
+# `gate_sha` projects to the same hash. A CRLF checkout, an LF clone and the stored blob therefore
+# agree, and a hash typed by hand names no tree this repository contains.
 GREEN_CACHE_PATH = REPO_ROOT / "data" / "reference" / "source_tree_green.json"
 SOURCE_TREE_EXCLUDED_PREFIXES = ("reports/audit/", "docs/")
 SOURCE_TREE_EXCLUDED_FILES = (
@@ -41,6 +45,10 @@ SOURCE_TREE_EXCLUDED_FILES = (
     "data/reference/source_tree_green.json",
 )
 GREEN_CACHE_MAX_AGE = datetime.timedelta(hours=24)
+# §80.3 (N-160): the identity of a source tree. `git-blob-oid-v1` composes git blob oids, so it is a
+# property of the commit rather than of the machine that checked it out. A row written under any other
+# scheme (the 2026-11-17 working-copy sha256 rows) cannot witness a tree and is never reused.
+GREEN_CACHE_SCHEME = "git-blob-oid-v1"
 # Audit §79.8 (N-155): a record is evidence only if it witnesses the run it claims. The floor is a
 # pinned minimum, not a default: a row reading `suite_count: 1` used to satisfy the same comparison as
 # a row reading 523. The two runtime verifiers are re-executed even on a cached source tree, because
@@ -127,10 +135,6 @@ def check_audit_report_append_only() -> bool:
 
     print("[PASS] Gate W0.5-1: Audit report append-only invariant verified 100%.\n")
     return True
-
-
-def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def canonical_volume_bytes(path: Path) -> bytes:
@@ -266,33 +270,82 @@ def is_source_tree_path(rel_path: str) -> bool:
 
 
 def source_tree_entries() -> List[Tuple[str, str]]:
-    """`(relative path, sha256 of bytes)` for every tracked source file."""
+    """
+    `(relative path, blob oid)` for every source file in HEAD's tree.
+
+    The digest is composed of the object ids git stores, never of working-copy bytes, so a Windows
+    checkout holding CRLF and a fresh LF clone produce the same hash (Audit §80.3, N-160). A working
+    copy that differs from HEAD is not hashed at all: `dirty_source_paths()` forces the full run, so an
+    uncommitted edit can never be certified by a recorded tree.
+    """
+    entries = source_tree_entries_for_commit("HEAD")
+    if entries is None:
+        raise RuntimeError("git ls-tree HEAD failed: this checkout has no committed source tree")
+    return entries
+
+
+def dirty_source_paths() -> List[str]:
+    """
+    Source paths whose working copy (staged or unstaged) differs from HEAD.
+
+    These are the files that could change a computation without changing HEAD's tree hash, so the gate
+    must run the heavy checks for them rather than reuse a record of the committed tree (N-160).
+    """
     proc = subprocess.run(
-        ["git", "ls-files", "-z"],
+        ["git", "diff-index", "--name-only", "-z", "HEAD", "--"],
         cwd=str(REPO_ROOT),
         capture_output=True,
-        check=True,
     )
+    if proc.returncode != 0:
+        raise RuntimeError(f"git diff-index failed: {proc.stderr.decode('utf-8', 'replace').strip()}")
+    paths = [raw.decode("utf-8") for raw in proc.stdout.split(b"\x00") if raw]
+    return sorted(path for path in paths if is_source_tree_path(path))
+
+
+def source_tree_entries_for_commit(ref: str) -> Optional[List[Tuple[str, str]]]:
+    """
+    `(relative path, blob oid)` for every source file in commit `ref`'s tree.
+
+    This is the projection a cache row has to equal: the oids come from `git ls-tree`, so nothing is
+    read from the working copy and no checkout can disagree (Audit §80.3, N-160).
+    """
+    proc = subprocess.run(
+        ["git", "ls-tree", "-r", "-z", ref],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        return None
     entries: List[Tuple[str, str]] = []
     for raw in proc.stdout.split(b"\x00"):
         if not raw:
             continue
-        rel = raw.decode("utf-8")
+        meta, _, name = raw.partition(b"\t")
+        parts = meta.split()
+        if len(parts) != 3 or parts[1] != b"blob":
+            continue
+        rel = name.decode("utf-8")
         if not is_source_tree_path(rel):
             continue
-        path = REPO_ROOT / rel
-        if not path.is_file():
-            continue
-        entries.append((rel, sha256_file(path)))
+        entries.append((rel, parts[2].decode("ascii")))
     return entries
 
 
+def source_tree_hash_at_commit(ref: str) -> Optional[str]:
+    """The source-tree hash a commit's own tree projects, or None when `ref` names no tree."""
+    entries = source_tree_entries_for_commit(ref)
+    if entries is None:
+        return None
+    return compute_source_tree_hash(entries)
+
+
 def compute_source_tree_hash(entries: Sequence[Tuple[str, str]]) -> str:
+    """Order-independent digest over `(path, content oid)` pairs (N-160: oids, never raw bytes)."""
     digest = hashlib.sha256()
-    for rel, file_sha in sorted(entries):
+    for rel, oid in sorted(entries):
         digest.update(rel.encode("utf-8"))
         digest.update(b"\x00")
-        digest.update(file_sha.encode("ascii"))
+        digest.update(oid.encode("ascii"))
         digest.update(b"\n")
     return digest.hexdigest()
 
@@ -324,13 +377,16 @@ def green_record_problem(
     record: dict,
     expected_verifiers: Sequence[str],
     resolve_commit,
+    project_tree_hash=None,
 ) -> Optional[str]:
     """
-    Why this record cannot witness a green run, or None when it can (Audit §79.8, N-155).
+    Why this record cannot witness a green run, or None when it can (Audit §79.8, §80.3).
 
     Four independent holes are closed: an empty `verify_exits` (no verifier ran) reads as all-zero
     under `any(...)`; `suite_count` had no floor; `gate_sha` was never resolved; and the run itself was
-    never required to be one the gate could have produced.
+    never required to be one the gate could have produced. §80.3 (N-160) closes the last one: the
+    record's hash must be the source-tree projection of `gate_sha`'s own git tree, so a row written by
+    hand names no tree that was ever run.
     """
     exits = record.get("verify_exits")
     if not isinstance(exits, dict):
@@ -351,9 +407,24 @@ def green_record_problem(
             f"cache record suite_count {suite_count} is below the pinned floor "
             f"{GREEN_CACHE_MIN_SUITE_COUNT}"
         )
+    if record.get("source_tree_scheme") != GREEN_CACHE_SCHEME:
+        return (
+            f"cache record was not written by the {GREEN_CACHE_SCHEME} source-tree scheme, so its "
+            f"hash is not the identity of a tree"
+        )
     gate_sha = str(record.get("gate_sha") or "")
     if not resolve_commit(gate_sha):
         return f"cache record gate_sha {gate_sha!r} is not a commit in this repository"
+    project = project_tree_hash or source_tree_hash_at_commit
+    projected = project(gate_sha)
+    if projected is None:
+        return f"cache record gate_sha {gate_sha!r} projects no source tree"
+    recorded = str(record.get("source_tree_hash") or "")
+    if recorded != projected:
+        return (
+            f"cache record source_tree_hash {recorded[:12]}… is not the tree at gate_sha "
+            f"{gate_sha}: that commit's tree projects {projected[:12]}…"
+        )
     return None
 
 
@@ -362,6 +433,21 @@ def load_green_cache() -> List[dict]:
         return []
     data = json.loads(GREEN_CACHE_PATH.read_text(encoding="utf-8") or "[]")
     return [record for record in data if isinstance(record, dict)] if isinstance(data, list) else []
+
+
+def should_record_green(
+    plan: str,
+    all_ok: bool,
+    suite_count: int,
+    dirty_paths: Sequence[str],
+) -> bool:
+    """
+    True only for a full, all-green pass of a clean tree (Audit §80.3, N-160).
+
+    A row names the tree of a commit, so a run over a working copy that differs from HEAD has no tree
+    to name: recording it would certify code the tests never executed.
+    """
+    return plan == "full" and bool(all_ok) and suite_count > 0 and not dirty_paths
 
 
 def append_green_record(
@@ -375,6 +461,7 @@ def append_green_record(
     records = load_green_cache()
     records.append({
         "source_tree_hash": source_hash,
+        "source_tree_scheme": GREEN_CACHE_SCHEME,
         "suite_count": int(suite_count),
         "pytest_seconds": round(float(pytest_seconds), 2),
         "verify_exits": verify_exits,
@@ -391,11 +478,12 @@ def select_gate_plan(
     force_full: bool = False,
     verifier_scripts: Optional[Sequence[str]] = None,
     resolve_commit=None,
+    project_tree_hash=None,
 ) -> Tuple[str, Optional[dict], str]:
     """
     Returns `(plan, record, reason)`. `plan` is "reuse" only for an identical source tree with a
-    record that witnesses a complete green run and is younger than 24 hours; anything else is "full",
-    which is the fail-closed default (Audit §79.8, N-155).
+    record that witnesses a complete green run, whose `gate_sha` projects to that same tree, and that
+    is younger than 24 hours; anything else is "full", the fail-closed default (Audit §79.8, §80.3).
     """
     if force_full:
         return "full", None, "forced"
@@ -406,7 +494,7 @@ def select_gate_plan(
     for record in reversed(list(records)):
         if record.get("source_tree_hash") != source_hash:
             continue
-        problem = green_record_problem(record, expected, resolver)
+        problem = green_record_problem(record, expected, resolver, project_tree_hash)
         if problem is not None:
             return "full", None, problem
         try:
@@ -734,12 +822,22 @@ def main() -> int:
     # §78.15 (b): heavy gates run only when the source tree differs from a recorded green run.
     plan, record, reason = "full", None, "targeted run"
     source_hash = ""
+    dirty: List[str] = []
     if run_all:
         source_hash = compute_source_tree_hash(source_tree_entries())
-        plan, record, reason = select_gate_plan(
-            source_hash, load_green_cache(), datetime.datetime.now(datetime.timezone.utc),
-            force_full=args.force_full,
-        )
+        # §80.3 (N-160): the hash describes HEAD's tree, so a working copy that differs from HEAD is
+        # never a cache hit -- there is no committed tree to witness the run. The heavy gates run, and
+        # the run is not recorded: a row would claim HEAD's tree was tested when it was not.
+        dirty = dirty_source_paths()
+        if dirty:
+            plan, record, reason = (
+                "full", None, f"{len(dirty)} source path(s) differ from HEAD: {', '.join(dirty[:3])}"
+            )
+        else:
+            plan, record, reason = select_gate_plan(
+                source_hash, load_green_cache(), datetime.datetime.now(datetime.timezone.utc),
+                force_full=args.force_full,
+            )
         print(f"[INFO] Source-tree hash {source_hash[:16]}… — {reason}")
 
     suite_count = 0
@@ -766,14 +864,15 @@ def main() -> int:
     if run_all or args.check_reference_only:
         results.append(check_reference_manifest_integrity())
 
-    if run_all and plan == "full" and all(results) and suite_count > 0:
+    if run_all and should_record_green(plan, all(results), suite_count, dirty):
         gate_sha = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", check=True,
         ).stdout.strip()
-        # §79.8 (N-155): a hash already recorded as green is not appended again, so a routine full run
-        # does not dirty a tracked file. A record that fails validation is deliberately not replaced:
-        # the forge is reported, not self-healed.
+        # §79.8 (N-155) / §80.3 (N-160): a hash already recorded as green is not appended again, so a
+        # routine full run does not dirty a tracked file. Because the hash is HEAD's tree and this run
+        # was not a cache hit, the row names a tree the commit contains by construction. A record that
+        # fails validation is deliberately not replaced: the forge is reported, not self-healed.
         if any(r.get("source_tree_hash") == source_hash for r in load_green_cache()):
             print(
                 f"[INFO] Source tree {source_hash[:16]}… is already recorded; not appending a "
@@ -787,6 +886,11 @@ def main() -> int:
                 f"[INFO] Recorded green source tree {source_hash[:16]}… ({suite_count} passed) "
                 f"in {GREEN_CACHE_PATH.relative_to(REPO_ROOT).as_posix()}.\n"
             )
+    elif run_all and all(results) and dirty:
+        print(
+            f"[INFO] This run tested a working copy that differs from HEAD in {len(dirty)} source "
+            f"path(s), so no green row was recorded: commit and re-run the gate (N-160).\n"
+        )
 
     print("=" * 80)
     if all(results):

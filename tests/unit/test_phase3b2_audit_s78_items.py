@@ -37,6 +37,7 @@ from scripts.derive_2022_2024_corpora import (
 )
 from scripts.probe_audit_findings import PROBES
 from scripts.verify_audit_append_only import (
+    GREEN_CACHE_SCHEME,
     compute_source_tree_hash,
     compute_volume_digest,
     discovered_verification_scripts,
@@ -271,6 +272,7 @@ def test_green_cache_reuses_only_an_identical_fresh_source_tree():
     # discovered verifier at exit 0, a suite count above the pinned floor, and a real commit.
     record = {
         "source_tree_hash": "h1",
+        "source_tree_scheme": GREEN_CACHE_SCHEME,
         "suite_count": 523,
         "verify_exits": {script: 0 for script in verifier_scripts},
         "utc": (now - datetime.timedelta(hours=2)).isoformat(),
@@ -280,8 +282,13 @@ def test_green_cache_reuses_only_an_identical_fresh_source_tree():
     def resolve(sha: str) -> bool:
         return sha == "3119cb2"
 
+    # §80.3 (N-160): the record is only evidence for the tree its `gate_sha` contains.
+    def projects(sha: str):
+        return "h1" if sha == "3119cb2" else None
+
     plan, used, reason = select_gate_plan(
-        "h1", [record], now, verifier_scripts=verifier_scripts, resolve_commit=resolve
+        "h1", [record], now, verifier_scripts=verifier_scripts, resolve_commit=resolve,
+        project_tree_hash=projects,
     )
     assert plan == "reuse"
     assert used is not None and used["gate_sha"] == "3119cb2"
@@ -292,9 +299,16 @@ def test_green_cache_reuses_only_an_identical_fresh_source_tree():
         "h1", [record], now, force_full=True, verifier_scripts=verifier_scripts
     )[0] == "full"
 
+    # A row whose commit projects a different tree is not a hit, whatever hash it records.
+    assert select_gate_plan(
+        "h1", [record], now, verifier_scripts=verifier_scripts, resolve_commit=resolve,
+        project_tree_hash=lambda sha: "h9",
+    )[0] == "full"
+
     stale = dict(record, utc=(now - datetime.timedelta(hours=25)).isoformat())
     plan, _used, reason = select_gate_plan(
-        "h1", [stale], now, verifier_scripts=verifier_scripts, resolve_commit=resolve
+        "h1", [stale], now, verifier_scripts=verifier_scripts, resolve_commit=resolve,
+        project_tree_hash=projects,
     )
     assert plan == "full"
     assert "24h" in reason
