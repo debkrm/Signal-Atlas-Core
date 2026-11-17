@@ -1092,6 +1092,107 @@ def probe_n167() -> None:
     )
 
 
+def probe_n168() -> None:
+    """
+    An ignored rootdir pytest config is not dirty state (N-168).
+
+    `pytest.ini`, `tox.ini`, `setup.cfg` and `pyproject.toml` decide the rootdir, `addopts` and
+    `testpaths`, so a local `.git/info/exclude` rule can point pytest at a different suite. The dirty set
+    counts `.py` files and the rootdir `conftest.py` (§84.2), and a config file is not a `.py` file, so
+    the gate reuses a green row while pytest collects something else. The probe asserts the defect with
+    the instruments §83 used -- the dirty set, the forged row, pytest's own collection -- and must be
+    replaced by a closure probe once a rootdir config file is dirty state.
+    """
+    import datetime
+    import subprocess
+
+    from verify_audit_append_only import (
+        GREEN_CACHE_SCHEME,
+        dirty_source_paths,
+        discovered_verification_scripts,
+        select_gate_plan,
+        should_record_green,
+        source_tree_hash_at_commit,
+    )
+
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(REPO_ROOT), capture_output=True, text=True
+    ).stdout.strip()
+    head_hash = source_tree_hash_at_commit(head)
+    assert head_hash
+    verifiers = discovered_verification_scripts()
+    # Relative to whatever this working copy already holds, never to an empty set (N-166, §82.6).
+    baseline_dirty = dirty_source_paths()
+
+    config = "pytest.ini"
+    collected_test = "tests/unit/test_phase3b2_audit_s80_items.py"
+    assert not (REPO_ROOT / config).exists(), f"{config} already exists: the probe would clobber it"
+    exclude = REPO_ROOT / ".git" / "info" / "exclude"
+    original = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
+
+    def collect() -> str:
+        return subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", collected_test],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace",
+        ).stdout
+
+    before = collect()
+    assert "deselected" not in before, f"the working copy already deselects tests: {before[-300:]}"
+    try:
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        rules = original + ("" if not original or original.endswith("\n") else "\n")
+        exclude.write_text(rules + f"{config}\n", encoding="utf-8")
+        (REPO_ROOT / config).write_text(
+            '[pytest]\naddopts = -q -k "not test_n160_source_tree_hash"\n', encoding="utf-8"
+        )
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--no-renames"], cwd=str(REPO_ROOT),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        ).stdout
+        assert config not in status, status
+        dirty = dirty_source_paths()
+        assert set(dirty) == set(baseline_dirty), (
+            f"the dirty set already covers a rootdir pytest config ({dirty}); re-measure N-168 and "
+            f"consider closing it"
+        )
+        assert should_record_green("full", True, 536, []) is True, (
+            "recording over a clean tree is refused, so this probe cannot show the config is invisible"
+        )
+        assert should_record_green("full", True, 536, baseline_dirty) == should_record_green(
+            "full", True, 536, dirty
+        ), "an ignored rootdir pytest config changes the recording decision; re-measure N-168"
+        # The config is executed, not inert: the suite it selects is not the one a record describes.
+        after = collect()
+        assert "deselected" in after, (
+            f"the ignored pytest.ini does not change collection: {after[-300:]}"
+        )
+        now = datetime.datetime.now(datetime.timezone.utc)
+        forged = {
+            "source_tree_hash": head_hash,
+            "source_tree_scheme": GREEN_CACHE_SCHEME,
+            "suite_count": 536,
+            "verify_exits": {script: 0 for script in verifiers},
+            "utc": (now - datetime.timedelta(minutes=5)).isoformat(),
+            "gate_sha": head,
+        }
+        plan, used, reason = select_gate_plan(head_hash, [forged], now, head_commit=head)
+        assert plan == "reuse" and used is not None, (
+            f"the forged row is no longer a valid hit under an ignored pytest config: {plan} — {reason}"
+        )
+    finally:
+        (REPO_ROOT / config).unlink(missing_ok=True)
+        if original:
+            exclude.write_text(original, encoding="utf-8")
+        elif exclude.is_file():
+            exclude.unlink()
+    assert not (REPO_ROOT / config).exists(), f"{config} still present after cleanup"
+    after = dirty_source_paths()
+    assert config not in after, f"{config} is still dirty after cleanup: {after}"
+    assert set(after) == set(baseline_dirty), (
+        f"cleanup left the dirty set changed: {sorted(set(after) - set(baseline_dirty))}"
+    )
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -1112,6 +1213,7 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-165": probe_n165,
     "N-166": probe_n166,
     "N-167": probe_n167,
+    "N-168": probe_n168,
 }
 
 

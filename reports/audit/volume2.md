@@ -1184,3 +1184,148 @@ rather than done.
 - If removing `.decode()` leaves `probe_n160` passing, N-164 has regressed through the §83.2 rework.
 - If any gate decision turns out to read working-copy bytes, removing the byte-inequality assertion was a
   widening rather than a correction; today `main()` decides on the dirty path set.
+---
+
+## §84 — Audit of `f361ba8` (tag `feat-s83-f361ba8`): both named shapes refuse now; a config file does not
+
+`f361ba8` is the cache row for `626ebba`, and the repair is `626ebba`'s. It implements §83.6 item 1 and
+nothing else: `dirty_source_paths()` enumerates the `.py` files inside an ignored directory under a
+collected root, and keeps an ignored rootdir `conftest.py`. The plain gate at this SHA selects `full`
+with *"the record for this source tree was written at 626ebba, not at the commit being verified
+(f361ba84…)"* — the §82 key, still working. The work log cites §83 and `b89dbe7` and labels itself
+**not audited**, so §11.3 is satisfied by the log it wrote.
+
+### 84.1 Baseline re-measured at `f361ba8`
+
+| Instrument | Result at `f361ba8` |
+|---|---|
+| `verify_audit_append_only.py --force-full` | **exit 0** — `ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| pytest | **536 passed** in 140.17 s; 0 skipped, 0 xfailed (W0.5-3 PASS) |
+| `scripts/verify_*.py` discovered / executed | 9 / 9, every exit 0 (W0.5-2 PASS) |
+| W0.5-1 / 1b / 1c | PASS — append-only; 2 volumes (1186 committed lines); INDEX reproduces at 83 section rows |
+| W0.5-4 / W0.5-5 | PASS — 84 commit-bearing tags; 46 current / 22 superseded manifest rows |
+| Probes at the audited SHA | 19 / 19 `PASS`; N-168 registered in this section takes the ledger to 20 ids |
+| Findings ledger | 26 rows / 19 ids |
+| Green cache | 12 rows; newest `626ebba` / tree `98d7c3a7…` / 536 |
+| Trials / criteria / holdout | **N = 9, N_eval = 5**; criteria **1.1.9** (`5591656411a6c1ef…`); no `HOLDOUT_UNLOCK` sentinel |
+| Source tree | `98d7c3a7…` at both `626ebba` and `f361ba8`; `dirty_source_paths()` is `[]` |
+
+### 84.2 N-167 — `CLOSED`
+
+Both shapes were attacked end to end in a clone at `f361ba8`, with a row forged to name HEAD as the
+instrument; the forged row is first shown to be a real hit, otherwise the refusal proves nothing.
+
+| Configuration | `git status` | `dirty_source_paths()` | Gate with the forged row |
+|---|---|---|---|
+| Clean tree (control) | clean | `[]` | `reused green at f361ba84… (536 passed)`, **exit 0**, no row appended |
+| Ignored `tests/unit/n167_hidden/` holding a failing test | clean (not even reported) | `['tests/unit/n167_hidden/test_hidden.py']` | `1 source path(s) differ from HEAD: tests/unit/n167_hidden/test_hidden.py`, **exit 1**, cache 13 → 13 |
+| Ignored rootdir `conftest.py` that raises in `pytest_runtest_setup` | clean | `['conftest.py']` | `1 source path(s) differ from HEAD: conftest.py`, **exit 1**, cache 13 → 13 |
+
+`should_record_green("full", True, 536, [])` is `True` and the same call over either dirty set is
+`False`, so the refusal is the set and not a recording rule that never fires. The enumeration is real
+rather than declared: `git status --ignored=matching` still reports only `!! tests/unit/n167_hidden/`,
+while `git ls-files --others --ignored --exclude-standard` lists `test_hidden.py` inside it. Both
+mutations fail closed — deleting the directory branch makes `probe N-167` exit 1 with *"an ignored
+directory under tests/ is still invisible to the dirty set"*, and deleting the `conftest.py` branch
+makes it exit 1 with *"an ignored rootdir conftest.py is still invisible to the dirty set"*. The
+implementer's claim that the flipped probe failed on the pre-fix tree reproduces: the new probe against
+`74e74d3`'s verifier exits 1 with that same phrase (the dirty list it prints is that clone's, which
+carries 25 modified archive files, so the list differs from the work log's while the phrase matches).
+
+Two properties are worth recording because they were not asked for. The probe aborts when
+`tests/unit/n167_hidden` already exists (`FAIL N-167: … already exists`) instead of clearing a path it
+did not create — it failed that way against my own planted directory, which is the right direction.
+And the fix does not over-collect: on a clean tree after a full pytest run, with `__pycache__`
+directories reported as ignored, `dirty_source_paths()` is still `[]`.
+
+### 84.3 N-165 — `CLOSED`
+
+N-165's metric is *a recorded green run is not reused when the suite it would certify is red because of
+a collected file git does not report*. Every shape a `.py` collected file can take now reaches the set:
+an ignored file (§83.3, `probe N-165` still `PASS`), an ignored directory, an ignored conftest inside
+one (enumerated by the same `ls-files` call), and an ignored rootdir `conftest.py`. The pre-fix probe
+that could only hide a file is no longer the widest instrument: the two shapes that beat it in §83.4
+are measured red above.
+
+The row is closed with the residual named rather than implied: what still hides code from this set is
+not a source path at all but a rootdir pytest *configuration* file, registered below as N-168. That is a
+different input, and §14.5's contract for this round was §83.6 item 1 — the directory and the
+`conftest.py`. Both are met, so the verdict changes even though a better condition can be imagined.
+
+### 84.4 N-168 (`MEDIUM`, new) — an ignored rootdir pytest config is not dirty state
+
+The config file is outside every branch this round added: `ignored_python_files()` keeps `.py` files,
+and the new rootdir branch matches exactly `conftest.py`. Measured in the same clone, with a row forged
+to name HEAD:
+
+```
+$ printf '[pytest]\naddopts = -q --ignore=tests/unit/test_phase3b2_audit_s80_items.py\n' > pytest.ini
+$ printf 'pytest.ini\n' >> .git/info/exclude
+$ git status --porcelain
+                                        # empty: git calls the tree clean
+$ python -c "...print(dirty_source_paths())"
+[]                                      # and so does the gate's only view of the working copy
+$ python -m pytest
+529 passed in 132.84s                   # seven tests, including a §80 item, never ran
+$ python scripts/verify_audit_append_only.py    # forged row naming HEAD
+[INFO] reused green at f361ba84… (536 passed) — heavy gates skipped for an identical source tree.
+OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)   exit 0
+```
+
+The config is executed, not inert: under `addopts = -q -k "not test_n160_source_tree_hash"` pytest
+reports `6/7 tests collected (1 deselected)` for the §80 test file. So a local exclude rule can still
+make a green row certify a suite that did not run — through a configuration file rather than a source
+file. The threshold is that an ignored rootdir `pytest.ini`, `tox.ini`, `setup.cfg` or `pyproject.toml`
+is dirty state. `probe_n168` asserts the defect through the dirty set, the recording decision, the
+forged row and pytest's own collection, and passes while it stands; applying the closure form in the
+verifier (keeping those four names when they are reported `!!`) makes it exit 1 with *"the dirty set
+already covers a rootdir pytest config"*.
+
+This is not a missed contract. §83.4's fix direction named configuration files, but the ordered item in
+§83.6 named the directory and `conftest.py` only, and that is what was delivered and verified.
+
+### 84.5 Phase verdicts and residuals
+
+| Phase / claim | Verdict at `f361ba8` | Residuals named |
+|---|---|---|
+| `§12.3` repository gate machinery | **GO** — 536 passed, 9/9 verifiers, `--force-full` exit 0; reuse refused over both measured shapes | N-168 (ignored rootdir pytest config) |
+| N-167 | **CLOSED** — both shapes in the dirty set, gate exit 1 and no row, both branches mutation-tested | — |
+| N-165 | **CLOSED** — file, directory and conftest shapes all refuse; metric holds | N-168 for the config channel |
+| N-162 / N-163 / N-164 / N-166 | remain **CLOSED** — key, tree identity and probe stability unchanged by this commit | — |
+| `§80.13` items 3-5 | **PREPARED, NOT EXECUTED** — unchanged since §81.7 | A1, A2, A4 open by design |
+| Criteria / trials / holdout | **UNTOUCHED** — 1.1.9, N = 9, N_eval = 5, no trial row, 2024 fold frozen, holdout sealed | N-152 `ACCEPTED`, N-150 `OPEN` |
+
+### 84.6 Work order
+
+1. **Treat an ignored rootdir pytest configuration file as dirty** (N-168). `pytest.ini`, `tox.ini`,
+   `setup.cfg` and `pyproject.toml` reported `!!` at the repository root are state, so they refuse reuse
+   and recording the way `conftest.py` now does. Probe: `probe_audit_findings.py N-168` must be flipped
+   to assert the fix and must fail at the fixing commit's parent; the full suite must go red over an
+   ignored config that deselects a tracked test, not only report a different count. Serves `§12.3`.
+2. **Carry items 4-6 of §82.8 unchanged** — A1 sourcing with per-year provenance, `WARMUP_NOT_GATABLE`
+   plus a gating-mode probe, and pre-2022 pin relaxation as a computed gate. Serves Phase 3B-2 / `§10.8`.
+
+No other item of §83.6 survives: item 1 is delivered and measured, and its closure probe is load-bearing
+in both directions.
+
+### 84.7 What would falsify this verdict
+
+- If an ignored directory under `tests/`, or an ignored rootdir `conftest.py`, stops appearing in
+  `dirty_source_paths()`, N-167 is not closed and this section is wrong.
+- If either mutation of `probe_n167` still prints `PASS`, the closure probe is not the instrument that
+  decided it.
+- If `dirty_source_paths()` is non-empty on a clean tree after a full pytest run, the enumeration
+  over-collects and every checkout pays the heavy gates; today it is `[]`.
+- If `probe N-165` fails at a later commit, N-165's file form regressed and its closure was premature.
+- If an ignored rootdir pytest config ever makes the gate refuse, N-168 is stale in the direction of
+  being too harsh; today it reuses green over one.
+### 84.8 A §83 closure that never reached the ledger
+
+§83.2 declared N-166 `CLOSED`. The ledger at `f361ba8` did not contain that row: `findings.jsonl` held
+26 rows and N-166's newest row was still `OPEN` with `section: 82`, so the closure lived only in prose
+while `verify_audit_findings.py`, which executes every non-`ACCEPTED` row, went on treating N-166 as
+open. That is the auditor's error and it is recorded rather than quietly patched: §84 appends the
+closure row with `closed_in_section: 83`, the section that decided it, because the ledger is append-only
+and citing §84 would move the closure to a round that did not make it. No verdict changes — the probe
+has been the closure probe since `1a20255` — only the citation, and the ledger now reads 30 rows over
+20 ids with N-165, N-166 and N-167 all `CLOSED`.
