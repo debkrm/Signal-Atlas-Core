@@ -7925,3 +7925,161 @@ A trend-following system's losers hit their stop and close; its winners are stil
 All probes ran in-process from the repository root against committed bytes; no artifact, registry row, criteria file or corpus was written. `git status` empty at the start and end of the round; no trial was appended or re-scored; the registry, sidecar, manifest, criteria and pin were read and re-hashed. The one CLI probe (`--band-policy STRICT_BAND_REQUIRED`) exited 1 before loading the dataset, wrote no artifact, and its exit status was captured before any pipe. `CURRENT_STAGE_OF_WORK.md` was not edited.
 
 **Not measured, and not claimed:** whether H-127 aborts a real seq 9 (no held name crossed a split or transition in seq 8); how many of the ~6,200 unbanded submissions were refused by sizing, turnover or participation rather than by the band; whether ranking survives the de-censoring and viability fixes, since the quintile diagnostic above is gross, uncapped and in-sample; and any out-of-sample read at all — the 2024 fold is unspent and the holdout is sealed.
+## 76. Audit of `9f7036e..348b5ba` — the remediation holds, but the gate and the report measure different books
+
+### 76.1 Baseline re-measured at `348b5ba`
+
+`python scripts/verify_audit_append_only.py` → **exit 0**, `ALL REPOSITORY FOUNDATION GATES PASSED (100%)`: W0.5-1 append-only PASS; W0.5-2 all 8 discovered `verify_*.py` exit 0; W0.5-3 **496 passed in 118.04 s, 0 skipped, 0 xfailed**; W0.5-4 every commit-bearing tag resolves to the SHA its name claims; W0.5-5 46 current artifacts match byte_count/sha256 with 19 superseded rows skipped.
+
+`verify_phase2a_containment_and_trials.py` → exit 0: **G2A-6.6 `N=9, N_eval=5`**, sidecar present; **G2A-6.7** 5 scored trials agree with their artifacts; **G2A-6.8a** manifest sha256 `3326b1b221b2e026…` equals the criteria pin; 6.8b (witness-key removal refused) and 6.8c (nulled `annualized_sharpe` refused) both hold.
+
+**Attack on the pin, per §14.3.** I replaced the pinned digest with `deadbeef…` in a working-copy of `configs/go_no_go_criteria.yaml` and re-ran the verifier: **exit 1**. Restored with `git checkout --`, `git status` clean, re-run exit 0. The pin is a gate, not a declaration.
+
+Registry shape verified from bytes: seq 9 row `record_hash 50de55e9…`, `prev_hash d8dc07b7…` (seq 8's record hash), `criteria_version 1.1.5`, `sharpe_ratio: null`, `partition IN_SAMPLE`, `canonical_params` carrying `entry_rank_indicator mom_63`, `unbanded_session_fill_policy LOCKED_BAR_REFUSAL_ONLY`, `min_entry_notional 25000`, `min_fill_notional 5000`. Sidecar 5 evaluations; manifest 323 bytes, sha256 `3326b1b2…`; artifact `evaluated_trial_count 5` beside `evaluated_trial_count_prior 4`; `validation_folds_count 0`.
+
+### 76.2 H-127 — **CLOSED**, at both conventions and through the harness helpers
+
+Probe: a real 25-share position (₹2,004.15 average after slippage, ₹50,103.75 basis, stop `1800.0000`/25), then the same corporate action under both conventions.
+
+| Arm | Convention | Result |
+|---|---|---|
+| B1 | `SPLIT_BONUS_ADJUSTED`, 10:1 `ISIN_TRANSITION` | quantity 25, average 2004.1500, basis 50103.75, realized PnL 0.00 — **identical before and after**; position re-keyed to `INE081A01020` |
+| B2 | same, harness `carry_protective_stop_across_corporate_action(apply_ratio=False)` | stop moved 1:1 to `1800.0000`/25 on the successor, old key removed |
+| B3 | same, next session gaps to 1700 | **one fill, 25 shares, on the successor identity** |
+| B4 | `UNADJUSTED_RAW`, 10:1 | 250 shares, average 200.4150, basis 50103.75 held |
+| B5 | same, `apply_ratio=True` | stop rescaled to `180.0000`/250 |
+| B6 | adjusted, same-ISIN `SPLIT` 10:1 | **no-op, no exception** (H-108's abort is superseded, and the old test now asserts the no-op with its reasoning) |
+| B7 | adjusted, `MERGER` 42:25 | 42 shares, basis held — the convention adjusts splits and bonuses, not mergers, and the ratio survives |
+
+The harness gates all four call sites on the same flag (`apply_share_ratios` for the stop adjust, both lot restatements, and the stop carry; mergers pass `apply_ratio=True` in both conventions). The unconditional restatement H-127 named is gone, and the gate is the dataset's own `price_convention`, not a run flag.
+
+### 76.3 N-136 — **CLOSED**, recomputed exactly from committed bytes; two residuals named
+
+From the artifact alone, over `closed_trades` (193) plus `liquidated_open_positions` (12):
+
+- **C1** liquidated PF recomputes to `1.643962708744622107…` — the artifact's `1.643962708744622107248191850`, digit for digit.
+- **C2** liquidated mean net expectancy recomputes to `+₹1,366.588954591626…` — exact.
+- **C3** the identity the code asserts and reports (`realized net + dividends + open market value − open cost = Δequity`) is **₹0.00** at tolerance ₹0.01. Reconstructed independently from the ledger rows I get **₹0.0670**, not zero: per-trade paise rounding in `closed_trades` leaves a 6.7-paise gap against the portfolio-level identity. That is a disclosure, not an integrity failure — the identity is proved in portfolio terms and the rows are rounded — but a reader who reconciles from the ledger will see ₹0.07 and should be told why.
+- **C4** the 12 liquidation rows net `₹316,236.2587`, equal to open unrealized `₹319,413.32` less liquidation exit costs `₹1,591.68` and exit slippage `₹1,585.39` to 7.5 paise. The exit side is charged through the same statutory and slippage models as every fill, as claimed.
+
+Two residuals, neither of which reopens the item. First, `liquidated_open_positions` rows carry no `entry_date`, so an open lot cannot be joined to the trade ledger, and its holding period and entry-time weight cannot be computed from the artifact. Second, the liquidation is a **diagnostic**: no ledger entry, no fill, no `closed_trades` row — which the artifact's own note states, and which is the right choice, but it means `liquidated_profit_factor` describes a book that was never actually traded. Both are named in 76.11 because they decide how the wired criterion should read.
+
+### 76.4 N-137 — **CLOSED**
+
+- **D1** three qualifying names, all `close > SMA20 > SMA50`, scores 0.30 / 0.18 / 0.05: BUYs emit in that order, identically for three different universe orderings.
+- **D2** a fourth name with the highest score (0.90) but `close < SMA50` is emitted as a **SELL**, never as a ranked BUY: the rank only orders qualifying entries.
+- **D3** exits precede ranked entries in the intent tuple, so a session's own sells are submitted before the entries that compete for the freed cash.
+- **D4** equal scores break on ascending ISIN (`C, A, B` with A and B tied at 0.18).
+- **D5** `mom_63` is bar *t* over bar *t−63*, `None` until 63 prior observations exist.
+- **D6/D7** lookahead attack: recomputing on `series[:t+1]` gives the same value at *t*, and mutating bar *t+1* leaves `mom_63(t)` unchanged. The rank is known at *t* close and uses nothing later.
+- **D5'** `NONE` still reproduces the alphabetical order exactly, so a prior trial re-renders the same intents.
+
+### 76.5 N-138 — **CLOSED**, and the floor is in the one runner
+
+| Probe | Result |
+|---|---|
+| E1 intended notional below ₹25,000 | named no-trade `BELOW_MIN_ENTRY_NOTIONAL`, status `UNTRIGGERED`, no position, no cash moved |
+| E2 a ₹1,00,000 intent that gaps to a ₹3,000 fill | `REJECTED_BELOW_MIN_NOTIONAL`, 0 filled, **no position, cash unchanged** |
+| E3 same | **no protective stop armed** for the refused entry |
+| E4 control | 25 shares filled |
+| E5 a ₹600 SELL | **FILLED** — exits are exempt, as pre-registered |
+| E6 an exit on a bar below the ₹5 Cr ADTV floor | `REJECTED_INSUFFICIENT_TURNOVER` — see N-142 |
+
+Both checks sit in `DailyTPlus1OrderRunner` (sizing floor before the intent; fill floor before `Portfolio.process_fill` and before the stop is armed), which is the single authoritative path `execute_swing_strategy_session` and the walk-forward both use. There is no second booking path.
+
+### 76.6 N-134 / N-135 — **CLOSED**
+
+A locked unbanded BUY returns `REJECTED_LOCKED_SESSION` (**F1**) and so does a locked unbanded SELL (**F2**), with the reason string unchanged and the refusal identical; the session counter now keys on the status rather than on a string prefix. `canonical_params` on seq 9 carries the band policy, the rank and both floors, so two rows can be compared without decoding a version string.
+
+### 76.7 seq 9 as recorded, against the thresholds §75.11 committed before it ran
+
+Ticket accounting reconciles: 4,078 + 6,744 = **10,822 emitted**, 176 + 158 = **334 filled**, 98 + 95 = **193 closed**, 16 + 18 = 34 rejected, 12 open at the end → 205 liquidated round trips.
+
+| §75.11 condition | Closed book | Liquidated book |
+|---|---|---|
+| net expectancy per round trip > 0 | FAIL −₹186.97 | PASS +₹1,366.59 |
+| gross ≥ 0.30% of notional per round trip | FAIL −0.0289% (−₹3,935.05 on ₹13,632,287.45) | PASS **+2.1639%** (₹315,293.06 on ₹14,570,360.05) |
+| `CRIT-STAT-02` PF ≥ 1.50 | FAIL 0.9920 | PASS 1.6440 |
+| MaxDD ≤ 25% | PASS 20.73% | PASS 20.73% |
+| ≥ 200 closed round trips | FAIL 193 | PASS 205 |
+| DSR ≥ 0.95 at N=9, N_eval=5 | FAIL 0.4140 | FAIL 0.4140 |
+
+Verdict `NO-GO`, `PASS 14 / FAIL 4 / NOT RUN 6`. **The §75.11 falsifier did not fire**: gross on the de-censored book is +2.1639% against a 0.30% bar, so the SMA(20/50) long-only family is alive on this tape. seq 9's own pre-registered bar was not met, so nothing here is signed off.
+
+DSR recomputed from committed bytes: `deflated_sharpe_ratio 0.413984`, `trial_count_n 9`, `evaluated_trial_count 5`, `observation_count 493`, skew −0.7193, kurtosis 5.6880, `expected_max_sharpe 1.031317`, `p_value 0.586016`, `annualized_sharpe 0.8730934047…`. The artifact's 0.4140 is a computation.
+
+### 76.8 N-139 (new, MEDIUM) — the artifact's criteria fingerprint is a state that no file at this SHA produces
+
+`reports/verdicts/trial_009/…json` cites `criteria_fingerprint CRIT-FPR-V1-b60ca03e9239caf…`. Loading the committed `configs/go_no_go_criteria.yaml` at `348b5ba` gives **`CRIT-FPR-V1-ab9cb7342003…`**. The difference is the manifest pin: `b60ca03e` is exactly 1.1.5's fields with the **pre-seq-9** pin `93f7967d…`, which I reproduced by substitution; seq 8's artifact has the same shape (`a92d8577…`, not the pre-seq-8-pin value either).
+
+This is structural, not a slip. A run that appends a trial rewrites `trial_registry.jsonl.manifest`, the criteria pin must then move, and the artifact was already stamped with the pin that existed before its own append. So **every artifact's criteria fingerprint necessarily predates the criteria file it ships with**, and `compute_criteria_fingerprint` includes the pin ("every field of `GoNoGoCriteria`"). The consequence is that the one content anchor a verdict cites cannot be verified by any reader who loads the committed criteria, for seq 6 through seq 9. No threshold differs — 1.1.5 changed none — so this is not a threshold-laundering finding; it is a reproducibility defect in the anchor itself.
+
+### 76.9 N-140 (new, MEDIUM) — `CRIT-DATA-05` measures a different quantity than the criterion it names
+
+The criterion is `min_traded_eq_resolution_pct 100.0`, named "Traded EQ Bhavcopy Resolution Pct", citing H-54 / §41.3, where the measurement is **2,390,165 of 2,390,165 traded EQ rows = 100.0000%**. What the trial runner computes (`run_phase3b2_walkforward.py:1572`) is
+
+```python
+len(uuid_to_isin) / len(dataset.symbols_by_instrument) * 100
+```
+
+— the share of the **research dataset's instruments** that resolved to an ISIN, which is 196 of 211 = **92.8910%**, exactly the printed figure. That is a real and useful coverage metric, but it is not the criterion's measurement: 15 of the dataset's 211 instruments never resolved and were therefore outside the universe entirely, while the traded-row resolution that the criterion names is 100%. Reporting the first under the second's name is why `CRIT-DATA-05` has read 92.8910% identically in seq 6, 7, 8 and 9: it is a property of the loader, not of any run. Both readings matter, and neither should impersonate the other.
+
+### 76.10 N-141 (new, MEDIUM) — a committed anti-overfitting threshold is never evaluated, and its computed value is a fail
+
+`anti_overfitting_and_significance.min_haircut_sharpe_ratio: "1.25"` is in the criteria file and inside the fingerprint. `grep haircut` over `src/signal_core/reporting/verdicts.py` returns **nothing**: no criterion evaluates it, and none of the 24 rows in the seq 9 artifact is a haircut criterion. Meanwhile `evaluate_strategy_significance` computes `haircut_sharpe_ratio 0.000000`, `haircut_percentage 100.0000`, `t_adjusted_p_value 1.000000`, `haircut_verdict FAIL` on seq 9's own returns.
+
+So the report carries a committed gate that nothing enforces, beside a computed multiple-testing result that would fail it. Per §9.1 a threshold that is not computed is not a gate, and per §8.2 the haircut is exactly the statistic that should stand between a 0.873 Sharpe and a nine-trial search.
+
+### 76.11 N-142 (new, LOW) — rejections are counted, never attributed
+
+`tickets_rejected` is 16 (2022) and 18 (2023) and no reason breakdown exists in the artifact, so a reader cannot tell how many were `BELOW_MIN_ENTRY_NOTIONAL`, `REJECTED_VOLUME_CAP`, `REJECTED_BELOW_MIN_NOTIONAL`, or — the one that matters for §5.3 — a **SELL** refused for turnover. Probe E6 shows an exit on a below-ADTV bar is refused with `REJECTED_INSUFFICIENT_TURNOVER`; if that happened in seq 9, a held position was extended involuntarily and the artifact cannot say so. The claim in `CURRENT_STAGE_OF_WORK.md` that "most candidates were refused as `BELOW_MIN_ENTRY_NOTIONAL`" is not reproducible from the artifact for the same reason.
+
+### 76.12 Ruling 1 — wire `CRIT-STAT-02` to the liquidated book, and do it as a stated definition change covering both statistics
+
+**Ruling: yes.** PF is the only binding statistic computed from trade rows while every other headline (equity, CAGR, MaxDD, Sharpe, DSR) is mark-to-market. A closed-only PF therefore describes a book the rest of the report does not describe, and it is censored in exactly the direction a trend system is censored: losers close at the stop, winners are still open. §75.10 asked for the measurement; the measurement now exists and reproduces exactly.
+
+**Conditions, all of them.** (i) The threshold stays 1.50 — this is a definition change, not a threshold move, and it must be committed in 1.1.6 with a restatement note naming what changed. (ii) **The basis must cover `CRIT-STAT-01` as well as `CRIT-STAT-02`**: the pre-registered condition is "≥ 200 round trips", the closed book is 193 and the liquidated book is 205, and wiring PF while leaving trade count on the censored book would be the additive fix §14.4 names — a gate that reads 1.6440 while the count it is paired with reads 193. (iii) The closed-only pair is retained beside it as disclosure, which the artifact already does. (iv) The published number carries its sensitivity: **1.6440 → 1.4812 without the single largest winner → 1.2939 without the top three**. A PF that clears 1.50 only while its best trade is in the set has no margin, and the reader must see that in the same line.
+
+**What wiring it does not do.** It does not make seq 9 a GO. The wired PF would pass; DSR 0.4140 and the haircut 0.0000 still fail, `CRIT-OVERFIT-03` is still NOT RUN, and Ruling 4 still applies. A gate that flips one row from FAIL to PASS while the verdict stays NO-GO is honest — it is the verdict that must not move, not the measurement.
+
+### 76.13 Ruling 2 — `CRIT-STAT-03` is implemented where the criterion does not say it applies
+
+The criteria comment reads "Maximum single-stock capital allocation **at trade entry**". The runner (`run_phase3b2_walkforward.py:1483-1489`) computes the maximum over **every portfolio snapshot** of `market_value / total_portfolio_value` — a hold-period mark. Measured on seq 9: **max entry-time weight 0.082769** (INE982J01020, 2023-02-08, 124 shares at ₹618.40), with **0 of 193 closed trades above 0.10**; the failing 0.1291 is a name that appreciated after entry with `trim = None`.
+
+**Ruling: evaluate the criterion at entry, as written, and report the hold-period maximum as a non-gating disclosure.** This does not weaken the gate — it moves the measurement to where the committed definition places it, which is the opposite of a post-hoc relaxation — and the entry side is already double-capped (strategy `allocation_weight 0.08`, N-94 cap at `max_single_position_weight 0.10`). Do **not** raise 0.10. Do **not** silently keep measuring the hold-period mark under an entry-time name. If a hold-period concentration limit is actually wanted, that is a new criterion with its own threshold and its own decision record (trial 4's trim is the existing mechanism), not a re-reading of this one.
+
+### 76.14 Ruling 3 — `CRIT-DATA-05` stays FAIL, and it is not a strategy defect
+
+The 92.8910% is a **universe-coverage** fact (N-140): 15 of 211 dataset instruments never resolved and never entered the universe. The criterion as committed measures traded-row resolution (100.0000%, H-54). My ruling: **keep the FAIL** — dropping it to NOT RUN would launder a real 7.1% universe exclusion — but fix the name and the arithmetic, and print numerator and denominator. Concretely: (a) rename the bundle metric to `dataset_instrument_resolution_pct` and add `min_dataset_resolution_pct` as its own pre-registered threshold; (b) recompute the criterion at its own definition over 2022–2023 and let it pass or fail on traded rows; (c) **name the 15 unresolved instruments with the reason each was excluded**, because "92.891%" hides whether they were illiquid shells or three large caps that the strategy would have wanted. Until (c) exists, no GO is possible on this corpus regardless of DSR: a universe missing 7.1% of its instruments cannot support a breadth claim under §13.4, which is the very axis seq 9 is testing.
+
+### 76.15 Ruling 4 — the 2024 validation fold stays frozen. Not spent, and here is the measurement that decides it
+
+**No.** Five measured reasons, in descending order of force:
+
+1. **The pre-committed bar is not close.** §75.11 required DSR ≥ 0.95 at N=9, N_eval=5 before the fold could be considered confirmatory. Measured 0.413984, p = 0.586. That is a miss of 0.54 on a statistic designed to answer exactly this question.
+2. **The multiple-testing haircut is zero.** `haircut_sharpe_ratio 0.000000`, 100% haircut, Bonferroni-adjusted p 1.000000 at N=9. No criterion currently gates it (N-141), which is itself a defect, but the number is what a single-shot fold would be spent against.
+3. **The gain is an open-book mark, not a return.** Closed net **−₹36,085.52**; open unrealized **+₹319,413.32**; Δequity **₹283,327.73**. The open book is **112.7%** of the entire two-year gain. The equity curve is honest — it marks to market — but nothing about those 12 marks has been out-of-sample, and their exit is exactly what a 2024 fold would test. Spending the fold here is not confirming a return; it is confirming a mark.
+4. **One year, one name.** 2022 liquidated PF **0.7458** (net −₹85,855.30 on 98 round trips) against 2023 **2.8257** (+₹366,006.04 on 107). PF without the largest winner 1.4812, without the top three 1.2939. A result that is negative in one of two in-sample years and clears its PF bar only with its best trade included is not the candidate a single-shot fold is for.
+5. **No stability evidence exists to confirm.** `CRIT-OVERFIT-03` is NOT RUN by design (it needs ≥2 validation folds), and no rolling in-sample stability was measured. The fold would be the only out-of-sample read in the repository, spent on a candidate that fails every anti-overfitting gate it has.
+
+**What would justify spending it** — all four, in one committed round before the run: (i) N-139, N-140 and N-141 closed; (ii) the `CRIT-STAT-01`/`STAT-02` liquidated basis committed in 1.1.6 per Ruling 1; (iii) a **computed** rolling in-sample stability statistic (parameter and window neighbours, not one cell) so that `CRIT-OVERFIT-03` becomes computable without touching 2024; (iv) seq 10 pre-registered with the fold's use stated in advance and a threshold the candidate must clear in-sample first. Then the fold confirms a candidate that has already passed its own gate, which is what §8.1 asks for. Spending it now would convert the repository's only out-of-sample observation into a second in-sample number.
+
+### 76.16 Ordered work order
+
+Each item names the probe that must fail closed before it can be closed, and the section it serves.
+
+1. **N-139 — make the criteria fingerprint reproducible across an append.** Exclude `expected_trial_registry_manifest_sha256` (and the evaluation-side pin) from the fingerprint payload, or stamp the artifact with both the pre-run pin and the post-run pin and say which judges. Probe: `compute_criteria_fingerprint(load_go_no_go_criteria())` at the artifact's own commit equals the artifact's citation for seq 6–9; changing the pin alone leaves the fingerprint unchanged while G2A-6.8 still fails on a wrong pin. Serves §9.1, §10.5.
+2. **N-141 — gate the haircut or delete the threshold.** Add a criterion for `min_haircut_sharpe_ratio` (1.25), or remove it from the criteria file in a commit that names what is now unverified. Probe: haircut 0.000000 → FAIL; a synthetic haircut above 1.25 → PASS; the criterion appears in the 24-row table. Serves §8.2, §12.4.
+3. **Ruling 1 — commit the liquidated basis for `CRIT-STAT-01` and `CRIT-STAT-02` in 1.1.6**, closed-only retained as disclosure, sensitivity printed beside the value. Probe: seq 9 re-stamped shows `total_trades 205` and PF 1.6440 with 1.4812/1.2939 on the same line, and a hand-built fixture where the closed book is 190 round trips but the liquidated book is 205 reads 205. Serves §9.1.
+4. **Ruling 2 — evaluate `CRIT-STAT-03` at entry.** Probe: a name that doubles after entry passes; a name deliberately sized at 12% at entry fails; the hold-period maximum is printed and marked non-gating. Serves §13.2.
+5. **N-140 — rename, recompute and name the 15.** Probe: the bundle prints `dataset_instrument_resolution_pct` with numerator/denominator (196/211), `CRIT-DATA-05` is computed on traded rows, and the 15 unresolved instruments are listed with a reason each. Serves §6.1, §13.4.
+6. **N-142 — attribute every rejection.** Tabulate rejections by reason and side per session. Probe: a refused SELL appears as `REJECTED_INSUFFICIENT_TURNOVER` in the artifact, and the sum of reason counts equals `tickets_rejected`. Serves §5.3, §9.3.
+7. **Only after 1–6: seq 10**, in-sample only, with rolling stability computed as a pre-registered statistic. The 2024 fold is released only under Ruling 4's four conditions, and never as a rescue read for a candidate that failed in-sample.
+
+### 76.17 Probe hygiene, not measured, and what would falsify this verdict
+
+All probes ran in-process from the repository root against committed bytes. The one write outside a temp directory was the deliberate pin corruption in 76.1, restored with `git checkout --` and confirmed clean before and after; no artifact, registry row, corpus or criteria file was modified at the end of the round, and `CURRENT_STAGE_OF_WORK.md` was not edited.
+
+**Not measured, and not claimed:** whether the rank or the notional floor caused seq 9's improvement (both landed in the same commit and no ablation was registered — the ticket count fell because the floor refuses, and the rank's marginal contribution is unmeasured); whether the 15 unresolved instruments (N-140) are EQ, liquid, or large caps; whether the 12 open positions could have been exited at the 2023-12-29 close at the modelled slippage, since the liquidation is a diagnostic and not a fill; whether any SELL was refused in seq 9 (N-142 — the artifact cannot say); and anything out-of-sample — the 2024 fold is unspent and the holdout is sealed.
+
+**What would falsify this verdict.** If the same parameters run to a window ending three months earlier (2023-09-29) produce a comparable liquidated PF and the 2022/2023 split persists, then the gain is not an artifact of the 2023-12-29 cut and Ruling 4's reason 3 weakens — the fold question would then rest on DSR 0.4140 and the zero haircut alone, which still refuse it. Conversely, if those 12 open positions are marked at prices that could not have been sold at the modelled slippage, the +₹319,413 is overstated, the liquidated PF falls through 1.50 before the ex-top-one cut, and Ruling 1's wiring should be read as a measurement of a book that never existed.
