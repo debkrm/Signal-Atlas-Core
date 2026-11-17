@@ -510,7 +510,9 @@ def probe_n160() -> None:
     assert green_record_problem(healthy, verifiers, commit_exists) is None, (
         green_record_problem(healthy, verifiers, commit_exists)
     )
-    plan, used, _reason = select_gate_plan(head_hash, [healthy], now, verifier_scripts=verifiers)
+    plan, used, _reason = select_gate_plan(
+        head_hash, [healthy], now, head_commit=head, verifier_scripts=verifiers
+    )
     assert plan == "reuse" and used is healthy
 
     # The §80.3 forgery: poison a test, hash the poisoned tree with the gate's own function, and name a
@@ -524,15 +526,40 @@ def probe_n160() -> None:
     problem = green_record_problem(record(forged_hash), verifiers, commit_exists)
     assert problem is not None and "tree" in problem, problem
     plan, used, _reason = select_gate_plan(
-        forged_hash, [record(forged_hash)], now, verifier_scripts=verifiers
+        forged_hash, [record(forged_hash)], now, head_commit=head, verifier_scripts=verifiers
     )
     assert plan == "full" and used is None
 
-    # A row that hashes one tree and names another commit is refused as well.
-    parent = git("rev-parse", f"{head}^")
-    assert green_record_problem(
-        record(head_hash, gate_sha=parent), verifiers, commit_exists
-    ) is not None
+    # A row hashes one tree and names one commit. Naming a commit whose tree is genuinely another is a
+    # tree mismatch (N-160); naming a commit that merely shares this tree is a valid record that is
+    # still not reusable here (N-162). The commit is decoded before it is used (N-164): an undecoded
+    # `gate_sha` is refused earlier as a non-commit string, which is not the property under test.
+    parent = git("rev-parse", f"{head}^").decode().strip()
+    assert commit_exists(parent)
+
+    def commit_with_other_tree() -> str:
+        for sha in git("rev-list", "-n", "40", head).decode().split()[1:]:
+            if source_tree_hash_at_commit(sha) != head_hash:
+                return sha
+        raise AssertionError("no ancestor within 40 commits projects a different source tree")
+
+    other = commit_with_other_tree()
+    mismatch = green_record_problem(record(head_hash, gate_sha=other), verifiers, commit_exists)
+    assert mismatch is not None and "is not the tree at gate_sha" in mismatch, mismatch
+
+    undecoded = green_record_problem(
+        record(head_hash, gate_sha=str(other.encode())), verifiers, commit_exists
+    )
+    assert undecoded is not None and "is not a commit" in undecoded, (
+        f"an undecoded sha is no longer refused for the wrong reason: {undecoded}"
+    )
+
+    # A row recorded at another commit is not reusable at HEAD, whether or not the two share a tree.
+    plan, used, reason = select_gate_plan(
+        head_hash, [record(head_hash, gate_sha=parent)], now,
+        head_commit=head, verifier_scripts=verifiers,
+    )
+    assert plan == "full" and used is None, reason
 
     # The committed cache rows must be trees of the commits they name, so a clone recomputes the same
     # digest and can reuse the newest green run.
@@ -581,97 +608,194 @@ def probe_n161() -> None:
 
 def probe_n162() -> None:
     """
-    The green cache's reuse key is a tree, and a tree is not the state pytest sees (N-162).
+    Reuse is keyed on the commit being verified, and an untracked source file forces the full run (N-162).
 
-    Two source states can share a tree while producing different suite outcomes: a commit that only
-    touches paths excluded from the hash (so its tree equals its parent's, and a test that reads `HEAD^`
-    flips), and an untracked file (which pytest collects and `git diff-index --untracked-files=no` never
-    reports). Both were measured at `80ff581`: `verify_audit_append_only.py` printed
-    `ALL REPOSITORY FOUNDATION GATES PASSED` with exit 0 while `python -m pytest -q` printed
-    `1 failed, 533 passed`. The probe records the shape that makes the reuse sound today.
+    At `80ff581` the plain gate printed `ALL REPOSITORY FOUNDATION GATES PASSED` with exit 0 while
+    `python -m pytest -q` printed `1 failed, 533 passed`, because the row recorded at `742324c` was spent
+    on a docs-only child whose source tree is identical: `select_gate_plan` took no commit. And
+    `dirty_source_paths()` ran `git status --untracked-files=no`, so a failing untracked test never
+    reached the reuse decision at all. Both halves are measured here against real commits and a real
+    failing test file.
     """
-    import inspect
+    import datetime
+    import os
+    import subprocess
 
-    from verify_audit_append_only import dirty_source_paths, is_source_tree_path, select_gate_plan
-
-    # Half one: the reuse decision takes no commit, so two commits that share a tree are interchangeable.
-    params = list(inspect.signature(select_gate_plan).parameters)
-    assert not any(name in {"head", "commit", "gate_sha", "head_oid"} for name in params), (
-        f"select_gate_plan now keys on a commit ({params}); re-measure N-162"
+    from verify_audit_append_only import (
+        GREEN_CACHE_MIN_SUITE_COUNT,
+        GREEN_CACHE_SCHEME,
+        dirty_source_paths,
+        discovered_verification_scripts,
+        select_gate_plan,
+        should_record_green,
+        source_tree_hash_at_commit,
     )
 
-    # Half two: an untracked source file is invisible to the dirty set, so a failing untracked test is
-    # reused green instead of forcing the full run.
+    now = datetime.datetime.now(datetime.timezone.utc)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(REPO_ROOT), capture_output=True, text=True
+    ).stdout.strip()
+    head_hash = source_tree_hash_at_commit(head)
+    assert head_hash, f"HEAD {head[:8]} projects no source tree"
+    verifiers = discovered_verification_scripts()
+
+    def record(tree_hash: str, gate_sha: str) -> dict:
+        return {
+            "source_tree_hash": tree_hash,
+            "source_tree_scheme": GREEN_CACHE_SCHEME,
+            "suite_count": max(GREEN_CACHE_MIN_SUITE_COUNT, 534),
+            "verify_exits": {script: 0 for script in verifiers},
+            "utc": (now - datetime.timedelta(minutes=5)).isoformat(),
+            "gate_sha": gate_sha,
+        }
+
+    # A second commit carrying HEAD's exact tree: the docs-only child that made `80ff581` red. It is a
+    # real commit object, so the row names a commit the repository contains rather than a label.
+    built = subprocess.run(
+        ["git", "commit-tree", f"{head}^{{tree}}", "-p", head, "-m", "N-162 same-tree probe"],
+        cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "GIT_AUTHOR_NAME": "probe", "GIT_AUTHOR_EMAIL": "probe@invalid",
+             "GIT_COMMITTER_NAME": "probe", "GIT_COMMITTER_EMAIL": "probe@invalid"},
+    )
+    assert built.returncode == 0, built.stderr
+    same_tree = built.stdout.strip()
+    assert same_tree != head
+    assert source_tree_hash_at_commit(same_tree) == head_hash, (
+        f"the constructed commit {same_tree[:8]} does not share HEAD's source tree"
+    )
+
+    # Half one: that row projects this very tree and is still not spendable here — reuse is the commit.
+    plan, used, reason = select_gate_plan(
+        head_hash, [record(head_hash, same_tree)], now, head_commit=head, verifier_scripts=verifiers
+    )
+    assert plan == "full" and used is None, (
+        f"a row recorded at {same_tree[:8]} was reused at HEAD {head[:8]}: {reason}"
+    )
+
+    # The identical row, naming HEAD, is reusable: the rule is the commit and not the tree alone.
+    plan, used, _reason = select_gate_plan(
+        head_hash, [record(head_hash, head)], now, head_commit=head, verifier_scripts=verifiers
+    )
+    assert plan == "reuse" and used is not None, "a row naming HEAD is no longer reusable"
+
+    # Half two: a failing untracked test reaches the reuse decision, so the heavy gates run and the run
+    # is not recorded. Without this the gate reports PASS on a tree whose suite is red.
     temp = REPO_ROOT / "tests" / "unit" / "test_n162_untracked_probe.py"
+    rel = "tests/unit/test_n162_untracked_probe.py"
     assert not temp.exists(), f"{temp} already exists; remove it before running N-162"
     try:
         temp.write_text("def test_n162_untracked() -> None:\n    assert False\n", encoding="utf-8")
-        rel = "tests/unit/test_n162_untracked_probe.py"
-        assert is_source_tree_path(rel)
-        assert rel not in dirty_source_paths(), (
-            "the dirty set now reports untracked source files; re-measure N-162"
+        dirty = dirty_source_paths()
+        assert rel in dirty, (
+            "an untracked source file is invisible to the dirty set, so the gate can reuse green "
+            "over a failing untracked test"
+        )
+        assert should_record_green("full", True, 534, dirty) is False
+        collected = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", str(temp)],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        assert collected.returncode != 0, (
+            f"the untracked probe test is not a failing test: {collected.stdout[-300:]}"
         )
     finally:
         temp.unlink()
+    assert rel not in dirty_source_paths(), f"{rel} is still in the dirty set after removal"
 
 
 def probe_n163() -> None:
     """
-    The audited commit's suite is red because a §80 test assumes `HEAD^` has a different tree (N-163).
+    The §80 cache test compares against a commit whose tree genuinely differs, not against `HEAD^` (N-163).
 
-    At `80ff581` (docs-only) the source tree equals `742324c`'s, so
-    `test_n160_a_hand_written_hash_names_no_tree_and_is_refused` asserted that a row naming `HEAD^` must
-    be refused while `HEAD^`'s tree projects the same digest: `assert None is not None`. The test passed at
-    `742324c` only because that commit's parent changed source files.
+    At `80ff581` the docs-only commit shares its parent's source tree, so
+    `test_n160_a_hand_written_hash_names_no_tree_and_is_refused` asserted that a row naming `HEAD^` must be
+    refused while `HEAD^`'s tree projects the same digest: `assert None is not None`, and the audited commit
+    was red at its own SHA. The test must depend on a divergent tree it selects, never on its own
+    commit's parentage.
     """
+    import subprocess
+
     path = REPO_ROOT / "tests" / "unit" / "test_phase3b2_audit_s80_items.py"
     source = path.read_text(encoding="utf-8")
-    assert '"^"' in source or '}^' in source or "'^'" in source, (
-        "the §80 cache test no longer derives a commit from HEAD^; re-measure N-163"
+    assert "HEAD^" not in source and "}^" not in source, (
+        "the §80 cache test still derives its divergent commit from HEAD's parent, whose tree may be "
+        "identical: the assertion then depends on the repository's parentage rather than on the cache"
     )
+    assert "source_tree_hash_at_commit" in source, (
+        "the §80 cache test no longer selects a commit by the tree it projects"
+    )
+
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", str(path)],
+        cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    assert run.returncode == 0, run.stdout[-1200:]
 
 
 def probe_n164() -> None:
     """
-    `probe_n160`'s parent sha is bytes, so its refusal assertion passes without testing the property (N-164).
+    `probe_n160` compares trees, not strings: its parent sha is decoded before it is refused (N-164).
 
-    `git()` in `probe_n160` returns bytes, so `parent` is `b'742324…\n'` and `green_record_problem` refuses
-    the row because that string `is not a commit in this repository` — not because the hash names another
-    tree. Every assert in the probe could therefore be deleted and the row would still print PASS.
+    `git()` in `probe_n160` returns bytes, so an undecoded `parent` is `b'742324…\n'` and
+    `green_record_problem` refuses the row because that string `is not a commit in this repository` — not
+    because the hash names another tree. The refusal reason is therefore measured on both shapes: the
+    decoded commit is refused for its tree, the undecoded bytes are refused as a non-commit.
     """
     import inspect
     import subprocess
 
     from verify_audit_append_only import (
+        GREEN_CACHE_SCHEME,
         commit_exists,
+        compute_source_tree_hash,
         discovered_verification_scripts,
         green_record_problem,
+        source_tree_entries,
         source_tree_hash_at_commit,
     )
 
     source = inspect.getsource(probe_n160)
     line = next((ln for ln in source.splitlines() if "parent = git(" in ln), "")
     assert line, "probe_n160 no longer derives a parent commit; re-measure N-164"
-    assert ".decode()" not in line, f"probe_n160 now decodes the parent sha: {line.strip()}"
+    assert ".decode()" in line, f"probe_n160 does not decode the parent sha: {line.strip()}"
 
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=str(REPO_ROOT), capture_output=True, text=True
     ).stdout.strip()
-    parent_bytes = subprocess.run(
-        ["git", "rev-parse", f"{head}^"], cwd=str(REPO_ROOT), capture_output=True
-    ).stdout
-    record = {
-        "source_tree_hash": source_tree_hash_at_commit(head),
-        "source_tree_scheme": "git-blob-oid-v1",
-        "suite_count": 534,
-        "verify_exits": {s: 0 for s in discovered_verification_scripts()},
-        "utc": "2026-11-17T10:00:00+00:00",
-        "gate_sha": parent_bytes,
-    }
-    problem = green_record_problem(record, discovered_verification_scripts(), commit_exists)
-    assert problem is not None and "is not a commit" in problem, (
-        f"an undecoded sha is no longer refused for the wrong reason: {problem}"
+    head_hash = source_tree_hash_at_commit(head)
+    assert head_hash
+    verifiers = discovered_verification_scripts()
+
+    entries = dict(source_tree_entries())
+    poisoned = dict(entries)
+    poisoned["tests/unit/test_verdicts.py"] = "0" * 40
+    forged_hash = compute_source_tree_hash(list(poisoned.items()))
+    assert forged_hash != head_hash
+
+    def record(gate_sha) -> dict:
+        return {
+            "source_tree_hash": forged_hash,
+            "source_tree_scheme": GREEN_CACHE_SCHEME,
+            "suite_count": 534,
+            "verify_exits": {s: 0 for s in verifiers},
+            "utc": "2026-11-17T10:00:00+00:00",
+            "gate_sha": gate_sha,
+        }
+
+    # The decoded commit is refused because its tree is not the recorded hash: the property the probe
+    # claims to test, and the one that needs no assumption about this commit's parentage.
+    decoded = green_record_problem(record(head), verifiers, commit_exists)
+    assert decoded is not None and "is not the tree at gate_sha" in str(decoded), (
+        f"a row recording another tree still names a commit it is not refused for: {decoded}"
     )
+
+    # The undecoded shape is refused earlier, as a string that names no commit. An assertion of the form
+    # `problem is not None` therefore passes on the typing accident alone, which is the finding.
+    undecoded = green_record_problem(record(str(head.encode())), verifiers, commit_exists)
+    assert undecoded is not None and "is not a commit" in str(undecoded), (
+        f"an undecoded sha is no longer refused for the wrong reason: {undecoded}"
+    )
+    assert "is not the tree at gate_sha" not in str(undecoded)
 
 
 PROBES: Dict[str, Callable[[], None]] = {

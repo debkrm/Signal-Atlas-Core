@@ -130,17 +130,27 @@ def test_n155_forged_green_cache_row_is_not_reusable():
         dict(healthy, source_tree_scheme="working-copy-sha256"), verifiers, resolves, projects
     ) is not None
 
+    # The row names the verified commit and is still refused for what it witnesses (no verifier ran, one
+    # test passed), so the content checks are not hidden behind the commit key (§81.4, N-162).
     plan, record, reason = select_gate_plan(
-        "h1", [forged], now, verifier_scripts=verifiers, resolve_commit=lambda sha: False,
-        project_tree_hash=projects,
+        "h1", [dict(forged, gate_sha="3119cb2")], now, head_commit="3119cb2",
+        verifier_scripts=verifiers, resolve_commit=resolves, project_tree_hash=projects,
     )
     assert plan == "full"
     assert record is None
-    assert "suite_count" in reason or "verifier" in reason or "gate_sha" in reason
+    assert "suite_count" in reason or "verifier" in reason
+
+    # A label with no commit behind it is refused as a commit, whatever tree it claims.
+    plan, record, reason = select_gate_plan(
+        "h1", [forged], now, head_commit="3119cb2", verifier_scripts=verifiers,
+        resolve_commit=resolves, project_tree_hash=projects,
+    )
+    assert plan == "full" and record is None
+    assert "forged" in reason, reason
 
     plan, record, _reason = select_gate_plan(
-        "h1", [healthy], now, verifier_scripts=verifiers, resolve_commit=resolves,
-        project_tree_hash=projects,
+        "h1", [healthy], now, head_commit="3119cb2", verifier_scripts=verifiers,
+        resolve_commit=resolves, project_tree_hash=projects,
     )
     assert plan == "reuse" and record is healthy
 

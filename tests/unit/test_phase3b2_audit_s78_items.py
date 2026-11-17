@@ -287,35 +287,51 @@ def test_green_cache_reuses_only_an_identical_fresh_source_tree():
         return "h1" if sha == "3119cb2" else None
 
     plan, used, reason = select_gate_plan(
-        "h1", [record], now, verifier_scripts=verifier_scripts, resolve_commit=resolve,
-        project_tree_hash=projects,
+        "h1", [record], now, head_commit="3119cb2", verifier_scripts=verifier_scripts,
+        resolve_commit=resolve, project_tree_hash=projects,
     )
     assert plan == "reuse"
     assert used is not None and used["gate_sha"] == "3119cb2"
 
-    assert select_gate_plan("h2", [record], now, verifier_scripts=verifier_scripts)[0] == "full"
-    assert select_gate_plan("h1", [], now, verifier_scripts=verifier_scripts)[0] == "full"
     assert select_gate_plan(
-        "h1", [record], now, force_full=True, verifier_scripts=verifier_scripts
+        "h2", [record], now, head_commit="3119cb2", verifier_scripts=verifier_scripts
+    )[0] == "full"
+    assert select_gate_plan(
+        "h1", [], now, head_commit="3119cb2", verifier_scripts=verifier_scripts
+    )[0] == "full"
+    assert select_gate_plan(
+        "h1", [record], now, head_commit="3119cb2", force_full=True,
+        verifier_scripts=verifier_scripts,
     )[0] == "full"
 
     # A row whose commit projects a different tree is not a hit, whatever hash it records.
     assert select_gate_plan(
-        "h1", [record], now, verifier_scripts=verifier_scripts, resolve_commit=resolve,
-        project_tree_hash=lambda sha: "h9",
+        "h1", [record], now, head_commit="3119cb2", verifier_scripts=verifier_scripts,
+        resolve_commit=resolve, project_tree_hash=lambda sha: "h9",
     )[0] == "full"
 
     stale = dict(record, utc=(now - datetime.timedelta(hours=25)).isoformat())
     plan, _used, reason = select_gate_plan(
-        "h1", [stale], now, verifier_scripts=verifier_scripts, resolve_commit=resolve,
-        project_tree_hash=projects,
+        "h1", [stale], now, head_commit="3119cb2", verifier_scripts=verifier_scripts,
+        resolve_commit=resolve, project_tree_hash=projects,
     )
     assert plan == "full"
     assert "24h" in reason
 
     failing = dict(record, verify_exits={script: 1 for script in verifier_scripts})
     assert select_gate_plan(
-        "h1", [failing], now, verifier_scripts=verifier_scripts, resolve_commit=resolve
+        "h1", [failing], now, head_commit="3119cb2", verifier_scripts=verifier_scripts,
+        resolve_commit=resolve,
+    )[0] == "full"
+
+    # Audit §81.4 (N-162): the tree is not the key -- a row recorded at another commit is not reused even
+    # when it projects the verified tree, and a caller that cannot resolve HEAD cannot reuse at all.
+    assert select_gate_plan(
+        "h1", [record], now, head_commit="9999999", verifier_scripts=verifier_scripts,
+        resolve_commit=resolve, project_tree_hash=projects,
+    )[0] == "full"
+    assert select_gate_plan(
+        "h1", [record], now, head_commit="not-a-commit", verifier_scripts=verifier_scripts
     )[0] == "full"
 
 

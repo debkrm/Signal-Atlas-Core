@@ -48,6 +48,8 @@ GREEN_CACHE_MAX_AGE = datetime.timedelta(hours=24)
 # §80.3 (N-160): the identity of a source tree. `git-blob-oid-v1` composes git blob oids, so it is a
 # property of the commit rather than of the machine that checked it out. A row written under any other
 # scheme (the 2026-11-17 working-copy sha256 rows) cannot witness a tree and is never reused.
+# §81.4 (N-162): the tree is necessary and not sufficient -- two commits can share a tree while producing
+# different suite outcomes, so reuse also requires the row's `gate_sha` to be the commit being verified.
 GREEN_CACHE_SCHEME = "git-blob-oid-v1"
 # Audit §79.8 (N-155): a record is evidence only if it witnesses the run it claims. The floor is a
 # pinned minimum, not a default: a row reading `suite_count: 1` used to satisfy the same comparison as
@@ -286,7 +288,7 @@ def source_tree_entries() -> List[Tuple[str, str]]:
 
 def dirty_source_paths() -> List[str]:
     """
-    Source paths whose working copy (staged or unstaged) differs from HEAD.
+    Source paths whose working copy (staged, unstaged or untracked) differs from HEAD.
 
     These are the files that could change a computation without changing HEAD's tree hash, so the gate
     must run the heavy checks for them rather than reuse a record of the committed tree (N-160).
@@ -294,9 +296,13 @@ def dirty_source_paths() -> List[str]:
     `git status` is used rather than `git diff-index` because it refreshes the index first: a verifier
     that rewrites an artifact byte-identically leaves a stale stat entry that `diff-index` would report
     as a change, which would force the heavy gates for a tree that did not move.
+
+    Untracked paths are included (`--untracked-files=all`, audit §81.4 / N-162): pytest collects a test
+    file that is not in the tree, so `--untracked-files=no` let an untracked `assert False` be reused
+    green. Ignored paths stay excluded, because `git status` does not report them (§9.1).
     """
     proc = subprocess.run(
-        ["git", "status", "--porcelain", "-z", "--untracked-files=no", "--no-renames"],
+        ["git", "status", "--porcelain", "-z", "--untracked-files=all", "--no-renames"],
         cwd=str(REPO_ROOT),
         capture_output=True,
     )
@@ -363,10 +369,16 @@ def discovered_verification_scripts() -> List[str]:
     )
 
 
-def commit_exists(sha: str) -> bool:
-    """True when `sha` names a commit in this repository (§79.8: `gate_sha` is not a free label)."""
+def commit_oid(sha: str) -> Optional[str]:
+    """
+    The full commit object id `sha` names, or None (§79.8, §81.4 / N-162).
+
+    Reuse is keyed on this value rather than on the string a row happens to carry: a row records a short
+    sha and HEAD is resolved here, so the two are compared as commits (`abbrev` versus full, and `deadbeef`
+    versus a real object, are not the same thing).
+    """
     if not re.fullmatch(r"[0-9a-f]{7,40}", str(sha or "")):
-        return False
+        return None
     proc = subprocess.run(
         ["git", "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}"],
         cwd=str(REPO_ROOT),
@@ -374,7 +386,14 @@ def commit_exists(sha: str) -> bool:
         text=True,
         encoding="utf-8",
     )
-    return proc.returncode == 0
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
+def commit_exists(sha: str) -> bool:
+    """True when `sha` names a commit in this repository (§79.8: `gate_sha` is not a free label)."""
+    return commit_oid(sha) is not None
 
 
 def green_record_problem(
@@ -479,6 +498,8 @@ def select_gate_plan(
     source_hash: str,
     records: Sequence[dict],
     now: datetime.datetime,
+    *,
+    head_commit: str,
     force_full: bool = False,
     verifier_scripts: Optional[Sequence[str]] = None,
     resolve_commit=None,
@@ -486,17 +507,33 @@ def select_gate_plan(
 ) -> Tuple[str, Optional[dict], str]:
     """
     Returns `(plan, record, reason)`. `plan` is "reuse" only for an identical source tree with a
-    record that witnesses a complete green run, whose `gate_sha` projects to that same tree, and that
-    is younger than 24 hours; anything else is "full", the fail-closed default (Audit §79.8, §80.3).
+    record that witnesses a complete green run, was recorded **at `head_commit` itself**, whose
+    `gate_sha` projects to that same tree, and that is younger than 24 hours; anything else is "full",
+    the fail-closed default (Audit §79.8, §80.3, §81.4 / N-162).
+
+    `head_commit` is keyword-only and has no default on purpose (§14.4): a caller that cannot say which
+    commit it is verifying cannot reuse a row. Two commits can share a source tree — a docs-only child
+    over a code commit does — while producing different suite outcomes, so the tree is not the state
+    pytest sees and the commit has to be part of the key.
     """
     if force_full:
         return "full", None, "forced"
     expected = list(
         verifier_scripts if verifier_scripts is not None else discovered_verification_scripts()
     )
-    resolver = resolve_commit or commit_exists
+    resolver = resolve_commit or commit_oid
+    head_oid = resolver(str(head_commit or ""))
+    if not head_oid:
+        return "full", None, f"the verifying commit {head_commit!r} is not a commit in this repository"
+    elsewhere: List[str] = []
     for record in reversed(list(records)):
         if record.get("source_tree_hash") != source_hash:
+            continue
+        recorded_oid = resolver(str(record.get("gate_sha") or ""))
+        if recorded_oid != head_oid:
+            # The row describes this tree at another commit. Its own tree projection may be perfect and
+            # the row is still not evidence for HEAD, so it is skipped rather than reused.
+            elsewhere.append(str(record.get("gate_sha")))
             continue
         problem = green_record_problem(record, expected, resolver, project_tree_hash)
         if problem is not None:
@@ -509,7 +546,14 @@ def select_gate_plan(
             recorded_at = recorded_at.replace(tzinfo=datetime.timezone.utc)
         if now - recorded_at > GREEN_CACHE_MAX_AGE:
             return "full", None, "cache record is older than 24h"
-        return "reuse", record, "source tree unchanged since a green run"
+        return "reuse", record, "this commit's own tree was green"
+    if elsewhere:
+        return (
+            "full",
+            None,
+            f"the record for this source tree was written at {', '.join(sorted(set(elsewhere)))}, "
+            f"not at the commit being verified ({head_commit})",
+        )
     return "full", None, "unknown source-tree hash"
 
 
@@ -827,11 +871,17 @@ def main() -> int:
     plan, record, reason = "full", None, "targeted run"
     source_hash = ""
     dirty: List[str] = []
+    head_oid = ""
     if run_all:
+        head_oid = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", check=True,
+        ).stdout.strip()
         source_hash = compute_source_tree_hash(source_tree_entries())
-        # §80.3 (N-160): the hash describes HEAD's tree, so a working copy that differs from HEAD is
-        # never a cache hit -- there is no committed tree to witness the run. The heavy gates run, and
-        # the run is not recorded: a row would claim HEAD's tree was tested when it was not.
+        # §80.3 (N-160) / §81.4 (N-162): the hash describes HEAD's tree, so a working copy that differs
+        # from HEAD (including untracked source files) is never a cache hit -- there is no committed tree
+        # to witness the run. The heavy gates run, and the run is not recorded: a row would claim HEAD's
+        # tree was tested when it was not.
         dirty = dirty_source_paths()
         if dirty:
             plan, record, reason = (
@@ -840,7 +890,7 @@ def main() -> int:
         else:
             plan, record, reason = select_gate_plan(
                 source_hash, load_green_cache(), datetime.datetime.now(datetime.timezone.utc),
-                force_full=args.force_full,
+                head_commit=head_oid, force_full=args.force_full,
             )
         print(f"[INFO] Source-tree hash {source_hash[:16]}… — {reason}")
 
@@ -877,6 +927,11 @@ def main() -> int:
         # routine full run does not dirty a tracked file. Because the hash is HEAD's tree and this run
         # was not a cache hit, the row names a tree the commit contains by construction. A record that
         # fails validation is deliberately not replaced: the forge is reported, not self-healed.
+        #
+        # §81.4 (N-162): reuse is keyed on the commit, so a docs-only commit whose tree a parent already
+        # recorded gets no row of its own and is never a cache hit. That is the cost the finding named
+        # (one full run per commit); re-recording here would make every `git commit` of a row mint a new
+        # HEAD that needs its own run, with no end.
         if any(r.get("source_tree_hash") == source_hash for r in load_green_cache()):
             print(
                 f"[INFO] Source tree {source_hash[:16]}… is already recorded; not appending a "
