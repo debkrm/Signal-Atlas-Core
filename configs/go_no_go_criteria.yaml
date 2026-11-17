@@ -167,10 +167,10 @@ market_data_and_accounting_invariants:
   # {evaluation_count, head_eval_hash} outside the (sidecar, anchor) pair. Pinning its SHA-256 here
   # gives that witness a root no append path writes: removing the witness keys, editing a witnessed
   # value, or appending a trial without re-pinning this anchor fails G2A-6.8. Hash of
-  # data/trials/trial_registry.jsonl.manifest with LF line endings (324 bytes after the §74.10 Ruling D
-  # append of seq 8, TRIAL-PHASE3B2-BREADTH-008, which takes the registry to N = 8, N_eval = 4;
-  # 330 bytes after the §73 append).
-  expected_trial_registry_manifest_sha256: "93f7967d8f42a4bf713ccff3ffae9f2765f1b1623835a903bdde50d2b790cf4d"
+  # data/trials/trial_registry.jsonl.manifest with LF line endings (323 bytes after the §75.10
+  # append of seq 9, TRIAL-PHASE3B2-RANKED-009, which takes the registry to N = 9, N_eval = 5;
+  # 324 bytes after the §74.10 append of seq 8).
+  expected_trial_registry_manifest_sha256: "3326b1b221b2e02616915a9d1f56a4026affa82506803abcc783e2261bf37306"
 
   # Authoritative Calendar and Session Reconciliation Invariants (AGENTS.md §6.3, §9.2, Findings H-56, H-61, H-62, H-64)
   # H-64: Calendar identity anchor — computed from session_records (dates, session_types, open/close times) at load time

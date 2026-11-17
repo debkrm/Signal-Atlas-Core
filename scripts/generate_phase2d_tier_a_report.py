@@ -134,8 +134,9 @@ def build_tier_a_results_bundle(
             "25000 (an entry below it is a named no-trade) and min_fill_notional = 5000 (a BUY fill "
             "below it is refused, never booked; exits are exempt because a frozen exit is an "
             "unbounded hold). Both enter the criteria fingerprint, so the fingerprint moves with "
-            "them. The registry still reads N = 8, N_eval = 4 at this commit; seq 9 "
-            "(TRIAL-PHASE3B2-RANKED-009) is registered and executed under these values. Provenance "
+            "them. seq 9 (TRIAL-PHASE3B2-RANKED-009) was then registered and executed under these "
+            "values, which rewrites the trials manifest the pin names; the registry now reads "
+            "N = 9, N_eval = 5. Provenance "
             "remains CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN "
             "and every Tier-A verdict is unchanged."
         ),
