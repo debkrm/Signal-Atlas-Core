@@ -455,13 +455,22 @@ def probe_n160() -> None:
 
     # An uncommitted source change is not certifiable by a recorded tree: it is reported, and the gate
     # runs the heavy checks instead of reusing one (measured through the same function main() calls).
-    reported = set(
-        path.decode()
-        for path in git("diff-index", "--name-only", "-z", "HEAD", "--").split(b"\x00")
-        if path
-    )
+    reported = {
+        entry.decode("utf-8")[3:]
+        for entry in git(
+            "status", "--porcelain", "-z", "--untracked-files=no", "--no-renames"
+        ).split(b"\x00")
+        if entry
+    }
     dirty = dirty_source_paths()
     assert dirty == sorted(p for p in reported if is_source_tree_path(p)), dirty
+    # A path in the dirty set must actually differ from its blob: no stat-only noise may force a full run.
+    for rel in dirty:
+        blob = git("cat-file", "blob", f"HEAD:{rel}")
+        disk = (REPO_ROOT / rel).read_bytes()
+        assert disk.replace(b"\r\n", b"\n") != blob.replace(b"\r\n", b"\n"), (
+            f"{rel} is reported dirty but its content is its blob"
+        )
 
     # Find a clean text file whose checkout differs from its blob only by line endings: its entry must
     # still be the committed blob's oid. A checkout with no CRLF at all satisfies the same digest by

@@ -53,14 +53,20 @@ def test_n160_source_tree_hash_is_the_object_id_git_stores():
     assert entries, "no source file was hashed"
 
     # A working copy that differs from HEAD is reported, so main() runs the heavy checks instead of
-    # reusing a record of the committed tree.
+    # reusing a record of the committed tree. A stat-only touch is not a difference.
     reported = {
-        name.decode()
-        for name in _git("diff-index", "--name-only", "-z", "HEAD", "--").split(b"\x00")
-        if name
+        entry.decode("utf-8")[3:]
+        for entry in _git(
+            "status", "--porcelain", "-z", "--untracked-files=no", "--no-renames"
+        ).split(b"\x00")
+        if entry
     }
     dirty = gate.dirty_source_paths()
     assert dirty == sorted(p for p in reported if gate.is_source_tree_path(p))
+    for path in dirty:
+        blob = _git("cat-file", "blob", f"HEAD:{path}")
+        disk = (REPO_ROOT / path).read_bytes()
+        assert disk.replace(b"\r\n", b"\n") != blob.replace(b"\r\n", b"\n")
 
     # A clean text path whose checkout holds CRLF while its blob holds LF must hash to the blob's id:
     # line endings must not move the digest, or a clone could not reuse the row.

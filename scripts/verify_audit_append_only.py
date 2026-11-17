@@ -290,15 +290,19 @@ def dirty_source_paths() -> List[str]:
 
     These are the files that could change a computation without changing HEAD's tree hash, so the gate
     must run the heavy checks for them rather than reuse a record of the committed tree (N-160).
+
+    `git status` is used rather than `git diff-index` because it refreshes the index first: a verifier
+    that rewrites an artifact byte-identically leaves a stale stat entry that `diff-index` would report
+    as a change, which would force the heavy gates for a tree that did not move.
     """
     proc = subprocess.run(
-        ["git", "diff-index", "--name-only", "-z", "HEAD", "--"],
+        ["git", "status", "--porcelain", "-z", "--untracked-files=no", "--no-renames"],
         cwd=str(REPO_ROOT),
         capture_output=True,
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"git diff-index failed: {proc.stderr.decode('utf-8', 'replace').strip()}")
-    paths = [raw.decode("utf-8") for raw in proc.stdout.split(b"\x00") if raw]
+        raise RuntimeError(f"git status failed: {proc.stderr.decode('utf-8', 'replace').strip()}")
+    paths = [raw.decode("utf-8")[3:] for raw in proc.stdout.split(b"\x00") if raw]
     return sorted(path for path in paths if is_source_tree_path(path))
 
 
