@@ -1308,3 +1308,58 @@ and everything below is the measurement the next round has to reproduce.
 - **Not claimed.** No seq 10 was registered or run; §81.11 items 4-7 (ledger ratification, A1 sourcing,
   warm-up labelling, pin relaxation) are untouched; N-150 stays `OPEN`, N-152 `ACCEPTED`; the pre-2022
   window remains warm-up only and the DSR bar is unchanged.
+
+### Audit §82 — the evidence no longer depends on the checkout's line endings
+
+Round: audit §82 (audit of `c8f56d4`, section and work order appended at `cf112df`, tag
+`audit-s82-66c2f36`), work order items 1-3 implemented, plus the Ubuntu CI failure in the §80 tree test
+and `probe_n160`. Criteria **1.1.9**, no threshold moved, no data written. §82.2-§82.4 closed N-162,
+N-163 and N-164 at `c8f56d4`; **N-165 and N-166 stay `OPEN`** — their closure rows belong to the
+auditor (§11.1), so what follows is the measurement the next round has to reproduce.
+
+- **The two tree measurements were machines, not caches.** `test_n160_source_tree_hash_is_the_object_id_git_stores`
+  and `probe_n160` asserted that every uncommitted source path differs byte-for-byte from its blob and
+  then searched for a CRLF sample to prove that line endings do not move the digest. Both claims are
+  Windows facts: on an LF checkout no file holds CRLF and a reported path can carry its blob's exact
+  bytes (a mode change), so the assertions were measuring the developer's checkout. They now assert the
+  blob-oid identity **unconditionally** on a clean text file (`entries[rel] == git rev-parse HEAD:<rel>`,
+  with CRLF folded on both sides), require raw byte inequality only inside the CRLF branch that exists
+  only where the checkout really differs, restrict the sample to text suffixes (`.py/.yaml/.yml/.json/
+  .jsonl/.md`, so no `.zip` or binary is read), and make no content claim at all about a path HEAD has
+  no blob for. Measured in a detached worktree checked out with `core.autocrlf=false`: **0 files
+  containing CRLF**, `tests/unit/test_phase3b2_audit_s80_items.py` **7 passed**, `probe N-160` **PASS**.
+- **N-165 — an ignored file the suite collects is dirty state.** `dirty_source_paths()` now runs
+  `git status --porcelain -z --ignored=matching --untracked-files=all` and keeps ignored entries only
+  when they are `.py` files under `src/`, `scripts/` or `tests/`. Measured in the repository with a real
+  `.git/info/exclude` rule and a real `assert False` test: `git status` still does not report it, the
+  file is in the dirty set, pytest on it exits 1, and `should_record_green` is `False`; the forged row
+  naming HEAD is still a valid hit on a clean tree, so the refusal is the file and not a broken fixture.
+  The filter is bounded on purpose: byte-code caches, build directories and ignored `data/` artifacts
+  report as directories or non-`.py` files and stay out, so a normal checkout keeps its green reuse
+  (measured: the dirty set is empty at `f6dc7da` on this working copy). Residual, named not fixed: an
+  **ignored non-`.py` artifact** is still invisible — this machine holds
+  `data/reference/historical_dev_dataset_2022_2024.json`, untracked and ignored, which no test collects.
+- **N-166 — the consumers hold their verdict in a dirty working copy.** `probe_n160` now asserts an
+  implication (every source path git reports is in the dirty set) instead of equality against a set
+  collected with different flags, and compares no bytes for a dirty path, so an unrelated untracked file
+  cannot change its verdict. The §80 tree test skips the `cat-file` comparison for paths absent from
+  HEAD, which is what raised. Measured with one untracked failing test present: `probe N-160` prints
+  exactly `PASS N-160` and exits 0, the tree test passes, and the gate still fails closed — the file is
+  in the dirty set and no run over it is recorded.
+- **N-164 nit.** `assert commit_exists(parent)` now carries HEAD's parent value in its message, and the
+  divergent-tree refusal asserts `mismatch is not None` separately from the reason it must contain, so a
+  failure prints what was measured instead of an empty line.
+- **Verification actually run.** `verify_audit_findings.py` exit 0, **ALL 18 FINDING PROBE(S) PASSED**
+  (`N-160 N-162 N-163 N-164 N-165 N-166` each PASS standalone); `verify_audit_append_only.py --force-full`
+  on the uncommitted tree exit 0, **536 passed, 0 skipped, 0 xfailed** (135.50 s), and it recorded no row
+  for a working copy that differed from HEAD in 3 paths; the post-commit run at `f6dc7da` exit 0,
+  **536 passed** (128.40 s), 9 discovered `scripts/verify_*.py` all exit 0, and exactly one row appended
+  — `06732f11…`, scheme `git-blob-oid-v1`, `gate_sha f6dc7da`. No assertion was skipped or widened.
+- **Invariants held.** No trial row was appended or scored: **N = 9, N_eval = 5**; the 2024 validation
+  partition stays frozen (`configs/partition_spec.yaml` 2024-01-01..2024-12-31, the committed verdicts'
+  `validation_folds_count` untouched); Holdout `2025-01-01..2026-11-11` remains sealed with no
+  `HOLDOUT_UNLOCK` sentinel on disk; `reports/audit/**`, `AGENTS.md` and
+  `.agents/skills/audit-round/SKILL.md` are untouched by this round.
+- **Not claimed.** No seq 10 was registered or run; §82.8 items 4-6 (A1 sourcing, warm-up labelling, pin
+  gating) are untouched; N-150 stays `OPEN`, N-152 `ACCEPTED`; the pre-2022 window remains warm-up only
+  and the DSR bar is unchanged.
