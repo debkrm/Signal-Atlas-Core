@@ -7774,3 +7774,154 @@ So the ruling is to **narrow the requirement, not the window**:
 Five probe scripts (`probe_h125.py`, `probe_partial.py`, `probe_noband.py`, plus the three CLI re-render probes) ran from `%TEMP%\s74`, outside the repository; three walk-forward runs wrote artifacts only under `%TEMP%\s74\run_{k2,bad,t5}` and none under `reports/`. `git status` was empty at the start and end of the round; the registry, manifest, sidecar, criteria file and corpus were read and re-hashed, never written; no trial row was appended and no verdict artifact was regenerated. No holdout partition was read. `CURRENT_STAGE_OF_WORK.md` was not edited.
 
 **Not measured, and not claimed:** whether H-126 fires on the committed 2022–2023 corpus (no merger or transition touched a held name — `unprotected_corporate_action_positions = 0` in both artifacts; the defect is reachable by data and demonstrated on a fixture); how many names a `LOCKED_BAR_REFUSAL_ONLY` universe would actually enter, since the ADTV floor, the EMA filter and the subsegment partitioning have not been run without the band veto; whether a locked-bar veto would ever reject a fill in this corpus (no stop was deferred by a frozen bid in either diagnostic run — 0 deferrals — so the veto path is unexercised on the tape); and any DSR at `N_eval = 3`, which remains NOT RUN for the reason recorded in 74.7.
+---
+
+## §75 — Audit of `4eb5c58..9f7036e` (H-126, N-133, N-132, Ruling D, seq 8)
+
+**Scope audited:** `58145ff` ("Carry the position itself across a merger…") and `9f7036e` ("Register and execute seq 8…"), diff `4eb5c58..9f7036e` — 25 files, +9,115 / −114 (152 of those lines are my own §74). Tree clean at `9f7036e`, tags `feat-s74-hardening-58145ff` and `feat-s74-trial008-9f7036e`. Holdout `2025-01-01..2026-11-11` not read; 2024 fold still frozen (`validation_folds_count = 0`); window `2022-01-03..2023-12-29`.
+
+### 75.1 Baseline re-measured at `9f7036e`
+
+| Item | Measurement |
+|---|---|
+| `scripts/verify_audit_append_only.py` | exit **0**, `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| W0.5-1 | `[PASS] … append-only invariant verified 100%` |
+| W0.5-3 | **485 passed in 105.73 s, 0 skipped, 0 xfailed** |
+| W0.5-5 | `[PASS] 46 current artifact(s) … 19 superseded` |
+| G2A-6.6 / 6.7 | `N=8, N_eval=4`; `4 scored trial(s) agree with their verdict artifacts` |
+| G2A-6.8a | manifest sha256 `93f7967d8f42a4bf…` equals the criteria pin, recomputed by me from the 324-byte file |
+| Registry | 8 rows, chain intact (`prev_hash`), seq 8 row `sharpe_ratio: null`, `criteria_version: "1.1.4"`, sidecar 4 evaluations |
+
+`configs/go_no_go_criteria.yaml` `1.1.3 → 1.1.4`: the diff adds `unbanded_session_fill_policy`, rewrites the version comment and moves the manifest pin. **No numeric threshold changed** — I diffed every `[+-]` line.
+
+### 75.2 H-126 — **CLOSED** at the probe I specified in §74.9 item 1
+
+The fix has two halves: the harness restates the lot book for a ratio-bearing `ISIN_TRANSITION`/`SPLIT` (`restate_lots_for_share_ratio`, `:217`) and for a merger (`restate_lots_across_merger`, `:248`), and then `execute_swing_strategy_session` moves the `Portfolio` through its own `apply_corporate_actions_for_session` (`swing.py:321`). Measured at the declared probe, using the **real committed corporate-action rows**:
+
+| Fixture | Portfolio | Lot book | Stop after carry | Next-session fill |
+|---|---|---|---|---|
+| HDFC→HDFCBANK merger 42:25, ex 2023-07-13 | `{INE040A01034: 33}` | `INE040A01034: 33` | `(1071.4286, 33)` | **FILLED 33 @ ₹1049.20** (gap through) |
+| TATASTEEL 10:1 `ISIN_TRANSITION`, ex 2022-07-28 | `{INE081A01020: 200}` | `INE081A01020: 200` | `(90.0000, 200)` | **FILLED 200 @ ₹84.90** |
+
+Identity, quantity and stop price agree across all three stores, and the carried stop produces exactly one fill for the full position — the §74.3 failure (stop cancelled next session because the portfolio still held the old ISIN) no longer reproduces. The run-level assertion `open_lot_quantities == portfolio_quantities` (`:974-984`) now has teeth because both sides are actually moved. **H-126 closed.**
+
+Named residual: the counter `unprotected_corporate_action_positions` is still only reachable through the no-successor or successor-already-stopped branches, and on the committed corpus no merger or transition touched a held name in seq 8 (counter `0`). The path is proven by fixture, not by the tape — stated in the artifact's own "Not claimed", and I agree with it.
+
+### 75.3 N-133 — **CLOSED**
+
+`transfer_protective_stop(old, "", 1, 1)` now returns **`False`** and leaves the stop armed at `(900.00, 20)`; validation happens before the cancel (`order_runner.py:735`), and the successor order is constructed before the old one is retired. §74.9 item 4 satisfied: a malformed successor no longer turns a caller error into an unprotected hold.
+
+### 75.4 H-127 (new, HIGH) — the restatement is unconditional, but the only corpus in the repo is already split/bonus adjusted
+
+Measured facts:
+
+- The resolved dataset is `EXP-DEV-2022-2024-V2` with `price_convention = SPLIT_BONUS_ADJUSTED`, 153,510 records, 211 instruments.
+- Its series are genuinely adjusted across the very action the harness restates: TATASTEEL closes `₹114.245` on 2022-01-03 and `₹100.35` on 2022-07-28 — no 10× step at the 10:1 ex-date. The lot/stop restatement therefore **divides an entry price that the series never multiplied**.
+- `Portfolio.apply_corporate_action` refuses exactly this, by design: `CorporateActionError: Corporate action ISIN_TRANSITION cannot be restated on an already SPLIT_BONUS_ADJUSTED price series for INE081A01012` (Finding H-108).
+
+So the two halves disagree, and the disagreement is resolved by aborting: on the committed corpus, a held name crossing a split or transition raises out of `execute_swing_strategy_session` and the trial produces no artifact. It did not fire in seq 8 only because no held name crossed one of the three transition rows or any split in 2022–2023. The harness's restatement is the *correct* rule for an `UNADJUSTED_RAW` corpus (my P-B probe shows 20 → 200 with the stop at 90 and equity preserved) and the *wrong* rule for the corpus that exists. It is not gated on `price_convention` anywhere.
+
+This is fail-closed, not silently wrong, so no committed number moves — but it makes the trial's stability depend on which names happen to be held on three dates, and it means §74.9 item 2 was implemented in the direction that only one of the two corpora supports. Probe that must fail closed before this closes: on `SPLIT_BONUS_ADJUSTED`, a held 10:1 transition must complete with quantity **unchanged at 20**, stop **unchanged at 900.00**, and equity invariant; on `UNADJUSTED_RAW`, the same fixture must give **200 / 90.0000** and a 200-share fill.
+
+### 75.5 N-132 — **CLOSED**, and `CRIT-OVERFIT-02` is now computed rather than asserted
+
+Recomputed from committed bytes only, in a fresh process, from `trial_008`'s persisted series:
+
+```
+digest      RET-V1-35734346104b66479… == artifact returns_digest   MATCH
+returns     493 observations == artifact observation_count
+moments     skew −0.5374912686431483158368693278, kurt 4.0828955583… (RAW_NORMAL_THREE)
+Sharpe      −0.01475375638851309790188878344  == artifact, to the last digit
+DSR         0.244614  (artifact 0.2446), N=8, N_eval=4
+```
+
+`evaluate_strategy_significance` consumes the persisted series and reproduces the artifact's own number, so §74.7's finding is closed and my Erratum E-4 is now fully corrected in the artifact rather than in prose: `CRIT-OVERFIT-02` is **FAIL** at 0.2446 against 0.95. The moments stored beside the series are consistent with the series (I did not take them on trust; the DSR re-derives them).
+
+### 75.6 Ruling D — honoured, and measured on both sides
+
+| Probe | Result |
+|---|---|
+| `criteria.unbanded_session_fill_policy` | `LOCKED_BAR_REFUSAL_ONLY` (a criteria field, so it enters `criteria_fingerprint`) |
+| Runner default (no explicit policy) | unbanded normal bar → **FILLED 20** |
+| Unbanded bar with `open == high` (not locked) | **FILLED 20** — no synthetic band, no extreme-price veto (I checked `obs_upper` is `None` for a bare `PriceBar`, so the simulator has no derived limit here) |
+| Unbanded locked bar (`high == low`) | **REJECTED**, reason `Locked 0-range session (high=1000 == low=1000)` |
+| `band_policy=STRICT_BAND_REQUIRED` override | `OrderRunnerEligibilityError: Mandatory price band evidence missing for BUY entry…` — H-83 restored exactly |
+| Criteria file with `NONSENSE` | `CriteriaValidationError: Unsupported unbanded_session_fill_policy…` |
+| CLI `--band-policy STRICT_BAND_REQUIRED` against the committed criteria | **exit 1**, `…disagrees with the committed criteria ('LOCKED_BAR_REFUSAL_ONLY'); commit the assumption before running it` |
+
+The policy is where I said it must be — inside the fingerprint, not a run flag — and both directions fail closed. Two nits:
+
+- **N-134 (LOW):** a locked-bar refusal is reported as `REJECTED_UPPER_CIRCUIT` and carries `circuit_evidence_present`. A locked bar is not a circuit event, and a reader counting circuit rejections would count bars with no band at all. The reason string discriminates; the status enum does not.
+- `unbanded_tickets_submitted` counts submissions, and `locked_bar_refusals` counts only the one reason prefix at `swing.py:443`; everything else that refuses an unbanded order (sizing, turnover floor, participation, cash) is invisible in the three per-year counters. The artifact reports 7,007 submissions, 771 fills and 0 locked-bar refusals, and nothing reconciles the other ~6,200. That is not wrong, but it is not the audit trail §9.1 asks for either.
+
+### 75.7 seq 8 — registered before execution, and the artifact agrees with the ledger
+
+| Item | Measurement |
+|---|---|
+| Row | `seq 8`, `TRIAL-PHASE3B2-BREADTH-008`, `IN_SAMPLE`, `criteria_version 1.1.4`, `sharpe_ratio: null`, chained `prev_hash` |
+| `canonical_params` | identical to seq 6 — `sma_20/sma_50`, `allocation_weight 0.0800`, `k 2.0`, trim `None`, `APPROVED_EQ_ONLY_POLICY` — and, unlike seq 6, no band-policy key (N-135) |
+| Sidecar | Sharpe `−0.01475375638851309790188878344`, digest `RET-V1-3573434610…`, 493 observations, `N_eval = 4` |
+| Artifact | `recorded: true`, `evaluated_trial_count 4` beside `evaluated_trial_count_prior 3`, `band_policy LOCKED_BAR_REFUSAL_ONLY`, `criteria_version 1.1.4` |
+| Coverage | 2022: 3 band-covered + 145 unbanded, 2,803 unbanded submissions, 355 fills, 205 closed; 2023: 3 + 132, 4,204 submissions, 416 fills, 233 closed; 2024: 0 (fold frozen) |
+| Verdict | `NO-GO`, `PASS 13 / FAIL 5 / NOT RUN 6` |
+
+The §74.9 item-5 fix landed (`evaluated_trial_count_prior`), and the pin moved with the append. **N-135 (LOW):** `canonical_params` does not record the band policy — it is reachable only through `criteria_version 1.1.4`. Because the policy changes what a fill means, a reader comparing seq 6 and seq 8 rows sees two identical parameter sets and a different result. It should be a canonical parameter, not a version indirection.
+
+**The two FAILs that are the strategy's, not the harness's:** `CRIT-STAT-03` max single position weight **0.1141 > 0.10** and `CRIT-DATA-05` coverage **92.891% < 100%**. The first is a sizing violation the engine reported against itself; the second is the unbanded-universe residual. Both are computed, and neither is explained away.
+
+### 75.8 N-136 (MEDIUM) — the PF and the mean expectancy are computed on a censored sample
+
+The artifact's headline statistics do not describe the same book as the equity curve:
+
+| Quantity | Value |
+|---|---|
+| Sum of `gross_pnl` over 438 closed trades | **−₹156,376.95** |
+| Statutory costs, closed ledger / all fills | ₹54,222.10 / ₹55,760.01 |
+| Sum of `net_pnl` over 438 closed trades | **−₹210,599.05** |
+| End equity | **₹978,479.40** (−₹21,520.60) |
+| Difference | **≈ +₹189,078 of unrealized P&L in positions still open on 2023-12-29** |
+
+A trend-following system's losers hit their stop and close; its winners are still open when the window ends. So `PF 0.6826`, `mean net expectancy −₹462.03` and `mean realized R −1.0130` are all measured on a book from which the right tail has been systematically removed — while the equity curve, which is the honest number, says the strategy lost **1.09% a year** with a **29.73%** drawdown. Both are true and they are not the same claim. A Go/No-Go criterion (`CRIT-STAT-02`, PF ≥ 1.50) computed this way is biased downward by construction, which under §9.1 makes it the wrong estimator of the thing it names. Fix: force-close the open book at the evaluation end and compute PF/expectancy on the liquidated ledger (and report the open count and its unrealized P&L beside it), or define the criterion on mark-to-market P&L. This is a correctness item for seq 9, not a hypothesis.
+
+### 75.9 Verdicts
+
+| Phase | Verdict |
+|---|---|
+| 3B-2c corporate-action identity and stop carry (§13.2) | **PASS** — merger and 10:1 transition re-key portfolio, lots and stop together; one fill each (H-126 closed) |
+| 3B-2c blank-successor preservation | **PASS** (N-133 closed) |
+| 3B-2c corporate actions on the committed corpus | **FAIL (H-127)** — restatement is unconditional; the adjusted corpus raises and aborts the run |
+| Phase 2A DSR reproducibility (§8.2, §9.1) | **PASS** — DSR 0.244614 recomputed from committed bytes; `CRIT-OVERFIT-02` FAIL is now a computation (N-132 closed) |
+| Ruling D (unbanded fill policy) | **PASS** — in the criteria fingerprint, both directions fail closed, no synthetic band |
+| seq 8 registration and execution | **PASS as recorded** — pre-registered params, N=8/N_eval=4, pin, artifact agree; verdict `NO-GO` |
+| Strategy verdict | **NO-GO**, unchanged and now computed on a de-censored equity curve |
+
+### 75.10 Ordered work order
+
+1. **H-127 — gate the restatement on the price convention.** On `SPLIT_BONUS_ADJUSTED` a split/transition must re-key identity only (quantity and stop price unchanged); only `UNADJUSTED_RAW` takes the ratio. Probe: both conventions, held 10:1 transition, quantities 20/200, stop 900.00/90.0000, equity invariant in both. Serves §10.3, §5.4.
+2. **N-136 — stop measuring PF on a censored book.** Liquidate the open book at the evaluation end (or compute PF and expectancy on mark-to-market P&L), print the open count and its unrealized P&L beside the closed-trade statistics. Probe: with the same run, `PF_mark_to_market` and `PF_closed_only` both printed, and the identity `Σclosed net + unrealized = Δequity` verified to the paisa. Serves §9.1.
+3. **N-137 (HIGH) — selection is not a strategy.** `generate_signals` iterates `sorted(universe)` (`swing.py:120`), so with ~14 signals a session and a handful of slots the slot is decided by ISIN string order. Implement a ranked entry rule with the score in `canonical_params`. Probe: two qualifying names, one slot, the higher score is the one that trades — deterministic, both orders of input. Serves §13.4.
+4. **N-138 (HIGH) — no minimum viable size.** 182 of 438 closed trades have notional below ₹5,000 (deciles: ₹58 / ₹286 / ₹887 / ₹17,737 …); fixed brokerage is ₹20 an order, so measured statutory cost runs **12–82% of notional** on those trades, and their mean R is −2.16. Add a `min_entry_notional` (pre-registered, e.g. ₹25,000) and refuse a fill that lands below a floor (e.g. ₹5,000) instead of booking it. Probe: a ₹58 order is refused and counted, not filled. Serves §7.2, §7.3.
+5. **N-135 / N-134 (LOW).** Put the band policy into `canonical_params`; give a locked-bar refusal its own status instead of `REJECTED_UPPER_CIRCUIT`.
+6. **seq 9 — see 75.11.** No trial may be registered before items 1–4 land, because each of them changes what a trade is.
+
+### 75.11 The ledger read, and the seq 9 hypothesis
+
+**What the 438 trades say.** 130 stops (mean gross −₹2,251, mean R −2.10, 12 sessions held) and 308 signal exits (mean gross **+₹442**, mean R −0.554, 39 sessions held). The stops carry the entire closed-book loss; the signal exits are gross-positive and net-negative after cost. The R figures are contaminated by fixed costs on micro orders (above), so the honest per-trade read is the notional-weighted one: the ₹20k+ cohort (219 trades) is gross −₹149,098 at a 21.5% win rate, while the sub-₹5k cohort (182 trades) loses ₹10,842 net and ₹9,040 of that is statutory cost.
+
+**What the signal says, measured on the corpus (audit diagnostics, in-sample, not trial evidence).** The entry condition `close > SMA20 > SMA50` is mildly predictive: forward 20-session return +3.34% versus +2.57% unconditional, 40-session +6.65% versus +5.79%. Played as an uncapped, unlimited-slot, entry-T+1-open / exit-on-`close<SMA50` book it earns **+3.56% per round trip at a 33.6% win rate, median −1.59%, mean hold 40 sessions** — a textbook positively-skewed trend payoff. The k·ATR stop costs **0.57pp** of that at k=2 (mean +2.92%, 33% stop share), 0.29pp at k=3, and 0.07pp at k=4 (3.4% stop share). Entry fills carry only +0.076% slippage over the open, and the entry gap is +0.349% on average (71.6% positive) — real but not the killer.
+
+**So the edge exists, and the engine does not capture it.** Canonical +3.56% per trade versus a portfolio that earns +3.4% *over two years*: the loss is in *which* signals get a slot and *how large* the fill is, not in the signal, the stop or the execution price. Two mechanical reasons, both measured: selection is alphabetical (N-137), and 41% of the fills are economically non-viable sizes (N-138).
+
+**seq 9 hypothesis (one change):** *Among the qualifying entries on a session, selecting by cross-sectional rank instead of ISIN order raises per-trade gross expectancy enough to clear the statutory cost schedule.* Canonical params: `strategy_id SWING-TREND-EQ-V1`, `sma_20/sma_50`, `atr_stop_multiple 2.0`, `allocation_weight 0.0800`, trim `None`, `APPROVED_EQ_ONLY_POLICY`, `band_policy LOCKED_BAR_REFUSAL_ONLY`, plus `entry_rank_indicator: "mom_63"`, `entry_rank_order: "DESC"`, `entry_tiebreak: "ISIN_ASC"`. Everything else frozen. Pre-register in criteria `1.1.5` **before** the run, with the other four work-order items already landed: `min_entry_notional 25000`, `min_fill_notional 5000`, PF computed on the force-closed book, and the de-censored expectancy.
+
+**The prior, stated honestly, because it is weaker than it looks.** On the same corpus, ranking simultaneous signals by 63-session return gives a **+2.25pp** top-minus-bottom quintile spread at 20 sessions (+3.44pp at 40) — but the **median same-session spread is −0.65pp** (−2.26pp at 40). The mean is carried by a few explosive days; the typical ranking is inverted. seq 9 is therefore a genuine test of a weak-but-positively-skewed prior, not a lay-up, and it must be registered as such.
+
+**Success and falsification, committed before execution.** Success requires all of: net expectancy per round trip **> 0**; gross per round trip **≥ 0.30% of notional** (the statutory round trip is ~0.25% before slippage); `CRIT-STAT-02` PF **≥ 1.50** on the liquidated book; `CRIT-STAT-04` MaxDD **≤ 25%**; at least **200** closed round trips; DSR **≥ 0.95** at `N = 9`, `N_eval = 5`. Falsification: if gross per round trip stays below 0.30% with a viable book, selection is not the constraint and the SMA(20/50) long-only family is closed — the next hypothesis moves to the holding horizon (exit and stop geometry), not to another entry filter. If gross clears 0.30% and net does not, the cost schedule is the binding constraint and the answer is fewer, longer holds — which is a different trial, not a tweak to this one.
+
+**What would falsify this section.** A seq 9 run under the ranked rule that clears every threshold above (the family is alive and my §75.11 diagnosis was too pessimistic), or a ranked run whose top-ranked names are *not* better than the alphabetical ones once the micro-fills are removed (the selection diagnosis was wrong and the constraint is the signal). Either way the next reader should measure the ranked versus alphabetical cohort on the same sessions, not compare two reports' headline means.
+
+### 75.12 Probe hygiene and not measured
+
+All probes ran in-process from the repository root against committed bytes; no artifact, registry row, criteria file or corpus was written. `git status` empty at the start and end of the round; no trial was appended or re-scored; the registry, sidecar, manifest, criteria and pin were read and re-hashed. The one CLI probe (`--band-policy STRICT_BAND_REQUIRED`) exited 1 before loading the dataset, wrote no artifact, and its exit status was captured before any pipe. `CURRENT_STAGE_OF_WORK.md` was not edited.
+
+**Not measured, and not claimed:** whether H-127 aborts a real seq 9 (no held name crossed a split or transition in seq 8); how many of the ~6,200 unbanded submissions were refused by sizing, turnover or participation rather than by the band; whether ranking survives the de-censoring and viability fixes, since the quintile diagnostic above is gross, uncapped and in-sample; and any out-of-sample read at all — the 2024 fold is unspent and the holdout is sealed.
