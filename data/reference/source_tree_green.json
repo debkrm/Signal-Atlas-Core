@@ -70,5 +70,43 @@
     },
     "utc": "2026-11-17T09:43:38.821440+00:00",
     "gate_sha": "96d24a1"
+  },
+  {
+    "source_tree_hash": "333bead0136b0e26b05b226c504c9b03f098ade85a2be64e7f68c6c19d10e6ab",
+    "source_tree_scheme": "git-blob-oid-v1",
+    "suite_count": 534,
+    "pytest_seconds": 108.05,
+    "verify_exits": {
+      "scripts/verify_audit_findings.py": 0,
+      "scripts/verify_cash_universe_coverage.py": 0,
+      "scripts/verify_historical_snapshot.py": 0,
+      "scripts/verify_phase2a_containment_and_trials.py": 0,
+      "scripts/verify_phase2b5_storage.py": 0,
+      "scripts/verify_phase2b_significance.py": 0,
+      "scripts/verify_phase2c_walkforward.py": 0,
+      "scripts/verify_phase2d_verdicts.py": 0,
+      "scripts/verify_wave1_thin_slice.py": 0
+    },
+    "utc": "2026-11-17T10:14:09.598880+00:00",
+    "gate_sha": "c285310"
+  },
+  {
+    "source_tree_hash": "eb61ec28ecd13cd1dfa851a4ba5c309ee193715ae04990c21c76939f992ee6bd",
+    "source_tree_scheme": "git-blob-oid-v1",
+    "suite_count": 534,
+    "pytest_seconds": 108.64,
+    "verify_exits": {
+      "scripts/verify_audit_findings.py": 0,
+      "scripts/verify_cash_universe_coverage.py": 0,
+      "scripts/verify_historical_snapshot.py": 0,
+      "scripts/verify_phase2a_containment_and_trials.py": 0,
+      "scripts/verify_phase2b5_storage.py": 0,
+      "scripts/verify_phase2b_significance.py": 0,
+      "scripts/verify_phase2c_walkforward.py": 0,
+      "scripts/verify_phase2d_verdicts.py": 0,
+      "scripts/verify_wave1_thin_slice.py": 0
+    },
+    "utc": "2026-11-17T10:21:32.998668+00:00",
+    "gate_sha": "742324c"
   }
 ]

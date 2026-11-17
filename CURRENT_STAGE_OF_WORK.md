@@ -1170,3 +1170,80 @@ Round: audit §79 (`67235d9`, corrected in `0f650c3`) reviewing `3119cb2`, work 
 - **Verification actually run.** Full offline suite **529 passed, 0 skipped, 0 xfailed** (122 s); all **9** `scripts/verify_*.py` exit 0; `python scripts/verify_audit_append_only.py --force-full` exit 0 with `ALL REPOSITORY FOUNDATION GATES PASSED` — W0.5-1/1b/1c/2/3/4/5 all PASS, W0.5-5 on **46 current / 22 superseded** rows; `verify_phase2d_verdicts.py` exit 0 on the 1.1.9 artifacts (Gates 2D-1/2D-5 reproduce the committed bytes); `verify_audit_findings.py` exit 0 with 5 probes executed and N-152 carried as `ACCEPTED`. No trial row was appended or scored: **N = 9, N_eval = 5**, the trials manifest pin is unchanged, `validation_folds_count = 0`, and Holdout `2025-01-01..2026-11-11` remains sealed with `HOLDOUT_UNLOCK` absent.
 - **Tests moved with the bindings, not against them.** Version literals moved `1.1.8 -> 1.1.9` in the six files that assert them; complete fixtures now state `walk_forward_validation_folds_count: 2` beside the ratio they already declared, and the Tier-A fixture keeps its omitted-count assertion untouched; `tests/unit/test_phase3b2_audit_s79_items.py` adds six probes (N-154 CRLF canonical digest, N-155 forged cache row, N-156 missing count, N-157 transition rules, N-158 324/324 alignment and refusal, N-159 positions without a closed count). No assertion was skipped, dropped or widened.
 - **Not claimed.** No audit verdict on this commit. N-150 remains `OPEN` and out of this work order; N-152 remains `ACCEPTED`; §79.12 item 7 (pre-2022 ingestion) is untouched, so no seq 10 was registered or run. A first green run of a changed tree necessarily writes one record to the tracked cache — that record is committed here; a re-run on the same tree appends nothing.
+
+### Audit §80 — the green cache binds to a git tree, and the fold count must be an integer
+
+Round: audit §80 at `3f5f338` (tag `audit-s80-3f5f338`), reviewing `96d24a1`; work order §80.13 items 1-2
+implemented and items 3-5 prepared. Criteria **1.1.9**, no threshold moved. **Not audited**: no verdict
+judges these commits, and **N-160 / N-161 carry no `CLOSED` row** in `reports/audit/findings.jsonl` — that
+ledger is the auditor's (§11.1), so nothing below is a closure claim, only the measurement the auditor's
+next round has to reproduce.
+
+- **N-160 — a cache row now names a tree, not a directory.** `source_tree_entries()` returns `(path, blob
+  oid)` from `git ls-tree -r HEAD` instead of sha256 over working-copy bytes, `source_tree_hash_at_commit(ref)`
+  projects the same digest for any commit, and `green_record_problem` refuses a row unless
+  `source_tree_hash_at_commit(record["gate_sha"]) == record["source_tree_hash"]` under a recorded
+  `source_tree_scheme: "git-blob-oid-v1"`. Measured, replaying §80.3's transcript in `probe_n160`: poison
+  `tests/unit/test_verdicts.py`, recompose the digest with the gate's own `compute_source_tree_hash`, name the
+  real commit `HEAD` — `green_record_problem` answers *"is not the tree at gate_sha … that commit's tree
+  projects …"* and `select_gate_plan` answers **full**; a row hashing HEAD's tree while naming `HEAD^` is
+  refused; the positive control (HEAD's tree, `gate_sha` HEAD) is **reuse**.
+- **N-160 — the platform half.** The digest is now composed of the oids git stores, so the 280-CRLF working
+  copy of `configs/go_no_go_criteria.yaml` hashes to the oid of its LF blob; the probe finds a clean text file
+  whose checkout differs from its blob only by line endings and asserts the entry is the blob's oid. `git
+  hash-object` was measured first and rejected: with the `text` attribute it converts
+  `data/reference/bhavcopy_2024/cm03JAN2024bhav.csv.zip` and returns an oid the repository does not contain,
+  so the digest is taken from `ls-tree`, which cannot disagree with a commit.
+- **N-160 — the tree a run tested is the tree recorded.** `dirty_source_paths()` (`git status --porcelain`,
+  which refreshes the index) plus `should_record_green()` mean a run over a working copy that differs from
+  HEAD is neither a cache hit nor recorded. This was found by the work, not by reading: the first
+  `--force-full` run appended a row that combined HEAD's tree hash with a suite that had tested modified
+  files — the exact forgery the item closes, produced by the gate itself. That row was removed before it was
+  committed and the follow-up run printed *"no green row was recorded"*. A second measurement found the
+  index-stat trap: `git diff-index` reported two Phase 2D artifacts as modified after a verifier rewrote them
+  byte-identically, which would have forced the heavy gates for a tree that did not move, so the dirty check
+  uses `git status` and the probe asserts every dirty path really differs from its blob.
+- **N-160 — legacy rows are history, not evidence.** The four working-copy rows stay in
+  `data/reference/source_tree_green.json` unchanged and are never reused, because they carry no scheme. Two
+  rows are now recorded under the new scheme: `333bead0…` at `c285310` and `eb61ec28…` at `742324c`, both 534
+  passed with all nine discovered verifiers at exit 0.
+- **N-161 — a fold count is an integer or it is not a count.** `CRIT-OVERFIT-06` no longer coerces: measured
+  `{ratio 1.00, count "2"}` → **NOT RUN**, `{ratio 1.00, count 2.0}` → **NOT RUN**, `{count true}` → **NOT
+  RUN**, `{count 1}` → **NOT RUN**, `{ratio 1.00, count 2}` → **PASS 1.0000**, `{ratio 0.50, count 2}` →
+  **FAIL**. The live producer already emits an `int` (`walk_forward_validation_folds_count = num_val_folds`),
+  so no run changes; no threshold moved.
+- **§80.13 items 3-5 prepared, not executed.** `scripts/probe_pre2022_preconditions.py` is the executable form
+  of A1/A2/A4 and exits **1** with 8 of 8 checks unmet: no 2018-2021 circular artifact exists in
+  `data/raw/circulars` (13 on disk, all issued 2021-12-10..2026-01-12); the calendar's `provenance.sha256` is
+  its own `CAL-FPR` hex rather than a source digest; all 4,510 identity interval rows begin 2022-01-03, zero
+  reach 2021-12-31; 0 of 138 committed dividend ex-dates fall in the window (earliest 2022-03-29); no
+  maximum-hold bound is committed. `docs/pre2022_ingestion_preconditions.md` records the artifact each gate
+  needs, the acceptance rule, the derivation plan (interval rows from pre-2022 Bhavcopy, no back-solving from
+  the present, no stitching across ISINs), and the order A1 → A2 → A4 → B1-B9 → C1-C6 with §80.10's corrected
+  count (`930 + 494 = 1,424`; `T = 494`). **No data was written**: no Bronze archive, corpus row, manifest row,
+  criteria value or interval row changed.
+- **Skills.** `.agents/skills/audit-round/SKILL.md` now opens with the Senior Indian Quantitative Researcher &
+  Principal Systems Architect persona and eight Strategic Ruling rules (evidence first, numbered and
+  append-only, thresholds out of scope, one change with its falsifier, it creates work, scope may be narrowed
+  only, the holdout is not ruling territory, computed status), and its Step 5 gains a post-commit gate run
+  **without** `--force-full` plus the requirement that `source_tree_green.json` be append-only and clean before
+  the Step 6 commit. `.agents/skills/implement-round/SKILL.md` records that a full run over a dirty tree
+  records nothing, so the row is committed after the commit it names.
+- **Verification actually run.** `python scripts/verify_audit_append_only.py --force-full` exit 0 with
+  `ALL REPOSITORY FOUNDATION GATES PASSED (100%)` on the working tree — **534 passed, 0 skipped, 0 xfailed**
+  (106.85 s) — and it recorded **no** row for a dirty tree. Post-commit runs on `c285310` (106.86 s) and
+  `742324c` (107.43 s) each recorded exactly one row: **534 passed**, 9 discovered `scripts/verify_*.py` all
+  exit 0, W0.5-5 on **46 current / 22 superseded** manifest rows. `probe_audit_findings.py N-160` → **PASS**,
+  `N-161` → **PASS**, `N-156` → **PASS**. `verify_audit_findings.py` exit 0 inside the gate on the five
+  non-`ACCEPTED` ledger rows.
+- **Invariants held.** No trial row was appended or scored: **N = 9, N_eval = 5** (`trial_registry.jsonl` 9
+  rows / `…evaluations` 5 rows, `data/trials/**` byte-identical to `3f5f338`); the 2024 fold stays frozen as
+  the validation partition with `validation_folds_count = 0`; Holdout `2025-01-01..2026-11-11` remains sealed
+  with `HOLDOUT_UNLOCK` absent; `reports/audit/**` is untouched by this round.
+- **Tests moved with the bindings.** The §78 and §79 cache tests gained the scheme field and an injected tree
+  projection (plus new refusals for a wrong-tree row, an unregistered scheme and a stat-only change), and
+  `tests/unit/test_phase3b2_audit_s80_items.py` adds five: tree-oid identity, the §80.3 forgery with a real
+  commit, the dirty-tree recording rule, a gate-written row's reuse on a clone, and the N-161 shapes. No
+  assertion was skipped, dropped or widened.
+- **Not claimed.** No seq 10 was registered or run; §80.13 items 6-7 are untouched; N-152 remains `ACCEPTED`;
+  the pre-2022 window remains warm-up only, and the DSR bar is unchanged by anything here.
