@@ -65,6 +65,7 @@ def test_verdict_report_reproducibility():
         "evaluation_end_date": "2026-10-31",
         "evaluated_at_utc": "2026-11-14T12:00:00+00:00",
         "total_trades": 250,
+        "liquidated_trade_count": 250,
         "profit_factor": Decimal("1.75"),
         "max_single_position_weight": Decimal("0.08"),
         "max_portfolio_drawdown": Decimal("0.18"),
@@ -159,6 +160,7 @@ def test_pass_only_on_printed_computed_value():
     """Rule 9.3: PASS may only be attached to a computed value."""
     bundle = {
         "total_trades": 300,
+        "liquidated_trade_count": 300,
         "profit_factor": Decimal("1.80"),
     }
     report = evaluate_verdicts(bundle)
@@ -176,6 +178,7 @@ def test_residual_r3_unverified_provenance_evaluates_to_not_run():
     """
     bundle_unverified = {
         "total_trades": 250,
+        "liquidated_trade_count": 250,
         "profit_factor": Decimal("2.0"),
         "max_single_position_weight": Decimal("0.05"),
         "max_portfolio_drawdown": Decimal("0.15"),
@@ -293,6 +296,7 @@ def test_synthetic_fixture_end_to_end_regression():
         "evaluation_end_date": meta["end_date"],
         "evaluated_at_utc": "2026-11-14T12:00:00+00:00",
         "total_trades": 210,
+        "liquidated_trade_count": 210,
         "profit_factor": Decimal("1.62"),
         "max_single_position_weight": Decimal("0.09"),
         "max_portfolio_drawdown": Decimal("0.19"),
@@ -413,6 +417,7 @@ def test_h67_unattested_verified_provenance_rejected():
         "evaluation_end_date": "2026-10-31",
         "evaluated_at_utc": "2026-11-14T12:00:00+00:00",
         "total_trades": 250,
+        "liquidated_trade_count": 250,
         "profit_factor": Decimal("1.75"),
         "max_single_position_weight": Decimal("0.08"),
         "max_portfolio_drawdown": Decimal("0.18"),
@@ -478,6 +483,7 @@ def test_n58_deterministic_report_timestamp_from_bundle():
         "evaluation_end_date": "2026-10-31",
         "evaluated_at_utc": "2026-11-14T10:20:30+00:00",
         "total_trades": 150,
+        "liquidated_trade_count": 150,
     }
     rep1 = evaluate_verdicts(bundle)
     rep2 = evaluate_verdicts(bundle)
@@ -508,6 +514,7 @@ def test_h68_attestation_must_be_manifest_registered_and_digest_matched():
         "evaluation_end_date": "2026-10-31",
         "evaluated_at_utc": "2026-11-14T12:00:00+00:00",
         "total_trades": 250,
+        "liquidated_trade_count": 250,
         "profit_factor": Decimal("1.75"),
         "max_single_position_weight": Decimal("0.08"),
         "max_portfolio_drawdown": Decimal("0.18"),
@@ -569,6 +576,7 @@ def test_h69_evaluation_window_calendar_bounding_and_session_plausibility():
     base_bundle = {
         "evaluated_at_utc": "2026-11-14T12:00:00+00:00",
         "total_trades": 210,
+        "liquidated_trade_count": 210,
         "profit_factor": Decimal("1.75"),
         "max_single_position_weight": Decimal("0.08"),
         "max_portfolio_drawdown": Decimal("0.18"),
@@ -699,6 +707,7 @@ def test_total_trades_decimal_parsing_and_plausibility_bound():
         "evaluation_start_date": "2022-01-05",
         "evaluation_end_date": "2022-01-07",
         "total_trades": 500,
+        "liquidated_trade_count": 500,
     })
     eval_win_3s = next(e for e in rep_3s.evaluations if e.criterion_id == "CRIT-WINDOW-01")
     assert eval_win_3s.status == VerdictStatus.FAIL
@@ -831,6 +840,8 @@ def test_tier_a_report_omitted_engine_output_falsifier():
                 or "no sourced NSE price-band report" in ev.evidence
                 or "untested on this run" in ev.evidence
                 or "no sourced price-band report" in ev.evidence
+                # N-149: a fold ratio supplied without the fold rows cannot be validated.
+                or "cannot be validated" in ev.evidence
             ), f"NOT_RUN criterion {ev.criterion_id} has unexpected evidence: {ev.evidence}"
 
     eval_stat1 = next(e for e in rep.evaluations if e.criterion_id == "CRIT-STAT-01")
@@ -882,6 +893,9 @@ def test_tier_a_report_omitted_engine_output_falsifier():
     # 6. N-66 acceptance probe: adding a fourth valid PASS does not break derivation assertions
     bundle_fourth_pass = dict(bundle)
     bundle_fourth_pass["total_trades"] = 150
+    # N-148: the count is only gated when the bundle can reconcile it, so the declared liquidated
+    # count moves with the total rather than disagreeing with it.
+    bundle_fourth_pass["liquidated_trade_count"] = 150
     rep_fourth = evaluate_verdicts(bundle_fourth_pass)
     assert rep_fourth.summary_counts.get("PASS", 0) == rep.summary_counts.get("PASS", 0) + 1
     eval_trades = next(e for e in rep_fourth.evaluations if e.criterion_id == "CRIT-STAT-01")

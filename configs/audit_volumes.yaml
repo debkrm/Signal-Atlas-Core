@@ -1,0 +1,22 @@
+# Signal Atlas Core — Audit Volume Registry
+# Audit §78.15 (a) / §78.13 item 3. One row per audit volume; the verifier iterates this file.
+#
+# Volume 1 is FROZEN byte-for-byte at the §78 boundary. Every §N is a citation target, so the file is
+# never split, moved or rewritten: a frozen volume must hash exactly, which is strictly stronger than
+# "no removed line". §79 and later append to the active volume instead.
+#
+# `line_count` and `sha256` are measured on the committed file, not transcribed.
+
+version: "1.0"
+
+volumes:
+  - path: reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md
+    sections: "1-78"
+    line_count: 8442
+    sha256: 7c7760f72820f19527af2032f04b3b93aa3c69c1e5523d6ee9194161a193b0ba
+    frozen: true
+    base_commit: 82e3ef0
+
+  - path: reports/audit/volume2.md
+    sections: "79+"
+    frozen: false

@@ -132,21 +132,47 @@ def test_n145_identity_splits_at_each_documented_transition(security_master):
     ]
 
 
+class _UndocumentedMaster:
+    """An interval table that records two identities and no transition row between them."""
+
+    isin_transitions: tuple = ()
+
+    def resolve_isin_by_symbol(self, symbol, as_of, series):
+        return {
+            datetime.date(2023, 3, 1): "INE466L01020",
+            datetime.date(2023, 3, 2): "INE466L01038",
+        }.get(as_of)
+
+
 def test_n145_undocumented_transition_still_fails_closed(security_master):
-    """360ONE changes ISIN on 2023-03-02 with no ISIN_TRANSITION row: refused, not resolved."""
+    """
+    A symbol that changes ISIN with no ISIN_TRANSITION row is refused, not resolved.
+
+    After Audit §78.11 every pair the committed interval table records carries a row, so the refusal
+    arm (still live for a pair the table lacks, e.g. a newly ingested identity) is probed against a
+    stub master that records the change without the row. The same probe then confirms the corpus
+    state: 360ONE, undocumented at §77, is now documented by the generator and resolves.
+    """
     bars = [_bar("360ONE", d) for d in (datetime.date(2023, 3, 1), datetime.date(2023, 3, 2))]
     segments, refusal = resolve_instrument_identity_segments(
-        symbol="360ONE", bars=bars, sec_master=security_master,
+        symbol="360ONE", bars=bars, sec_master=_UndocumentedMaster(),
         reference_isin="INE466L01038",
     )
     assert segments is None
     assert refusal is not None
     assert refusal[0] == "ISIN_TRANSITION_UNDOCUMENTED"
 
+    resolved_segments, refusal = resolve_instrument_identity_segments(
+        symbol="360ONE", bars=bars, sec_master=security_master,
+        reference_isin="INE466L01038",
+    )
+    assert refusal is None, refusal
+    assert [s[0] for s in resolved_segments] == ["INE466L01020", "INE466L01038"]
+
 
 def test_n145_every_dataset_instrument_resolves(short_run):
     artifact, _markdown = short_run
-    assert artifact["criteria_version"] == "1.1.7"
+    assert artifact["criteria_version"] == "1.1.8"
     assert artifact["dataset_instrument_resolution_denominator"] == 211
     assert artifact["dataset_instrument_resolution_numerator"] == 211
     assert Decimal(str(artifact["dataset_instrument_resolution_pct"])) == Decimal("100")
@@ -267,7 +293,7 @@ def test_overfit05_gates_the_ex_top_1_margin():
 
 def test_criteria_1_1_7_adds_only_the_three_committed_bindings():
     crit = _criteria()
-    assert crit.version == "1.1.7"
+    assert crit.version == "1.1.8"
     assert crit.min_positive_is_fold_ratio == Decimal("0.75")
     assert crit.min_fold_liquidated_pf == Decimal("1.30")
     assert crit.min_liquidated_pf_ex_top_1 == Decimal("1.40")

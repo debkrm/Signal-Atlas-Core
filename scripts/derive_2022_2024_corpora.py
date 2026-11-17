@@ -20,9 +20,11 @@ from __future__ import annotations
 import csv
 import datetime
 from decimal import Decimal
+import hashlib
 import json
 from pathlib import Path
 import sys
+from typing import List, Sequence
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT / "src") not in sys.path:
@@ -31,8 +33,66 @@ if str(_REPO_ROOT / "src") not in sys.path:
 from signal_core.storage.security_master import (
     CorporateAction,
     CorporateActionType,
+    SymbolInterval,
     load_cash_universe_symbol_intervals,
 )
+
+
+def generate_isin_transition_rows(
+    intervals: Sequence[SymbolInterval],
+    documented_pairs: set[tuple[str, str]],
+) -> List[CorporateAction]:
+    """
+    One `ISIN_TRANSITION` row per adjacent identity pair the committed interval table records
+    (Audit §78.11 / §78.16 item 1, N-151).
+
+    The table, not a list of symbols a dataset happened to visit, is the source: a symbol that traded
+    two ISINs gets an effective-dated transition whether or not 2022-2024 Bhavcopy carries it, so a
+    corpus extension cannot re-enter the undocumented-interval refusal path. Pair order is by the
+    successor interval's `effective_from`, the date the new identity starts trading.
+
+    The ratio is 1:1 and carries no share-count claim: the price series is split/bonus adjusted, so an
+    identity change is price-neutral and any ratio here would be an invention. Provenance stays
+    `CONTENT_IDENTIFIED_ONLY` — the interval table is the reference, not an NSE circular (§6.5, N-152).
+    Pairs already carried by an explicit `ISIN_TRANSITION` row are skipped rather than duplicated, so
+    the three rows whose ratio is known from a committed SPLIT keep their 10:1 / 2:1 / 2:1 values.
+    """
+    by_symbol: dict[str, List[SymbolInterval]] = {}
+    for interval in intervals:
+        by_symbol.setdefault(interval.symbol, []).append(interval)
+
+    rows: List[CorporateAction] = []
+    for symbol in sorted(by_symbol):
+        ordered: List[tuple[str, datetime.date]] = []
+        for interval in sorted(by_symbol[symbol], key=lambda r: (r.effective_from, r.isin, r.series)):
+            if ordered and ordered[-1][0] == interval.isin:
+                continue
+            if any(seen == interval.isin for seen, _d in ordered):
+                # The identity re-appears after a different one: the table is not describing one
+                # forward transition chain, so no pair is asserted across it (fail closed).
+                continue
+            ordered.append((interval.isin, interval.effective_from))
+
+        for (old_isin, _old_from), (new_isin, effective_from) in zip(ordered, ordered[1:]):
+            if (old_isin, new_isin) in documented_pairs:
+                continue
+            rows.append(CorporateAction(
+                isin=old_isin,
+                symbol=symbol,
+                ex_date=effective_from,
+                action_type=CorporateActionType.ISIN_TRANSITION,
+                ratio_numerator=Decimal("1"),
+                ratio_denominator=Decimal("1"),
+                old_isin=old_isin,
+                new_isin=new_isin,
+                circular_ref=f"UNATTESTED_NSE_INTERVAL_TABLE_{symbol}_{effective_from:%Y%m%d}",
+                description=(
+                    f"{symbol} ISIN transition {old_isin} -> {new_isin} per "
+                    f"cash_equity_symbol_intervals.csv; share ratio not established by the corpus"
+                ),
+                provenance="CONTENT_IDENTIFIED_ONLY",
+            ))
+    return rows
 
 
 def generate_corporate_actions_corpus() -> list[CorporateAction]:
@@ -546,48 +606,25 @@ def generate_corporate_actions_corpus() -> list[CorporateAction]:
         ))
 
     # -------------------------------------------------------------------------
-    # ISIN identity transitions recorded by the committed interval table
-    # (Audit §77.11 / N-145)
+    # ISIN identity transitions generated from the committed interval table
+    # (Audit §78.11 / §78.16 item 1, N-151)
     # -------------------------------------------------------------------------
-    # Every symbol that the corpus shows under two ISINs across 2022-2024 gets an explicit,
-    # effective-dated transition row, so the runner can resolve identity point-in-time instead of
-    # refusing the instrument. The date is the first session of the successor ISIN as recorded in
-    # `cash_equity_symbol_intervals.csv`; the price series is already split/bonus adjusted, so the
-    # ratio is 1:1 and carries no share-count claim. What is *not* established here is the real-world
-    # cause and ratio — the corpus asserts two identities and a date, and the reference names the
-    # interval table rather than an NSE circular. That is the documented debt (§6.5), not a claim of
-    # attestation.
-    identity_transitions = [
-        ("INE825A01012", "INE825A01020", "VTL", "2022-03-25"),
-        ("INE797F01012", "INE797F01020", "JUBLFOOD", "2022-04-20"),
-        ("INE918I01018", "INE918I01026", "BAJAJFINSV", "2022-09-14"),
-        ("INE821I01014", "INE821I01022", "IRB", "2023-02-22"),
-        ("INE066F01012", "INE066F01020", "HAL", "2023-09-28"),
-        ("INE239A01016", "INE239A01024", "NESTLEIND", "2024-01-05"),
-        ("INE262H01013", "INE262H01021", "PERSISTENT", "2024-03-28"),
-        ("INE476A01014", "INE476A01022", "CANBK", "2024-05-15"),
-        ("INE171Z01018", "INE171Z01026", "BDL", "2024-05-27"),
-        ("INE200M01021", "INE200M01039", "VBL", "2024-09-12"),
-        ("INE089A01023", "INE089A01031", "DRREDDY", "2024-10-28"),
-        ("INE249Z01012", "INE249Z01020", "MAZDOCK", "2024-12-27"),
-    ]
-    for old_isin, new_isin, sym, ex_d_str in identity_transitions:
-        actions.append(CorporateAction(
-            isin=old_isin,
-            symbol=sym,
-            ex_date=datetime.date.fromisoformat(ex_d_str),
-            action_type=CorporateActionType.ISIN_TRANSITION,
-            ratio_numerator=Decimal("1"),
-            ratio_denominator=Decimal("1"),
-            old_isin=old_isin,
-            new_isin=new_isin,
-            circular_ref=f"UNATTESTED_NSE_INTERVAL_TABLE_{sym}_{ex_d_str.replace('-', '')}",
-            description=(
-                f"{sym} ISIN transition {old_isin} -> {new_isin} per "
-                f"cash_equity_symbol_intervals.csv; share ratio not established by the corpus"
-            ),
-            provenance="CONTENT_IDENTIFIED_ONLY",
-        ))
+    # Every identity pair the committed interval table records gets an explicit, effective-dated
+    # transition row — not only the pairs that happened to appear in the 2022-2024 corpus. The node
+    # is the table, so a wider window or a new listing cannot re-enter the refusal path with an
+    # undocumented interval: it enters with a row already committed. Attestation is unchanged and
+    # unresolved: the interval table is the witness, not an NSE circular (§6.5, N-152), so every
+    # generated row stays CONTENT_IDENTIFIED_ONLY.
+    documented_identity_pairs = {
+        (ca.old_isin, ca.new_isin)
+        for ca in actions
+        if ca.action_type == CorporateActionType.ISIN_TRANSITION and ca.old_isin and ca.new_isin
+    }
+    actions.extend(
+        generate_isin_transition_rows(
+            load_cash_universe_symbol_intervals(), documented_identity_pairs
+        )
+    )
 
     # Deterministic deduplication and sorting
     actions_dict = {(ca.isin, ca.ex_date, ca.action_type): ca for ca in actions}
@@ -596,6 +633,70 @@ def generate_corporate_actions_corpus() -> list[CorporateAction]:
         key=lambda ca: (ca.ex_date, ca.isin, ca.action_type.value)
     )
     return sorted_actions
+
+
+CORPUS_RESTATEMENT_TIMESTAMP_UTC = "2026-11-17T12:00:00+00:00"
+
+
+def restate_manifest(
+    manifest_path: Path,
+    byte_count: int,
+    sha256_hex: str,
+    total_records: int,
+    first_ex_date: datetime.date,
+    last_ex_date: datetime.date,
+) -> None:
+    """
+    Appends a new current manifest row and demotes the previous one to history (§10.1: a correction
+    is a new append carrying an effective date and a restatement reference, never an edit in place).
+    Unchanged rows are written back byte-for-byte.
+    """
+    raw = manifest_path.read_text(encoding="utf-8")
+    lines = raw.split("\n")
+    written = []
+    for line in lines:
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if row.get("artifact") == "corporate_actions.jsonl" and row.get("is_current"):
+            row["is_current"] = False
+            row["status"] = "superseded"
+            line = json.dumps(row)
+        written.append(line)
+
+    written.append(json.dumps({
+        "artifact": "corporate_actions.jsonl",
+        "is_current": True,
+        "status": "active",
+        "timestamp_utc": CORPUS_RESTATEMENT_TIMESTAMP_UTC,
+        "byte_count": byte_count,
+        "sha256": sha256_hex,
+        "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+        "source_coverage": (
+            f"{first_ex_date.isoformat()} to {last_ex_date.isoformat()} ({total_records} corporate "
+            "actions covering SPLIT, BONUS, CONSOLIDATION, DIVIDEND, RIGHTS, ISIN_TRANSITION, "
+            "MERGER, DELISTING)"
+        ),
+        "retrieval_reference": (
+            "Audit §63.6 Item 7, §63.7 CA-1; restated 2026-11-16 under Audit §68.6 item 3 (H-115, "
+            "N-112 residual); restated 2026-11-17 under Audit §77.11 / §77.15 item 1 (N-145) with the "
+            "twelve then-measured identity changes; restated again 2026-11-17 under Audit §78.11 / "
+            "§78.16 item 1 (N-151): the ISIN_TRANSITION table is now generated from the committed "
+            "cash_equity_symbol_intervals.csv for every symbol it records under more than one ISIN, "
+            "not for the fourteen symbols one dataset happened to visit, so a corpus extension cannot "
+            "re-enter the undocumented-interval refusal path. Each generated row names the old and new "
+            "ISIN, the first session of the successor identity, a 1:1 ratio because the corpus "
+            "establishes no share ratio on a split/bonus-adjusted series, and the interval table as "
+            "its reference. None is attested: every row remains CONTENT_IDENTIFIED_ONLY / "
+            "SOURCE_UNVERIFIED (§78.12, N-152)."
+        ),
+        "description": (
+            "Reference corporate actions table for cash equity delivery hold invariant accounting "
+            "(splits, bonuses, dividends, rights, consolidations, ISIN transitions, mergers, delistings)"
+        ),
+    }))
+
+    manifest_path.write_text("\n".join(written) + "\n", encoding="utf-8", newline="\n")
 
 
 def main() -> None:
@@ -621,7 +722,6 @@ def main() -> None:
     lines = [json.dumps(ca.to_dict()) + "\n" for ca in corpus]
     content_bytes = "".join(lines).encode("utf-8")
 
-    import hashlib
     ca_sha256 = hashlib.sha256(content_bytes).hexdigest()
     ca_byte_count = len(content_bytes)
     print(f"\nWritten {len(corpus)} records to {ca_path}")
@@ -630,6 +730,16 @@ def main() -> None:
 
     with open(ca_path, "wb") as f:
         f.write(content_bytes)
+
+    restate_manifest(
+        manifest_path,
+        byte_count=ca_byte_count,
+        sha256_hex=ca_sha256,
+        total_records=len(corpus),
+        first_ex_date=min(ca.ex_date for ca in corpus),
+        last_ex_date=max(ca.ex_date for ca in corpus),
+    )
+    print(f"Restated {manifest_path.name} with a new current row ({ca_byte_count} bytes)")
 
     # Calculate covered ISIN-days against universe
     sym_intervals = load_cash_universe_symbol_intervals()

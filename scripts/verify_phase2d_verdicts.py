@@ -197,6 +197,10 @@ def verify_gate_2d3_synthetic_fixture_end_to_end() -> bool:
         # Criteria 1.1.7 (Audit §77.12 item 4, §77.13): a complete fixture bundle also carries the
         # ex-top-1 liquidity margin and the four anchored in-sample folds, so neither CRIT-OVERFIT-05
         # nor CRIT-OVERFIT-03 is a NOT RUN this fixture does not need.
+        # Findings N-148 (§78.8): a complete bundle also reconciles the de-censored count, or the
+        # liquidated basis is unverifiable and CRIT-STAT-01 is NOT RUN. The fixture's 210 round trips
+        # are all liquidated, so it declares that count rather than leaving the basis to a key name.
+        "liquidated_trade_count": 210,
         "liquidated_pf_ex_top_1": Decimal("1.45"),
         "is_folds": [
             {"label": "IS-F1", "fold_end": "2022-06-30", "closed_net_expectancy": Decimal("120.00"),

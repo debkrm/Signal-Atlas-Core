@@ -103,6 +103,9 @@ def test_n141_haircut_sharpe_ratio_is_gated():
 def test_ruling1_statistics_are_evaluated_on_the_liquidated_book():
     live = _by_id({
         "total_trades": 205,
+        # Findings N-148 (§78.8): the de-censored count is only gated when the bundle can reconcile
+        # it, so a complete fixture declares the liquidated count beside the total.
+        "liquidated_trade_count": 205,
         "profit_factor": Decimal("1.6440"),
         "closed_only_trade_count": 193,
         "closed_only_profit_factor": Decimal("0.9920"),
@@ -132,7 +135,11 @@ def test_ruling1_statistics_are_evaluated_on_the_liquidated_book():
     assert censored["CRIT-STAT-02"].status.value == "FAIL"
     assert censored["CRIT-STAT-02"].computed_value == "0.9920"
 
-    short = _by_id({"total_trades": 95, "profit_factor": Decimal("1.80")})
+    short = _by_id({
+        "total_trades": 95,
+        "liquidated_trade_count": 95,
+        "profit_factor": Decimal("1.80"),
+    })
     assert short["CRIT-STAT-01"].status.value == "FAIL"
 
 
@@ -248,7 +255,7 @@ def test_n142_refused_sell_is_tabulated_under_its_side_and_reason():
 def test_criteria_1_1_6_changes_no_numeric_threshold():
     """1.1.6 moved definitions only. 1.1.7 (Audit §77) adds two bindings; both asserted below."""
     crit = _criteria()
-    assert crit.version == "1.1.7"
+    assert crit.version == "1.1.8"
     assert crit.min_positive_is_fold_ratio == Decimal("0.75")
     assert crit.min_fold_liquidated_pf == Decimal("1.30")
     assert crit.min_liquidated_pf_ex_top_1 == Decimal("1.40")
@@ -281,7 +288,7 @@ def test_short_walkforward_emits_the_s76_disclosures(tmp_path):
             encoding="utf-8"
         )
     )
-    assert art["criteria_version"] == "1.1.7"
+    assert art["criteria_version"] == "1.1.8"
     ids = {e["criterion_id"] for e in art["evaluations"]}
     assert {"CRIT-DATA-07", "CRIT-OVERFIT-04"} <= ids
 

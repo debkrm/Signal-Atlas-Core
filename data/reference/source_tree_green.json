@@ -1,0 +1,20 @@
+[
+  {
+    "source_tree_hash": "a2be699c3d9b9ba83a1d1967e2400f22a953c2ac838d3eaa20f1036ffb5b33d6",
+    "suite_count": 523,
+    "pytest_seconds": 117.65,
+    "verify_exits": {
+      "scripts/verify_audit_findings.py": 0,
+      "scripts/verify_cash_universe_coverage.py": 0,
+      "scripts/verify_historical_snapshot.py": 0,
+      "scripts/verify_phase2a_containment_and_trials.py": 0,
+      "scripts/verify_phase2b5_storage.py": 0,
+      "scripts/verify_phase2b_significance.py": 0,
+      "scripts/verify_phase2c_walkforward.py": 0,
+      "scripts/verify_phase2d_verdicts.py": 0,
+      "scripts/verify_wave1_thin_slice.py": 0
+    },
+    "utc": "2026-11-17T08:44:44.845451+00:00",
+    "gate_sha": "82e3ef0"
+  }
+]

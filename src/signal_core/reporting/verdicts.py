@@ -32,6 +32,21 @@ from signal_core.storage.calendar import (
 )
 
 
+# Audit §78.9 / §77.13: the anchored expanding in-sample folds are four specific ends, pre-registered
+# before any run could be judged by them. A bundle that supplies a shorter or different set is not
+# measuring this criterion, so the set is pinned here rather than inferred from whatever arrives.
+IS_FOLD_ENDS: Tuple[str, ...] = ("2022-06-30", "2022-12-30", "2023-06-30", "2023-12-29")
+
+
+def _fold_end_key(value: Any) -> str:
+    """Normalises a fold end to an ISO date string so the anchored ends compare as text."""
+    if isinstance(value, datetime.datetime):
+        return value.date().isoformat()
+    if isinstance(value, datetime.date):
+        return value.isoformat()
+    return str(value).strip() if value is not None else ""
+
+
 class ReportingError(ValueError):
     """Base error for reporting and verdict engine failures."""
     pass
@@ -413,6 +428,17 @@ def evaluate_verdicts(
                 f"{liquidated_declared} on the same bundle (N-144)."
             )
 
+    # Audit §78.8 (N-148): the reconciliation above is inert when the bundle omits the evidence that
+    # triggers it, so a producer reporting `total_trades` alone passed under the "de-censored" label.
+    # §14.4's test is exactly this: a consumer that cannot produce the de-censored book must fail, not
+    # be exempted by leaving out the column. No positions and no declared count means the basis cannot
+    # be reconciled, so the row is NOT RUN rather than a PASS on the key's name.
+    stat01_basis_unverifiable = (
+        parsed_total_trades is not None
+        and not isinstance(liquidated_positions, (list, tuple))
+        and liquidated_declared is None
+    )
+
     if trades_parse_error is not None:
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-STAT-01",
@@ -435,6 +461,24 @@ def evaluate_verdicts(
             comparator=">=",
             status=VerdictStatus.FAIL,
             evidence=stat01_basis_error,
+            is_binding=True,
+        ))
+    elif parsed_total_trades is not None and stat01_basis_unverifiable:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-STAT-01",
+            category="Risk & Performance",
+            metric_name="Total Completed Trades (Liquidated Book)",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_total_trades}",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence=(
+                f"total_trades = {parsed_total_trades} was supplied with neither "
+                f"'liquidated_open_positions' nor 'liquidated_trade_count', so the de-censored basis "
+                f"cannot be reconciled and the row is NOT RUN rather than a PASS on the key's name "
+                f"(Audit §78.8, N-148). A producer that cannot enumerate the liquidated positions must "
+                f"fail here, not omit the column that triggers the check."
+            ),
             is_binding=True,
         ))
     elif parsed_total_trades is not None:
@@ -1555,7 +1599,24 @@ def evaluate_verdicts(
     )
     is_ratio: Optional[Decimal] = None
     is_ratio_evidence = ""
+    # Audit §78.9 (N-149): the ratio used to be positives / len(rows) over whatever the bundle sent, so
+    # one positive fold out of one read 1.0000 PASS and a self-declared ratio passed with no rows at
+    # all. The fold set is pinned to the four pre-registered ends; a shorter or different set is FAIL,
+    # and a ratio without per-fold rows is NOT RUN rather than trusted.
+    fold_set_error: Optional[str] = None
     if fold_rows:
+        observed_ends = [_fold_end_key(fold.get("fold_end")) for fold in fold_rows]
+        missing_ends = [end for end in IS_FOLD_ENDS if end not in observed_ends]
+        unexpected_ends = [end for end in observed_ends if end not in IS_FOLD_ENDS]
+        if missing_ends or unexpected_ends or len(observed_ends) != len(IS_FOLD_ENDS):
+            fold_set_error = (
+                f"Anchored in-sample fold set does not match the four pre-registered ends "
+                f"({', '.join(IS_FOLD_ENDS)}): {len(observed_ends)} fold row(s) supplied, missing "
+                f"[{', '.join(missing_ends) or 'none'}], unexpected "
+                f"[{', '.join(unexpected_ends) or 'none'}]. The ratio is computed only over the four "
+                f"committed anchored folds, so an incomplete set is FAIL and never a favourable ratio "
+                f"over a shorter list (Audit §78.9, N-149)."
+            )
         positives = 0
         computable_folds = 0
         fold_details: List[str] = []
@@ -1595,14 +1656,31 @@ def evaluate_verdicts(
                 + "; ".join(fold_details) + "."
             )
     else:
-        is_ratio = _to_decimal(results_bundle.get("positive_is_fold_ratio"))
-        if is_ratio is not None:
-            is_ratio_evidence = (
-                f"Positive-fold ratio {is_ratio:.4f} over the anchored expanding in-sample folds supplied "
-                f"by the producer (no per-fold rows in the bundle, so the fold detail is NOT RUN)."
+        declared_ratio = _to_decimal(results_bundle.get("positive_is_fold_ratio"))
+        is_ratio_evidence = (
+            "No per-fold rows were supplied, so the anchored fold ratio cannot be validated: a "
+            "producer-declared 'positive_is_fold_ratio' is NOT RUN, not accepted on its own "
+            "(Audit §78.9, N-149)."
+        )
+        if declared_ratio is not None:
+            is_ratio_evidence += (
+                f" The bundle declares positive_is_fold_ratio = {declared_ratio:.4f} without the "
+                f"fold rows that would substantiate it."
             )
 
-    if is_ratio is not None:
+    if fold_set_error is not None:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-OVERFIT-03",
+            category="Walk-Forward Stability",
+            metric_name="Positive Anchored In-Sample Folds Ratio",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_positive_is_fold_ratio}",
+            comparator=">=",
+            status=VerdictStatus.FAIL,
+            evidence=fold_set_error,
+            is_binding=True,
+        ))
+    elif is_ratio is not None:
         status = (
             VerdictStatus.PASS
             if is_ratio >= active_criteria.min_positive_is_fold_ratio
@@ -1681,7 +1759,33 @@ def evaluate_verdicts(
     val_wf = _to_decimal(results_bundle.get("walk_forward_positive_fold_ratio"))
     wf_reason = results_bundle.get("walk_forward_not_run_reason")
     wf_n_val = results_bundle.get("walk_forward_validation_folds_count")
-    if val_wf is not None:
+    wf_n_val_int: Optional[int] = None
+    if wf_n_val is not None and not isinstance(wf_n_val, bool):
+        try:
+            wf_n_val_int = int(wf_n_val)
+        except (TypeError, ValueError):
+            wf_n_val_int = None
+    # Audit §78.10 (N-150): the two-fold minimum lived only in the NOT RUN reason, so one validation
+    # fold plus a favourable ratio cleared the row. Below two folds nothing is gated, ratio or not.
+    if wf_n_val_int is not None and wf_n_val_int < 2:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-OVERFIT-06",
+            category="Walk-Forward Stability",
+            metric_name="Positive Out-of-Sample Folds Ratio",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_positive_walk_forward_fold_ratio}",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence=(
+                f"Only N_val = {wf_n_val_int} validation fold evaluated; minimum 2 independent "
+                f"out-of-sample validation folds are required before a stability ratio is gated, so "
+                f"the supplied ratio "
+                f"{f'{val_wf:.4f}' if val_wf is not None else 'NOT RUN'} is NOT RUN rather than PASS "
+                f"(§8.3, Audit §78.10, N-150)."
+            ),
+            is_binding=True,
+        ))
+    elif val_wf is not None:
         status = VerdictStatus.PASS if val_wf >= active_criteria.min_positive_walk_forward_fold_ratio else VerdictStatus.FAIL
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-OVERFIT-06",

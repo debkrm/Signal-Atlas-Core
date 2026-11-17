@@ -11,16 +11,36 @@ Continuous verification gate enforcing AGENTS.md §11.1, §12.3, and §12.4:
 from __future__ import annotations
 
 import argparse
+import datetime
+import hashlib
+import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
 import time
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 AUDIT_FILE = REPO_ROOT / "reports" / "audit" / "signal_atlas_phase1c_audit_deepseek_review_.md"
 RULE_11_BASE_COMMIT = "a3a40f1"  # Commit ratifying Rule 11 & §37 verdict
+AUDIT_VOLUMES_CONFIG = REPO_ROOT / "configs" / "audit_volumes.yaml"
+AUDIT_FINDINGS_LEDGER = REPO_ROOT / "reports" / "audit" / "findings.jsonl"
+
+# §78.15 (b): the source-tree green cache. A commit that touches only audit prose, docs or the work
+# log cannot change a computation, so the gate reuses the recorded result for an identical source
+# tree instead of re-running 500 tests. Any path outside the excluded set produces an unknown hash and
+# forces the full run; --force-full exists for the human, and a full run is mandatory once a day.
+GREEN_CACHE_PATH = REPO_ROOT / "data" / "reference" / "source_tree_green.json"
+SOURCE_TREE_EXCLUDED_PREFIXES = ("reports/audit/", "docs/")
+SOURCE_TREE_EXCLUDED_FILES = (
+    "CURRENT_STAGE_OF_WORK.md",
+    "data/reference/source_tree_green.json",
+)
+GREEN_CACHE_MAX_AGE = datetime.timedelta(hours=24)
 
 VERIFICATION_SCRIPTS = [
     "scripts/verify_phase2a_containment_and_trials.py",
@@ -99,7 +119,215 @@ def check_audit_report_append_only() -> bool:
     return True
 
 
-def check_verification_scripts() -> bool:
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def load_audit_volumes() -> List[dict]:
+    with open(AUDIT_VOLUMES_CONFIG, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    volumes = data.get("volumes")
+    if not isinstance(volumes, list) or not volumes:
+        raise ValueError(f"audit_volumes.yaml has no 'volumes' list: {AUDIT_VOLUMES_CONFIG}")
+    return volumes
+
+
+def check_audit_volume_integrity() -> bool:
+    """
+    Frozen volumes must hash exactly (stronger than "no removed line"); active volumes keep the
+    append-only prefix check (Audit §78.15 (a)).
+    """
+    print("--- Gate W0.5-1b: Audit Volume Registry (§78.13, §78.15 (a)) ---")
+    try:
+        volumes = load_audit_volumes()
+    except (FileNotFoundError, ValueError, yaml.YAMLError) as exc:
+        print(f"[FAIL] Audit volume registry unreadable: {exc}\n")
+        return False
+
+    all_ok = True
+    for volume in volumes:
+        rel = str(volume.get("path", ""))
+        path = REPO_ROOT / rel
+        frozen = bool(volume.get("frozen"))
+        if not path.is_file():
+            if frozen:
+                print(f"[FAIL] Frozen volume missing: {rel}")
+                all_ok = False
+            else:
+                print(f"[INFO] Active volume {rel} is registered and not created yet.")
+            continue
+
+        if frozen:
+            expected_sha = str(volume.get("sha256", ""))
+            expected_lines = volume.get("line_count")
+            actual_sha = sha256_file(path)
+            actual_lines = len(path.read_text(encoding="utf-8").splitlines())
+            if actual_sha != expected_sha:
+                print(
+                    f"[FAIL] Frozen volume {rel} sha256 {actual_sha[:16]}… != pinned "
+                    f"{expected_sha[:16]}… — a frozen volume is byte-identical or the pin is wrong"
+                )
+                all_ok = False
+            elif expected_lines is not None and actual_lines != int(expected_lines):
+                print(
+                    f"[FAIL] Frozen volume {rel} has {actual_lines} line(s), pinned {expected_lines}"
+                )
+                all_ok = False
+            else:
+                print(
+                    f"[PASS] Frozen volume {rel}: sha256 and {actual_lines} line(s) match the pin "
+                    f"({volume.get('sections', '?')})."
+                )
+            continue
+
+        # Active volume: only appends may land, so HEAD's content must be a prefix of the working file.
+        try:
+            head_proc = subprocess.run(
+                ["git", "show", f"HEAD:{rel}"],
+                cwd=str(REPO_ROOT),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            print(f"[INFO] Active volume {rel} is not yet committed; nothing to compare.")
+            continue
+        head_text = head_proc.stdout
+        working_text = path.read_text(encoding="utf-8")
+        if not working_text.startswith(head_text):
+            print(f"[FAIL] Active volume {rel} is not an append-only extension of HEAD")
+            all_ok = False
+        else:
+            print(
+                f"[PASS] Active volume {rel}: HEAD content is an unchanged prefix "
+                f"({len(head_text.splitlines())} committed line(s), {len(working_text.splitlines())} now)."
+            )
+
+    if all_ok:
+        print(f"[PASS] Gate W0.5-1b: {len(volumes)} audit volume(s) verified.\n")
+    else:
+        print("[FAIL] Gate W0.5-1b: audit volume registry violated.\n")
+    return all_ok
+
+
+def check_audit_index() -> bool:
+    """The committed INDEX.md must be the generator's exact output (never hand-edited)."""
+    print("--- Gate W0.5-1c: Audit Index Reproducibility (§78.15 (a)) ---")
+    proc = subprocess.run(
+        [sys.executable, "scripts/generate_audit_index.py", "--check"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if proc.returncode != 0:
+        print((proc.stdout or "").strip())
+        print("[FAIL] Gate W0.5-1c: audit index is stale.\n")
+        return False
+    print((proc.stdout or "").strip())
+    print("[PASS] Gate W0.5-1c: audit index reproduces.\n")
+    return True
+
+
+def is_source_tree_path(rel_path: str) -> bool:
+    """True when a tracked path can change a computation (audit prose, docs and the log cannot)."""
+    if rel_path in SOURCE_TREE_EXCLUDED_FILES:
+        return False
+    return not any(rel_path.startswith(prefix) for prefix in SOURCE_TREE_EXCLUDED_PREFIXES)
+
+
+def source_tree_entries() -> List[Tuple[str, str]]:
+    """`(relative path, sha256 of bytes)` for every tracked source file."""
+    proc = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        check=True,
+    )
+    entries: List[Tuple[str, str]] = []
+    for raw in proc.stdout.split(b"\x00"):
+        if not raw:
+            continue
+        rel = raw.decode("utf-8")
+        if not is_source_tree_path(rel):
+            continue
+        path = REPO_ROOT / rel
+        if not path.is_file():
+            continue
+        entries.append((rel, sha256_file(path)))
+    return entries
+
+
+def compute_source_tree_hash(entries: Sequence[Tuple[str, str]]) -> str:
+    digest = hashlib.sha256()
+    for rel, file_sha in sorted(entries):
+        digest.update(rel.encode("utf-8"))
+        digest.update(b"\x00")
+        digest.update(file_sha.encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def load_green_cache() -> List[dict]:
+    if not GREEN_CACHE_PATH.is_file():
+        return []
+    data = json.loads(GREEN_CACHE_PATH.read_text(encoding="utf-8") or "[]")
+    return [record for record in data if isinstance(record, dict)] if isinstance(data, list) else []
+
+
+def append_green_record(
+    source_hash: str,
+    suite_count: int,
+    pytest_seconds: float,
+    verify_exits: Dict[str, int],
+    gate_sha: str,
+) -> None:
+    """Appends one record. Existing rows are never rewritten: the cache is history, not state."""
+    records = load_green_cache()
+    records.append({
+        "source_tree_hash": source_hash,
+        "suite_count": int(suite_count),
+        "pytest_seconds": round(float(pytest_seconds), 2),
+        "verify_exits": verify_exits,
+        "utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "gate_sha": gate_sha,
+    })
+    GREEN_CACHE_PATH.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8", newline="\n")
+
+
+def select_gate_plan(
+    source_hash: str,
+    records: Sequence[dict],
+    now: datetime.datetime,
+    force_full: bool = False,
+) -> Tuple[str, Optional[dict], str]:
+    """
+    Returns `(plan, record, reason)`. `plan` is "reuse" only for an identical source tree with a
+    green record younger than 24 hours; anything else is "full", which is the fail-closed default.
+    """
+    if force_full:
+        return "full", None, "forced"
+    for record in reversed(list(records)):
+        if record.get("source_tree_hash") != source_hash:
+            continue
+        exits = record.get("verify_exits") or {}
+        if any(int(code) != 0 for code in exits.values()):
+            continue
+        try:
+            recorded_at = datetime.datetime.fromisoformat(str(record.get("utc")))
+        except ValueError:
+            return "full", None, "cache record has an unreadable timestamp"
+        if recorded_at.tzinfo is None:
+            recorded_at = recorded_at.replace(tzinfo=datetime.timezone.utc)
+        if now - recorded_at > GREEN_CACHE_MAX_AGE:
+            return "full", None, "cache record is older than 24h"
+        return "reuse", record, "source tree unchanged since a green run"
+    return "full", None, "unknown source-tree hash"
+
+
+def check_verification_scripts() -> Tuple[bool, Dict[str, int]]:
     """Verifies that all scripts/verify_*.py in scripts/ exit with code 0 (Note N-20)."""
     print("--- Gate W0.5-2: Verification Scripts Exit Status (§12.3, Note N-20) ---")
     all_passed = True
@@ -117,6 +345,7 @@ def check_verification_scripts() -> bool:
         if p.name != "verify_audit_append_only.py"
     ])
     print(f"[INFO] Discovered {len(discovered_scripts)} verification scripts: {', '.join(discovered_scripts)}")
+    exits: Dict[str, int] = {}
 
     for script_rel in discovered_scripts:
         script_path = REPO_ROOT / script_rel
@@ -137,6 +366,7 @@ def check_verification_scripts() -> bool:
         )
         elapsed = time.perf_counter() - start_t
 
+        exits[script_rel] = proc.returncode
         if proc.returncode != 0:
             print(f"[FAIL] {script_rel} exited with non-zero code {proc.returncode} ({elapsed:.2f}s)")
             out = proc.stdout or ""
@@ -153,10 +383,10 @@ def check_verification_scripts() -> bool:
         print(f"[PASS] Gate W0.5-2: All {len(discovered_scripts)} verification scripts passed exit 0.\n")
     else:
         print("[FAIL] Gate W0.5-2: One or more verification scripts failed.\n")
-    return all_passed
+    return all_passed, exits
 
 
-def check_test_suite_zero_skip_xfail() -> bool:
+def check_test_suite_zero_skip_xfail() -> Tuple[bool, int, float]:
     """Runs pytest -q and asserts exit 0 with zero skip, zero xfail, and zero failures (§12.4)."""
     print("--- Gate W0.5-3: Offline Test Suite with Zero Skip/Xfail (§12.3, §12.4) ---")
     env = os.environ.copy()
@@ -179,9 +409,9 @@ def check_test_suite_zero_skip_xfail() -> bool:
 
     if proc.returncode != 0:
         print(f"[FAIL] pytest exited with code {proc.returncode} ({elapsed:.2f}s)")
-        print(proc.stdout[-1000:])
-        print(proc.stderr[-500:])
-        return False
+        print((proc.stdout or "")[-1000:])
+        print((proc.stderr or "")[-500:])
+        return False, 0, elapsed
 
     summary_line = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
     print(f"[INFO] pytest summary: {summary_line} ({elapsed:.2f}s)")
@@ -189,22 +419,24 @@ def check_test_suite_zero_skip_xfail() -> bool:
     # Assert no skipped, xfailed, or failed tests
     if "failed" in summary_line.lower() and not "0 failed" in summary_line.lower():
         print(f"[FAIL] Found test failures: {summary_line}")
-        return False
+        return False, 0, elapsed
 
     if "skipped" in summary_line.lower():
         print(f"[FAIL] Found skipped tests (Rule 12.4 prohibition): {summary_line}")
-        return False
+        return False, 0, elapsed
 
     if "xfail" in summary_line.lower():
         print(f"[FAIL] Found xfailed tests (Rule 12.4 prohibition): {summary_line}")
-        return False
+        return False, 0, elapsed
 
     if "passed" not in summary_line.lower():
         print(f"[FAIL] No passed tests reported: {summary_line}")
-        return False
+        return False, 0, elapsed
 
+    passed_match = re.search(r"(\d+) passed", summary_line)
+    passed_count = int(passed_match.group(1)) if passed_match else 0
     print("[PASS] Gate W0.5-3: Full test suite passed with 0 skipped and 0 xfailed.\n")
-    return True
+    return True, passed_count, elapsed
 
 
 def check_verdict_tags() -> bool:
@@ -353,6 +585,11 @@ def main() -> int:
     parser.add_argument("--check-suite-only", action="store_true", help="Run pytest suite check only")
     parser.add_argument("--check-tags-only", action="store_true", help="Run verdict tags check only")
     parser.add_argument("--check-reference-only", action="store_true", help="Run reference manifest integrity check only")
+    parser.add_argument(
+        "--force-full",
+        action="store_true",
+        help="Ignore the source-tree green cache and re-run the full suite (§78.15 (b))",
+    )
     args = parser.parse_args()
 
     print("=" * 80)
@@ -365,18 +602,55 @@ def main() -> int:
     results = []
     if run_all or args.check_audit_only:
         results.append(check_audit_report_append_only())
+        results.append(check_audit_volume_integrity())
+        results.append(check_audit_index())
 
-    if run_all or args.check_scripts_only:
-        results.append(check_verification_scripts())
+    # §78.15 (b): heavy gates run only when the source tree differs from a recorded green run.
+    plan, record, reason = "full", None, "targeted run"
+    source_hash = ""
+    if run_all:
+        source_hash = compute_source_tree_hash(source_tree_entries())
+        plan, record, reason = select_gate_plan(
+            source_hash, load_green_cache(), datetime.datetime.now(datetime.timezone.utc),
+            force_full=args.force_full,
+        )
+        print(f"[INFO] Source-tree hash {source_hash[:16]}… — {reason}")
 
-    if run_all or args.check_suite_only:
-        results.append(check_test_suite_zero_skip_xfail())
+    suite_count = 0
+    pytest_seconds = 0.0
+    verify_exits: Dict[str, int] = {}
+    if plan == "reuse" and record is not None:
+        print(
+            f"[INFO] reused green at {record.get('gate_sha')} ({record.get('suite_count')} passed, "
+            f"recorded {record.get('utc')}) — heavy gates skipped for an identical source tree.\n"
+        )
+    else:
+        if run_all or args.check_scripts_only:
+            scripts_ok, verify_exits = check_verification_scripts()
+            results.append(scripts_ok)
+
+        if run_all or args.check_suite_only:
+            suite_ok, suite_count, pytest_seconds = check_test_suite_zero_skip_xfail()
+            results.append(suite_ok)
 
     if run_all or args.check_tags_only:
         results.append(check_verdict_tags())
 
     if run_all or args.check_reference_only:
         results.append(check_reference_manifest_integrity())
+
+    if run_all and plan == "full" and all(results) and suite_count > 0:
+        gate_sha = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", check=True,
+        ).stdout.strip()
+        append_green_record(
+            source_hash, suite_count, pytest_seconds, verify_exits, gate_sha
+        )
+        print(
+            f"[INFO] Recorded green source tree {source_hash[:16]}… ({suite_count} passed) "
+            f"in {GREEN_CACHE_PATH.relative_to(REPO_ROOT).as_posix()}.\n"
+        )
 
     print("=" * 80)
     if all(results):
