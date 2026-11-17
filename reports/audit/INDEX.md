@@ -6,7 +6,7 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | Volume | Path | Sections | Lines | Frozen | SHA-256 |
 |---|---|---|---|---|---|
 | `signal_atlas_phase1c_audit_deepseek_review_.md` | `reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md` | 1-78 | 8442 | yes | `f4ca03d58466bebb…` |
-| `volume2.md` | `reports/audit/volume2.md` | 79+ | 536 | no | `de7cb9f328267bf7…` |
+| `volume2.md` | `reports/audit/volume2.md` | 79+ | 823 | no | `87e39454b67872f2…` |
 
 | Section | Title | Volume | Lines | Finding ids |
 |---|---|---|---|---|
@@ -89,5 +89,6 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | §77 | Audit of `348b5ba..adb16bd` — every §76 item lands, and the gate it repaired now blocks the corpus | `signal_atlas_phase1c_audit_deepseek_review_.md` | 8086–8267 | N-128, N-139, N-140, N-141, N-142, N-143, N-144, N-145, N-146, N-147 |
 | §78 | Audit of `adb16bd..780ac4b` — identity now resolves at 211/211, and the fix is scoped to exactly the 211 instruments it was measured on | `signal_atlas_phase1c_audit_deepseek_review_.md` | 8268–8442 | N-144, N-145, N-146, N-147, N-148, N-149, N-150, N-151, N-152, N-153 |
 | §79 | Audit of `82e3ef0..3119cb2` (tag `feat-s78-3119cb2`): the table is generated for the whole market, and the freeze pins bytes the repository does not contain | `volume2.md` | 8–270 | N-148, N-149, N-150, N-151, N-152, N-153, N-154, N-155, N-156, N-157, N-158, N-159 |
-| §80 | Audit of `96d24a1` (tag `feat-s79-e0290b4`): five of six §79 repairs hold, and the green cache still pays for a test it never ran | `volume2.md` | 271–536 | N-152, N-154, N-155, N-156, N-157, N-158, N-159, N-160, N-161, N-999 |
+| §80 | Audit of `96d24a1` (tag `feat-s79-e0290b4`): five of six §79 repairs hold, and the green cache still pays for a test it never ran | `volume2.md` | 271–539 | N-152, N-154, N-155, N-156, N-157, N-158, N-159, N-160, N-161, N-999 |
+| §81 | Audit of `80ff581` (tag `feat-s80-80ff581`): the cache binds to a tree, and a tree is not a commit | `volume2.md` | 540–823 | N-150, N-152, N-160, N-161, N-162, N-163, N-164 |
 

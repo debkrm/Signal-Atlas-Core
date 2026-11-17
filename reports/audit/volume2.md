@@ -534,3 +534,290 @@ Ordered by what each item unblocks. Each names the probe that must fail closed b
 - If `743` is not the 2022-2024 archive count, the §80.10 correction is wrong and C1 stands as written.
 - If `{walk_forward_positive_fold_ratio: 1.00}` with no count can still PASS through a key this round did
   not construct, N-156's closure is wrong.
+
+---
+
+## §81 — Audit of `80ff581` (tag `feat-s80-80ff581`): the cache binds to a tree, and a tree is not a commit
+
+Three commits carry the §80 work order: `c285310` (N-160's blob-oid scheme and N-161's integer count),
+`742324c` (a content-based dirty-tree detector) and `80ff581` (the implementer's status section and two
+cache rows). The source tree of `80ff581` is byte-identical to `742324c`'s — `eb61ec28ecd13cd1…` from
+both — because it touches only `CURRENT_STAGE_OF_WORK.md` and `data/reference/source_tree_green.json`,
+paths the gate excludes. That identity is a property of the design, not an accident, and it is what this
+round's two central measurements turn on.
+
+### 81.1 Baseline re-measured at `80ff581`
+
+| Instrument | Result at `80ff581` |
+|---|---|
+| `verify_audit_append_only.py --force-full` | **exit 1** — `ONE OR MORE GATES FAILED` |
+| pytest inside that run | **1 failed, 533 passed** in 108.55 s; 534 collected, 0 skipped, 0 xfailed |
+| `verify_audit_append_only.py` (no flag) | **exit 0** — `reused green at 742324c (534 passed, recorded 2026-11-17T10:21:32)` |
+| `scripts/verify_*.py` discovered / executed | 9 / 9, every exit 0 (W0.5-2 PASS) |
+| W0.5-1 / 1b / 1c | PASS — 8,442 lines; 2 audit volumes; INDEX reproduces at 80 section rows |
+| W0.5-4 / W0.5-5 | PASS — 78 commit-bearing tags; 46 current / 22 superseded manifest rows |
+| Findings ledger | 15 rows / 11 ids; 11 probes PASS; N-152 `ACCEPTED`, N-150 `OPEN` |
+| Criteria / manifest pin / trials | 1.1.9 / `MAN-FPR-V1-23200ba8…` / N = 9, N_eval = 5 |
+| 2024 fold / holdout | `validation_folds_count = 0`; no `HOLDOUT_UNLOCK` in the tree |
+| Source-tree identity | `80ff581`, `742324c` → `eb61ec28…`; `c285310` → `333bead0…` |
+
+The first two rows describe the same commit. The gate says the tree is green because a record exists for
+that tree; pytest says it is red. §81.4 is the measurement of how both can be true, and §81.5 is why the
+red one is not noise.
+
+### 81.2 N-160 — `CLOSED`
+
+§80.3 named four conditions on a cache record. Measured directly against `green_record_problem`, with the
+scheme and the nine discovered verifiers injected rather than read:
+
+| Record | Verdict |
+|---|---|
+| HEAD's tree, `gate_sha: HEAD`, 534, nine zero exits | accepted (`None`) |
+| `source_tree_scheme` stripped | refused — *"was not written by the git-blob-oid-v1 source-tree scheme"* |
+| HEAD's `gate_sha`, another tree's hash | refused — *"is not the tree at gate_sha … that commit's tree projects eb61ec28ecd1…"* |
+| `gate_sha: "deadbeef"` | refused — *"is not a commit in this repository"* |
+| `verify_exits: {}` | refused — *"witnesses 0 verifier(s), not the 9 discovered one(s)"* |
+| `suite_count: 1` | refused — *"below the pinned floor 500"* |
+
+The platform half is measured end to end, not argued: a shallow `git clone --depth 1` on this machine —
+LF working copy, no CRLF anywhere — projects `eb61ec28ecd13cd1dfa851a4ba5c309ee193715ae04990c21c76939f992ee6bd`
+for `80ff581` over 1,391 source entries, the same digest this CRLF checkout computes. §80's `87f0fd5d…` /
+`816783f8…` split is gone because no code path reads working-copy bytes; `source_tree_entries()` and
+`source_tree_hash_at_commit()` both compose `git ls-tree` object ids.
+
+**Residual (accepted, not a work item).** The cache remains unauthenticated: a row naming a real commit's
+real tree, nine verifier names at `0` and `suite_count: 534` is accepted, because the gate cannot tell a
+hand-written row from one it wrote. It was measured (`suite_count: 534 (no exits run) → None`). This is
+inherent to a local file and bounded by the daily `--force-full` rule; closing it would need signed rows
+or gate-only writes, which is a maintainer decision, not a repair.
+
+### 81.3 N-161 — `CLOSED`
+
+Measured through `evaluate_verdicts` with the bundle built here, not through the implementer's probe:
+
+| `walk_forward_validation_folds_count` | `CRIT-OVERFIT-06` |
+|---|---|
+| `2` (int) | **PASS** 1.0000 |
+| `3` (int) | **PASS** 1.0000 |
+| `"2"` | NOT RUN — *"supplied without a valid integer"* |
+| `2.0` | NOT RUN — same |
+| `True` | NOT RUN — same |
+| `Decimal(2)` | NOT RUN — same |
+| `"2.5"` | NOT RUN — same |
+| `None` | NOT RUN — same |
+| `1` / `0` / `-3` | NOT RUN — *"Only N_val = N validation fold evaluated; minimum 2"* |
+
+The `bool` arm matters independently of the string arm: `isinstance(True, int)` is true in Python, so a
+type-only check would have counted a boolean as one fold. The residual is closed for the reason it named.
+
+### 81.4 N-162 (`HIGH`, new) — the reuse key is a tree, and the suite is not a function of the tree
+
+Two measurements, both on a clean tree, neither touching the cache:
+
+**A. A docs-only commit inherits its parent's green run.** `80ff581` adds a section and two cache rows, so
+its source tree is `742324c`'s. The gate therefore printed
+
+```
+[INFO] Source-tree hash eb61ec28ecd13cd1… — source tree unchanged since a green run
+[INFO] reused green at 742324c (534 passed, recorded 2026-11-17T10:21:32…) — heavy gates skipped
+OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)
+```
+
+with exit 0, while `python -m pytest -q` on the same checkout printed `1 failed, 533 passed` and exit 1.
+The suite is not a function of the tree here because `test_n160_a_hand_written_hash_names_no_tree_and_is_refused`
+reads `HEAD^`, and `80ff581`'s parent has the same tree as `80ff581`. The green record was true for
+`742324c` and false for the commit it was spent on.
+
+**B. An untracked file is invisible to the dirty set.** Writing
+`tests/unit/test_s81_untracked_temp.py` with `assert False` left `git status` reporting `?? …` and
+`dirty_source_paths()` returning `[]` — it runs `git diff-index --untracked-files=no`, so a file pytest
+either collects or ignores never reaches the reuse decision. The gate again printed `reused green at
+742324c` and `ALL REPOSITORY FOUNDATION GATES PASSED`, exit 0; `pytest` on that file alone printed
+`1 failed`. The file was removed and the tree verified clean afterwards.
+
+Both are the same defect: the key is the source tree, and the thing whose greenness is being asserted is a
+suite that also depends on the commit (parentage) and on files outside the tree (untracked tests). §80.3's
+rule — "the record must be one the gate could have produced" — is satisfied at the record and violated at
+the consumer, so N-160 closes on its own conditions and this is a new, separate finding rather than a
+retracted closure (§14.5). The repo's own skill now states the weakened form ("it reuses a record only when
+the tree of the record's `gate_sha` projects to the recorded hash"), which is exactly the predicate measured
+wrong here.
+
+**Fix direction (work item 2).** Key reuse on `(source tree, HEAD oid)` — a row is reusable only when its
+`gate_sha` is the commit being verified — and add untracked source paths to the dirty set. The cost is one
+full run per commit, which is already the daily rule; what reuse still buys is repeated runs of the same
+HEAD, which is the local case it was built for.
+
+### 81.5 N-163 (`MEDIUM`, new) — the audited commit is red, and the test that makes it red is a test bug
+
+At `80ff581`, `python -m pytest -q` → `1 failed, 533 passed`, exit 1. The failure is
+`tests/unit/test_phase3b2_audit_s80_items.py:108`:
+
+```
+other = _git("rev-parse", f"{head}^").decode().strip()
+assert gate.green_record_problem(_green_record(head_hash, other), …) is not None
+E   AssertionError: assert None is not None
+```
+
+At `742324c` the same line passed, because `HEAD^` there is `c285310` (`333bead0…` ≠ `eb61ec28…`); at
+`80ff581` `HEAD^` is `742324c` and the two trees are equal, so a record naming the parent is a record of
+the same tree and is correctly accepted. The test encodes an assumption about its own commit's parentage,
+not a property of the cache. Restated plainly: the product behaviour is right, the test is wrong, and the
+commit that claims `534 passed, 0 skipped, 0 xfailed` is red at its own SHA. The implementer's number was
+true when it was taken, at `742324c`, before `80ff581` existed; it is not true of `80ff581`, and
+`CURRENT_STAGE_OF_WORK.md` cites it as the round's baseline (a `§11.3` citation gap: the sentence names
+`ALL REPOSITORY FOUNDATION GATES PASSED` without the caveat that the commit it describes was not the
+commit measured).
+
+### 81.6 N-164 (`MEDIUM`, new) — the ledger's N-160 evidence passes vacuously
+
+`probe_n160` is the executable evidence behind a closure, so it was instrumented rather than trusted.
+`git()` inside that probe returns **bytes**, and the probe does
+
+```
+parent = git("rev-parse", f"{head}^")
+assert green_record_problem(record(head_hash, gate_sha=parent), verifiers, commit_exists) is not None
+```
+
+so `gate_sha` becomes `"b'742324ce14…\\n'"` and the refusal is *"cache record gate_sha … is not a commit in
+this repository"* — a string-typing accident, not the tree comparison the assertion names. Spying on
+`green_record_problem` during a probe run shows five calls: the twinned healthy records, the forged hash
+twice, and then `gate_sha= b'742324…` refused as a non-commit. With the parent line decoded, the same
+assertion fails (measured: `problem = None`). The probe would therefore still print `PASS` with its final
+assertion deleted. The pytest twin decodes and fails, which is why the suite is red and `verify_audit_findings.py`
+is green — the additive-fix pattern §14.4 describes, now inside the audit instrument itself.
+
+N-160's closure in §81.2 does not rest on that probe: it rests on the six-row record matrix and the clone
+measurement taken here. The probe must still be repaired (work item 3), because a ledger row whose probe
+cannot fail is not evidence.
+
+### 81.7 §80.13 items 3-5 — prepared, and correctly not executed
+
+`scripts/probe_pre2022_preconditions.py` exits **1** with 8 of 8 checks `NO` (four `A1` years, `A1`
+provenance, `A2`, `A4` dividends, `A4` max hold), writes nothing (`git status` clean after the run), and is
+deliberately not named `verify_*.py`: the gate still discovers 9 verifiers and `pre2022` is not among them,
+which is the right call under §12.4 — a readiness probe registered as a gate would either be red forever or
+tempt a skip. `docs/pre2022_ingestion_preconditions.md` is honest about its own status ("prepared, not
+ingested", "Nothing here is audited"), names the derivation that already exists
+(`derive_cash_universe_intervals.py`) instead of inventing a mechanism, and keeps the ordering
+A1 → A2 → A4 → B1-B9 → C1-C6. Two process facts belong on the record:
+
+- The document's own arithmetic agrees with §80.10 (`930` window sessions, `494` gating, `1,424` extended
+  in-sample), so the correction is carried forward rather than re-litigated.
+- `c285310` adds 66 lines to `.agents/skills/audit-round/SKILL.md`, the auditor's own procedure. The content
+  is consistent with §80.3 and §81.4 and is ratified here by citation, but an implementer writing the rules
+  its own work is judged by is a §11.1-adjacent conflict: from this section the skill is the auditor's, and a
+  proposed change arrives as a note citing the finding it serves.
+
+### 81.8 Ruling 1 — capture eligibility and gating eligibility are different preconditions
+
+*Evidence.* At `80ff581`, `probe_pre2022_preconditions.py` exit 1, 8/8 `NO`: no committed holiday circular
+names any 2018-2021 date among the 13 artifacts on disk (all issued 2021-12-10..2026-01-12); the calendar's
+`provenance.sha256` is its own `CAL-FPR-V1-af8e309a…` hex; the interval table begins 2022-01-03 (4,510 rows,
+0 reaching 2021-12-31); 0 of 138 ex-dates fall in the window.
+
+*It changes one definition.* A pre-2022 session becomes **capturable** when A1 holds — a sourced holiday
+circular whose declared holidays and special sessions reproduce the calendar's session set for that year —
+and it is then labelled `WARMUP_NOT_GATABLE`. A pre-2022 session becomes **gatable** only when A1, A2 and A4
+all hold. The A1-first ordering is not a preference: §6.3 fails a missing session closed against an
+authoritative calendar, so without A1 a captured series cannot even be checked for gaps, and A2/A4 govern
+whether a held position and its ex-dates are accounted for — neither of which can be evaluated over a corpus
+that is not there.
+
+*It changes nothing else.* Not the pin (`min_binding_evaluation_start_date: 2022-01-03`), not the window
+start `2018-04-01` in §10.8, not the DSR/Haircut thresholds, not N or N_eval, not the 2024 fold, not the
+holdout.
+
+*Probe that must fail closed.* The readiness probe gains a gating mode: it exits non-zero if any verdict's
+evaluated session set contains a `WARMUP_NOT_GATABLE` session, and per-year A1 checks exit non-zero unless
+`weekdays(year) - declared_holidays ∪ declared_special_sessions` equals the calendar's session set for that
+year with zero unexplained and zero unmatched dates.
+
+*Work item.* 5 (A1 sourcing) and 6 (the label and the gating guard), serving Phase 3B-2 / §10.8.
+
+*Falsifier.* A 2018-2021 session whose continuity can be established without a sourced calendar — for
+instance a consolidated circular covering all four years — would make A1 a single artifact rather than four,
+but would not weaken the rule that capture needs provenance before it needs identity.
+
+### 81.9 Ruling 2 — the pin is the operative window, and relaxing it re-derives the denominator
+
+*Evidence.* `configs/go_no_go_criteria.yaml:209` pins `min_binding_evaluation_start_date: "2022-01-03"`, and
+that pin is what returns `NOT RUN` for every pre-2022 session today; §80.10's counts (`1,424` in-sample,
+`T = 494`) follow from it. §10.8's stated window is `2018-04-01..2021-12-31`, so the pin is stricter than the
+rule it implements.
+
+*It changes one definition.* While A1, A2 and A4 are unmet, the committed pin is the operative expression of
+§10.8's window and pre-2022 sessions are warm-up only; the pin is *provisional*, not a narrowing of the
+standing window. When the pin moves, the gating session count `T` and every denominator derived from it (DSR,
+Haircut Sharpe, `N_eval`) are **recomputed** from the sessions actually gated, never carried from `494`.
+
+*It changes nothing else.* The DSR/Haircut thresholds, the fold partition ends, the 2024 validation freeze,
+the holdout seal, and `N = 9` / `N_eval = 5`.
+
+*Probe that must fail closed.* A criteria test that refuses a `min_binding_evaluation_start_date` earlier than
+`2022-01-03` unless `probe_pre2022_preconditions.py` exits 0 at the same commit, and a reporting test that
+refuses a DSR/Haircut denominator unequal to the computed gating `T`.
+
+*Work item.* 7, serving Phase 2D and Phase 3B-2.
+
+*Falsifier.* A verdict that computes CRIT-STAT-01, the DSR or the Haircut Sharpe over pre-2022 sessions while
+any of A1/A2/A4 is unmet would show the pin is not, in fact, operative.
+
+### 81.10 Phase verdicts and residuals
+
+| Phase / claim | Verdict at `80ff581` | Residuals named |
+|---|---|---|
+| `§12.3` repository gate | **NO-GO** — red suite, and a plain run reports PASS for the same SHA | N-162 (reuse key), N-163 (red test) |
+| N-160 repair | **CLOSED** — six record-level conditions measured; clone recomputes the digest | unauthenticated cache (§81.2) |
+| N-161 repair | **CLOSED** — 11 input shapes measured | none |
+| ``§80.13`` items 1-2 | **DELIVERED** — the two repairs above | their probes: N-164 |
+| ``§80.13`` items 3-5 | **PREPARED, NOT EXECUTED** — probe exit 1, 8/8 `NO`, 0 artifacts written | A1, A2, A4 open by design |
+| Criteria / trials / holdout | **UNTOUCHED** — 1.1.9, N = 9, N_eval = 5, fold 0, no unlock | N-152 `ACCEPTED`, N-150 `OPEN` |
+
+No phase moves toward GO on this commit: a red suite plus a gate that reports it green is a stronger reason
+to stop than a clean round would be to continue. The pre-2022 block is not a phase verdict — no data exists,
+so there is nothing to judge, which is exactly what §9.3 requires the document to say.
+
+### 81.11 Work order
+
+1. **Green the suite at HEAD** (N-163). Replace the `HEAD^` assumption in
+   `test_n160_a_hand_written_hash_names_no_tree_and_is_refused` with a constructed divergent tree (the probe
+   in `probe_n160` already builds one by poisoning an entry; reuse that method). Probe: `python -m pytest -q`
+   exit 0 **and** `verify_audit_append_only.py --force-full` exit 0, reported at the commit that carries the
+   fix. Serves `§12.3`.
+2. **Key reuse on the commit and see untracked files** (N-162). Add HEAD's oid to the reuse predicate and
+   include untracked source paths in the dirty set. Probe: the replacement for `probe_n162` must measure
+   (a) a docs-only commit is not reused from its parent and (b) an untracked failing test forces the full
+   run and a non-zero exit; both fail closed today. Serves `§12.3` / `§80.3`.
+3. **Repair `probe_n160`** (N-164). Decode the parent sha, and demonstrate the refusal is the tree
+   comparison: with the decode removed, the probe must fail. Serves `§9.1`.
+4. **Ratify this round's ledger** — five rows from §81 (two closures, three registrations) and their three
+   probes. Probe: `scripts/verify_audit_findings.py` exit 0 over 16 ids / 20 rows, and every row's probe
+   executable on its own.
+5. **Source A1** (§81.8 Ruling 1). Four holiday circulars as Bronze artifacts with manifest rows and a
+   per-year calendar provenance table; the calendar fingerprint stops standing in for provenance. Probe:
+   per-year checks in `probe_pre2022_preconditions.py` exit 0 with zero unexplained sessions. Serves
+   Phase 3B-2.
+6. **Label warm-up and guard gating** (§81.8 Ruling 1). `WARMUP_NOT_GATABLE` on captured pre-2022 sessions,
+   and a gating-mode probe that fails closed if a gated metric consumes one. Serves `§10.8`.
+7. **Make pin relaxation a computed gate** (§81.9 Ruling 2). A criteria test refusing a pre-2022 pin unless
+   the readiness probe exits 0 at the same commit, and a denominator check against the computed gating `T`.
+   Serves Phase 2D / Phase 3B-2.
+
+Items 1-3 are ordered by what they unblock: nothing measured after them can be trusted while the gate can
+report a red commit green. Items 5-7 are the pre-2022 plan and do not start before 1-3 are green.
+
+### 81.12 What would falsify this verdict
+
+- If `python -m pytest -q` at `80ff581` exits 0 on a machine without this checkout's line-ending or cache
+  state, N-163 is environmental and the commit is not red. The transcript is one command and its tail.
+- If the plain gate at `80ff581` does **not** print `reused green at 742324c`, then this checkout's cache is
+  not the one the audit measured and N-162's first attack is unproven.
+- If an untracked source file appears in `dirty_source_paths()`, the second attack is wrong. The probe
+  writes one such file and asserts its absence from the set; a passing probe is the defect, not the fix.
+- If `probe_n160` fails when its final assertion is deleted, it is not vacuous and N-164 collapses. The
+  measured call log shows the parent refusal carries a bytes `gate_sha`.
+- If a cache row can be reused across two commits whose pytest outcomes differ, N-162 stands even if the
+  docs-only case is closed another way; that is the property item 2 must measure.
+- If `min_binding_evaluation_start_date` already permits pre-2022 gating through another key, Ruling 2 is
+  redundant and §81.9 should be superseded rather than followed.

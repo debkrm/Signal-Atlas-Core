@@ -579,6 +579,101 @@ def probe_n161() -> None:
     assert one.status.value == "NOT RUN", one.evidence
 
 
+def probe_n162() -> None:
+    """
+    The green cache's reuse key is a tree, and a tree is not the state pytest sees (N-162).
+
+    Two source states can share a tree while producing different suite outcomes: a commit that only
+    touches paths excluded from the hash (so its tree equals its parent's, and a test that reads `HEAD^`
+    flips), and an untracked file (which pytest collects and `git diff-index --untracked-files=no` never
+    reports). Both were measured at `80ff581`: `verify_audit_append_only.py` printed
+    `ALL REPOSITORY FOUNDATION GATES PASSED` with exit 0 while `python -m pytest -q` printed
+    `1 failed, 533 passed`. The probe records the shape that makes the reuse sound today.
+    """
+    import inspect
+
+    from verify_audit_append_only import dirty_source_paths, is_source_tree_path, select_gate_plan
+
+    # Half one: the reuse decision takes no commit, so two commits that share a tree are interchangeable.
+    params = list(inspect.signature(select_gate_plan).parameters)
+    assert not any(name in {"head", "commit", "gate_sha", "head_oid"} for name in params), (
+        f"select_gate_plan now keys on a commit ({params}); re-measure N-162"
+    )
+
+    # Half two: an untracked source file is invisible to the dirty set, so a failing untracked test is
+    # reused green instead of forcing the full run.
+    temp = REPO_ROOT / "tests" / "unit" / "test_n162_untracked_probe.py"
+    assert not temp.exists(), f"{temp} already exists; remove it before running N-162"
+    try:
+        temp.write_text("def test_n162_untracked() -> None:\n    assert False\n", encoding="utf-8")
+        rel = "tests/unit/test_n162_untracked_probe.py"
+        assert is_source_tree_path(rel)
+        assert rel not in dirty_source_paths(), (
+            "the dirty set now reports untracked source files; re-measure N-162"
+        )
+    finally:
+        temp.unlink()
+
+
+def probe_n163() -> None:
+    """
+    The audited commit's suite is red because a §80 test assumes `HEAD^` has a different tree (N-163).
+
+    At `80ff581` (docs-only) the source tree equals `742324c`'s, so
+    `test_n160_a_hand_written_hash_names_no_tree_and_is_refused` asserted that a row naming `HEAD^` must
+    be refused while `HEAD^`'s tree projects the same digest: `assert None is not None`. The test passed at
+    `742324c` only because that commit's parent changed source files.
+    """
+    path = REPO_ROOT / "tests" / "unit" / "test_phase3b2_audit_s80_items.py"
+    source = path.read_text(encoding="utf-8")
+    assert '"^"' in source or '}^' in source or "'^'" in source, (
+        "the §80 cache test no longer derives a commit from HEAD^; re-measure N-163"
+    )
+
+
+def probe_n164() -> None:
+    """
+    `probe_n160`'s parent sha is bytes, so its refusal assertion passes without testing the property (N-164).
+
+    `git()` in `probe_n160` returns bytes, so `parent` is `b'742324…\n'` and `green_record_problem` refuses
+    the row because that string `is not a commit in this repository` — not because the hash names another
+    tree. Every assert in the probe could therefore be deleted and the row would still print PASS.
+    """
+    import inspect
+    import subprocess
+
+    from verify_audit_append_only import (
+        commit_exists,
+        discovered_verification_scripts,
+        green_record_problem,
+        source_tree_hash_at_commit,
+    )
+
+    source = inspect.getsource(probe_n160)
+    line = next((ln for ln in source.splitlines() if "parent = git(" in ln), "")
+    assert line, "probe_n160 no longer derives a parent commit; re-measure N-164"
+    assert ".decode()" not in line, f"probe_n160 now decodes the parent sha: {line.strip()}"
+
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(REPO_ROOT), capture_output=True, text=True
+    ).stdout.strip()
+    parent_bytes = subprocess.run(
+        ["git", "rev-parse", f"{head}^"], cwd=str(REPO_ROOT), capture_output=True
+    ).stdout
+    record = {
+        "source_tree_hash": source_tree_hash_at_commit(head),
+        "source_tree_scheme": "git-blob-oid-v1",
+        "suite_count": 534,
+        "verify_exits": {s: 0 for s in discovered_verification_scripts()},
+        "utc": "2026-11-17T10:00:00+00:00",
+        "gate_sha": parent_bytes,
+    }
+    problem = green_record_problem(record, discovered_verification_scripts(), commit_exists)
+    assert problem is not None and "is not a commit" in problem, (
+        f"an undecoded sha is no longer refused for the wrong reason: {problem}"
+    )
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -593,6 +688,9 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-159": probe_n159,
     "N-160": probe_n160,
     "N-161": probe_n161,
+    "N-162": probe_n162,
+    "N-163": probe_n163,
+    "N-164": probe_n164,
 }
 
 
