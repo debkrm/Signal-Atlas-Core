@@ -1456,3 +1456,64 @@ rows belong to the auditor (§11.1), so what follows is the measurement the next
 - **Not claimed.** No seq 10 was registered or run; §82.8 items 4-6 are untouched; N-168 stays `OPEN` in
   the ledger until the auditor's next section, N-150 stays `OPEN`, N-152 `ACCEPTED`; the pre-2022 window
   remains warm-up only and the DSR bar is unchanged.
+
+### Audit §85 — the legacy ini name is state; A1 was measured, not ingested
+
+Round: audit §85 (audit of `0b3c56d`, section and work order appended at `08a5fe5`, tag
+`audit-s85-08a5fe5`). Item 1 — N-169 (`MEDIUM`) — is delivered. Item 2's A1 half (2018-2021 holiday
+circulars plus per-year provenance) was **measured and is blocked**: two of the four years cannot be
+reproduced from the exchange circulars while the committed calendar says what it says, and closing that
+gap moves the calendar identity pin rather than a threshold. No artifact, manifest row, criteria value
+or provenance field was written for A1. N-169's ledger row stays `OPEN`: closure rows are the auditor's
+(§11.1). Criteria **1.1.9**, no threshold moved, no trial registered. **Not audited.**
+
+- **The legacy ini name is in the tuple.** pytest 8.3.4 still reads `.pytest.ini`, and it reached no
+  branch of `dirty_source_paths()` because §84.6 item 1 named only `pytest.ini`, `tox.ini`, `setup.cfg`
+  and `pyproject.toml`. `ROOTDIR_PYTEST_CONFIG_FILES` now begins with `".pytest.ini"`, so an ignored
+  rootdir `.pytest.ini` is dirty state exactly as its undotted sibling is.
+- **The probe was flipped, and it failed first.** `probe_n169` asserted the defect; it now asserts the
+  closure, and on the unfixed verifier (parent `a906738`, only the probe replaced) it exits 1 with
+  *"an ignored legacy .pytest.ini is still invisible to the dirty set (['scripts/probe_audit_findings.py']),
+  so a local exclude rule can point pytest at a different suite under a reused green row"*. After the
+  change it prints `PASS N-169`: `.pytest.ini` is in the dirty set, `should_record_green` is `False` over
+  that set and `True` over an empty one, pytest's own collection changes while the config is in place
+  (7 collected, then 6 with the tracked `test_n160_source_tree_hash_is_the_object_id_git_stores`
+  deselected), the forged row is still a valid `select_gate_plan` hit — so the refusal is the dirty set,
+  not a rule that never fires — and the file leaves the set on cleanup with the set equal to baseline.
+- **No neighbour regressed.** `probe N-169`, `N-168`, `N-167` and `N-165` each exit 0; `--list` reports
+  **21** ids; `git status --ignored=matching` shows no `pytest.ini`/`.pytest.ini` after the runs.
+- **A1, measured against the committed grid.** The exchange circulars were read as dated lists and
+  compared with the calendar's implied holiday set (`weekdays(year) − sessions(year)` plus weekend
+  sessions the calendar carries): `NSE/CMTR/36475` (2017-12-12) for 2018, `NSE/CMTR/39612` (2018-12-07)
+  for 2019, `NSE/CMTR/42877` (2019-12-11) for 2020, `NSE/CMTR/46623` (2020-12-11) for 2021, with
+  `NSE/CMTR/40536` (2019-04-29, Parliamentary Elections) and `NSE/MSD/42319` (2019-10-21, Maharashtra
+  Assembly Elections) as the 2019 amendments.
+  - **2018 reproduces exactly.** 16 declared weekday holidays (including 2018-11-07 Diwali-Laxmi Pujan,
+    the muhurat session the calendar carries as a session) give `261 − 16 + 1 = 246`, the calendar's
+    count, with zero date-level difference.
+  - **2021 reproduces exactly.** 14 declared weekday holidays (including 2021-11-04 muhurat) give
+    `261 − 14 + 1 = 248`, the calendar's count, with zero date-level difference.
+  - **2019 cannot.** The annual circular declares 15 weekday holidays, the two amendments add 2019-04-29
+    and 2019-10-21, and the Sunday muhurat is 2019-10-27: `261 − 17 + 1 = 245` sessions, but the calendar
+    holds 244 and omits **2019-10-29**. That date is a Tuesday, no circular in this set declares it a
+    holiday, and the equity market traded on it (Sensex closed 39,831.84, +582 points, on 2019-10-29).
+    A1 2019 fails closed on exactly that one date: *"1 circular date(s) absent from the calendar"*.
+  - **2020 cannot.** The annual circular's 12 weekday holidays match the calendar's 12 implied ones, but
+    the calendar also carries **2020-02-01**, the Saturday Union Budget session, and no ingested circular
+    declares that session. The 2020-02-01 live-session circular for the cash segment is not among the
+    artifacts here and no download reference for it was located; the commodity-segment circular
+    (`NSE/COM/43331`, 2020-01-24) is a different segment and is not admissible as its source.
+- **Why nothing was ingested.** Adding artifacts and a per-year provenance table would have to re-pin
+  `expected_manifest_fingerprint` (a criteria-version commit) and replace the calendar's self-referential
+  `provenance.sha256` — which `load_nse_trading_calendar()` currently compares against the recomputed
+  `CAL-FPR` content digest (H-26) — while the probe would still print `NO` for 2019 and 2020. Freezing
+  per-year provenance around a grid that omits a real 2019 session, or declaring 2019-10-29 a holiday no
+  circular declares, would be fabrication (§6.3, §6.5). Correcting the grid instead adds one session,
+  moves `CAL-FPR-V1-af8e309a…`, `expected_total_calendar_sessions` 2935 → 2936, the 2019 count 244 → 245
+  and the binding-window 930 → 931, and re-points the phase 2D / 3B2 verdicts' cited calendar
+  fingerprint; that is a decision this work order does not authorise, so it is reported, not taken.
+- **Not claimed.** A1, A2 and A4 remain unmet and `probe_pre2022_preconditions.py` still exits 1; the
+  pre-2022 window is warm-up only and every pre-2022 verdict stays `NOT RUN`. No §82.8 item is touched.
+- **Invariants held.** No trial row was appended or scored: **N = 9, N_eval = 5**; the 2024 validation
+  partition stays frozen; Holdout `2025-01-01..2026-11-11` remains sealed with no `HOLDOUT_UNLOCK`
+  sentinel; `reports/audit/**`, `AGENTS.md` and `.agents/skills/audit-round/SKILL.md` are untouched.

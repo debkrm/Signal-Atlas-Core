@@ -1215,15 +1215,15 @@ def probe_n168() -> None:
 
 def probe_n169() -> None:
     """
-    An ignored legacy `.pytest.ini` is not dirty state (N-169).
+    An ignored legacy `.pytest.ini` is dirty state (N-169).
 
-    pytest 8.3.4 still reads the deprecated `.pytest.ini` name: a local `.git/info/exclude` rule plus
-    that file adds `addopts` and deselects a tracked test while `git status` reports a clean tree. The
-    §84.6 item 1 tuple names `pytest.ini`, `tox.ini`, `setup.cfg` and `pyproject.toml`, so this name
-    reaches no branch of `dirty_source_paths()` and the gate reuses a green row over a suite pytest
-    never ran (§85.3). The probe asserts the defect with the instruments §83 used -- the dirty set, the
-    recording decision, pytest's own collection -- and must be replaced by a closure probe once an
-    ignored `.pytest.ini` is dirty state.
+    pytest 8.3.4 still reads the deprecated `.pytest.ini` name, and it outranks nothing else: an ignored
+    rootdir `.pytest.ini` adds `addopts` and deselects a tracked test while `git status` reports a clean
+    tree. The §84.6 item 1 tuple named `pytest.ini`, `tox.ini`, `setup.cfg` and `pyproject.toml`, so this
+    name reached no branch of `dirty_source_paths()` and the gate reused a green row over a suite pytest
+    never ran (§85.3, N-169). §85.5 item 1 adds it beside them. The probe asserts the closure: the
+    config is named in the dirty set, the recording decision refuses over it, and pytest executes it, so
+    the refusal is not vacuous. Before the fix it exits 1 with "still invisible to the dirty set".
     """
     import datetime
     import subprocess
@@ -1279,13 +1279,19 @@ def probe_n169() -> None:
         ).stdout
         assert config not in status, status
         dirty = dirty_source_paths()
-        assert config not in dirty, (
-            f"the dirty set already covers an ignored legacy .pytest.ini ({dirty}); re-measure N-169 "
-            f"and consider closing it"
+        assert config in dirty, (
+            f"an ignored legacy .pytest.ini is still invisible to the dirty set ({dirty}), so a local "
+            f"exclude rule can point pytest at a different suite under a reused green row"
         )
-        assert should_record_green("full", True, 536, dirty) == should_record_green(
-            "full", True, 536, baseline_dirty
-        ), "an ignored .pytest.ini changes the recording decision; re-measure N-169"
+        assert should_record_green("full", True, 536, dirty) is False, (
+            "a run over an ignored legacy .pytest.ini would still be recorded as green"
+        )
+        # The refusal is the dirty set, not a recording rule that never fires: an empty set records.
+        assert should_record_green("full", True, 536, []) is True
+        # The config is executed, not inert: pytest collects a different suite, so the tree a record
+        # would describe is not the tree pytest ran. That deselected suite still exits 0 with a count
+        # the 500 floor accepts, which is why the dirty set -- not the exit status or the count -- is
+        # the instrument: the gate refuses reuse and recording over the config as it does over an edit.
         after = collect()
         assert "deselected" in after, (
             f"the ignored .pytest.ini does not change collection, so it is not the channel N-169 names: "
@@ -1306,6 +1312,8 @@ def probe_n169() -> None:
             "utc": (now - datetime.timedelta(minutes=5)).isoformat(),
             "gate_sha": head,
         }
+        # The forged row still looks like a hit to the reuse rule, and that is the point: the dirty set
+        # is what keeps it from being consulted over a tree whose pytest config git calls clean.
         plan, used, reason = select_gate_plan(head_hash, [forged], now, head_commit=head)
         assert plan == "reuse" and used is not None, (
             f"the forged row is no longer a valid hit under an ignored .pytest.ini: {plan} — {reason}"

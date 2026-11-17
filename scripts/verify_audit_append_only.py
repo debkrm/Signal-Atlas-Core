@@ -63,7 +63,12 @@ ROOTDIR_PYTEST_CONFTEST = "conftest.py"
 # `testpaths`, so an ignored one points pytest at a different suite while `git status` calls the tree
 # clean. It is neither a `.py` file under a collected root nor a `conftest.py`, so without this tuple it
 # reaches no branch -- which is exactly how a local `-k` deselect kept a green row reusable (§84.4).
-ROOTDIR_PYTEST_CONFIG_FILES = ("pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml")
+# §85.5 item 1 (N-169): pytest 8.3.4 still honours the deprecated `.pytest.ini` name, so it is the same
+# channel as `pytest.ini` and is listed beside it; leaving it out let a local exclude rule deselect a
+# tracked test under a reused 536-test row (§85.3).
+ROOTDIR_PYTEST_CONFIG_FILES = (
+    ".pytest.ini", "pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml",
+)
 # Audit §79.8 (N-155): a record is evidence only if it witnesses the run it claims. The floor is a
 # pinned minimum, not a default: a row reading `suite_count: 1` used to satisfy the same comparison as
 # a row reading 523. The two runtime verifiers are re-executed even on a cached source tree, because
@@ -326,7 +331,8 @@ def dirty_source_paths() -> List[str]:
     An ignored rootdir pytest configuration file is state for the same reason (§84.6 item 1, N-168): it
     decides the rootdir and can add `addopts` or replace `testpaths`, so pytest runs a suite the tree
     does not describe. A `-k` deselect in an ignored `pytest.ini` left the dirty set empty while a green
-    row certified a suite seven tests short (§84.4).
+    row certified a suite seven tests short (§84.4). The tuple names the deprecated `.pytest.ini` too,
+    which the installed pytest still reads (§85.5 item 1, N-169).
     """
     proc = subprocess.run(
         [
