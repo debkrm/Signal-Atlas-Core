@@ -1213,6 +1213,117 @@ def probe_n168() -> None:
     )
 
 
+def probe_n169() -> None:
+    """
+    An ignored legacy `.pytest.ini` is not dirty state (N-169).
+
+    pytest 8.3.4 still reads the deprecated `.pytest.ini` name: a local `.git/info/exclude` rule plus
+    that file adds `addopts` and deselects a tracked test while `git status` reports a clean tree. The
+    §84.6 item 1 tuple names `pytest.ini`, `tox.ini`, `setup.cfg` and `pyproject.toml`, so this name
+    reaches no branch of `dirty_source_paths()` and the gate reuses a green row over a suite pytest
+    never ran (§85.3). The probe asserts the defect with the instruments §83 used -- the dirty set, the
+    recording decision, pytest's own collection -- and must be replaced by a closure probe once an
+    ignored `.pytest.ini` is dirty state.
+    """
+    import datetime
+    import subprocess
+
+    from verify_audit_append_only import (
+        GREEN_CACHE_SCHEME,
+        dirty_source_paths,
+        discovered_verification_scripts,
+        select_gate_plan,
+        should_record_green,
+        source_tree_hash_at_commit,
+    )
+
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(REPO_ROOT), capture_output=True, text=True
+    ).stdout.strip()
+    head_hash = source_tree_hash_at_commit(head)
+    assert head_hash
+    verifiers = discovered_verification_scripts()
+    baseline_dirty = dirty_source_paths()
+
+    config = ".pytest.ini"
+    collected_test = "tests/unit/test_phase3b2_audit_s80_items.py"
+    deselected_test = "test_n160_source_tree_hash_is_the_object_id_git_stores"
+    assert not (REPO_ROOT / config).exists(), f"{config} already exists: the probe would clobber it"
+    exclude = REPO_ROOT / ".git" / "info" / "exclude"
+    original = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
+
+    def collect() -> str:
+        return subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", collected_test],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace",
+        ).stdout
+
+    before = collect()
+    assert "deselected" not in before, f"the working copy already deselects tests: {before[-300:]}"
+    collected_before = before.count("<Function ")
+    assert collected_before > 1, f"the tracked file collects no tests: {before[-300:]}"
+    assert deselected_test in before, (
+        f"the tracked test this probe deselects is not collected, so the config would not hide it: "
+        f"{before[-300:]}"
+    )
+    try:
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        rules = original + ("" if not original or original.endswith("\n") else "\n")
+        exclude.write_text(rules + f"{config}\n", encoding="utf-8")
+        (REPO_ROOT / config).write_text(
+            '[pytest]\naddopts = -k "not test_n160_source_tree_hash"\n', encoding="utf-8"
+        )
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--no-renames"], cwd=str(REPO_ROOT),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        ).stdout
+        assert config not in status, status
+        dirty = dirty_source_paths()
+        assert config not in dirty, (
+            f"the dirty set already covers an ignored legacy .pytest.ini ({dirty}); re-measure N-169 "
+            f"and consider closing it"
+        )
+        assert should_record_green("full", True, 536, dirty) == should_record_green(
+            "full", True, 536, baseline_dirty
+        ), "an ignored .pytest.ini changes the recording decision; re-measure N-169"
+        after = collect()
+        assert "deselected" in after, (
+            f"the ignored .pytest.ini does not change collection, so it is not the channel N-169 names: "
+            f"{after[-300:]}"
+        )
+        assert deselected_test not in after, (
+            f"pytest still collects {deselected_test}: the config did not deselect a tracked test"
+        )
+        assert after.count("<Function ") == collected_before - 1, (
+            f"the ignored .pytest.ini does not drop exactly one tracked test: {after[-300:]}"
+        )
+        now = datetime.datetime.now(datetime.timezone.utc)
+        forged = {
+            "source_tree_hash": head_hash,
+            "source_tree_scheme": GREEN_CACHE_SCHEME,
+            "suite_count": 536,
+            "verify_exits": {script: 0 for script in verifiers},
+            "utc": (now - datetime.timedelta(minutes=5)).isoformat(),
+            "gate_sha": head,
+        }
+        plan, used, reason = select_gate_plan(head_hash, [forged], now, head_commit=head)
+        assert plan == "reuse" and used is not None, (
+            f"the forged row is no longer a valid hit under an ignored .pytest.ini: {plan} — {reason}"
+        )
+    finally:
+        (REPO_ROOT / config).unlink(missing_ok=True)
+        if original:
+            exclude.write_text(original, encoding="utf-8")
+        elif exclude.is_file():
+            exclude.unlink()
+    assert not (REPO_ROOT / config).exists(), f"{config} still present after cleanup"
+    after_dirty = dirty_source_paths()
+    assert config not in after_dirty, f"{config} is still dirty after cleanup: {after_dirty}"
+    assert set(after_dirty) == set(baseline_dirty), (
+        f"cleanup left the dirty set changed: {sorted(set(after_dirty) - set(baseline_dirty))}"
+    )
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -1234,6 +1345,7 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-166": probe_n166,
     "N-167": probe_n167,
     "N-168": probe_n168,
+    "N-169": probe_n169,
 }
 
 

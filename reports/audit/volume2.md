@@ -1329,3 +1329,132 @@ closure row with `closed_in_section: 83`, the section that decided it, because t
 and citing §84 would move the closure to a round that did not make it. No verdict changes — the probe
 has been the closure probe since `1a20255` — only the citation, and the ledger now reads 30 rows over
 20 ids with N-165, N-166 and N-167 all `CLOSED`.
+---
+
+## §85 — Audit of `0b3c56d` (tag `feat-s84-0b3c56d`): the four named configs are state, the fifth name pytest reads is not
+
+`0b3c56d` is the cache row for `120a8d0`, the one commit this round audits. `120a8d0` implements §84.6
+item 1 and nothing else: `ROOTDIR_PYTEST_CONFIG_FILES` adds four names to the `!!` branch of
+`dirty_source_paths()` beside the rootdir `conftest.py`, and `probe_n168` is flipped from asserting the
+defect to asserting the closure. `CURRENT_STAGE_OF_WORK.md` grew a §84 entry that cites the audit section
+and tag and labels itself **Not audited**, so §11.3 is satisfied by the log the implementer wrote.
+
+Two instruments used by this round were wrong first and are recorded rather than hidden: a forged row
+that witnesses two verifiers, and then eight, is not a cache hit — the gate ran the full suite both times
+and the "control" proved nothing. The measurements below use a forge built from
+`discovered_verification_scripts()` (9), which the gate accepts: `reused green at 0b3c56d… (536 passed)`
+in 52 s. A refusal is only evidence once the thing it refuses would otherwise have been honoured.
+
+### 85.1 Baseline re-measured at `0b3c56d`
+
+| Instrument | Result at `0b3c56d` (clone `/tmp/s85`, clean tree) |
+|---|---|
+| `verify_audit_append_only.py --force-full` | **exit 0** — `ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| pytest | **536 passed** in 140.70 s; 0 skipped, 0 xfailed |
+| `scripts/verify_*.py` discovered / executed | 9 / 9, every exit 0 |
+| W0.5-1 / 1b / 1c | append-only PASS; 2 volumes (frozen pin 1-78, 8442 lines; active 1331 committed lines, unchanged prefix); INDEX reproduces at **84** section rows |
+| W0.5-4 / W0.5-5 | PASS — **86** commit-bearing tags; 46 current / 22 superseded manifest rows |
+| Probes before this round's rows | 20 / 20 `PASS`; N-168 still `OPEN` in the ledger |
+| Findings ledger | 30 rows / 20 ids (N-165, N-166, N-167 `CLOSED`) |
+| Green cache | 14 rows; `dirty_source_paths()` is `[]` before and after a full pytest run |
+| Plain plan at this SHA | `full` — *"the record for this source tree was written at 120a8d0, not at the commit being verified (0b3c56d…)"* |
+| Trials / criteria / holdout | registry **9 rows** (6 `IN_SAMPLE`, 3 `VALIDATION`), no row added; criteria **1.1.9**, `configs/go_no_go_criteria.yaml` sha256 `d0a607b4…`, untouched by `120a8d0`; no `HOLDOUT_UNLOCK` sentinel |
+
+`120a8d0` touches `scripts/verify_audit_append_only.py`, `scripts/probe_audit_findings.py` and
+`CURRENT_STAGE_OF_WORK.md`; the source tree of `0b3c56d` is `b1a88925…` and nothing in `src/` or the
+suite moved, which is why the baseline count is unchanged from §84.
+
+### 85.2 N-168 — `CLOSED`
+
+Attacked in the clone with a forged row naming HEAD and HEAD's tree, so the gate has something real to
+reuse. The control is the first row and it is load-bearing: without a hit, the two refusals below would
+prove only that the gate runs.
+
+| Configuration | `git status` | `dirty_source_paths()` | Gate |
+|---|---|---|---|
+| Clean tree (control) | clean | `[]` | `reused green at 0b3c56d… (536 passed)`, **exit 0**, 52 s, cache 15 → 15 |
+| Ignored `pytest.ini` (`addopts = -k "not …"`) | clean (hidden) | `['pytest.ini']` | *"1 source path(s) differ from HEAD: pytest.ini"*, **no** `reused green`, cache 15 → 15 |
+| Ignored `tox.ini` / `setup.cfg` (decision) | clean | `['tox.ini']` / `['setup.cfg']` | plan `full`, `should_record_green("full", True, 536, dirty)` is `False` |
+
+The `pytest.ini` gate invocation exits 1 with *1 FINDING PROBE(S) FAILED* — and that failure is
+`probe_n168` refusing to clobber the planted file (`pytest.ini already exists: the probe would clobber
+it`), not a red suite. The refusal being measured is the dirty set, and its own evidence is the reason
+line, the absent reuse line and an unchanged cache: over a config-dirty tree the gate runs the heavy
+gates and declines to record the result. That the recording rule fires is not inferred from the gate's
+exit status, which my own instrument perturbed.
+
+**Which of the four names are live here was measured, not assumed.** `pytest.ini` is executed: the §80
+file collects 7, then 6 with one deselected. `tox.ini` and `setup.cfg`, planted the same way, change
+nothing (7 → 7, no deselection) because the tracked `pyproject.toml` carries `[tool.pytest.ini_options]`
+and outranks both — they are covered by the tuple and unreachable in this repository. `pyproject.toml`
+itself is tracked, so `git status` can never report it `!!`; the implementer's log records that entry as
+unexercised and this round agrees. The closure therefore rests on `pytest.ini`, the one live name, and
+the tuple covers the other three defensively. No over-collection was observed: a clean tree holding the
+tracked `pyproject.toml` yields `dirty_source_paths()` `[]`, before and after a full run.
+
+The probe is the deciding instrument in both directions. Flipped, it exits 0 and prints `PASS N-168` at
+`0b3c56d`. Against the pre-fix verifier at `2060a31` (with only the probe file replaced) it exits 1 with
+*"an ignored rootdir pytest config is still invisible to the dirty set (['scripts/probe_audit_findings.py']),
+so a local exclude rule can point pytest at a different suite under a reused green row"* — the phrase the
+implementer's log claims. Removing the config clause from the fixed verifier reproduces the same phrase
+in the fixed tree. The probe also stopped asserting that the recorded suite is the one pytest ran; it now
+asserts the set, the recording decision and the collection change, which is the pair of facts the gate
+acts on.
+
+### 85.3 N-169 (`MEDIUM`, new) — the deprecated `.pytest.ini` is honoured and invisible
+
+pytest 8.3.4 still reads `.pytest.ini`, and that name is in no tuple:
+
+```
+$ printf '[pytest]\naddopts = -k "not test_parse_bhavcopy_date_formats"\n' > .pytest.ini
+$ printf '.pytest.ini\n' >> .git/info/exclude
+$ git status --porcelain                     # empty: git calls the tree clean
+$ python -m pytest --collect-only -q         # 535/536 tests collected (1 deselected)
+$ python -c "...dirty_source_paths()"        # []
+$ python scripts/verify_audit_append_only.py # forged row naming HEAD
+[INFO] reused green at 0b3c56de4d68a9bb4209ab65d65b3eab111be049 (536 passed, …)
+OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)   exit 0
+```
+
+Same channel as N-168, one name short: reuse certifies a 536-test record for a tree whose suite pytest
+collected 535 of. The probe that closes it must fail closed first, so `probe_n169` is registered and
+prints `PASS N-169` while the defect stands; including `.pytest.ini` in the branch makes it exit 1 with
+*"the dirty set already covers an ignored legacy .pytest.ini"*. `pytest.toml` and `.pytest.toml` (the
+names pytest 9 reads) were measured the same way and change nothing under 8.3.4, so they are recorded as
+not-a-channel under the installed pytest rather than registered as findings.
+
+### 85.4 Phase verdicts and residuals
+
+| Phase / claim | Verdict at `0b3c56d` | Residuals named |
+|---|---|---|
+| `§12.3` repository gate machinery | **GO** — 536 passed, 9/9 verifiers, `--force-full` exit 0; the four named configs refuse reuse and recording | N-169 (ignored legacy `.pytest.ini`) |
+| N-168 | **CLOSED** — `pytest.ini` in the dirty set, reuse refused, no row; probe flipped, failing at `2060a31`, load-bearing under mutation | three tuple names defensive/untracked-unreachable, recorded above |
+| N-165 / N-167 | **no regression** — `probe N-165` and `probe N-167` both still `PASS` | — |
+| `§80.13` items 3-5 | **PREPARED, NOT EXECUTED** — unchanged since §81.7 | A1, A2, A4 open by design |
+| Criteria / trials / holdout | **UNTOUCHED** — 1.1.9, 9 trial rows, no new row, 2024 fold frozen, holdout sealed | N-152 `ACCEPTED`, N-150 `OPEN` |
+
+### 85.5 Work order
+
+1. **Treat an ignored legacy `.pytest.ini` as dirty state** (N-169). It is the name pytest 8.3.4 actually
+   reads for a rootdir ini, so it belongs beside `pytest.ini` in the branch `120a8d0` added. Probe:
+   `probe_audit_findings.py N-169` flipped to assert the fix and failing at the fixing commit's parent;
+   the runtime check must be the dirty set, not pytest's exit status, because the deselected suite still
+   exits 0 with a count the 500 floor accepts. Serves `§12.3`.
+2. **Carry items 4-6 of §82.8 unchanged** — A1 sourcing with per-year provenance, `WARMUP_NOT_GATABLE`
+   plus a gating-mode probe, and pre-2022 pin relaxation as a computed gate. Serves Phase 3B-2 / `§10.8`.
+
+No other item of §84.6 survives: item 1 is delivered and measured, and its closure probe fails closed
+both before the fix and under a mutation of it.
+
+### 85.6 What would falsify this verdict
+
+- If an ignored rootdir `pytest.ini` stops appearing in `dirty_source_paths()`, or the gate reuses green
+  over one, N-168 is not closed and this section is wrong.
+- If a forged row witnessing all nine discovered verifiers is not reused on a clean tree, the control was
+  not a hit and every refusal measured here needs re-taking.
+- If `probe N-168` passes at `2060a31`, the closure probe is not the instrument that decided the finding.
+- If `probe N-169` fails at `0b3c56d`, `.pytest.ini` has stopped being honoured by the installed pytest
+  and N-169 is stale in the direction of being too harsh; today it prints `PASS` and the reuse above
+  reproduces end to end.
+- If a later pytest upgrade starts reading `pytest.toml`, the name measured as inert here becomes a
+  channel and the tuple is short by that name too.

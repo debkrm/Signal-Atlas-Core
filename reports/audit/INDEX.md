@@ -6,7 +6,7 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | Volume | Path | Sections | Lines | Frozen | SHA-256 |
 |---|---|---|---|---|---|
 | `signal_atlas_phase1c_audit_deepseek_review_.md` | `reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md` | 1-78 | 8442 | yes | `f4ca03d58466bebb…` |
-| `volume2.md` | `reports/audit/volume2.md` | 79+ | 1331 | no | `eb15ca3b53e9f4c1…` |
+| `volume2.md` | `reports/audit/volume2.md` | 79+ | 1460 | no | `e059e12e2ae1dec0…` |
 
 | Section | Title | Volume | Lines | Finding ids |
 |---|---|---|---|---|
@@ -93,5 +93,6 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | §81 | Audit of `80ff581` (tag `feat-s80-80ff581`): the cache binds to a tree, and a tree is not a commit | `volume2.md` | 540–826 | N-150, N-152, N-160, N-161, N-162, N-163, N-164 |
 | §82 | Audit of `c8f56d4` (tag `feat-s81-c8f56d4`): the commit becomes the key | `volume2.md` | 827–1026 | N-150, N-152, N-160, N-161, N-162, N-163, N-164, N-165, N-166 |
 | §83 | Audit of `1a20255` (tag `feat-s82-1a20255`): the file is guarded, the directory is not | `volume2.md` | 1027–1188 | N-150, N-152, N-160, N-162, N-163, N-164, N-165, N-166, N-167 |
-| §84 | Audit of `f361ba8` (tag `feat-s83-f361ba8`): both named shapes refuse now; a config file does not | `volume2.md` | 1189–1331 | N-150, N-152, N-162, N-163, N-164, N-165, N-166, N-167, N-168 |
+| §84 | Audit of `f361ba8` (tag `feat-s83-f361ba8`): both named shapes refuse now; a config file does not | `volume2.md` | 1189–1333 | N-150, N-152, N-162, N-163, N-164, N-165, N-166, N-167, N-168 |
+| §85 | Audit of `0b3c56d` (tag `feat-s84-0b3c56d`): the four named configs are state, the fifth name pytest reads is not | `volume2.md` | 1334–1460 | N-150, N-152, N-165, N-166, N-167, N-168, N-169 |
 
