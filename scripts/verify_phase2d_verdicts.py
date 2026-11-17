@@ -78,6 +78,7 @@ def verify_gate_2d1_reproducibility() -> bool:
         "trial_count_n": 10,
         "deflated_sharpe_ratio": Decimal("0.98"),
         "walk_forward_positive_fold_ratio": Decimal("0.85"),
+        "walk_forward_validation_folds_count": 2,  # N-156: the count is required with the ratio
     }
 
     # Evaluate twice with no external timestamp parameter; N-58 requires report reproducibility from bundle alone
@@ -188,6 +189,7 @@ def verify_gate_2d3_synthetic_fixture_end_to_end() -> bool:
         "trial_count_n": 4,
         "deflated_sharpe_ratio": Decimal("0.9650"),
         "walk_forward_positive_fold_ratio": Decimal("0.85"),
+        "walk_forward_validation_folds_count": 2,  # N-156: the count is required with the ratio
         # Criteria 1.1.6 (Audit §76.9 N-140, §76.10 N-141): a complete fixture bundle also carries
         # dataset completeness and the multiple-testing haircut Sharpe. The fixture's instruments all
         # resolve, so leaving either out would be a NOT RUN the fixture does not need.

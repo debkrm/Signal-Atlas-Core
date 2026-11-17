@@ -1,7 +1,7 @@
 """
 Unit tests for the Audit §78 remediation (audit §78 at 82e3ef0, reviewing 780ac4b).
 
-Target invariants (criteria 1.1.8):
+Target invariants (criteria 1.1.8, carried into 1.1.9 unchanged except where §79 tightened them):
 - N-148: `CRIT-STAT-01` is NOT RUN when `total_trades` arrives without liquidated positions or a
   declared liquidated count, so a censored book cannot pass by omitting its own evidence.
 - N-149: `CRIT-OVERFIT-03` requires the four pre-registered anchored fold ends and refuses a
@@ -38,6 +38,8 @@ from scripts.derive_2022_2024_corpora import (
 from scripts.probe_audit_findings import PROBES
 from scripts.verify_audit_append_only import (
     compute_source_tree_hash,
+    compute_volume_digest,
+    discovered_verification_scripts,
     is_source_tree_path,
     select_gate_plan,
 )
@@ -229,9 +231,12 @@ def test_audit_volume1_is_frozen_at_its_pinned_digest():
     assert volume1["frozen"] is True
     assert volume1["sections"] == "1-78"
 
+    # Audit §79.7 (N-154): the digest is computed over the text with CRLF folded to LF, so the pin is a
+    # property of the committed volume rather than of the machine that checked it out.
     path = REPO_ROOT / volume1["path"]
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == volume1["sha256"]
-    assert len(path.read_text(encoding="utf-8").splitlines()) == volume1["line_count"] == 8442
+    digest, line_count = compute_volume_digest(path)
+    assert digest == volume1["sha256"]
+    assert line_count == volume1["line_count"] == 8442
 
     volume2 = volumes["reports/audit/volume2.md"]
     assert volume2["frozen"] is False
@@ -259,29 +264,45 @@ def test_source_tree_hash_ignores_audit_prose_and_docs():
 
 def test_green_cache_reuses_only_an_identical_fresh_source_tree():
     now = datetime.datetime(2026, 11, 17, 12, 0, tzinfo=datetime.timezone.utc)
+    verifier_scripts = discovered_verification_scripts()
+    assert len(verifier_scripts) == 9
+
+    # Audit §79.8 (N-155): a record is reusable only when it witnesses a complete green run — every
+    # discovered verifier at exit 0, a suite count above the pinned floor, and a real commit.
     record = {
         "source_tree_hash": "h1",
-        "suite_count": 513,
-        "verify_exits": {"scripts/verify_phase2d_verdicts.py": 0},
+        "suite_count": 523,
+        "verify_exits": {script: 0 for script in verifier_scripts},
         "utc": (now - datetime.timedelta(hours=2)).isoformat(),
-        "gate_sha": "780ac4b",
+        "gate_sha": "3119cb2",
     }
 
-    plan, used, reason = select_gate_plan("h1", [record], now)
-    assert plan == "reuse"
-    assert used is not None and used["gate_sha"] == "780ac4b"
+    def resolve(sha: str) -> bool:
+        return sha == "3119cb2"
 
-    assert select_gate_plan("h2", [record], now)[0] == "full"
-    assert select_gate_plan("h1", [], now)[0] == "full"
-    assert select_gate_plan("h1", [record], now, force_full=True)[0] == "full"
+    plan, used, reason = select_gate_plan(
+        "h1", [record], now, verifier_scripts=verifier_scripts, resolve_commit=resolve
+    )
+    assert plan == "reuse"
+    assert used is not None and used["gate_sha"] == "3119cb2"
+
+    assert select_gate_plan("h2", [record], now, verifier_scripts=verifier_scripts)[0] == "full"
+    assert select_gate_plan("h1", [], now, verifier_scripts=verifier_scripts)[0] == "full"
+    assert select_gate_plan(
+        "h1", [record], now, force_full=True, verifier_scripts=verifier_scripts
+    )[0] == "full"
 
     stale = dict(record, utc=(now - datetime.timedelta(hours=25)).isoformat())
-    plan, _used, reason = select_gate_plan("h1", [stale], now)
+    plan, _used, reason = select_gate_plan(
+        "h1", [stale], now, verifier_scripts=verifier_scripts, resolve_commit=resolve
+    )
     assert plan == "full"
     assert "24h" in reason
 
-    failing = dict(record, verify_exits={"scripts/verify_phase2d_verdicts.py": 1})
-    assert select_gate_plan("h1", [failing], now)[0] == "full"
+    failing = dict(record, verify_exits={script: 1 for script in verifier_scripts})
+    assert select_gate_plan(
+        "h1", [failing], now, verifier_scripts=verifier_scripts, resolve_commit=resolve
+    )[0] == "full"
 
 
 # --- §78.15 (c): the findings ledger is executable ---------------------------------------------
@@ -309,12 +330,12 @@ def test_findings_ledger_rows_carry_executable_probes():
             PROBES[row["id"]]()
 
 
-# --- Criteria 1.1.8 reseals the pin and moves nothing else -------------------------------------
+# --- Criteria reseal the pin and move nothing else ----------------------------------------------
 
 
-def test_criteria_1_1_8_reseals_only_the_manifest_pin():
+def test_criteria_1_1_9_reseals_only_the_manifest_pin():
     crit = load_go_no_go_criteria()
-    assert crit.version == "1.1.8"
+    assert crit.version == "1.1.9"
     assert crit.expected_manifest_fingerprint == compute_manifest_fingerprint(
         REPO_ROOT / "data" / "reference" / "manifest.jsonl"
     )

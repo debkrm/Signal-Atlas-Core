@@ -55,7 +55,19 @@ metadata:
   #   N-150 — `CRIT-OVERFIT-06` is NOT RUN below 2 validation folds, whatever ratio is supplied (§78.10).
   #   N-151 — `ISIN_TRANSITION` rows are generated for every multi-ISIN symbol in the committed
   #           interval table, so the expected_manifest_fingerprint pin is recomputed (§78.11).
-  version: "1.1.8"
+  # 1.1.9 (2026-11-17): no numeric threshold and no criterion changed. Audit §79.12 items 2, 4 and 5
+  # close three bypasses the §79 round measured, and the manifest pin is resealed because TATASTEEL's
+  # documented transition moved one session to meet the interval boundary:
+  #   N-156 — `CRIT-OVERFIT-06` is NOT RUN when a positive fold ratio arrives without a valid integer
+  #           `walk_forward_validation_folds_count`, so the two-fold minimum cannot be skipped by
+  #           omitting the count that triggers it (§79.4, §14.4).
+  #   N-159 — `CRIT-STAT-01` is NOT RUN when `total_trades` and `liquidated_open_positions` arrive
+  #           without `closed_only_trade_count`: an empty positions list is an affirmative statement
+  #           only when there is a closed count to reconcile the sum against (§79.2).
+  #   N-158 — `corporate_actions.jsonl` dates TATASTEEL's ISIN transition 2022-07-29 (the successor
+  #           ISIN's first session) instead of 2022-07-28, and the generator now asserts that every
+  #           documented pair meets its interval boundary instead of skipping it silently (§79.5).
+  version: "1.1.9"
   effective_date: "2026-11-17"
   market: "NSE_CASH_EQUITY"
   currency: "INR"
@@ -216,7 +228,7 @@ market_data_and_accounting_invariants:
   # MAN-FPR-V1 covers data/reference/manifest.jsonl content (37,597 bytes, SHA-256 0b9b0d7c24887049b13d68374b195215052584df594993119226d0b9fe0d00e6); re-pinned
   # 2026-11-17 with the corporate_actions.jsonl restatement append (Audit §77.11, N-145), the only
   # manifest change in that commit.
-  expected_manifest_fingerprint: "MAN-FPR-V1-571752f09d59981da781aba3d790f9e4820563430d05da9b6350951658ad3e0c"
+  expected_manifest_fingerprint: "MAN-FPR-V1-23200ba8825533929fe96128994641814f1b4737b18991c6a91ca63ddde2c92c"
 
   # Finding N-128 (Audit §72.3, §72.5 item 3): the trial-registry manifest witnesses
   # {evaluation_count, head_eval_hash} outside the (sidecar, anchor) pair. Pinning its SHA-256 here

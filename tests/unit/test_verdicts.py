@@ -110,6 +110,7 @@ def test_verdict_report_reproducibility():
         "trial_count_n": 10,
         "deflated_sharpe_ratio": Decimal("0.98"),
         "walk_forward_positive_fold_ratio": Decimal("0.85"),
+        "walk_forward_validation_folds_count": 2,  # N-156: the count is required with the ratio
     }
 
     # Evaluate twice with no external timestamp parameter; N-58 requires report reproducibility from bundle alone
@@ -205,6 +206,7 @@ def test_residual_r3_unverified_provenance_evaluates_to_not_run():
         "trial_count_n": 5,
         "deflated_sharpe_ratio": Decimal("0.97"),
         "walk_forward_positive_fold_ratio": Decimal("0.85"),
+        "walk_forward_validation_folds_count": 2,  # N-156: the count is required with the ratio
     }
     report = evaluate_verdicts(bundle_unverified)
     prov_eval = next(e for e in report.evaluations if e.criterion_id == "CRIT-PROV-01")
@@ -322,6 +324,7 @@ def test_synthetic_fixture_end_to_end_regression():
         "data_provenance_status": meta["source_provenance_status"],  # CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED
         "trial_count_n": 4,
         "deflated_sharpe_ratio": Decimal("0.9650"),            "walk_forward_positive_fold_ratio": Decimal("0.85"),
+            "walk_forward_validation_folds_count": 2,  # N-156: the count is required with the ratio
             # 1.1.6: every synthetic instrument resolves inside the fixture, and the haircut Sharpe
             # is computable from the fixture's own DSR and trial count, so neither is NOT RUN.
             "dataset_instrument_resolution_pct": Decimal("100.0"),
@@ -444,6 +447,7 @@ def test_h67_unattested_verified_provenance_rejected():
         "trial_count_n": 10,
         "deflated_sharpe_ratio": Decimal("0.98"),
         "walk_forward_positive_fold_ratio": Decimal("0.85"),
+        "walk_forward_validation_folds_count": 2,  # N-156: the count is required with the ratio
     }
     report = evaluate_verdicts(bundle)
     eval_prov = next(e for e in report.evaluations if e.criterion_id == "CRIT-PROV-01")
@@ -540,6 +544,7 @@ def test_h68_attestation_must_be_manifest_registered_and_digest_matched():
         "trial_count_n": 10,
         "deflated_sharpe_ratio": Decimal("0.98"),
         "walk_forward_positive_fold_ratio": Decimal("0.85"),
+        "walk_forward_validation_folds_count": 2,  # N-156: the count is required with the ratio
         "data_provenance_status": "VERIFIED / EXCHANGE_ATTESTED",
         "provenance_attestation_reference": "AGENTS.md",
     }
@@ -602,6 +607,7 @@ def test_h69_evaluation_window_calendar_bounding_and_session_plausibility():
         "trial_count_n": 10,
         "deflated_sharpe_ratio": Decimal("0.98"),
         "walk_forward_positive_fold_ratio": Decimal("0.85"),
+        "walk_forward_validation_folds_count": 2,  # N-156: the count is required with the ratio
     }
 
     # Case 1 (§53.4): window 2031-01-01 .. 2031-06-30 -> FAIL

@@ -127,7 +127,17 @@ def build_tier_a_results_bundle(
         # not a threshold, and they enter the criteria fingerprint, so the committed artifact is
         # restated rather than left describing a criteria version that no longer governs.
         "restatement_note": (
-            "Restatement 2026-11-17 (Audit §78.11 / §78.16 item 1, N-151): supersedes the §77.15 "
+            "Restatement 2026-11-17 (Audit §79.12 items 2, 4 and 5, criteria 1.1.9): supersedes the "
+            "§78.11 restatement recorded below. Criteria version 1.1.9 changes no numeric threshold "
+            "and no criterion; it reseals expected_manifest_fingerprint because TATASTEEL's "
+            "ISIN_TRANSITION is now dated 2022-07-29, the successor ISIN's first session (N-158), and "
+            "it closes two bypasses the §79 round measured — CRIT-OVERFIT-06 is NOT RUN when a "
+            "positive fold ratio arrives without a valid integer "
+            "walk_forward_validation_folds_count (N-156), and CRIT-STAT-01 is NOT RUN when "
+            "total_trades and liquidated_open_positions arrive without closed_only_trade_count "
+            "(N-159); neither repair changes a row on this Tier-A bundle, which carries neither a "
+            "fold ratio nor a total_trades count. Under 1.1.8, the §78.11 restatement supersedes the "
+            "§77.15 "
             "items 1-6 restatement recorded below, the §76.16 items 1-6 restatement recorded above, "
             "the 1.1.5 restatement "
             "recorded under Audit §75.10 items 3-4, the 1.1.4 restatement recorded under §74.10 "

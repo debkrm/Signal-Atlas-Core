@@ -2134,6 +2134,9 @@ def run_phase3b2_walkforward(
 
     if walk_forward_positive_fold_ratio is not None:
         extra_m["walk_forward_positive_fold_ratio"] = walk_forward_positive_fold_ratio
+        # Audit §79.4 / §79.12 item 2 (N-156): a ratio without its fold count is NOT RUN, so the live
+        # runner states the count it actually evaluated instead of leaving the gate to guess.
+        extra_m["walk_forward_validation_folds_count"] = num_val_folds
     else:
         extra_m["walk_forward_validation_folds_count"] = num_val_folds
         extra_m["walk_forward_not_run_reason"] = (

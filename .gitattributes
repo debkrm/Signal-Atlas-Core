@@ -9,4 +9,7 @@
 *.yml text eol=lf
 data/reference/** text eol=lf
 configs/** text eol=lf
+# Audit §79.7 (N-154): the audit volumes are frozen by sha256, so their bytes are part of the
+# verification instrument. Pin them to LF in the working copy as well as in the stored blob.
+reports/audit/** text eol=lf
 

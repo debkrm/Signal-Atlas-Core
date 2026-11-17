@@ -41,6 +41,16 @@ SOURCE_TREE_EXCLUDED_FILES = (
     "data/reference/source_tree_green.json",
 )
 GREEN_CACHE_MAX_AGE = datetime.timedelta(hours=24)
+# Audit §79.8 (N-155): a record is evidence only if it witnesses the run it claims. The floor is a
+# pinned minimum, not a default: a row reading `suite_count: 1` used to satisfy the same comparison as
+# a row reading 523. The two runtime verifiers are re-executed even on a cached source tree, because
+# they read the audit ledger and the Phase 2D artifacts -- prose-excluded paths that can change
+# without changing the source-tree hash.
+GREEN_CACHE_MIN_SUITE_COUNT = 500
+GREEN_CACHE_RUNTIME_VERIFIERS = (
+    "scripts/verify_audit_findings.py",
+    "scripts/verify_phase2d_verdicts.py",
+)
 
 VERIFICATION_SCRIPTS = [
     "scripts/verify_phase2a_containment_and_trials.py",
@@ -123,6 +133,24 @@ def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def canonical_volume_bytes(path: Path) -> bytes:
+    """
+    Volume bytes with CRLF folded to LF (Audit §79.7, §79.12 item 3, N-154).
+
+    A frozen volume must hash the same on a Windows working copy and a Linux checkout. `git` stores the
+    committed blob with LF and `reports/audit/** text eol=lf` in `.gitattributes` asks every clone to
+    check it out that way, but an existing working copy can still hold CRLF (and did). Folding CRLF
+    before hashing makes the pin a property of the committed text instead of the machine that wrote it.
+    """
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
+
+def compute_volume_digest(path: Path) -> Tuple[str, int]:
+    canonical = canonical_volume_bytes(path)
+    line_count = len(canonical.decode("utf-8").splitlines())
+    return hashlib.sha256(canonical).hexdigest(), line_count
+
+
 def load_audit_volumes() -> List[dict]:
     with open(AUDIT_VOLUMES_CONFIG, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
@@ -160,8 +188,7 @@ def check_audit_volume_integrity() -> bool:
         if frozen:
             expected_sha = str(volume.get("sha256", ""))
             expected_lines = volume.get("line_count")
-            actual_sha = sha256_file(path)
-            actual_lines = len(path.read_text(encoding="utf-8").splitlines())
+            actual_sha, actual_lines = compute_volume_digest(path)
             if actual_sha != expected_sha:
                 print(
                     f"[FAIL] Frozen volume {rel} sha256 {actual_sha[:16]}… != pinned "
@@ -270,6 +297,66 @@ def compute_source_tree_hash(entries: Sequence[Tuple[str, str]]) -> str:
     return digest.hexdigest()
 
 
+def discovered_verification_scripts() -> List[str]:
+    """Every `scripts/verify_*.py` the gate executes, excluding the gate itself (Note N-20)."""
+    return sorted(
+        p.relative_to(REPO_ROOT).as_posix()
+        for p in (REPO_ROOT / "scripts").glob("verify_*.py")
+        if p.name != "verify_audit_append_only.py"
+    )
+
+
+def commit_exists(sha: str) -> bool:
+    """True when `sha` names a commit in this repository (§79.8: `gate_sha` is not a free label)."""
+    if not re.fullmatch(r"[0-9a-f]{7,40}", str(sha or "")):
+        return False
+    proc = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return proc.returncode == 0
+
+
+def green_record_problem(
+    record: dict,
+    expected_verifiers: Sequence[str],
+    resolve_commit,
+) -> Optional[str]:
+    """
+    Why this record cannot witness a green run, or None when it can (Audit §79.8, N-155).
+
+    Four independent holes are closed: an empty `verify_exits` (no verifier ran) reads as all-zero
+    under `any(...)`; `suite_count` had no floor; `gate_sha` was never resolved; and the run itself was
+    never required to be one the gate could have produced.
+    """
+    exits = record.get("verify_exits")
+    if not isinstance(exits, dict):
+        return "cache record has no verifier exit map"
+    if set(map(str, exits)) != set(expected_verifiers):
+        return (
+            f"cache record witnesses {len(exits)} verifier(s), not the {len(expected_verifiers)} "
+            f"discovered one(s)"
+        )
+    for script, code in exits.items():
+        if isinstance(code, bool) or not isinstance(code, int) or code != 0:
+            return f"cache record reports verifier {script} exiting {code!r}"
+    suite_count = record.get("suite_count")
+    if isinstance(suite_count, bool) or not isinstance(suite_count, int):
+        return f"cache record suite_count {suite_count!r} is not an integer"
+    if suite_count < GREEN_CACHE_MIN_SUITE_COUNT:
+        return (
+            f"cache record suite_count {suite_count} is below the pinned floor "
+            f"{GREEN_CACHE_MIN_SUITE_COUNT}"
+        )
+    gate_sha = str(record.get("gate_sha") or "")
+    if not resolve_commit(gate_sha):
+        return f"cache record gate_sha {gate_sha!r} is not a commit in this repository"
+    return None
+
+
 def load_green_cache() -> List[dict]:
     if not GREEN_CACHE_PATH.is_file():
         return []
@@ -302,19 +389,26 @@ def select_gate_plan(
     records: Sequence[dict],
     now: datetime.datetime,
     force_full: bool = False,
+    verifier_scripts: Optional[Sequence[str]] = None,
+    resolve_commit=None,
 ) -> Tuple[str, Optional[dict], str]:
     """
     Returns `(plan, record, reason)`. `plan` is "reuse" only for an identical source tree with a
-    green record younger than 24 hours; anything else is "full", which is the fail-closed default.
+    record that witnesses a complete green run and is younger than 24 hours; anything else is "full",
+    which is the fail-closed default (Audit §79.8, N-155).
     """
     if force_full:
         return "full", None, "forced"
+    expected = list(
+        verifier_scripts if verifier_scripts is not None else discovered_verification_scripts()
+    )
+    resolver = resolve_commit or commit_exists
     for record in reversed(list(records)):
         if record.get("source_tree_hash") != source_hash:
             continue
-        exits = record.get("verify_exits") or {}
-        if any(int(code) != 0 for code in exits.values()):
-            continue
+        problem = green_record_problem(record, expected, resolver)
+        if problem is not None:
+            return "full", None, problem
         try:
             recorded_at = datetime.datetime.fromisoformat(str(record.get("utc")))
         except ValueError:
@@ -339,11 +433,7 @@ def check_verification_scripts() -> Tuple[bool, Dict[str, int]]:
         env["PYTHONPATH"] = src_path
 
     # Note N-20: Dynamic discovery of all scripts/verify_*.py instead of hardcoded list
-    discovered_scripts = sorted([
-        p.relative_to(REPO_ROOT).as_posix()
-        for p in (REPO_ROOT / "scripts").glob("verify_*.py")
-        if p.name != "verify_audit_append_only.py"
-    ])
+    discovered_scripts = discovered_verification_scripts()
     print(f"[INFO] Discovered {len(discovered_scripts)} verification scripts: {', '.join(discovered_scripts)}")
     exits: Dict[str, int] = {}
 
@@ -437,6 +527,42 @@ def check_test_suite_zero_skip_xfail() -> Tuple[bool, int, float]:
     passed_count = int(passed_match.group(1)) if passed_match else 0
     print("[PASS] Gate W0.5-3: Full test suite passed with 0 skipped and 0 xfailed.\n")
     return True, passed_count, elapsed
+
+
+def check_runtime_verifiers() -> bool:
+    """
+    The two verifiers that read prose-excluded inputs must run even when the source tree is cached
+    (Audit §79.12 item 1, N-155): `findings.jsonl`, `volume2.md` and the Phase 2D artifacts are outside
+    the source-tree hash, so a cached run that skipped them could pass on a broken audit ledger.
+    """
+    print("--- Gate W0.5-2b: Runtime Verifiers on a Cached Source Tree (§79.8, N-155) ---")
+    env = os.environ.copy()
+    src_path = str(REPO_ROOT / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env['PYTHONPATH']}" if "PYTHONPATH" in env else src_path
+    all_passed = True
+    for rel in GREEN_CACHE_RUNTIME_VERIFIERS:
+        start_t = time.perf_counter()
+        proc = subprocess.run(
+            [sys.executable, str(REPO_ROOT / rel)],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+        )
+        elapsed = time.perf_counter() - start_t
+        if proc.returncode != 0:
+            print(f"[FAIL] {rel} exited {proc.returncode} ({elapsed:.2f}s)")
+            print((proc.stdout or "")[-500:])
+            all_passed = False
+        else:
+            print(f"[PASS] {rel} (exit 0, {elapsed:.2f}s)")
+    if all_passed:
+        print("[PASS] Gate W0.5-2b: runtime verifiers passed on the cached source tree.\n")
+    else:
+        print("[FAIL] Gate W0.5-2b: a runtime verifier failed on the cached source tree.\n")
+    return all_passed
 
 
 def check_verdict_tags() -> bool:
@@ -624,6 +750,7 @@ def main() -> int:
             f"[INFO] reused green at {record.get('gate_sha')} ({record.get('suite_count')} passed, "
             f"recorded {record.get('utc')}) — heavy gates skipped for an identical source tree.\n"
         )
+        results.append(check_runtime_verifiers())
     else:
         if run_all or args.check_scripts_only:
             scripts_ok, verify_exits = check_verification_scripts()
@@ -644,13 +771,22 @@ def main() -> int:
             ["git", "rev-parse", "--short", "HEAD"],
             cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", check=True,
         ).stdout.strip()
-        append_green_record(
-            source_hash, suite_count, pytest_seconds, verify_exits, gate_sha
-        )
-        print(
-            f"[INFO] Recorded green source tree {source_hash[:16]}… ({suite_count} passed) "
-            f"in {GREEN_CACHE_PATH.relative_to(REPO_ROOT).as_posix()}.\n"
-        )
+        # §79.8 (N-155): a hash already recorded as green is not appended again, so a routine full run
+        # does not dirty a tracked file. A record that fails validation is deliberately not replaced:
+        # the forge is reported, not self-healed.
+        if any(r.get("source_tree_hash") == source_hash for r in load_green_cache()):
+            print(
+                f"[INFO] Source tree {source_hash[:16]}… is already recorded; not appending a "
+                f"duplicate row to {GREEN_CACHE_PATH.relative_to(REPO_ROOT).as_posix()}.\n"
+            )
+        else:
+            append_green_record(
+                source_hash, suite_count, pytest_seconds, verify_exits, gate_sha
+            )
+            print(
+                f"[INFO] Recorded green source tree {source_hash[:16]}… ({suite_count} passed) "
+                f"in {GREEN_CACHE_PATH.relative_to(REPO_ROOT).as_posix()}.\n"
+            )
 
     print("=" * 80)
     if all(results):

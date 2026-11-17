@@ -38,6 +38,73 @@ from signal_core.storage.security_master import (
 )
 
 
+def adjacent_identity_pairs(
+    intervals: Sequence[SymbolInterval],
+) -> List[tuple[str, str, str, datetime.date]]:
+    """
+    Every adjacent identity pair the committed interval table records, as
+    `(symbol, old_isin, new_isin, first_session_of_new_identity)`.
+
+    The table, not a list of symbols a dataset happened to visit, is the source (Audit §78.11). The
+    chain is read in interval order; an ISIN that re-appears after a different one means the table is
+    not describing one forward chain, so no pair is asserted across it (fail closed).
+    """
+    by_symbol: dict[str, List[SymbolInterval]] = {}
+    for interval in intervals:
+        by_symbol.setdefault(interval.symbol, []).append(interval)
+
+    pairs: List[tuple[str, str, str, datetime.date]] = []
+    for symbol in sorted(by_symbol):
+        ordered: List[tuple[str, datetime.date]] = []
+        for interval in sorted(by_symbol[symbol], key=lambda r: (r.effective_from, r.isin, r.series)):
+            if ordered and ordered[-1][0] == interval.isin:
+                continue
+            if any(seen == interval.isin for seen, _d in ordered):
+                continue
+            ordered.append((interval.isin, interval.effective_from))
+
+        for (old_isin, _old_from), (new_isin, effective_from) in zip(ordered, ordered[1:]):
+            pairs.append((symbol, old_isin, new_isin, effective_from))
+    return pairs
+
+
+def validate_documented_transition_dates(
+    intervals: Sequence[SymbolInterval],
+    actions: Sequence[CorporateAction],
+) -> int:
+    """
+    A documented identity pair must start on the successor interval's first session (Audit §79.5,
+    §79.12 item 4, N-158).
+
+    The generator skips a pair that already carries a row, so before this assertion a hand-written row
+    could date the transition anywhere and nothing would notice: TATASTEEL's row read 2022-07-28 while
+    the interval table starts INE081A01020 on 2022-07-29. Returns the number of pairs checked.
+    """
+    documented: dict[tuple[str, str], CorporateAction] = {
+        (row.old_isin, row.new_isin): row
+        for row in actions
+        if row.action_type is CorporateActionType.ISIN_TRANSITION and row.old_isin and row.new_isin
+    }
+    problems: List[str] = []
+    checked = 0
+    for _symbol, old_isin, new_isin, effective_from in adjacent_identity_pairs(intervals):
+        row = documented.get((old_isin, new_isin))
+        if row is None:
+            continue
+        checked += 1
+        if row.ex_date != effective_from:
+            problems.append(
+                f"{row.symbol}: ISIN_TRANSITION dated {row.ex_date} but {new_isin} starts "
+                f"{effective_from} (§10.5)"
+            )
+    if problems:
+        raise ValueError(
+            "documented ISIN_TRANSITION date(s) disagree with the interval table (N-158): "
+            + "; ".join(problems)
+        )
+    return checked
+
+
 def generate_isin_transition_rows(
     intervals: Sequence[SymbolInterval],
     documented_pairs: set[tuple[str, str]],
@@ -57,26 +124,11 @@ def generate_isin_transition_rows(
     Pairs already carried by an explicit `ISIN_TRANSITION` row are skipped rather than duplicated, so
     the three rows whose ratio is known from a committed SPLIT keep their 10:1 / 2:1 / 2:1 values.
     """
-    by_symbol: dict[str, List[SymbolInterval]] = {}
-    for interval in intervals:
-        by_symbol.setdefault(interval.symbol, []).append(interval)
-
     rows: List[CorporateAction] = []
-    for symbol in sorted(by_symbol):
-        ordered: List[tuple[str, datetime.date]] = []
-        for interval in sorted(by_symbol[symbol], key=lambda r: (r.effective_from, r.isin, r.series)):
-            if ordered and ordered[-1][0] == interval.isin:
-                continue
-            if any(seen == interval.isin for seen, _d in ordered):
-                # The identity re-appears after a different one: the table is not describing one
-                # forward transition chain, so no pair is asserted across it (fail closed).
-                continue
-            ordered.append((interval.isin, interval.effective_from))
-
-        for (old_isin, _old_from), (new_isin, effective_from) in zip(ordered, ordered[1:]):
-            if (old_isin, new_isin) in documented_pairs:
-                continue
-            rows.append(CorporateAction(
+    for symbol, old_isin, new_isin, effective_from in adjacent_identity_pairs(intervals):
+        if (old_isin, new_isin) in documented_pairs:
+            continue
+        rows.append(CorporateAction(
                 isin=old_isin,
                 symbol=symbol,
                 ex_date=effective_from,
@@ -142,11 +194,13 @@ def generate_corporate_actions_corpus() -> list[CorporateAction]:
         description="TATA STEEL Sub-Division from Rs 10 to Re 1",
         provenance="CONTENT_IDENTIFIED_ONLY",
     ))
-    # 2. ISIN_TRANSITION (TATASTEEL)
+    # 2. ISIN_TRANSITION (TATASTEEL) — dated to the successor ISIN's first session. The SPLIT above
+    # keeps its ex-date; the identity row must meet the interval boundary the table records, or the
+    # corpus and the table disagree about when INE081A01020 began trading (Audit §79.5, N-158).
     actions.append(CorporateAction(
         isin="INE081A01012",
         symbol="TATASTEEL",
-        ex_date=datetime.date(2022, 7, 28),
+        ex_date=datetime.date(2022, 7, 29),
         action_type=CorporateActionType.ISIN_TRANSITION,
         ratio_numerator=Decimal("10"),
         ratio_denominator=Decimal("1"),
@@ -632,6 +686,9 @@ def generate_corporate_actions_corpus() -> list[CorporateAction]:
         actions_dict.values(),
         key=lambda ca: (ca.ex_date, ca.isin, ca.action_type.value)
     )
+    # Audit §79.12 item 4 (N-158): the generator cannot correct a pair it skips as already documented,
+    # so it asserts the date instead of trusting the hand-written row.
+    validate_documented_transition_dates(load_cash_universe_symbol_intervals(), sorted_actions)
     return sorted_actions
 
 
@@ -680,7 +737,10 @@ def restate_manifest(
         "retrieval_reference": (
             "Audit §63.6 Item 7, §63.7 CA-1; restated 2026-11-16 under Audit §68.6 item 3 (H-115, "
             "N-112 residual); restated 2026-11-17 under Audit §77.11 / §77.15 item 1 (N-145) with the "
-            "twelve then-measured identity changes; restated again 2026-11-17 under Audit §78.11 / "
+            "twelve then-measured identity changes; restated again 2026-11-17 under Audit §79.12 item 4 "
+            "(N-158), which reconciles TATASTEEL's documented transition to 2022-07-29 — the successor "
+            "ISIN's first session — and makes the generator assert that every documented pair meets its "
+            "interval boundary; restated again 2026-11-17 under Audit §78.11 / "
             "§78.16 item 1 (N-151): the ISIN_TRANSITION table is now generated from the committed "
             "cash_equity_symbol_intervals.csv for every symbol it records under more than one ISIN, "
             "not for the fourteen symbols one dataset happened to visit, so a corpus extension cannot "

@@ -439,6 +439,17 @@ def evaluate_verdicts(
         and liquidated_declared is None
     )
 
+    # Audit §79.12 item 5 (N-159): an empty positions list is an affirmative statement ("nothing is
+    # open"), so `{total_trades: 205, liquidated_open_positions: []}` passed while giving the
+    # reconciliation nothing to check it against. The closed-only count is the only quantity the sum
+    # can be tested with, so a bundle that states positions must state it, and one that cannot is NOT
+    # RUN rather than a PASS on a sum of zero.
+    stat01_closed_count_missing = (
+        parsed_total_trades is not None
+        and isinstance(liquidated_positions, (list, tuple))
+        and closed_n_raw is None
+    )
+
     if trades_parse_error is not None:
         evaluations.append(CriterionEvaluation(
             criterion_id="CRIT-STAT-01",
@@ -461,6 +472,24 @@ def evaluate_verdicts(
             comparator=">=",
             status=VerdictStatus.FAIL,
             evidence=stat01_basis_error,
+            is_binding=True,
+        ))
+    elif parsed_total_trades is not None and stat01_closed_count_missing:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-STAT-01",
+            category="Risk & Performance",
+            metric_name="Total Completed Trades (Liquidated Book)",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_total_trades}",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence=(
+                f"total_trades = {parsed_total_trades} was supplied with "
+                f"{len(liquidated_positions)} liquidated open position(s) but no "
+                f"'closed_only_trade_count', so there is nothing to reconcile the sum against and the "
+                f"row is NOT RUN (Audit §79.12 item 5, N-159). An empty positions list is an "
+                f"affirmative statement only when the closed count is stated with it."
+            ),
             is_binding=True,
         ))
     elif parsed_total_trades is not None and stat01_basis_unverifiable:
@@ -1782,6 +1811,26 @@ def evaluate_verdicts(
                 f"the supplied ratio "
                 f"{f'{val_wf:.4f}' if val_wf is not None else 'NOT RUN'} is NOT RUN rather than PASS "
                 f"(§8.3, Audit §78.10, N-150)."
+            ),
+            is_binding=True,
+        ))
+    # Audit §79.4 / §79.12 item 2 (N-156): the minimum above is read from the count, so a bundle that
+    # simply omits `walk_forward_validation_folds_count` skips it and clears the row with a
+    # single-fold ratio. The count is required whenever a ratio is offered: no count, no gate.
+    elif val_wf is not None and wf_n_val_int is None:
+        evaluations.append(CriterionEvaluation(
+            criterion_id="CRIT-OVERFIT-06",
+            category="Walk-Forward Stability",
+            metric_name="Positive Out-of-Sample Folds Ratio",
+            computed_value=None,
+            threshold_value=f">= {active_criteria.min_positive_walk_forward_fold_ratio}",
+            comparator=">=",
+            status=VerdictStatus.NOT_RUN,
+            evidence=(
+                f"Positive fold ratio {val_wf:.4f} was supplied without a valid integer "
+                f"'walk_forward_validation_folds_count', so the minimum 2 independent out-of-sample "
+                f"validation folds cannot be checked and the row is NOT RUN rather than a PASS on the "
+                f"ratio's name (Audit §79.4, N-156)."
             ),
             is_binding=True,
         ))
