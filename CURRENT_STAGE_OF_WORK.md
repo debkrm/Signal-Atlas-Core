@@ -1403,3 +1403,56 @@ so what follows is the measurement the next round has to reproduce. **Not audite
 - **Not claimed.** No seq 10 was registered or run; §82.8 items 4-6 are untouched; N-165 and N-166 stay
   `OPEN` in the ledger until the auditor's next section, N-150 stays `OPEN`, N-152 `ACCEPTED`; the
   pre-2022 window remains warm-up only and the DSR bar is unchanged.
+
+### Audit §84 — an ignored rootdir pytest config is dirty state too
+
+Round: audit §84 (audit of `f361ba8`, section and work order appended at `fe8299c`, tag
+`audit-s84-fe8299c`), work order item 1 only — N-168 (`MEDIUM`), the config channel §84.3 named as the
+residual of N-165 and §84.4 registered. Item 2 (the §82.8 items 4-6) is carried unchanged. Criteria
+**1.1.9**, no threshold moved, no trial and no data written. N-168's ledger row stays `OPEN`: closure
+rows belong to the auditor (§11.1), so what follows is the measurement the next round has to reproduce.
+**Not audited.**
+
+- **The config file is state now.** `ROOTDIR_PYTEST_CONFIG_FILES = ("pytest.ini", "tox.ini",
+  "setup.cfg", "pyproject.toml")`, and an entry `git status --ignored=matching` reports as `!!` for one
+  of those names is added to `dirty_source_paths()` beside the rootdir `conftest.py` (§83.6 item 1).
+  A rootdir config fixes the rootdir and can add `addopts` or replace `testpaths`, so an ignored one
+  makes pytest run a suite the committed tree does not describe — it is neither a `.py` file under a
+  collected root nor a `conftest.py`, which is why it reached no branch before. The gate now refuses
+  reuse and recording over it exactly as it does over an edited file.
+- **The probe was flipped, and it failed first.** `probe_n168` asserted the defect; it now asserts the
+  fixed behaviour, and on the pre-fix tree it exits 1 with *"an ignored rootdir pytest config is still
+  invisible to the dirty set (['scripts/probe_audit_findings.py']), so a local exclude rule can point
+  pytest at a different suite under a reused green row"*. After the change it exits 0 and prints
+  `PASS N-168`: `pytest.ini` is in the dirty set, `should_record_green` is `False` over that set and
+  `True` over an empty one, pytest's own collection changes while the config is in place (the tracked
+  `test_n160_source_tree_hash_is_the_object_id_git_stores` is collected before and deselected after —
+  7 collected, then 6 with one deselected), the forged row is still a valid hit to `select_gate_plan`
+  (so the refusal is the dirty set, not a rule that never fires), and `pytest.ini` leaves the set after
+  cleanup with the set equal to the baseline it started from.
+- **What the deselect does and does not prove.** The deselected suite exits 0 with a count the 500
+  floor still accepts, so pytest's exit status and the suite count are both blind to it; the dirty set
+  is the only instrument that fires. The probe therefore measures the refusal, not a red pytest run.
+- **Each tuple member that can be exercised was measured.** With `pytest.ini`, `tox.ini` and `setup.cfg`
+  present and hidden by one `.git/info/exclude` rule, `git status` stays clean and the dirty set reads
+  `['pytest.ini', …, 'setup.cfg', 'tox.ini']`; removing them restores the baseline set. `pyproject.toml`
+  is tracked in this repository, so git can never report it `!!` — its tuple entry is unexercised here
+  and is recorded as unmeasured rather than claimed tested.
+- **N-165 and N-167 did not regress.** `probe N-165` and `probe N-167` both still print `PASS`.
+- **Verification actually run.** `probe_audit_findings.py --list` 20 ids; `verify_audit_findings.py` exit
+  0, **ALL 20 FINDING PROBE(S) PASSED**; `verify_audit_append_only.py --check-scripts-only` exit 0, 9/9
+  verifiers exit 0; `--force-full` on the uncommitted tree exit 0, **536 passed, 0 skipped, 0 xfailed**
+  (136.10 s), and it recorded no row for a working copy that differed from HEAD in 2 paths. The
+  committed-tree run and the single row it appends follow in the next commit.
+- **One observation, reconciled.** A leftover `pytest.ini` and its `.git/info/exclude` rule were found
+  on disk after the gate run and removed before anything was committed; neither the probe run directly,
+  nor `verify_audit_findings.py`, nor the gate's verifier phase reproduces a leftover (measured twice
+  and once respectively, clean each time). The scratch artifacts are not in the commit; the sequence
+  that left them is unexplained rather than explained.
+- **Invariants held.** No trial row was appended or scored: **N = 9, N_eval = 5**; the 2024 validation
+  partition stays frozen; Holdout `2025-01-01..2026-11-11` remains sealed with no `HOLDOUT_UNLOCK`
+  sentinel on disk; `reports/audit/**`, `AGENTS.md` and `.agents/skills/audit-round/SKILL.md` are
+  untouched by this round.
+- **Not claimed.** No seq 10 was registered or run; §82.8 items 4-6 are untouched; N-168 stays `OPEN` in
+  the ledger until the auditor's next section, N-150 stays `OPEN`, N-152 `ACCEPTED`; the pre-2022 window
+  remains warm-up only and the DSR bar is unchanged.
