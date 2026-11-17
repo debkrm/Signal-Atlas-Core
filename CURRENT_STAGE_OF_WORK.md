@@ -1247,3 +1247,64 @@ next round has to reproduce.
   assertion was skipped, dropped or widened.
 - **Not claimed.** No seq 10 was registered or run; §80.13 items 6-7 are untouched; N-152 remains `ACCEPTED`;
   the pre-2022 window remains warm-up only, and the DSR bar is unchanged by anything here.
+
+### Audit §81 — the reuse key is the commit, and an untracked test is state
+
+Round: audit §81 (audit of `80ff581`, section and work order appended at `a5adeaa`, tag
+`audit-s81-dfc99e7`), work order items 1-3 implemented. Criteria **1.1.9**, no threshold moved, no data
+written. **Not audited**: no verdict judges these commits, and **N-162 / N-163 / N-164 carry no `CLOSED`
+row** in `reports/audit/findings.jsonl` — that ledger is the auditor's (§11.1), so the rows stay `OPEN`
+and everything below is the measurement the next round has to reproduce.
+
+- **N-162 — reuse is keyed on the commit being verified.** `select_gate_plan` takes a keyword-only
+  `head_commit` with **no default** (§14.4: a caller that cannot name the commit it verifies cannot
+  reuse), resolves it with `commit_oid()` and skips a row whose `gate_sha` resolves to a different
+  commit, even when that row projects the verified tree. Measured with a real commit object carrying
+  HEAD's exact tree (`git commit-tree HEAD^{tree} -p HEAD`): the row recorded at that commit is **not**
+  spent at HEAD (`full`, reason names the commit), the identical row naming HEAD is **reuse**, and
+  `head_commit="deadbeef"` is `full` with *"the verifying commit … is not a commit in this repository"*.
+  The natural witness arrived by itself at the end of this round: `df382ff` is the code commit and the
+  record commit that follows it is a docs-only child with the identical source tree — the gate there
+  printed *"the record for this source tree was written at df382ff, not at the commit being verified"*
+  instead of the §81.4 `reused green` line, and appended nothing.
+- **N-162 — untracked source files are in the dirty set.** `dirty_source_paths()` now runs
+  `git status --porcelain -z --untracked-files=all`, so a file pytest collects but git does not track
+  forces the heavy gates and forbids recording. Measured by writing
+  `tests/unit/test_n162_untracked_probe.py` with `assert False`: the path appears in the dirty set, the
+  file fails pytest (exit 1), `should_record_green` returns `False`, and the path leaves the set when the
+  file is deleted. Ignored paths stay excluded, because `git status` does not report them.
+- **The accepted cost, stated.** A docs-only commit whose tree a parent already recorded gets **no row of
+  its own** and is therefore never a cache hit: every commit runs the heavy gates at least once, which is
+  the cost §81.4 named. Rows remain history a clone can audit; what reuse now buys is repeated runs at one
+  HEAD, which is the local case it was built for. This supersedes the §80 sentence that a clone "can reuse
+  the newest green run" — a clone of the tag commit recomputes the digest and runs the gates itself.
+- **N-163 — the test no longer assumes its own parentage.** `test_n160_a_hand_written_hash_names_no_tree_and_is_refused`
+  selects its divergent commit by the tree it projects (`_commit_with_other_tree`, a scan of the 40 newest
+  ancestors) instead of taking the parent, so a docs-only commit with a source-identical parent exercises
+  the same property. Measured: `python -m pytest -q tests/unit/test_phase3b2_audit_s80_items.py` → **7
+  passed**, and the file contains no parent-of-HEAD derivation.
+- **N-164 — the probe's refusal is the tree comparison.** `probe_n160` decodes the commit it derives
+  (`parent = git("rev-parse", …).decode().strip()`), asserts the refusal text is *"is not the tree at
+  gate_sha"*, and demonstrates the old shape separately: the same record with an undecoded sha is refused
+  earlier as *"is not a commit in this repository"*, so an assertion that the problem is merely non-`None`
+  passed on the typing accident. Both messages are asserted, in the probe and in `probe_n164`.
+- **Probes were written first and watched to fail.** On the unfixed tree, `probe_n162` and `probe_n160`
+  raised `TypeError: select_gate_plan() got an unexpected keyword argument 'head_commit'`, `probe_n163`
+  failed on *"the §80 cache test still derives its divergent commit from HEAD's parent"*, and `probe_n164`
+  failed on *"a row recording another tree still names a commit it is not refused for: None"*.
+- **Verification actually run.** `python scripts/verify_audit_append_only.py --force-full` exit 0 with
+  `ALL REPOSITORY FOUNDATION GATES PASSED (100%)` — **536 passed, 0 skipped, 0 xfailed** (120.46 s) — and
+  it recorded **no** row for a dirty tree (5 paths). Post-commit run at `df382ff`: exit 0, **536 passed**
+  (121.70 s), 9 discovered `scripts/verify_*.py` all exit 0, W0.5-5 on 46 current / 22 superseded manifest
+  rows, and exactly one row appended — `7976b39b…`, scheme `git-blob-oid-v1`, `gate_sha df382ff`.
+  `verify_audit_findings.py` exit 0 with **16 probes matched**; `probe_audit_findings.py N-160 / N-161 /
+  N-162 / N-163 / N-164` each **PASS** standalone. The §78 and §79 cache tests were updated to the new
+  signature (a row naming another commit, and an unresolvable HEAD, both `full`) — no assertion relaxed,
+  none skipped.
+- **Invariants held.** No trial row was appended or scored: **N = 9, N_eval = 5**; the 2024 fold stays the
+  validation partition with `validation_folds_count = 0`; Holdout `2025-01-01..2026-11-11` remains sealed
+  with `HOLDOUT_UNLOCK` absent; `reports/audit/**` and `.agents/skills/audit-round/SKILL.md` are untouched
+  by this round.
+- **Not claimed.** No seq 10 was registered or run; §81.11 items 4-7 (ledger ratification, A1 sourcing,
+  warm-up labelling, pin relaxation) are untouched; N-150 stays `OPEN`, N-152 `ACCEPTED`; the pre-2022
+  window remains warm-up only and the DSR bar is unchanged.
