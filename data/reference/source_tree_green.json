@@ -241,5 +241,24 @@
     },
     "utc": "2026-11-17T16:08:01.558720+00:00",
     "gate_sha": "fe8299c"
+  },
+  {
+    "source_tree_hash": "b1a88925efd0c4e4955d52a20b5b21d61d09d91babed92405b792d31e2461607",
+    "source_tree_scheme": "git-blob-oid-v1",
+    "suite_count": 536,
+    "pytest_seconds": 140.13,
+    "verify_exits": {
+      "scripts/verify_audit_findings.py": 0,
+      "scripts/verify_cash_universe_coverage.py": 0,
+      "scripts/verify_historical_snapshot.py": 0,
+      "scripts/verify_phase2a_containment_and_trials.py": 0,
+      "scripts/verify_phase2b5_storage.py": 0,
+      "scripts/verify_phase2b_significance.py": 0,
+      "scripts/verify_phase2c_walkforward.py": 0,
+      "scripts/verify_phase2d_verdicts.py": 0,
+      "scripts/verify_wave1_thin_slice.py": 0
+    },
+    "utc": "2026-11-17T16:30:10.924535+00:00",
+    "gate_sha": "120a8d0"
   }
 ]
