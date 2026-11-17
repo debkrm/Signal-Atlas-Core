@@ -8083,3 +8083,185 @@ All probes ran in-process from the repository root against committed bytes. The 
 **Not measured, and not claimed:** whether the rank or the notional floor caused seq 9's improvement (both landed in the same commit and no ablation was registered — the ticket count fell because the floor refuses, and the rank's marginal contribution is unmeasured); whether the 15 unresolved instruments (N-140) are EQ, liquid, or large caps; whether the 12 open positions could have been exited at the 2023-12-29 close at the modelled slippage, since the liquidation is a diagnostic and not a fill; whether any SELL was refused in seq 9 (N-142 — the artifact cannot say); and anything out-of-sample — the 2024 fold is unspent and the holdout is sealed.
 
 **What would falsify this verdict.** If the same parameters run to a window ending three months earlier (2023-09-29) produce a comparable liquidated PF and the 2022/2023 split persists, then the gain is not an artifact of the 2023-12-29 cut and Ruling 4's reason 3 weakens — the fold question would then rest on DSR 0.4140 and the zero haircut alone, which still refuse it. Conversely, if those 12 open positions are marked at prices that could not have been sold at the modelled slippage, the +₹319,413 is overstated, the liquidated PF falls through 1.50 before the ex-top-one cut, and Ruling 1's wiring should be read as a measurement of a book that never existed.
+## 77. Audit of `348b5ba..adb16bd` — every §76 item lands, and the gate it repaired now blocks the corpus
+
+### 77.1 Baseline re-measured at `adb16bd`
+
+`python scripts/verify_audit_append_only.py` → **exit 0**, `ALL REPOSITORY FOUNDATION GATES PASSED (100%)`: W0.5-1 append-only PASS; **W0.5-2 all 8 discovered `verify_*.py` exit 0** (nine exist on disk; the gate deliberately excludes itself, `verify_audit_append_only.py:117`); **W0.5-3 505 passed in 121.47 s, 0 skipped, 0 xfailed**; W0.5-4 all sign-off and audit tags resolve; W0.5-5 46 current artifacts match byte_count/sha256 with 19 superseded rows skipped.
+
+Tree clean before and after the round; the implementer's change is `adb16bd` alone (15 files, +822/−63 — the 16-file figure in the range is my own §76 commit). Tag `feat-s76-adb16bd` present. Trials registry unchanged: **N=9, N_eval=5**, manifest 323 B pinned `3326b1b2…`, `validation_folds_count 0`, holdout sealed.
+
+### 77.2 N-139 — **CLOSED**, at the probe §76.16 item 1 specified
+
+| Probe | Measurement |
+|---|---|
+| A0 | committed criteria: version `1.1.6`, fingerprint `CRIT-FPR-V1-0371c9b5…`; `FINGERPRINT_EXCLUDED_FIELDS = ('expected_trial_registry_manifest_sha256',)` |
+| A1 | replacing the pin with a different 64-hex digest leaves the fingerprint **byte-identical**; the pin value itself really changed |
+| A2 | mutating any of `min_profit_factor`, `min_haircut_sharpe_ratio`, `min_dataset_instrument_resolution_pct`, `max_single_position_weight`, `min_total_trades`, `entry_rank_indicator`, `min_entry_notional` **moves** the fingerprint — the exclusion is not a hole a threshold can be smuggled through |
+| A3 | deleting only the pin key line → `CriteriaValidationError: Mandatory pinned invariant 'expected_trial_registry_manifest_sha256' is absent…` — still mandatory at load |
+| A4 | pin substituted in place → `verify_phase2a_containment_and_trials.py` **exit 1**, `[FAIL] G2A-6.8a (N-128): committed trials manifest sha256 3326b1b2… equals the criteria pin dededede…` |
+| A5 | restored → verify exit 0, pin back to `3326b1b2…`; `f(1.1.6)` reproduces the Tier-A artifact's cited `0371c9b5…` |
+
+The anchor is now a function of the thresholds and nothing else, and the pin that must move on append is no longer inside it. G2A-6.8a still enforces the pin against the manifest, so removing it from the fingerprint did not remove the check.
+
+**Residual, named and unavoidable.** The fingerprints cited by trial artifacts 6–9 cannot be reproduced by any file (`1cce20a0…`, `1cce20a0…`, `a92d8577…`, `b60ca03e…`). Those artifacts are append-only historical records of runs under 1.1.3–1.1.5; regenerating them would be rewriting history (§10.1). My §76.16 probe demanded reproduction "for seq 6–9", and that demand was wrong: it was satisfiable only by rewriting committed artifacts. The correct closure test is what A1/A2/A5 measure — invariance under the pin, sensitivity to every threshold, and exact reproduction for every artifact produced **from now on** — and the implementer met that, not the impossible version.
+
+### 77.3 N-141 — **CLOSED**
+
+`CRIT-OVERFIT-04` in `evaluate_verdicts`, threshold read from `active_criteria.min_haircut_sharpe_ratio` (1.25, `BONFERRONI`):
+
+| Probe | Bundle | Row |
+|---|---|---|
+| B1 | haircut 0.0000, N_eval 5 | **FAIL**, computed `0.0000` |
+| B2 | 1.30 | **PASS** |
+| B3 | 1.25 exactly | **PASS** (comparator `>=`) |
+| B4 | 1.30 with `evaluated_trial_count=1` | **NOT RUN** — "the haircut needs at least 2" |
+| B5 | 1.30 with N_eval 0 | **NOT RUN** |
+| B6 | key absent | **NOT RUN**, never PASS on an absent statistic |
+| B7 | `"0.0000"` as a string | **FAIL** — parsed, not ignored |
+
+B4 is the arm that matters: a good haircut value cannot pass the gate on a registry too thin to compute a trial-count adjustment.
+
+### 77.4 Ruling 1 — **CLOSED**, and it does not silently fall back
+
+| Probe | Bundle | `CRIT-STAT-01` | `CRIT-STAT-02` |
+|---|---|---|---|
+| C1 | liquidated 205, PF 1.64396…, closed-only 193 / 0.9920, ex-top-1 1.4812, ex-top-3 1.2939 | **PASS** 205, evidence names the closed-only pair | **PASS** 1.6440, evidence carries both sensitivities |
+| C2 | same with `total_trades=193` | PASS 193 — see N-144 | — |
+| C3 | PF 1.49 | — | **FAIL** — threshold is still 1.50 |
+| C4 | `total_trades` key absent, closed-only keys present | **NOT RUN** — no fallback to the censored count | — |
+| C5 | sensitivities absent | — | PASS on 1.6440 with no invented sensitivity text |
+
+C4 is the §14.4 test and it passes: the closed-only pair is disclosure only, and a bundle that omits the liquidated count reports NOT RUN rather than gating on 193.
+
+Two corrections to my own §76 framing, measured here. First, `CRIT-STAT-01`'s threshold is **≥ 100**, not ≥ 200; seq 9's row read 193/`PASS` before this commit and reads 205/`PASS` now — the basis change does not flip that criterion, and it should not be reported as having done so. The ≥ 200 figure in §75.11 and §76.7 is the stricter *pre-registration* for the trial's own success, which the closed book missed (193) and the liquidated book meets (205); that distinction is resolved cleanly and the artifact's row now states the de-censored count. Second, the four rows that would change under 1.1.6, recomputed from seq 9's own committed rows (G1/G2): `CRIT-STAT-01` 193→**205 PASS**, `CRIT-STAT-02` 0.9920→**1.6440 PASS**, `CRIT-STAT-03` 0.1291→**0.0828 PASS**, `CRIT-OVERFIT-04` added → **0.0000 FAIL**. The FAIL count would fall from four to two (DSR 0.4140, haircut 0.0000) and the verdict stays NO-GO.
+
+Ex-top-1 and ex-top-3 recompute from the artifact's rows to `1.481198621244744672803973178` and `1.293902689517123314516425735` — the committed 1.4812 / 1.2939 are that computation, and the concentration warning is now printed on the same line as the PF.
+
+### 77.5 Ruling 2 — **CLOSED**
+
+Entry-time weight `0.0828` → **PASS** with the hold-period maximum `0.1291` printed as non-gating disclosure; entry weight `0.1291` → **FAIL** (the gate still bites on the entry basis); a bundle carrying only the hold-period maximum → **NOT RUN**, so a hold-period mark cannot be laundered as an entry weight. The runner computes `executed_price × filled_quantity / total_portfolio_value` at the fill session's snapshot (falling back to the latest prior snapshot) and counts unpriced fills separately (`entry_weight_unpriced_fills`).
+
+### 77.6 Ruling 3 / N-140 — **CLOSED as wiring**, and the number it now computes is a binding **FAIL**. This is the finding of the round: **N-145 (HIGH)**
+
+The two statistics are now separate and independent (E1/E2/E5): `CRIT-DATA-05` (traded rows) PASS at 100.0000%, FAIL at 99.5%; `CRIT-DATA-07` (dataset instruments) FAIL at 92.8910% carrying "196 of 211" and "15 unresolved", PASS at 100%. Neither substitutes for the other, and both report NOT RUN when absent.
+
+But `CRIT-DATA-05` is now computed as rows of the research dataset, not rows of the bhavcopy archive, and on this corpus that reads **93.1867%** in-window and **93.2328%** over the full span — because the 15 refused instruments own **10,338 of 152,767 bars (6.7672%)**:
+
+| Window | rows resolved / total | `CRIT-DATA-05` |
+|---|---|---|
+| 2022-01-03 .. 2023-12-29 (the in-sample window) | 94,592 / 101,508 | **93.1867% → FAIL** |
+| 2022-01-03 .. 2024-12-31 | 142,429 / 152,767 | **93.2328% → FAIL** |
+
+So from 1.1.6 onward **every trial fails `CRIT-DATA-05` at threshold 100.0%**, by construction, before a single signal is evaluated. The wiring is faithful to the criterion's name; the corpus cannot satisfy it. I record this as the round's HIGH finding because it silently converts seq 10 into a forfeit, and because the same defect will make any future GO impossible while presenting itself as a strategy failure. 77.11–77.13 rule on what it means and what must happen first.
+
+### 77.7 N-142 — **CLOSED**
+
+`tabulate_rejections` attributes refusals by side and reason. F1: a six-ticket fixture with BUY/SELL, one refusal each of `REJECTED_BELOW_MIN_NOTIONAL`, `REJECTED_INSUFFICIENT_TURNOVER` ×2 and `REJECTED_LOCKED_SESSION`, plus a `FILLED` and a `status=None` ticket yields
+
+```json
+{"BUY": {"REJECTED_BELOW_MIN_NOTIONAL": 1},
+ "SELL": {"REJECTED_INSUFFICIENT_TURNOVER": 2, "REJECTED_LOCKED_SESSION": 1}}
+```
+
+whose counts sum to **4**, exactly the `tickets_rejected` figure computed by the same `REJECTED_*` predicate (`swing.py:531` versus `swing.py:335`), with `FILLED` and `None` excluded by both. A refused SELL is now visible per reason, which is what §5.3 needs to see an involuntary hold.
+
+### 77.8 N-143 (new, MEDIUM) — criteria 1.1.6 is not exercised by any committed trial artifact
+
+The Tier-A artifact was regenerated (PASS 3 / FAIL 0 / NOT RUN 22 of 25, `0371c9b5…`), but every *trial* artifact — including seq 9, the only run whose numbers matter — still shows the 1.1.5 table: `CRIT-STAT-01` 193, `CRIT-STAT-02` 0.9920 FAIL, `CRIT-STAT-03` 0.1291 FAIL, **24 rows and no `CRIT-OVERFIT-04`**. The criteria version and fingerprint in the artifact are 1.1.5 / `b60ca03e…`.
+
+That is correct behaviour for an immutable record, but it means the six repairs are verified only by unit fixtures and by my reconstruction from seq 9's own rows. A reader who opens the seq 9 artifact today sees a table that no longer matches the thresholds governing the project, and the one FAIL the new criteria adds (haircut 0.0000) is invisible there. Regenerating the artifact is forbidden; the resolution is a *separate* restatement note or a new artifact — never an in-place edit.
+
+### 77.9 N-146 (new, LOW) — `CRIT-DATA-05` now has two implementations with different denominators
+
+`scripts/generate_phase2d_tier_a_report.py` computes it as resolved bhavcopy rows over the archive manifest's `total_traded_eq_rows` across all 1,195 sessions → **100.0000% PASS**. `scripts/run_phase3b2_walkforward.py` computes it as resolved research-dataset bars inside the evaluation window → **93.1867% FAIL**. Same criterion id, same threshold, opposite verdicts, both "traded rows". The one-definition rule cuts both ways: whichever is canonical must be named in the criterion comment, and the other must not report under that id.
+
+### 77.10 N-147 (new, LOW) — the markdown report emits the unresolved-instruments line twice
+
+`run_phase3b2_walkforward.py:2183-2184` has two adjacent f-string list elements, the first a bare `"> Unresolved dataset instruments: "`. seq 10's report will carry an empty dangling line above the real one. Cosmetic, in the reporting path only.
+
+### 77.11 Senior Quant Researcher — the 15 unresolved instruments, reviewed
+
+Measured directly from the corpus (not the artifact): 211 dataset instruments, 196 resolved, **15 refused, but only 14 distinct symbols** — `COCHINSHIP` appears as two UUIDs whose spans abut at 2024-01-10, so the denominator counts one company twice. All 15 are `EQ`, all carry a full 743-bar history across the span (except the two COCHINSHIP halves), and every one is a liquid, well-known name:
+
+| Symbol | old ISIN → new ISIN | effective date (interval table) | corpus documentation | last close / volume |
+|---|---|---|---|---|
+| TATASTEEL | INE081A01012 → INE081A01020 | 2022-07-29 | `ISIN_TRANSITION` + `SPLIT` 10:1, both `UNATTESTED` | 138.05 / 20,080,291 |
+| VBL | INE200M01013 → INE200M01021 → INE200M01039 | 2023-06-15, **2024-09-12** | first only (`ISIN_TRANSITION` + `SPLIT` 2:1, `UNATTESTED`); **second undocumented** | 638.50 / 3,444,309 |
+| COCHINSHIP | INE704P01017 → INE704P01025 | 2024-01-10 | `ISIN_TRANSITION` 2:1, `UNATTESTED` | 1,538.75 / 438,789 |
+| NESTLEIND | INE239A01016 → INE239A01024 | 2024-01-05 | `SPLIT` row exists but **names no ISINs** | 2,170.05 / 635,557 |
+| CANBK | INE476A01014 → INE476A01022 | 2024-05-15 | none | 100.12 / 12,525,017 |
+| DRREDDY | INE089A01023 → INE089A01031 | 2024-10-28 | none (dividends only) | 1,388.50 / 1,892,083 |
+| BAJAJFINSV | INE918I01018 → INE918I01026 | 2022-09-14 | none (dividends only) | 1,568.10 / 1,041,557 |
+| HAL | INE066F01012 → INE066F01020 | 2023-09-28 | none | 4,178.35 / 901,281 |
+| MAZDOCK | INE249Z01012 → INE249Z01020 | 2024-12-27 | none | 2,227.80 / 4,785,547 |
+| PERSISTENT | INE262H01013 → INE262H01021 | 2024-03-28 | none | 6,457.70 / 573,708 |
+| BDL | INE171Z01018 → INE171Z01026 | 2024-05-27 | none | 1,122.85 / 479,637 |
+| JUBLFOOD | INE797F01012 → INE797F01020 | 2022-04-20 | none | 718.10 / 1,642,114 |
+| IRB | INE821I01014 → INE821I01022 | 2023-02-22 | none | 57.24 / 13,378,117 |
+| VTL | INE825A01012 → INE825A01020 | 2022-03-25 | none | 506.00 / 180,942 |
+
+**What this is, and what it is not.** These are not missing prices, stale tickers or illiquid shells. They are large caps whose identity changed mid-span, each with a complete adjusted price history, an effective-dated start and end in `cash_equity_symbol_intervals.csv`, and — in 10 of 14 cases — *no corporate-action row that explains the change at all*. In NSE practice a face-value change (split, bonus, consolidation) issues a new ISIN, so every one of these is consistent with a corporate action; the corpus asserts the consequence (two identities, a date) without the cause, the ratio or an attestation. Where a cause does exist it is `UNATTESTED_…` / `CONTENT_IDENTIFIED_ONLY`, which by §5.4 and §6.5 is not documentation.
+
+**The refusal is therefore correct and the debt is real.** Not stitching these histories is the only rule-compliant choice, and it costs 6.7672% of traded bars and 14 of the market's most liquid names — `CANBK` and `TATASTEEL` alone carry 32.6 million shares of last-session volume. A GO computed on a universe that excludes them is a claim about a different market, which is exactly what §13.4's breadth requirement exists to prevent. Equally, the refusal must not be laundered away by lowering `CRIT-DATA-05` or by re-scoping the denominator to "resolved instruments only" — that would make the criterion a tautology (every bar in `bars_by_isin` belongs to a resolved instrument by construction) and would erase the only measurement that shows the exclusion.
+
+**Ruling.** The identity transition table is the binding work item for seq 10, ahead of rank, exits and DSR. It requires, per row: old ISIN, new ISIN, effective date, action type, ratio, and an attested source reference with a content hash — the same standard already applied to the calendar and the trials manifest. Four of the 15 rows have a candidate in `corporate_actions.jsonl` that needs attestation and, for NESTLEIND, the ISIN fields filled in; VBL's second transition and the ten undocumented names need sourced circulars. The engine side is smaller than it looks: H-127 already implements re-keying identity at 1:1 on an adjusted corpus, so the runner needs a transition *lookup* at the effective date rather than a new stitching path — the price series is already continuous and split-adjusted, only the identity is unresolved.
+
+### 77.12 Senior Quant Researcher — the exact seq 10 pre-registration
+
+Seq 10 is `TRIAL-PHASE3B2-…-010`, and it may be registered **only after** 77.11 lands, because with `CRIT-DATA-05` reading 93.1867% a run now fails a binding data gate regardless of its P&L; registering first spends N=10 on a forfeit. The pre-registration, committed in `configs/go_no_go_criteria.yaml` 1.1.7 **before** execution:
+
+1. **Partition and window.** `IN_SAMPLE`, `2022-01-03 .. 2023-12-29`, unchanged. 2024 remains the unspent validation fold; the holdout (2025-01-01 .. 2026-11-11) stays sealed. Extending the in-sample window into 2024 is a scope change (see 77.14), not a tweak.
+2. **One change, named.** Exit geometry: `atr_stop_multiple` **2.0 → 3.0**. Everything else frozen at the seq 9 values already in `canonical_params` — `sma_20/sma_50`, `entry_rank_indicator mom_63`, `entry_rank_order DESC`, `entry_tiebreak ISIN_ASC`, `min_entry_notional 25000`, `min_fill_notional 5000`, `allocation_weight 0.08`, `trim None`, `APPROVED_EQ_ONLY_POLICY`, `LOCKED_BAR_REFUSAL_ONLY`. Rationale, from §75.11: the stop costs 0.57pp per round trip at k=2 and 0.29pp at k=3, with and the measured cost falling from 0.57pp to 0.29pp per round trip; seq 9's gross is +2.16% on the liquidated book while its *closed* book is −0.03%, i.e. the exits, not the entries, are what fails to bank the trend.
+3. **No ablation inside the trial.** The ranked-versus-alphabetical and stop-2.0-versus-3.0 comparisons are reported descriptively from the same run's rows (partition by entry-time rank bucket and by exit reason); they are not separate registered trials and do not enter N.
+4. **Success, all of it required, computed not typed.** Liquidated PF **≥ 1.50** *and* ex-top-1 PF **≥ 1.40** (a margin the current run fails at 1.4812); closed-book net expectancy **> 0** (the liquidated book alone is not evidence — 112.7% of seq 9's gain was an open mark); **≥ 200** liquidated round trips; MaxDD **≤ 0.25**; `CRIT-STAT-03` entry weight **≤ 0.10**; `CRIT-DATA-05` **PASS** (i.e. 77.11 closed); DSR **≥ 0.95** at N=10, N_eval=6; haircut **≥ 1.25** at N_eval=6; `CRIT-OVERFIT-03` **PASS** under 77.13.
+5. **Falsification.** If the closed-book net expectancy stays ≤ 0 while gross per round trip is ≥ 0.30%, the exit-geometry hypothesis is dead and the SMA(20/50) long-only family closes: the next trial must change the signal, the holding horizon or the universe, not another parameter of this one. If gross falls below 0.30%, the ranking plus stop change destroyed the edge and the family closes immediately.
+6. **Recorded before the run.** `trial_id`, `canonical_params`, the frozen criteria version and fingerprint, N and N_eval, and the fold-unlock conditions of 77.13, all appended to the registry before the first session is simulated. A condition added afterwards is not a condition.
+
+### 77.13 Senior Quant Researcher — `CRIT-OVERFIT-03` as a computed in-sample stability statistic
+
+`CRIT-OVERFIT-03` is currently NOT RUN because it needs ≥ 2 *validation* folds. It can be made computable without touching 2024 by evaluating stability **inside** the in-sample window from the single run's own ledger, pre-registered in 1.1.7 as three new fields:
+
+1. **Anchored expanding folds, four of them**, ending 2022-06-30, 2022-12-30, 2023-06-30, 2023-12-29. For each fold, recompute net expectancy, liquidated PF and MaxDD from the trade rows whose **exit date** falls inside the fold; entries may precede the fold start. No re-fitting, no re-running: one run, four partitions — otherwise four folds become four trials and N inflates.
+2. **`min_positive_is_fold_ratio: 0.75`** — at least 3 of 4 folds must show **positive net expectancy on the closed book** and **liquidated PF ≥ 1.30** (`min_fold_liquidated_pf`). 2022 vs 2023 is the live risk here: seq 9 is PF 0.7458 in 2022 against 2.8257 in 2023, which fails this 3-of-4 bar outright and is precisely why the fold must not be spent yet.
+3. **`max_parameter_neighbourhood_pf_spread: 0.25`** — the same run must be evaluated at `atr_stop_multiple ∈ {2.5, 3.0, 3.5}` and the liquidated PF must (a) stay ≥ 1.35 at all three and (b) vary by no more than 0.25 across the range. This is the §8.3 spike test: a result that exists only at k=3.0 is a curve fit. It is a *diagnostic on the same data*, reported in the artifact, and if it requires three engine runs those runs are declared as three trials in the registry — the cost is stated up front rather than discovered later.
+
+`CRIT-OVERFIT-03` then reads: PASS only if 1–3 hold *and* the two validation folds required by its existing definition eventually exist (the 2024 fold supplies one; the second must come from an independent window). Until then it reports the in-sample ratio as a **non-gating disclosure** — never a PASS.
+
+### 77.14 Senior Quant Researcher — the unlock arithmetic, stated before anyone plans around it
+
+With seq 9's return shape (T = 493, skew −0.7193, kurtosis 5.6880, trial-Sharpe variance 0.4599) and N = 10, N_eval = 6, the pre-committed thresholds imply:
+
+| Gate | Annualized Sharpe required | seq 9 observed |
+|---|---|---|
+| DSR ≥ 0.95, T = 493 (2022–2023) | **2.314** | 0.873 |
+| DSR ≥ 0.95, T = 747 (adds 2024) | 2.073 | — |
+| DSR ≥ 0.95, T ≈ 1,470 (2018-04 .. 2023-12) | 1.778 | — |
+| Haircut ≥ 1.25, N_eval = 6 | **1.765** | — |
+
+Two conclusions I will not soften. First, **the unlock gate as framed is not reachable by a parameter change**: it asks seq 10 for a Sharpe roughly 2.6× the best result in the registry, on 493 observations, after nine recorded trials. If seq 10 cannot produce that — and on this evidence it cannot — the 2024 fold is never unlocked, and the honest report will say so. That is a legitimate outcome of §8, not a failure of the process, but it means nobody should plan on the fold as a reward for clearing 1.50 PF.
+
+Second, **the binding constraint is the data window, not the strategy**. §10.8 sets the binding evaluation window from **2018-04-01**; the corpus starts 2022-01-03. Extending Bronze/Silver back to 2018-04 would roughly triple the observation count and drop the DSR bar from 2.314 to ~1.78 — a Sharpe a credible systematic strategy can actually reach — while leaving 2024 as confirmation. That is the highest-value engineering task in the repository, ahead of any further strategy work, and it is rule-compliant: longer history from real archive bytes, not a different test.
+
+I am **not** recommending any threshold move. DSR ≥ 0.95 and haircut ≥ 1.25 are pre-committed; the response to an unreachable bar is more evidence, not a lower bar.
+
+### 77.15 Ordered work order
+
+1. **N-145 / 77.11 — identity transitions, before anything else.** An attested transition table (old ISIN, new ISIN, effective date, action, ratio, source reference + hash) covering all 15 rows, plus a runner path that resolves identity through it at the effective date instead of refusing. Probe: `CRIT-DATA-05` prints 100.0000% over 2022-01-03..2023-12-29 with **0** refused instruments, all 14 symbols present, and an instrument deliberately given a transition with no table row still fails closed. Serves §5.4, §6.3, §13.1.
+2. **N-146 — one denominator for `CRIT-DATA-05`.** Name the canonical implementation in the criterion comment and have the other artifact report under its own id (or not at all). Probe: the same corpus produces one number for `CRIT-DATA-05` in both artifacts, or the second is a different criterion id. Serves §9.1.
+3. **N-143 — make 1.1.6 visible to a reader of the trial artifacts.** A separate, append-only restatement note (not an edit) recording seq 9's rows under 1.1.6: 205 / 1.6440 (ex-top-1 1.4812, ex-top-3 1.2939) / 0.0828 / haircut 0.0000 FAIL, with the recomputation stated so a reader can reproduce it from the artifact's own rows. Probe: the note's figures recompute from `closed_trades` + `liquidated_open_positions` to the digit. Serves §9.1, §11.3.
+4. **N-144 (LOW) — stop trusting the key name.** `total_trades` is gated as "the de-censored book" with no check that it is one; a bundle carrying 193 is labelled "de-censored" (measured C2). Require `liquidated_trade_count` or assert `total_trades == closed_only_trade_count + len(liquidated_open_positions)` and fail closed on mismatch. Probe: a bundle where the two disagree reports FAIL/ERROR, not PASS. Serves §9.1.
+5. **N-147 — delete the duplicate markdown line.** Probe: the generated report contains the unresolved-instruments line exactly once.
+6. **77.13 — implement the in-sample stability statistic** (`min_positive_is_fold_ratio`, `min_fold_liquidated_pf`, `max_parameter_neighbourhood_pf_spread`) as disclosures now and as gates for seq 10. Probe: a run negative in 2022 and positive in 2023 reports the ratio 0.50–0.75 and does **not** PASS; a single-cell spike fails the neighbourhood test. Serves §8.3.
+7. **77.14 — extend the corpus to the binding window start (2018-04-01).** Bronze-first, immutable, with manifests. Probe: the in-sample window yields ≥ 1,400 sessions with zero synthesised rows, and the DSR bar for a 10-trial registry is reported from the actual T. Serves §10.8, §8.2.
+8. **Only then seq 10** under 77.12, and only then a fold decision under §76.15.
+
+### 77.16 Probe hygiene, and not measured
+
+All probes ran in-process from the repository root. Two temporary mutations of `configs/go_no_go_criteria.yaml` (pin removed; pin corrupted) were made to test A3/A4 and restored with `git checkout --`; `git status` was verified clean before the round, after the restore, and at the end. The dataset probe loaded the corpus read-only through the same `resolve_or_build_historical_dataset` and `build_production_security_master` the runner uses, and enumerated the 15 refusals itself rather than reading them from the artifact. No artifact, registry row, corpus file or criteria file was modified. `CURRENT_STAGE_OF_WORK.md` was not edited.
+
+**Not measured, and not claimed:** whether any of the 15 transitions is *actually* a split/bonus (the corpus asserts two identities and a date; I verified the dates and the absence of documentation, not the real-world cause); whether the adjusted price series already resolves the identity conflict in a way that would make re-keying safe (the series is continuous and adjusted, but continuity is not attestation); whether seq 9's 12 open positions could be exited at the modelled slippage; the 2024 fold; the holdout; and the trading performance of a scenario where the 15 excluded names had been eligible — that is the unmeasured counterfactual that makes the exclusion hard to size.
+
+### 77.17 What would falsify this verdict
+
+If the 15 refusals turn out to be an artefact of the *interval table* rather than of the market — i.e. `cash_equity_symbol_intervals.csv` contradicts the bhavcopy's own ISIN column on those dates — then the identity debt is a security-master bug, not a documentation debt, the exclusion is self-inflicted, and 77.11's work order collapses into a data-repair task with no attestation requirement. Conversely, if a full attested transition table is added and `CRIT-DATA-05` *still* reads below 100% on a fresh run, then the row-denominator in `run_phase3b2_walkforward.py` counts something other than traded rows (for example, bars for instruments that never traded in-window) and N-146 is the real defect, not the universe.
