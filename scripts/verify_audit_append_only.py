@@ -56,6 +56,9 @@ GREEN_CACHE_SCHEME = "git-blob-oid-v1"
 # `.py` files are taken: a byte-code cache, a build directory or an ignored `data/` artifact cannot
 # change a test outcome on its own, and treating them as dirt would make every local checkout full-run.
 IGNORED_SOURCE_ROOTS = ("src/", "scripts/", "tests/")
+# §83.6 item 1 (N-167): pytest imports the rootdir conftest for every run, including for `testpaths`
+# entries that live elsewhere, so an ignored one changes the suite without being under a collected root.
+ROOTDIR_PYTEST_CONFTEST = "conftest.py"
 # Audit §79.8 (N-155): a record is evidence only if it witnesses the run it claims. The floor is a
 # pinned minimum, not a default: a row reading `suite_count: 1` used to satisfy the same comparison as
 # a row reading 523. The two runtime verifiers are re-executed even on a cached source tree, because
@@ -309,6 +312,11 @@ def dirty_source_paths() -> List[str]:
     "the tree is clean" and "the suite is green" would disagree. Only `.py` files under the roots pytest
     collects from count, so a byte-code cache or an ignored `data/` artifact does not force the heavy
     gates; that a local data artifact is invisible here is the residual §82.5 named.
+
+    Both shapes git reports are covered (§83.6 item 1, N-167). `--ignored=matching` names an ignored
+    directory once, as `dir/`, and enumerates nothing inside it, so the `.py` files under it are asked for
+    directly; and a rootdir `conftest.py` is state even though it sits outside the collected roots,
+    because pytest imports it for every run.
     """
     proc = subprocess.run(
         [
@@ -329,13 +337,53 @@ def dirty_source_paths() -> List[str]:
         if not is_source_tree_path(path):
             continue
         if status == "!!":
-            # An ignored directory is reported once, as `dir/`; nothing under it is enumerated.
-            if path.endswith("/") or not path.endswith(".py"):
+            # pytest imports the rootdir `conftest.py` for every run, whatever `testpaths` says, so an
+            # ignored one is code the suite executes (N-167).
+            if path == ROOTDIR_PYTEST_CONFTEST:
+                paths.append(path)
+                continue
+            # An ignored directory is reported once, as `dir/`, and nothing under it is enumerated.
+            if path.endswith("/"):
+                if any(path.startswith(root) for root in IGNORED_SOURCE_ROOTS):
+                    paths.extend(ignored_python_files(path))
+                continue
+            if not path.endswith(".py"):
                 continue
             if not any(path.startswith(root) for root in IGNORED_SOURCE_ROOTS):
                 continue
         paths.append(path)
     return sorted(set(paths))
+
+
+def ignored_python_files(directory: str) -> List[str]:
+    """
+    The ignored `.py` files inside an ignored `directory` git reports only as `dir/` (§83.6 item 1, N-167).
+
+    `git status --ignored=matching` collapses the whole subtree into one entry, so a collected test hidden
+    by a local exclude left the dirty set empty while pytest ran it. `git ls-files --others --ignored`
+    asks the index for those files directly. A failure is raised rather than read as "no files": the
+    dirty set is what refuses reuse, so an unenumerable directory must not look clean.
+    """
+    proc = subprocess.run(
+        [
+            "git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", directory,
+        ],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"git ls-files failed for ignored directory {directory}: "
+            f"{proc.stderr.decode('utf-8', 'replace').strip()}"
+        )
+    found: List[str] = []
+    for raw in proc.stdout.split(b"\x00"):
+        if not raw:
+            continue
+        rel = raw.decode("utf-8")
+        if rel.endswith(".py"):
+            found.append(rel)
+    return found
 
 
 def source_tree_entries_for_commit(ref: str) -> Optional[List[Tuple[str, str]]]:

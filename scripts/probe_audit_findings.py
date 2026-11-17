@@ -964,15 +964,14 @@ def probe_n166() -> None:
 
 def probe_n167() -> None:
     """
-    An ignored directory and an ignored rootdir `conftest.py` are invisible to the dirty set (N-167).
+    An ignored directory and an ignored rootdir `conftest.py` are dirty state (N-167).
 
     `git status --ignored=matching` reports an ignored directory once, as ``dir/``, and enumerates nothing
-    inside it; `dirty_source_paths()` drops every entry that ends in ``/`` and keeps ignored files only
-    under `src/`, `scripts/` and `tests/`. A directory under `tests/` holding a failing test, and a
-    rootdir `conftest.py` pytest loads for every run, are therefore code the suite executes while git
-    calls the tree clean. The probe asserts the defect with §82.8's instruments -- the dirty set, the
-    forged row naming HEAD, and pytest's own verdict -- and must fail, then be replaced by a closure
-    probe, once both shapes are covered.
+    inside it, and a rootdir `conftest.py` sits outside the roots pytest collects tests from -- yet pytest
+    executes both, so a green run certified over them can be red. `dirty_source_paths()` enumerates the
+    ignored `.py` files inside an ignored directory under a collected root (§83.6 item 1) and keeps an
+    ignored rootdir `conftest.py`, so both shapes refuse reuse and recording the way an edited file does
+    in main() (N-165).
     """
     import datetime
     import shutil
@@ -983,6 +982,7 @@ def probe_n167() -> None:
         dirty_source_paths,
         discovered_verification_scripts,
         select_gate_plan,
+        should_record_green,
         source_tree_hash_at_commit,
     )
 
@@ -1019,12 +1019,15 @@ def probe_n167() -> None:
         ).stdout
         assert hidden_dir not in status and "conftest" not in status, status
         dirty = dirty_source_paths()
-        assert hidden_test not in dirty and not any(p.startswith(hidden_dir) for p in dirty), (
-            f"the dirty set now covers an ignored directory ({dirty}); re-measure N-167 and close N-165"
+        assert hidden_test in dirty, (
+            f"an ignored directory under tests/ is still invisible to the dirty set ({dirty}), so a "
+            f"collected test git does not enumerate can be certified green"
         )
-        assert set(dirty) == set(baseline_dirty), (
-            f"an ignored directory changed the dirty set: {sorted(set(dirty) - set(baseline_dirty))}"
+        assert should_record_green("full", True, 536, dirty) is False, (
+            "a run over an ignored collected directory would still be recorded as green"
         )
+        # The refusal is the dirty set, not a recording rule that never fires: an empty set records.
+        assert should_record_green("full", True, 536, []) is True
         collected = subprocess.run(
             [sys.executable, "-m", "pytest", "-q", hidden_dir], cwd=str(REPO_ROOT),
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -1053,8 +1056,12 @@ def probe_n167() -> None:
             encoding="utf-8",
         )
         dirty = dirty_source_paths()
-        assert root_conftest not in dirty, (
-            f"the dirty set now covers an ignored rootdir conftest.py: {dirty}"
+        assert root_conftest in dirty, (
+            f"an ignored rootdir conftest.py is still invisible to the dirty set ({dirty}), so a run "
+            f"pytest configures with it can be certified green"
+        )
+        assert should_record_green("full", True, 536, dirty) is False, (
+            "a run over an ignored rootdir conftest.py would still be recorded as green"
         )
         run = subprocess.run(
             [
@@ -1076,7 +1083,13 @@ def probe_n167() -> None:
             exclude.unlink()
     assert not (REPO_ROOT / hidden_dir).exists(), f"{hidden_dir} still present after cleanup"
     assert not (REPO_ROOT / root_conftest).exists(), f"{root_conftest} still present after cleanup"
-    assert not any("n167" in path for path in dirty_source_paths()), "N-167 scratch file is still dirty"
+    after = dirty_source_paths()
+    assert hidden_test not in after and root_conftest not in after, (
+        f"an N-167 scratch path is still dirty after cleanup: {after}"
+    )
+    assert set(after) == set(baseline_dirty), (
+        f"cleanup left the dirty set changed: {sorted(set(after) - set(baseline_dirty))}"
+    )
 
 
 PROBES: Dict[str, Callable[[], None]] = {

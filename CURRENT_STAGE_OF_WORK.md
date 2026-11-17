@@ -1363,3 +1363,43 @@ auditor (§11.1), so what follows is the measurement the next round has to repro
 - **Not claimed.** No seq 10 was registered or run; §82.8 items 4-6 (A1 sourcing, warm-up labelling, pin
   gating) are untouched; N-150 stays `OPEN`, N-152 `ACCEPTED`; the pre-2022 window remains warm-up only
   and the DSR bar is unchanged.
+
+### Audit §83 — an ignored directory is dirty state, whatever shape git reports
+
+Round: audit §83 (audit of `1a20255`, section and work order appended at `b89dbe7`, tag
+`audit-s83-b89dbe7`), work order item 1 only — N-167 (`MEDIUM`), the surface §83.4 registered and §83.3
+left open. Item 2 (the §82.8 items 4-6) is carried unchanged. Criteria **1.1.9**, no threshold moved, no
+trial and no data written. N-167's ledger row stays `OPEN`: closure rows belong to the auditor (§11.1),
+so what follows is the measurement the next round has to reproduce. **Not audited.**
+
+- **Both shapes git does not enumerate are dirty now.** `dirty_source_paths()` used to drop every
+  ignored entry ending in `/` and kept ignored files only under `src/`, `scripts/`, `tests/`, so an
+  ignored directory under `tests/` holding a collected test, and an ignored rootdir `conftest.py`, were
+  code the suite executes while the gate's only view of the working copy said "clean". An ignored
+  directory under a collected root is now enumerated with `git ls-files --others --ignored
+  --exclude-standard -z -- <dir>` and its `.py` files are added to the set
+  (`ignored_python_files()`); a rootdir `conftest.py` reported as `!!` is kept because pytest imports it
+  for every run. A failing `git ls-files` raises rather than reading as "nothing hidden": the dirty set
+  is what refuses reuse.
+- **The probe was flipped, and it failed first.** `probe_n167` asserted the defect; it now asserts the
+  fixed behaviour. On the pre-fix tree it exits 1 with *"an ignored directory under tests/ is still
+  invisible to the dirty set (['scripts/probe_audit_findings.py'])"*. After the change it exits 0 and
+  prints `PASS N-167`: `tests/unit/n167_hidden/test_hidden.py` is in the dirty set, `should_record_green`
+  is `False` for it (and `True` for an empty set, so the refusal is the set and not a recording rule
+  that never fires), pytest on that directory still exits non-zero, an ignored rootdir `conftest.py` is
+  in the set with `should_record_green` `False`, and both paths leave the set after cleanup with the set
+  equal to the baseline it started from.
+- **N-165's file form did not regress.** `probe N-165` still prints `PASS` with a `.git/info/exclude`
+  rule hiding one file; both shapes now take the branch an edited file takes in `main()`.
+- **Verification actually run.** `probe_audit_findings.py --list` 19 ids; `verify_audit_findings.py` exit
+  0, **ALL 19 FINDING PROBE(S) PASSED**; `verify_audit_append_only.py --force-full` on the uncommitted
+  tree exit 0, **536 passed, 0 skipped, 0 xfailed** (158.98 s), 9 discovered `scripts/verify_*.py` all
+  exit 0, and it recorded no row for a working copy that differed from HEAD in 2 paths. The
+  committed-tree run and the single row it appends follow in the next commit.
+- **Invariants held.** No trial row was appended or scored: **N = 9, N_eval = 5**; the 2024 validation
+  partition stays frozen; Holdout `2025-01-01..2026-11-11` remains sealed with no `HOLDOUT_UNLOCK`
+  sentinel on disk; `reports/audit/**`, `AGENTS.md` and `.agents/skills/audit-round/SKILL.md` are
+  untouched by this round.
+- **Not claimed.** No seq 10 was registered or run; §82.8 items 4-6 are untouched; N-165 and N-166 stay
+  `OPEN` in the ledger until the auditor's next section, N-150 stays `OPEN`, N-152 `ACCEPTED`; the
+  pre-2022 window remains warm-up only and the DSR bar is unchanged.
