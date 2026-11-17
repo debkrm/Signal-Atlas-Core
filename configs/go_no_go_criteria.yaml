@@ -4,12 +4,14 @@
 # Never modify thresholds post-hoc after inspecting backtest results.
 
 metadata:
-  # 1.1.3 (2026-11-16): no threshold changed. Version bumped only to re-pin the trials manifest after
-  # Audit §73.9 items 3 and 4 appended the two post-hoc stop trials (seq 6, seq 7, N = 7,
-  # N_eval = 3) and the Trial #5 restatement record; any append rewrites the manifest, so the pin
-  # moved with it. 1.1.2 added that pin (Audit §72 N-128); 1.1.1 recorded the manifest pin move that
-  # followed the corporate_actions.jsonl restatement under Audit §68.6 item 3 (H-115, N-112).
-  version: "1.1.3"
+  # 1.1.4 (2026-11-17): no threshold changed. Version bumped for two reasons. First, Audit §74.10
+  # Ruling D pre-registers `unbanded_session_fill_policy: LOCKED_BAR_REFUSAL_ONLY` before seq 8: a
+  # session with no attested price band fills unless its bar is locked. Second, the new field enters
+  # the criteria fingerprint, so the pin and the Phase 2D artifact are regenerated with this note.
+  # 1.1.3 re-pinned the trials manifest after Audit §73.9 items 3 and 4 appended seq 6/7 (N = 7,
+  # N_eval = 3); 1.1.2 added that pin (Audit §72 N-128); 1.1.1 recorded the pin move that followed
+  # the corporate_actions.jsonl restatement (Audit §68.6 item 3, H-115, N-112).
+  version: "1.1.4"
   effective_date: "2026-11-16"
   market: "NSE_CASH_EQUITY"
   currency: "INR"
@@ -57,6 +59,18 @@ execution_and_liquidity_realism:
   prohibit_sell_at_lower_circuit: true
   # Execution latency: Earliest execution fill session relative to signal calculation session T
   min_execution_latency_sessions: 1
+  # Audit §74.10 Ruling D — the unbanded-session fill policy in force, pre-registered before seq 8.
+  # NSE publishes the band *code* in a single rolling sec_list.csv that is overwritten in place, and
+  # the bhavcopy carries no band column, so no daily 2022-2023 band history exists to source: H-83 as
+  # written admits 3 of 179 instruments and returns a criterion that has never been computed.
+  # LOCKED_BAR_REFUSAL_ONLY therefore narrows the requirement, not the window: an instrument-session
+  # with no attested band fills at the usual T+1 open plus the existing slippage and statutory-cost
+  # model, UNLESS the session bar is locked (high == low, zero depth on one side), which is refused on
+  # both sides (§5.3). No band and no circuit limit is ever synthesized from a price, and
+  # CRIT-EXEC-03/CRIT-EXEC-04 remain NOT RUN over unsourced sessions — the policy does not claim to
+  # know whether a non-locked open sat at a limit. This is an assumption about fills, not a threshold:
+  # setting STRICT_BAND_REQUIRED restores H-83 exactly (no band, no entry and no exit).
+  unbanded_session_fill_policy: "LOCKED_BAR_REFUSAL_ONLY"
 
 statutory_indian_cost_schedule:
   # Statutory tax rates (Finance Act / Indian Stamp Act)
@@ -135,7 +149,8 @@ market_data_and_accounting_invariants:
   # {evaluation_count, head_eval_hash} outside the (sidecar, anchor) pair. Pinning its SHA-256 here
   # gives that witness a root no append path writes: removing the witness keys, editing a witnessed
   # value, or appending a trial without re-pinning this anchor fails G2A-6.8. Hash of
-  # data/trials/trial_registry.jsonl.manifest with LF line endings (330 bytes after the §73 append).
+  # data/trials/trial_registry.jsonl.manifest with LF line endings (330 bytes after the §73 append;
+  # unchanged by 1.1.4, which appended no trial row).
   expected_trial_registry_manifest_sha256: "7cb9ed224c336bc7e091c2d917bf6d35faf78e8e5429e287dea43bbcf9985e4d"
 
   # Authoritative Calendar and Session Reconciliation Invariants (AGENTS.md §6.3, §9.2, Findings H-56, H-61, H-62, H-64)

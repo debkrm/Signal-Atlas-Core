@@ -29,6 +29,7 @@ from signal_core.contracts.exchange_series import (
 )
 from signal_core.contracts.price_band import PriceBandRecord
 from signal_core.contracts.price_bar import PriceBar
+from signal_core.execution.band_policy import PriceBandPolicy
 from signal_core.execution.simulator import ExecutionFillResult, ExecutionFillSimulator
 from signal_core.execution.types import (
     ExecutionOrder,
@@ -325,6 +326,7 @@ class DailyTPlus1OrderRunner:
         risk_per_trade_pct: Decimal = Decimal("0.01"),
         atr_stop_multiple: Decimal = Decimal("2.0"),
         eligibility_policy: SeriesEligibilityPolicy = APPROVED_EQ_ONLY_POLICY,
+        band_policy: Optional[PriceBandPolicy] = None,
     ) -> None:
         self._portfolio = portfolio
         self._simulator = simulator
@@ -333,6 +335,13 @@ class DailyTPlus1OrderRunner:
         self._risk_per_trade_pct = risk_per_trade_pct
         self._atr_stop_multiple = atr_stop_multiple
         self._eligibility_policy = eligibility_policy
+        # Audit §74.10 Ruling D: the committed criteria own the unbanded-session policy, so a run and
+        # the criteria that judge it cannot disagree about what a fill means.
+        self._band_policy = (
+            PriceBandPolicy.parse(self._criteria.unbanded_session_fill_policy)
+            if band_policy is None
+            else PriceBandPolicy.parse(band_policy)
+        )
         self.last_surveillance_result: Optional[SurveillanceExitResult] = None
         # Audit §72 Ruling 1: one persisted protective stop per open long, armed at the T+1 fill.
         self._protective_stops: dict[str, ProtectiveStopOrder] = {}
@@ -345,6 +354,11 @@ class DailyTPlus1OrderRunner:
     def atr_stop_multiple(self) -> Decimal:
         """The single k that governs sizing, the protective stop distance and the 1R denominator."""
         return self._atr_stop_multiple
+
+    @property
+    def band_policy(self) -> PriceBandPolicy:
+        """How an instrument-session without an attested price band is filled (Audit §74.10)."""
+        return self._band_policy
 
     @property
     def protective_stops(self) -> Mapping[str, ProtectiveStopOrder]:
@@ -523,7 +537,10 @@ class DailyTPlus1OrderRunner:
             )
 
         # Finding H-83 & H-85: Price band evidence is mandatory for BUY entries and SELL exits to verify circuit filters (§5.3)
-        if price_band is None:
+        # Audit §74.10 Ruling D: under LOCKED_BAR_REFUSAL_ONLY an unbanded session proceeds to the
+        # simulator, whose locked-bar check refuses high == low on both sides; the circuit criteria
+        # remain NOT RUN there, and no band is ever synthesized.
+        if price_band is None and self._band_policy is PriceBandPolicy.STRICT_BAND_REQUIRED:
             if intent.side == OrderSide.BUY:
                 raise OrderRunnerEligibilityError(
                     f"Mandatory price band evidence missing for BUY entry in {intent.instrument_id} on {intent.target_date} "
@@ -700,9 +717,13 @@ class DailyTPlus1OrderRunner:
         merger that changes the price scale without this rescale would place the stop above the
         market and manufacture an instant fill.
 
-        Returns False when there is no stop to carry, or when the successor already carries a stop
-        of its own (two lots cannot share one order), so the caller records the position as
-        explicitly unprotected (AGENTS.md §13.2, Audit §73.4).
+        Returns False when there is no stop to carry, when the successor identity is blank, or when
+        the successor already carries a stop of its own (two lots cannot share one order), so the
+        caller records the position as explicitly unprotected (AGENTS.md §13.2, Audit §73.4).
+
+        Audit §74.9 item 4 (N-133): validation happens **before** the old order is retired. The stop
+        is the only protection the position has, so a malformed successor must leave it armed —
+        refusing after the cancel would turn a caller error into an unprotected hold.
         """
         stop = self._protective_stops.get(old_isin)
         if stop is None:
@@ -711,16 +732,18 @@ class DailyTPlus1OrderRunner:
             raise OrderRunnerError(
                 f"corporate action ratio must be positive, got {ratio_numerator}:{ratio_denominator}"
             )
+        if not isinstance(new_isin, str) or not new_isin.strip():
+            return False
         if new_isin != old_isin and new_isin in self._protective_stops:
             self.cancel_protective_stop(old_isin)
             return False
-        self.cancel_protective_stop(old_isin)
         adjusted_quantity = (stop.quantity * ratio_numerator) // ratio_denominator
         if adjusted_quantity <= 0:
             # A reverse merger can annihilate the lot; the position is then settled for cash and
             # the caller counts it, rather than arming a stop for zero shares.
+            self.cancel_protective_stop(old_isin)
             return False
-        self._protective_stops[new_isin] = ProtectiveStopOrder(
+        successor = ProtectiveStopOrder(
             instrument_id=new_isin,
             stop_price=(stop.stop_price * Decimal(ratio_denominator) / Decimal(ratio_numerator)).quantize(
                 Decimal("0.0001")
@@ -730,6 +753,8 @@ class DailyTPlus1OrderRunner:
             armed_session=stop.armed_session,
             atr=(stop.atr * Decimal(ratio_denominator) / Decimal(ratio_numerator)).quantize(Decimal("0.0001")),
         )
+        self.cancel_protective_stop(old_isin)
+        self._protective_stops[new_isin] = successor
         return True
 
     def adjust_protective_stop_for_split(
@@ -798,7 +823,10 @@ class DailyTPlus1OrderRunner:
 
             bar = bars.get(isin)
             band = price_bands.get(isin)
-            if bar is None or band is None:
+            # Audit §74.10 Ruling D: under LOCKED_BAR_REFUSAL_ONLY an unbanded session still tests the
+            # stop. Skipping it would leave the position unprotected for its whole life, which is
+            # worse than the missing band the policy already discloses.
+            if bar is None or (band is None and self._band_policy is PriceBandPolicy.STRICT_BAND_REQUIRED):
                 skipped_no_bar += 1
                 deferrals.append((isin, "NO_BAR_OR_BAND"))
                 continue

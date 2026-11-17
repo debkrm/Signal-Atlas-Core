@@ -23,6 +23,7 @@ from signal_core.contracts.dataset import PriceConvention
 from signal_core.contracts.exchange_series import APPROVED_EQ_ONLY_POLICY, ExchangeSeries, ExchangeSessionObservation
 from signal_core.contracts.price_band import PriceBandRecord
 from signal_core.contracts.price_bar import PriceBar
+from signal_core.execution.band_policy import PriceBandPolicy
 from signal_core.execution.types import FillStatus, OrderProduct, OrderSide, OrderType
 from signal_core.storage.security_master import SecurityMasterError
 from signal_core.strategy.base import OrderIntent, Strategy
@@ -238,6 +239,11 @@ class SwingSessionExecutionSummary:
     protective_stop_deferrals: int = 0
     protective_stop_circuit_deferrals: int = 0
     active_protective_stops: int = 0
+    # Audit §74.10 Ruling D: orders the simulator refused because the session bar was locked
+    # (high == low). Under LOCKED_BAR_REFUSAL_ONLY an unbanded session reaches the simulator instead
+    # of being skipped, so this separates "no band, filled" from "no band, frozen bar".
+    unbanded_tickets_submitted: int = 0
+    locked_bar_refusals: int = 0
 
     def __len__(self) -> int:
         return len(self.tickets)
@@ -345,6 +351,8 @@ def execute_swing_strategy_session(
     skipped_unheld_sell = 0
     skipped_already_held = 0
     skipped_missing_features = 0
+    unbanded_submitted = 0
+    locked_bar_refusals = 0
 
     for intent in raw_intents:
         isin = intent.instrument_id
@@ -415,9 +423,13 @@ def execute_swing_strategy_session(
         if t_plus_1_bar is None:
             skipped_missing_bar += 1
             continue
-        if price_band is None:
+        # Audit §74.10 Ruling D: STRICT_BAND_REQUIRED (H-83 as written) skips an unbanded session.
+        # LOCKED_BAR_REFUSAL_ONLY submits it, and the simulator refuses only a locked bar (§5.3).
+        if price_band is None and runner.band_policy is PriceBandPolicy.STRICT_BAND_REQUIRED:
             skipped_missing_band += 1
             continue
+        if price_band is None:
+            unbanded_submitted += 1
 
         ticket = runner.run_candidate(
             candidate=cand,
@@ -428,6 +440,9 @@ def execute_swing_strategy_session(
             latest_market_prices=latest_market_prices,
         )
         tickets.append(ticket)
+        reason = str(ticket.fill_result.rejection_reason) if ticket.fill_result is not None else ""
+        if reason.startswith("Locked 0-range session"):
+            locked_bar_refusals += 1
 
     # Audit §72 Ruling 1: armed protective stops are tested against this session's bar too, after
     # entries fill, so an entry-session breach is not silently ignored. Simulator decides the fill.
@@ -481,4 +496,6 @@ def execute_swing_strategy_session(
         protective_stop_deferrals=stop_result.deferred_count,
         protective_stop_circuit_deferrals=stop_result.circuit_deferred_count,
         active_protective_stops=stop_result.active_stop_count,
+        unbanded_tickets_submitted=unbanded_submitted,
+        locked_bar_refusals=locked_bar_refusals,
     )

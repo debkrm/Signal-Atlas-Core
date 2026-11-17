@@ -478,6 +478,9 @@ def test_n130_rerender_whose_sharpe_disagrees_with_the_ledger_is_refused(tmp_pat
         trial_id=recorded_id,
         max_sessions=120,
         in_sample_only=True,
+        # Fixed clock: the falsified row below is dated 23:59, and the registry refuses a
+        # non-monotonic timestamp, so this run must not inherit the wall clock.
+        now_utc="2026-11-16T12:00:00+00:00",
     )
 
     registry = TrialRegistry(registry_path)

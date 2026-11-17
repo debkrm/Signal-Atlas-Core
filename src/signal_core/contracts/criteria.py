@@ -128,6 +128,12 @@ class GoNoGoCriteria:
     # Statutory cost schedule
     statutory_costs: StatutoryCostCriteria
 
+    # Audit §74.10 Ruling D: how an instrument-session with no attested price band is filled. It is a
+    # criteria field, not a run flag, because it changes what a fill means and must be inside the
+    # fingerprint that judges the run. LOCKED_BAR_REFUSAL_ONLY fills an unbanded session unless the
+    # bar is locked (high == low), leaving CRIT-EXEC-03/04 NOT RUN on those sessions.
+    unbanded_session_fill_policy: str = "STRICT_BAND_REQUIRED"
+
     # Market data and accounting invariants (§10.8, Audit §40.5, Finding H-54, H-61, H-62, H-64, H-72)
     min_binding_evaluation_start_date: datetime.date = datetime.date(2022, 1, 3)
     min_traded_eq_resolution_pct: Decimal = Decimal("100.0")
@@ -235,6 +241,12 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
             f"Must be 'EVALUATED_TRIALS_MINUS_ONE'."
         )
 
+    unbanded_policy = str(exec_liq.get("unbanded_session_fill_policy", "STRICT_BAND_REQUIRED")).strip()
+    if unbanded_policy not in ("STRICT_BAND_REQUIRED", "LOCKED_BAR_REFUSAL_ONLY"):
+        raise CriteriaValidationError(
+            f"Unsupported unbanded_session_fill_policy: {unbanded_policy!r} (Audit §74.10 Ruling D)."
+        )
+
     # N-51: All pinned calendar identity invariants are MANDATORY — missing key fails closed, no silent fallback.
     mda = data.get("market_data_and_accounting_invariants", {})
 
@@ -305,6 +317,7 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         prohibit_sell_at_lower_circuit=bool(exec_liq["prohibit_sell_at_lower_circuit"]),
         min_execution_latency_sessions=int(exec_liq["min_execution_latency_sessions"]),
         statutory_costs=costs,
+        unbanded_session_fill_policy=unbanded_policy,
         min_binding_evaluation_start_date=datetime.date.fromisoformat(
             str(mda.get("min_binding_evaluation_start_date", "2022-01-03"))
         ),

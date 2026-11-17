@@ -1,6 +1,6 @@
 {
-  "criteria_version": "1.1.3",
-  "criteria_fingerprint": "CRIT-FPR-V1-9edc022426ac58c156605e2942080ec5589f1ebd752888da61d86f69d3e8d5fd",
+  "criteria_version": "1.1.4",
+  "criteria_fingerprint": "CRIT-FPR-V1-a92d85771538fba884562d25eaa6a55da20c1d70fc49e3261d4f3a4943f5b0df",
   "calendar_fingerprint": "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad",
   "timestamp_utc": "2026-11-16T10:00:00+00:00",
   "evaluation_start_date": "2022-01-03",
@@ -270,6 +270,6 @@
     "binding_criteria_count": 22,
     "binding_failed_count": 19,
     "unverified_provenance_gating_applied": true,
-    "restatement_note": "Restatement 2026-11-16 (Audit \u00a773.9 items 3-4, \u00a773.10 Ruling C): supersedes the 1.1.2 restatement recorded under Audit \u00a772 N-128, the 1.1.1 restatement recorded under Audit \u00a768.6 item 3 (H-115), and the 2026-11-14T16:45:00+00:00 artifact before those. Criteria version 1.1.3 changes no threshold: it re-pins expected_trial_registry_manifest_sha256 after seq 6 (k=2.0) and seq 7 (k=3.0) were appended post hoc, which moves the registry manifest and therefore the criteria fingerprint. The trial registry now reads N = 7, N_eval = 3. Provenance remains CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and every Tier-A verdict is unchanged."
+    "restatement_note": "Restatement 2026-11-17 (Audit \u00a774.10 Ruling D): supersedes the 1.1.3 restatement recorded under Audit \u00a773.9 items 3-4, the 1.1.2 restatement recorded under Audit \u00a772 N-128, the 1.1.1 restatement recorded under Audit \u00a768.6 item 3 (H-115), and the 2026-11-14T16:45:00+00:00 artifact before those. Criteria version 1.1.4 changes no threshold: it adds unbanded_session_fill_policy = LOCKED_BAR_REFUSAL_ONLY, so an instrument-session with no attested band fills unless its bar is locked (high == low, zero depth on one side), while CRIT-EXEC-03/-04 remain NOT RUN on unsourced sessions. The policy enters the criteria fingerprint, so the fingerprint moves with it; the trial registry still reads N = 7, N_eval = 3. Provenance remains CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and every Tier-A verdict is unchanged."
   }
 }

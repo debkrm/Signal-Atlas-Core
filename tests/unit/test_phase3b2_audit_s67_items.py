@@ -267,8 +267,13 @@ def test_n112_merger_cash_in_lieu_settles_at_consideration_price():
 
 def test_n115_fractional_merger_slice_is_not_a_closed_trade(tmp_path: Path):
     """
-    N-115: A run that holds HDFC across the 2023-07-13 merger records the fractional
-    entitlement only as MERGER_CASH_IN_LIEU, never as a fractional zero-gross closed trade.
+    N-115: no fractional entitlement is ever recorded as a closed trade.
+
+    When this run holds a name across a merger ex-date, the fractional slice must appear only as
+    MERGER_CASH_IN_LIEU. Audit §74.10 Ruling D widened the unbanded universe, so the run no longer
+    holds HDFC across 2023-07-13 and settles no merger slice at all; the positive branch is covered
+    at the portfolio level by `test_n112_merger_cash_in_lieu_settles_at_consideration_price`, and the
+    corpus-wide invariant below is measured over every closed trade either way.
     """
     res = run_phase3b2_walkforward(
         registry_path=tmp_path / "trial_reg.jsonl",
@@ -282,13 +287,17 @@ def test_n115_fractional_merger_slice_is_not_a_closed_trade(tmp_path: Path):
         e for e in res.portfolio.ledger.entries
         if e.entry_type.value == "MERGER_CASH_IN_LIEU"
     ]
-    assert merger_entries, "Expected the held HDFC position to settle a fractional merger slice"
+    assert res.closed_trades, "Expected the run to close round trips"
     for trade in res.closed_trades:
         qty = Decimal(trade["quantity"])
         assert qty == qty.to_integral_value(), (
             f"Fractional quantity {qty} represented as a closed trade for "
             f"{trade['isin']} (Finding N-115)"
         )
+    # A merger settlement is a cash entry, never a trade.
+    for entry in merger_entries:
+        assert entry.amount != Decimal("0.00")
+        assert entry.entry_type.value == "MERGER_CASH_IN_LIEU"
 
 
 def test_trial4_trim_emits_partial_sell_above_threshold():

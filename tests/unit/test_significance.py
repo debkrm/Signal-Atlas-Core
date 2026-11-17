@@ -341,7 +341,7 @@ def test_evaluate_strategy_significance_with_registry(tmp_path: Path):
     assert report.haircut_result.trial_count_n == 3
     assert report.dsr_result.trial_sharpe_variance == Decimal("0.08")
     assert report.observation_count == 250
-    assert report.criteria_version == "1.1.3"
+    assert report.criteria_version == "1.1.4"
     assert report.dsr_verdict in ("PASS", "FAIL")
     assert report.haircut_verdict in ("PASS", "FAIL")
     assert report.overall_verdict in ("PASS", "FAIL")

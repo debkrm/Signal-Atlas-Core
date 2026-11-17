@@ -33,6 +33,7 @@ from signal_core.contracts.exchange_series import ExchangeSeries, ExchangeSessio
 from signal_core.contracts.price_band import PriceBandRecord
 from signal_core.contracts.price_bar import PriceBar
 import signal_core.execution
+from signal_core.execution.band_policy import PriceBandPolicy
 from signal_core.execution.order_runner import (
     DailyExecutionTicket,
     DailySignalCandidate,
@@ -113,6 +114,10 @@ def runner(portfolio, simulator, calendar, criteria):
         criteria=criteria,
         risk_per_trade_pct=Decimal("0.01"),  # 1% risk = ₹10,000
         atr_stop_multiple=Decimal("2.0"),
+        # These probes exercise H-83/H-85 as written: a missing band refuses the order. Audit §74.10
+        # Ruling D made the committed default LOCKED_BAR_REFUSAL_ONLY, so strict mode is selected here
+        # explicitly instead of being implied by the criteria file.
+        band_policy=PriceBandPolicy.STRICT_BAND_REQUIRED,
     )
 
 

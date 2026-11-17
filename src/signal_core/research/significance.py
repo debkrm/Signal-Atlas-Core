@@ -18,11 +18,12 @@ The authoritative trial count N feeding DSR must originate from a committed, ver
 """
 
 from dataclasses import dataclass
+import datetime
 from decimal import Decimal, ROUND_HALF_UP
 import math
 from pathlib import Path
 import statistics
-from typing import Any, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from signal_core.contracts.criteria import GoNoGoCriteria
 from signal_core.research.trials import TrialRegistry
@@ -634,3 +635,60 @@ def evaluate_strategy_significance(
         haircut_verdict=hc_verdict,
         overall_verdict=overall_verdict,
     )
+
+
+# ==============================================================================
+# Offline Recomputability of the Significance Inputs (Audit §74.7, N-132)
+# ==============================================================================
+
+def serialize_daily_returns(
+    session_dates: Sequence[datetime.date],
+    returns: Sequence[Decimal],
+) -> Dict[str, str]:
+    """
+    Persists the exact daily return series a SignificanceReport consumed, keyed by ISO session date.
+
+    Audit §74.7 (N-132): the DSR is a function of the return series (T, skewness, kurtosis and the
+    Sharpe derived from it), and the registry stores only `returns_digest`. A digest proves the
+    series existed; it cannot be fed back into `evaluate_strategy_significance`. These are the exact
+    Decimal strings — no rounding — so a reader recomputes the same moments and the same DSR from
+    committed bytes, to the last decimal.
+
+    `returns_digest` remains a hash of the same series quantised to 12 dp for byte-stable identity;
+    the persisted values are unquantised so the statistics are not perturbed by the fingerprint.
+    """
+    if len(session_dates) != len(returns):
+        raise SignificanceError(
+            f"session_dates ({len(session_dates)}) and returns ({len(returns)}) must be the same length."
+        )
+    series: Dict[str, str] = {}
+    for session_date, value in zip(session_dates, returns):
+        if type(session_date) is not datetime.date:
+            raise SignificanceError(
+                f"session_dates entries must be datetime.date, got {type(session_date).__name__}."
+            )
+        key = session_date.isoformat()
+        if key in series:
+            raise SignificanceError(
+                f"Duplicate session date {key} in the daily return series (one return per session)."
+            )
+        series[key] = str(value)
+    return series
+
+
+def daily_returns_from_artifact(artifact: Mapping[str, Any]) -> List[Decimal]:
+    """
+    Reads back the return series an artifact persisted via `serialize_daily_returns`.
+
+    Fails closed when the artifact predates N-132: an artifact without the series cannot be
+    recomputed, and substituting a digest or a moment summary would fabricate the input.
+    """
+    if not isinstance(artifact, Mapping):
+        raise SignificanceError(f"artifact must be a mapping, got {type(artifact).__name__}")
+    series = artifact.get("daily_returns")
+    if not isinstance(series, Mapping) or not series:
+        raise SignificanceError(
+            "artifact carries no persisted daily_returns series, so its significance statistics "
+            "cannot be recomputed offline (Audit §74.7 N-132)."
+        )
+    return [Decimal(series[key]) for key in sorted(series)]

@@ -119,19 +119,22 @@ def build_tier_a_results_bundle(
         "data_provenance_status": prov_status,
         "provenance_attestation_reference": str(bhavcopy_manifest_file),
 
-        # Audit §73.9 items 3-4: appending the post-hoc stop trials (seq 6, seq 7) rewrites the
-        # trials manifest, so criteria 1.1.3 re-pins it and the committed artifact is restated rather
-        # than left describing a pin that no longer holds. No threshold changed.
+        # Audit §74.10 Ruling D: criteria 1.1.4 records how an instrument-session without an attested
+        # price band is filled. That is a change in what a fill means, not a threshold, and it enters
+        # the criteria fingerprint, so the committed artifact is restated rather than left describing
+        # a criteria version that no longer governs.
         "restatement_note": (
-            "Restatement 2026-11-16 (Audit §73.9 items 3-4, §73.10 Ruling C): supersedes the 1.1.2 "
-            "restatement recorded under Audit §72 N-128, the 1.1.1 restatement recorded under Audit "
-            "§68.6 item 3 (H-115), and the 2026-11-14T16:45:00+00:00 artifact before those. Criteria "
-            "version 1.1.3 changes no threshold: it re-pins "
-            "expected_trial_registry_manifest_sha256 after seq 6 (k=2.0) and seq 7 (k=3.0) were "
-            "appended post hoc, which moves the registry manifest and therefore the criteria "
-            "fingerprint. The trial registry now reads N = 7, N_eval = 3. Provenance remains "
-            "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and every "
-            "Tier-A verdict is unchanged."
+            "Restatement 2026-11-17 (Audit §74.10 Ruling D): supersedes the 1.1.3 restatement "
+            "recorded under Audit §73.9 items 3-4, the 1.1.2 restatement recorded under Audit §72 "
+            "N-128, the 1.1.1 restatement recorded under Audit §68.6 item 3 (H-115), and the "
+            "2026-11-14T16:45:00+00:00 artifact before those. Criteria version 1.1.4 changes no "
+            "threshold: it adds unbanded_session_fill_policy = LOCKED_BAR_REFUSAL_ONLY, so an "
+            "instrument-session with no attested band fills unless its bar is locked (high == low, "
+            "zero depth on one side), while CRIT-EXEC-03/-04 remain NOT RUN on unsourced sessions. "
+            "The policy enters the criteria fingerprint, so the fingerprint moves with it; the trial "
+            "registry still reads N = 7, N_eval = 3. Provenance remains CONTENT_IDENTIFIED_ONLY / "
+            "SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and every Tier-A verdict is "
+            "unchanged."
         ),
     }
 
