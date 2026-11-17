@@ -1458,3 +1458,144 @@ both before the fix and under a mutation of it.
   reproduces end to end.
 - If a later pytest upgrade starts reading `pytest.toml`, the name measured as inert here becomes a
   channel and the tuple is short by that name too.
+---
+
+## §86 — Audit of `a3be813` (tag `feat-s85-a3be813`): the legacy ini is state; the 2019 grid is one session short, and the Ruling that authorises closing it
+
+**Date:** 17 November 2026
+**Commit under review:** `a3be813` — the cache row for `88b1921` ("Treat an ignored legacy `.pytest.ini` as dirty state"), which is the only implementation commit this round touches.
+**Verdicts:** N-169 `CLOSED` · N-168/N-167/N-165 no regression · A1 measured `NO` for all four years, with **§86.5 Ruling 1** authorising the 2019 grid correction and the §86.6 provenance contract for the 2018-2021 circulars · one new environment defect, **N-170**
+
+### 86.1 Baseline re-measured at `a3be813`
+
+| Measurement | Result |
+|---|---|
+| `scripts/verify_audit_append_only.py --force-full` | **exit 0** — `ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Verifiers discovered / executed | 9 / 9, every exit 0 |
+| pytest | **536 passed** in 146.55 s |
+| W0.5-1 / 1b / 1c | append-only PASS (frozen volume 8442 lines, 1-78); 2 volumes verified; INDEX reproduces at **85** section rows |
+| W0.5-4 | PASS — **88** commit-bearing tags verified |
+| `probe_pre2022_preconditions.py` | **exit 1** — 8 of 8 preconditions unmet (§86.4) |
+| Findings ledger before this round | 32 rows / 21 ids; N-169 `OPEN` |
+| Criteria | **1.1.9**, `configs/go_no_go_criteria.yaml` sha256 `5591656411a6c1ef…`, no threshold changed by `88b1921` |
+| Trials / fold / holdout | 9 rows (6 `IN_SAMPLE`, 3 `VALIDATION`), N = 9 / N_eval = 5, 2024 fold frozen, no `HOLDOUT_UNLOCK` sentinel; the commit touches no holdout path |
+| `dirty_source_paths()` on this checkout | `[]` |
+
+**One environment fact decides how the control below could be taken.** A fresh clone of `a3be813` reports **24 tracked paths modified** before anyone edits anything: `.gitattributes` marks `*.csv.zip` and `*.json.gz` as `text` with `eol=lf`, the committed blobs nevertheless store CRLF (measured: `cm12JAN2024bhav.csv.zip` blob 100,331 bytes / 393 CR, clone worktree 100,328 bytes / 0 CR), so checkout writes bytes that differ from the object git stored. On such a clone the gate prints `24 source path(s) differ from HEAD` and can never reuse a recorded tree; §85's control would have measured a full run and called it a refusal. This checkout is clean only because its working files predate the attribute. Recorded as **N-170** in §86.3 and the work order.
+
+### 86.2 N-169 — `CLOSED`
+
+`88b1921` prepends `".pytest.ini"` to `ROOTDIR_PYTEST_CONFIG_FILES` and flips `probe_n169` from asserting the defect to asserting the closure. Measured on the clean checkout at `a3be813` with a forged row that witnesses all nine discovered verifiers and names HEAD:
+
+| Configuration | `dirty_source_paths()` | Gate |
+|---|---|---|
+| Clean checkout + forged row (control) | `[]` | `reused green at a3be8133f5d… (536 passed)`, **exit 0** — the forge is a real hit |
+| Ignored `.pytest.ini` (+ forged row) | `['.pytest.ini']` | `1 source path(s) differ from HEAD: .pytest.ini`; **no** `reused green`, **no** `Recorded green`; cache rows unchanged; **exit 1** |
+| Tuple edited to drop `".pytest.ini"` | — | `probe N-169` **exit 1**: *"an ignored legacy .pytest.ini is still invisible to the dirty set …, so a local exclude rule can point pytest at a different suite under a reused green row"* |
+| Parent `a906738` + the flipped probe only | — | `probe N-169` **exit 1**, same sentence |
+
+The gate's exit 1 in row 2 is `probe_n169` refusing to clobber the planted file (`FAIL N-169: .pytest.ini already exists: the probe would clobber it`); the refusal being measured is the decision, not the exit status. The decision instruments were read directly over the same tree: `should_record_green("full", True, 536, ['.pytest.ini'])` is **False**, over `[]` it is **True**, and `select_gate_plan` reports `full` with no hit. The probe itself is load-bearing in three directions — membership, refusal, and pytest executing the config (collection 7 → 6 with the tracked `test_n160_source_tree_hash_is_the_object_id_git_stores` deselected) — and is non-vacuous on cleanup: it asserts the file left the set and the dirty set equals its baseline.
+
+**No additive path.** `dirty_source_paths()` has one producer and one consumer inside the gate (`main()` via `should_record_green` / `select_gate_plan`); the only other references in the tree are the probes themselves. There is no second config-name list and no second reuse rule to keep in step, so `88b1921` cannot leave an unguarded sibling behind — the failure mode §14.4 names is structurally unavailable here. Neighbours re-run: `N-165`, `N-167`, `N-168`, `N-169` all exit 0.
+
+### 86.3 N-170 (LOW) — every fresh checkout is dirty, so the green cache never pays off
+
+Measured at `a3be813`, both with `core.autocrlf=true` and with `-c core.autocrlf=false`:
+
+```
+$ git check-attr -a -- data/reference/cm12JAN2024bhav.csv.zip
+… text: set … eol: lf
+$ git cat-file -s HEAD:data/reference/cm12JAN2024bhav.csv.zip        # 100331, 393 CR
+$ wc -c < data/reference/cm12JAN2024bhav.csv.zip                     # clone: 100328, 0 CR
+$ git status --porcelain | wc -l                                     # 24
+```
+
+The attribute demands LF on checkout; the stored object holds CRLF. Every clone — on this machine, and on a Linux CI runner that honours `eol=lf` — materialises bytes the blob does not contain, so `dirty_source_paths()` is non-empty before any edit and `select_gate_plan` runs the heavy gates every time. The failure is in the safe direction (it wastes ~250 s per run and blocks reuse; it does not certify a suite that was not run), which is why it is LOW and not a gate bypass. It is recorded here and in the work order rather than in the ledger, for the §79.9 reason: a probe that asserts this defect cannot pass on a checkout where the working files still match the blobs, and the gate runs on exactly such checkouts.
+
+The repair is a byte decision, not a policy one: either store the archives with LF and update the manifest digests and pins in one commit, or mark them `-text` (`binary`) and store the original bytes. The second is correct for archives: forcing line-ending normalisation onto a compressed container is what created the mismatch.
+
+### 86.4 A1 re-measured — nothing in the repository can PASS it today
+
+`python scripts/probe_pre2022_preconditions.py` at `a3be813` exits **1**, 8 of 8 unmet:
+
+```
+[NO] A1 2018: no committed holiday circular artifact names a 2018 date (13 artifact(s) on disk, issued 2021-12-10..2026-01-12)
+[NO] A1 2019: … [NO] A1 2020: … [NO] A1 2021: …
+[NO] A1 provenance: the calendar's provenance.sha256 is its own CAL-FPR digest af8e309a6f897a67…, not the digest of a source artifact
+[NO] A2 … [NO] A4 dividends … [NO] A4 max hold …
+```
+
+The calendar's own arithmetic, measured, with the per-year holiday counts the §85 implementer note reports from circulars that are **not committed**:
+
+| Year | Weekdays | Calendar sessions | Weekend sessions in the grid | Implied by the reported holiday set |
+|---|---|---|---|---|
+| 2018 | 261 | **246** | none | 261 − 16 + 1 (muhurat Wed 2018-11-07) = 246 ✓ |
+| 2019 | 261 | **244** | 2019-10-27 (Sunday muhurat) | 261 − 17 + 1 = **245** ✗ one short |
+| 2020 | 262 | **252** | 2020-02-01, 2020-11-14 | 262 − 12 + 2 = 252 ✓ |
+| 2021 | 261 | **248** | none | 261 − 14 + 1 (muhurat Thu 2021-11-04) = 248 ✓ |
+
+The missing date is **2019-10-29, a Tuesday**: absent from the grid, absent from every committed artifact, and surrounded in the calendar by 2019-10-28 (absent, Balipratipada) and 2019-10-27 (present, Sunday muhurat). Totals: **2,935** sessions; **930** in `2018-04-01..2021-12-31`; **1,196** in `2022-01-03..2026-10-31`, which matches `expected_authoritative_calendar_sessions`.
+
+Independent corroboration that 2019-10-29 traded, from contemporaneous press rather than from NSE: Sensex closed **39,831.84** (+581.64, +1.48%), Nifty 11,786.85, on Tuesday 2019-10-29 (NewsNation, ETV Bharat, both dated 2019-10-29), with markets shut 2019-10-28 for Diwali Balipratipada and the muhurat session on Sunday 2019-10-27 at Sensex 39,250. That is enough to justify a Ruling that the grid is wrong; it is **not** enough to re-seal the pin, because §6.3 requires the exchange artifact and press coverage is not one.
+
+### 86.5 Ruling 1 — the 2019 grid is corrected, and the correction is conditional on its own provenance
+
+**Evidence:** measured at `a3be813` (§86.4): 2019 holds 244 sessions; the weekday arithmetic with the reported holiday set implies 245; the absent date is a Tuesday; the calendar's provenance is self-referential; and no committed artifact can contradict or confirm it because the circular corpus begins at 2022.
+
+**The single definition it changes:** the 2019 annual session grid gains one `FULL` session, `2019-10-29`, `09:15:00..15:30:00`, `"Regular Trading Session"`, taking 2019 from 244 to 245. This is a content correction to a pinned identity, not a threshold: no criterion, no fold, no window and no trial count moves.
+
+**What it authorises, exactly:**
+
+- `configs/trading_calendar_nse.json`: `session_records` and `sessions` gain `2019-10-29`; `annual_session_counts["2019"]` 244 → **245**; `fingerprint` recomputed (a new `CAL-FPR-V1-…`); `provenance.sha256` replaced by a digest of a named source (§86.6), never left equal to the new CAL-FPR hex; `provenance.retrieved_at` updated to the retrieval of the artifacts it names.
+- `configs/go_no_go_criteria.yaml`: `expected_calendar_fingerprint` re-pinned to the new CAL-FPR; `expected_total_calendar_sessions` 2935 → **2936**; `expected_manifest_fingerprint` recomputed after the new manifest rows; `criteria.version` **1.1.9 → 1.1.10** with a comment that states, in the words §77.12 used, that no numeric threshold changed; `pre_binding_calendar_provenance_note` 930 → **931**.
+- `src/signal_core/contracts/criteria.py` default `expected_total_calendar_sessions` 2935 → 2936; `scripts/verify_phase2b5_storage.py` constant 2935 → 2936; the three test constants that pin 2935 (`tests/unit/test_calendar_reconciliation.py` ×2, `tests/unit/test_storage.py` ×1). These are identity pins, not thresholds (§12.4).
+- `reports/verdicts/phase2d_tier_a_2022_2026_verdict.{json,md}` regenerated, because they cite `CAL-FPR-V1-af8e309a…` four times in the JSON and twice in the markdown; `scripts/verify_phase2d_verdicts.py` must reproduce the new bytes, and the recomputed verdict must be unchanged (`NO-GO`, `PASS=3 / FAIL=0 / NOT RUN=20`) since 2019 is pre-binding.
+
+**What it forbids moving** — these are scoped to `2022-01-03..2026-10-31`, outside the corrected date, and a re-pin of any of them is a falsifier, not diligence: `expected_sourced_window_calendar_fingerprint` (`CAL-FPR-V1-2d5ac7ac…`), `expected_baseline_calendar_sessions` 1201, `expected_authoritative_calendar_sessions` 1196, `min_binding_evaluation_start_date` 2022-01-03, `authorized_unarchived_special_sessions`, `authorized_calendar_holiday_exclusions`, `authorized_calendar_trading_inclusions`. Every numeric threshold in the file, N = 9, N_eval = 5, the 2024 fold's frozen state and the sealed holdout are equally out of bounds.
+
+**Condition of validity (fail-closed).** The grid correction lands in the **same commit** as the committed 2019 artifacts that imply it, and the pin is re-sealed only when `scripts/probe_pre2022_preconditions.py` prints `[PASS] A1 2019: 245 session(s) reproduced by N sourced circular artifact(s)`. A correction whose evidence arrives later is a fabricated session with a fingerprint (§6.3, §6.5). If the committed 2019 circular set declares 2019-10-29 a holiday, or the annual circular's dates cannot be reconciled to 245, this Ruling is withdrawn by a superseding Ruling — not edited.
+
+**What it does not do:** it does not move the binding window (still 2022-01-03), does not make any pre-2022 session gatable (A1 PASS is necessary, not sufficient — A3 surveillance and A4 dividends still govern), does not admit intraday, F&O or `BE` entry (§13.6), and does not touch the holdout.
+
+**Computed status.** The item this Ruling creates is open until the A1 2019 line prints `PASS` and `expected_total_calendar_sessions` reads 2936 with `verify_phase2b5_storage.py` exit 0. Today it prints `NO` for all four years, so nothing in this Ruling is partially satisfied.
+
+### 86.6 The provenance contract that turns A1 to `PASS` in `feat-s86`
+
+`check_a1()` is the acceptance instrument; these are the requirements it enforces, read from the code and confirmed against the 13 artifacts on disk:
+
+1. **One artifact per circular, under `data/raw/circulars/<CIRCULAR_ID_WITH_UNDERSCORES>.json`** — e.g. `NSE_CMTR_39612.json`. Shape mirrors the committed 2022-2026 files: `circular_id`, `circular_ref_no`, `download_ref_no`, `issue_date`, `market: NSE_CASH_EQUITY`, `segment`, `subject`, `source_url`, `http_status`, `retrieved_at`, `provenance_status`, plus dated entries under `trading_holidays`, `weekend_holidays`, `special_sessions`, `inferred_trading_sessions`. Entries may be `{"date": "2019-10-29", …}` or ISO strings; only `date[:10]` is read.
+2. **Each artifact must have a current manifest row** in `data/reference/manifest.jsonl` keyed `circulars/<filename>` with `byte_count` and `sha256` equal to the file's bytes and `is_current: true`. A digest mismatch is a `NO` for the year, not a warning. Superseded rows stay as history (§10.1).
+3. **Every artifact whose entries name year Y becomes mandatory calendar provenance** — its `circular_id` must appear in the calendar's `provenance.circular_references`, or A1 fails for that year. Do not deposit a partial or exploratory circular: coverage and citation are the same set, by construction.
+4. **The grid must be exactly implied**: `weekdays(Y) − (trading_holidays ∪ weekend_holidays of Y) ∪ special_sessions(Y) ∪ inferred_trading_sessions(Y)` must equal the calendar's sessions for Y, with both directions checked — a calendar session no artifact implies (`unexplained`) and an artifact date the calendar lacks (`unsourced`) each fail.
+5. **Per year, the set must cover both directions of the year's specials:** 2018 needs the muhurat session 2018-11-07 (a Wednesday, so it must appear as a `special_sessions` entry or the arithmetic loses it); 2019 needs 2019-10-27 (Sunday muhurat), the two election amendments 2019-04-29 and 2019-10-21, and — after Ruling 1 — the restored 2019-10-29; 2020 needs **both** weekend sessions, 2020-02-01 and 2020-11-14; 2021 needs 2021-11-04.
+6. **The 2020-02-01 Union Budget session needs a Capital Market circular that declares it** as a `special_sessions` entry. It must be a cash-equity (CM) circular: `NSE/COM/43331` is a commodity-segment circular and does not attest that the Capital Market traded that Saturday. Without this artifact, 2020 is `NO` even though its twelve weekday holidays reconcile, because the calendar carries a session nothing implies.
+7. **`provenance.sha256` must stop being the calendar's own digest.** It must be the digest of a named source: either the sha256 of a committed provenance bundle that is itself a manifest row, or of the primary annual circular, with `provenance.source` naming which. The probe only tests inequality with the CAL-FPR hex; the contract is the stricter statement.
+8. **`provenance_status` stays `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED`** unless a source certificate exists (§6.5). A1 does not require `VERIFIED`; promoting it without evidence is prohibited.
+9. **Same-commit re-pins**: the manifest append, `expected_manifest_fingerprint`, the criteria version bump and (with Ruling 1) the calendar fingerprint and total-session pin all land together, with a comment stating that no threshold changed. A manifest append without its pin is a red gate, not a follow-up.
+10. **What "A1 flips to PASS" does and does not mean**: the four `[PASS] A1 <year>` lines are the flip. The probe as a whole still exits 1 until A2 (identity intervals reaching 2018) and A4 (dividends or a committed maximum-hold bound) are met, so a green `probe_pre2022_preconditions.py` is a later, larger milestone than A1.
+
+### 86.7 Phase verdicts and residuals
+
+| Phase / claim | Verdict at `a3be813` | Residuals named |
+|---|---|---|
+| N-169 | **CLOSED** — dirty set names the legacy ini, recording refused, no row, probe flipped and failing at the parent and under mutation | — |
+| `§12.3` gate machinery | **GO** | N-170 (every clone dirty; reuse unreachable), N-169 satisfied |
+| `§10.8` A1 (2018-2021 grid) | **NO** — 4/4 years `NO`, provenance self-referential; correction authorised by Ruling 1, not executed | A1 artifacts, Ruling 1 conditions, A2/A4 untouched |
+| `§80.13` items 3-5 | **PREPARED, NOT EXECUTED** — unchanged since §81.7 | A1, A2, A4 all open by design |
+| Criteria / trials / holdout | **UNTOUCHED** — 1.1.9, 9 trial rows, 2024 fold frozen, holdout sealed | N-152 `ACCEPTED`, N-150 `OPEN` |
+
+### 86.8 Work order
+
+1. **Make a checkout byte-identical to its blobs** (N-170, serves `§12.3`). Probe: in a fresh clone, `git status --porcelain` is empty and `dirty_source_paths()` is `[]`; `git hash-object` equals the indexed oid for all 24 archives; then a recorded tree is reused (`reused green`) on the clone rather than re-run. Prefer `-text` over storing normalized bytes.
+2. **Restore 2019-10-29 under Ruling 1, with its artifacts** (serves `§10.8`, unblocks A1 2019). Probe: `[PASS] A1 2019: 245 session(s)` from committed circulars, `expected_total_calendar_sessions` 2936, `verify_phase2b5_storage.py` exit 0, `verify_phase2d_verdicts.py` exit 0 after regeneration, and `expected_sourced_window_calendar_fingerprint` byte-identical.
+3. **Ingest 2018, 2020 and 2021 under §86.6** (serves `§10.8`). Probe: `[PASS] A1 2018`, `[PASS] A1 2020` (with the 2020-02-01 CM special-session circular) and `[PASS] A1 2021`, each printing its session count; any artifact not cited in `provenance.circular_references` must fail that year.
+4. **Carry §82.8 items 4-6** — A2 identity intervals reaching 2018, `WARMUP_NOT_GATABLE` plus a gating-mode probe, and A4 dividends or a committed maximum-hold bound. Serves Phase 3B-2.
+
+### 86.9 What would falsify this verdict
+
+- If an ignored `.pytest.ini` stops appearing in `dirty_source_paths()`, or a run over one is recorded, N-169 is not closed and §86.2 is wrong.
+- If a forged row witnessing all nine verifiers is not reused on a clean checkout, the control was not a hit and the refusals in §86.2 need re-taking.
+- If the committed 2019 circular set declares 2019-10-29 a holiday, or reconciles to 244 and not 245, Ruling 1 is wrong and must be superseded before any pin moves.
+- If the grid correction lands without the 2019 artifacts in the same commit, the correction is a fabricated session regardless of who authorised it — this Ruling does not survive that.
+- If `expected_sourced_window_calendar_fingerprint`, 1201 or 1196 move when the 2019 date is added, the re-pin drifted into a window the correction cannot touch.
+- If a fresh clone at a later commit still reports 24 modified paths, N-170 stands and reuse remains unreachable outside this checkout.
