@@ -4,7 +4,7 @@
 - **Evaluated At (UTC):** `2026-11-16T10:00:00+00:00`
 - **Evaluation Window:** `2022-01-03` to `2026-10-30`
 - **Criteria Version:** `1.1.4`
-- **Criteria Fingerprint:** `CRIT-FPR-V1-a92d85771538fba884562d25eaa6a55da20c1d70fc49e3261d4f3a4943f5b0df`
+- **Criteria Fingerprint:** `CRIT-FPR-V1-431336570a7df1dba7cd3d5bac15221ff65fcf7b5d5456c6895c795d9535d1fd`
 - **Calendar Fingerprint:** `CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad`
 - **Summary Counts:** `PASS=3`, `FAIL=0`, `NOT RUN=20` (Total=23)
 
@@ -36,5 +36,5 @@
 | CRIT-OVERFIT-03 | Walk-Forward Stability | Positive Out-of-Sample Folds Ratio | `>= 0.80` | `—` | **NOT RUN** | YES | Metric 'walk_forward_positive_fold_ratio' not provided in results bundle. |
 | CRIT-INFO-01 | Execution Accounting | Circuit-Verified PnL Accounting | `True` | `—` | **NOT RUN** | NO | Informational metric 'circuit_verified_pnl' not provided in results bundle (pending historical circuit band verification across all fills). |
 
-> **Restatement:** Restatement 2026-11-17 (Audit §74.10 Ruling D): supersedes the 1.1.3 restatement recorded under Audit §73.9 items 3-4, the 1.1.2 restatement recorded under Audit §72 N-128, the 1.1.1 restatement recorded under Audit §68.6 item 3 (H-115), and the 2026-11-14T16:45:00+00:00 artifact before those. Criteria version 1.1.4 changes no threshold: it adds unbanded_session_fill_policy = LOCKED_BAR_REFUSAL_ONLY, so an instrument-session with no attested band fills unless its bar is locked (high == low, zero depth on one side), while CRIT-EXEC-03/-04 remain NOT RUN on unsourced sessions. The policy enters the criteria fingerprint, so the fingerprint moves with it; the trial registry still reads N = 7, N_eval = 3. Provenance remains CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and every Tier-A verdict is unchanged.
+> **Restatement:** Restatement 2026-11-17 (Audit §74.10 Ruling D): supersedes the 1.1.3 restatement recorded under Audit §73.9 items 3-4, the 1.1.2 restatement recorded under Audit §72 N-128, the 1.1.1 restatement recorded under Audit §68.6 item 3 (H-115), and the 2026-11-14T16:45:00+00:00 artifact before those. Criteria version 1.1.4 changes no threshold: it adds unbanded_session_fill_policy = LOCKED_BAR_REFUSAL_ONLY, so an instrument-session with no attested band fills unless its bar is locked (high == low, zero depth on one side), while CRIT-EXEC-03/-04 remain NOT RUN on unsourced sessions. The policy enters the criteria fingerprint, so the fingerprint moves with it. seq 8 (TRIAL-PHASE3B2-BREADTH-008) was then registered and executed under that policy on the 2022-2023 in-sample window, which rewrites the trials manifest the pin names; the registry now reads N = 8, N_eval = 4. Provenance remains CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and every Tier-A verdict is unchanged.
 

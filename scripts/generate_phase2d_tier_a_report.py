@@ -131,8 +131,10 @@ def build_tier_a_results_bundle(
             "threshold: it adds unbanded_session_fill_policy = LOCKED_BAR_REFUSAL_ONLY, so an "
             "instrument-session with no attested band fills unless its bar is locked (high == low, "
             "zero depth on one side), while CRIT-EXEC-03/-04 remain NOT RUN on unsourced sessions. "
-            "The policy enters the criteria fingerprint, so the fingerprint moves with it; the trial "
-            "registry still reads N = 7, N_eval = 3. Provenance remains CONTENT_IDENTIFIED_ONLY / "
+            "The policy enters the criteria fingerprint, so the fingerprint moves with it. seq 8 "
+            "(TRIAL-PHASE3B2-BREADTH-008) was then registered and executed under that policy on the "
+            "2022-2023 in-sample window, which rewrites the trials manifest the pin names; the "
+            "registry now reads N = 8, N_eval = 4. Provenance remains CONTENT_IDENTIFIED_ONLY / "
             "SOURCE_UNVERIFIED, so CRIT-PROV-01 is still NOT RUN and every Tier-A verdict is "
             "unchanged."
         ),
