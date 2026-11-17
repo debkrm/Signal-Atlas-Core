@@ -259,3 +259,11 @@ The target: `2018-04-01 .. 2021-12-31` NSE Bhavcopy into Bronze, the dev corpus 
 - If `{walk_forward_positive_fold_ratio: 1.00}` with no count is NOT RUN in some path I did not construct, N-156 is wrong.
 - If the 324 generated transition rows contradict TATASTEEL's, VBL's or COCHINSHIP's real circulars — which none of them cites — then N-152 is not an accepted residual but a live defect, and the generator is manufacturing identity continuity. Only an external source can settle it.
 - If the identity table's successor dates are themselves wrong for symbols outside the 211-instrument corpus, N-151's closure is coverage of a table that is wrong, not of the market.
+
+### 79.15 Correction — the suite clock in §79.1
+
+§79.1's table reports the suite as `523 passed … (117 s)`. The 117 s is the implementer's recorded
+`pytest_seconds` in `source_tree_green.json`, not this round's measurement: the gate run that
+validates this commit printed `523 passed in 102.50s (0:01:42)` at W0.5-3 under `--force-full`. Count,
+skips and xfails stand as reported; only the clock is corrected. §79.1 is left as committed because
+this volume is append-only (§11.1) — the correction is appended, never edited in place (§10.1).
