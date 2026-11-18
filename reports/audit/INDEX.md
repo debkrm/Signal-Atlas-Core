@@ -6,7 +6,7 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | Volume | Path | Sections | Lines | Frozen | SHA-256 |
 |---|---|---|---|---|---|
 | `signal_atlas_phase1c_audit_deepseek_review_.md` | `reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md` | 1-78 | 8442 | yes | `f4ca03d58466bebb…` |
-| `volume2.md` | `reports/audit/volume2.md` | 79+ | 2315 | no | `852ecc11705d846d…` |
+| `volume2.md` | `reports/audit/volume2.md` | 79+ | 2481 | no | `108d0e4a0e6ada1c…` |
 
 | Section | Title | Volume | Lines | Finding ids |
 |---|---|---|---|---|
@@ -101,4 +101,5 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | §89 | Audit of `2e7f51b` (tag `feat-s89-2e7f51b`): both §88 findings close, the suite halves its wall time with the same assertions, and the replacement clock ticks in 15.6 ms | `volume2.md` | 1853–1975 | N-171, N-172, N-173, N-999 |
 | §90 | Audit of `fb02eea` (tag `feat-s90-fb02eea`): the pooled clock closes N-173, the timing guard still cannot see a linear scan, and the interval table seats 1,206 trade-to-trade ISIN-sessions in the EQ universe | `volume2.md` | 1976–2143 | N-1, N-173, N-174, N-175 |
 | §91 | Audit of `abf198f` (tag `feat-s91-35e2050`): the interval log is corrected by append and N-175 closes, the new replay counter cannot see the scan it was added for, and the warm-up window becomes gating-eligible | `volume2.md` | 2144–2315 | N-150, N-171, N-172, N-173, N-174, N-175, N-176, N-177 |
+| §92 | Audit of `1aff4c6` (tag `feat-s92-1aff4c6`): the hold bound exits through the engine, Gate COV-3 computes its attribution, the scan is caught five of five, and the binding start moves while its labels stay | `volume2.md` | 2316–2481 | N-150, N-174, N-176, N-177 |
 

@@ -2313,3 +2313,169 @@ Ordered by what it unblocks. Each item names the probe that must fail closed bef
 - If the printed 933/224/17 split is reproducible from a different session's archive or from the price-band report rather than the Bhavcopy, my classification is the artifact and N-176 should be withdrawn.
 - If any session in `2018-04-01..2021-12-31` lacks an authoritative calendar row, or an identity boundary in the window is dated at the 2022-01-03 seam, Ruling 1 rests on a fabricated input and the window stays warm-up.
 - If promoting the start moves any fold, `N`, `N_eval`, cost parameter, criteria threshold or the holdout token hash, the promotion was a scope change disguised as an eligibility change.
+## §92 — Audit of `1aff4c6` (tag `feat-s92-1aff4c6`): the hold bound exits through the engine, Gate COV-3 computes its attribution, the scan is caught five of five, and the binding start moves while its labels stay
+
+**Date:** 18 November 2026
+**Commit under review:** `826ef95` (28 files, +693/−143: the portfolio-level hold-bound consumer and its two call sites, seven instrumented replay-guard accessors, Gate COV-3's attribution helper, criteria 1.1.13 and three flipped probes), plus `1aff4c6` (the green-cache row, +19 lines; the source tree projects to the same hash at both, so the gate found it already recorded and appended nothing).
+**Verdicts:** **N-177 CLOSED** · **N-176 CLOSED** · **N-174 CLOSED** — 5 of 5, measured on this host · criteria **1.1.13** with every pin the round promised intact, including `MAN-FPR-V1-e95ddf90…` · A1 / A2 / A4 dividends / A4 max hold / A5 **PASS** · **§91.9 item 4 PARTIAL** — the criteria moved to 2018-04-01, the 931 archive rows still read `WARMUP_NOT_GATABLE`, and the certificate refuses the relabel that would align them · **Ruling 1**: the relabel and `MAN-FPR` re-pin land as `1.1.14` **before** seq 10 registers · **Ruling 2**: eight-trial hold-bound invariance is **not measured**; it needs a targeted verification run before any seq-10 comparison
+
+### 92.1 Baseline re-measured at `1aff4c6`
+
+| Measurement | Result |
+|---|---|
+| `scripts/verify_audit_append_only.py --force-full` | **exit 0** — `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Suite under the gate | **544 passed in 55.72 s**, **0 skipped / 0 xfailed** |
+| Verifiers | **9/9 exit 0** — audit_findings 84.41 s, cash_universe_coverage 33.77 s, historical_snapshot 5.36 s, phase2a 1.35 s, phase2b5 2.67 s, phase2b_significance 0.91 s, phase2c 2.68 s, phase2d 3.82 s, wave1 4.38 s |
+| W0.5-4 / W0.5-5 | every tag verified, including `feat-s92-1aff4c6` → `1aff4c6`; **1,000** current artifacts match byte count and sha256, **26** superseded rows skipped as history |
+| Green cache | the source tree was already recorded; the forced run printed `already recorded; not appending a duplicate row`; `git status` clean before and after |
+| Findings ledger before this round | **46** rows / **27** ids; **4 open** — N-150, N-174, N-176, N-177 |
+| Criteria / pins | **1.1.13**, `MAN-FPR-V1-e95ddf90…`, `CAL-FPR-V1-6acb5f45…`, sourced-window `CAL-FPR-V1-2d5ac7ac…`, **2,936** / **1,201** / **1,196** sessions, binding start **2018-04-01**, `max_hold_trading_sessions` **21** |
+| Trials / fold / holdout | **N = 9** (seq 1–9), `evaluation_count` **5**, manifest head `50de55e9…`, eval head `ec66b016…`; in-sample `2018-04-01..2023-12-31`, validation `2024-01-01..2024-12-31`, holdout `2025-01-01..2026-11-11` with the all-zero token hash and no sentinel on disk |
+| `probe_pre2022_preconditions.py` | **exit 0** — A1 5/5 (246/245/252/248, provenance digest `7622fbf4…`), A2 17,864 active of 19,283 over all 931 sessions, A4 **4,357** ex-dates, A4 max hold `enforced at 1 production call site(s); refusals=1`, A5 `0 of 4,903` before 2018-04-01 |
+| `probe_pre2022_bronze_coverage.py` | **exit 0** — `COVERED — 931/931 … WARMUP_NOT_GATABLE on every row` |
+| Ledger probes | N-174, N-176, N-177 each PASS individually |
+| Files the code commit touches | 28; **no** path under `reports/audit/`, `data/`, `data/trials/`, `configs/partition_spec.yaml`, `data/raw/2025`, `data/raw/2026` |
+| `data/reference/manifest.jsonl`, `data/trials/` | **no diff** against `abf198f` |
+
+The calendar arithmetic of the promotion closes: **2,127** sessions fall in `2018-04-01..2026-10-31` and **1,196** in `2022-01-03..2026-10-31`, and 2,127 − 1,196 = **931**, the A1-counted warm-up sessions (246 + 245 + 252 + 248). The moved value is therefore exactly the span A1, A2 and A4 certified, not a rounder.
+
+### 92.2 N-177 — CLOSED: the bound has a consumer, and a frozen bid is a refusal, measured through the harness
+
+| Measurement | Result |
+|---|---|
+| `Portfolio.require_hold_bounds(as_of, bound, calendar)` | `portfolio.py:123`; returns each refused ISIN beside its refusal, and the bound is an argument — no module default (§10.8) |
+| Engine call site | `run_phase3b2_walkforward.py:1235`, `portfolio.require_hold_bounds(next_session, criteria.max_hold_trading_sessions, cal)`, inside the session loop |
+| Same ledger as the harness | `runner = build_authoritative_runner(portfolio=portfolio, …)`, so the consumer reads and the harness writes the same `Portfolio`; the consumer is not reading a parallel book |
+| Forced exit | `execute_swing_strategy_session(forced_exit_isins=…)` drops any strategy SELL for those ISINs and emits exactly one SELL at `next_session` with `exit_reason=MAX_HOLD_BOUND_EXIT`, through the same runner and simulator |
+| **Attack — at the bound, normal bar** | refused `INE002A01018`; **one ticket, `FILLED`**, `exit_reason=MAX_HOLD_BOUND_EXIT`, position closed (`qty_left=0`) |
+| **Attack — at the bound, bar locked at the lower circuit** (volume 100,000, turnover ₹9.0 cr) | **one ticket, `REJECTED_LOWER_CIRCUIT`**, `exit_reason=MAX_HOLD_BOUND_EXIT`, position **still open** (`qty_left=10`), refusal counted **1** — the §5.3 property, measured rather than inferred |
+| **Attack — one session inside the bound** | no refusal, no ticket, position untouched |
+| Probe flip | replacing the consumer call with an empty set makes `probe_n177` exit 1: `the walk-forward session loop does not consult the hold bound; the production consumer is never reached by a run` |
+| A4 line | `max_hold_trading_sessions=21 is committed and enforced at 1 production call site(s); refusals=1 for one synthetic hold 21 sessions after entry` |
+
+Three residuals, named rather than implied.
+
+1. **The A4 line's "1 production call site" is `portfolio.py`'s wrapper.** The counter scans `src/signal_core` for files other than `position.py` that call `require_within_hold_bound(`, and the engine's call site is a *script* path, so it is not counted. The printed 1 is correct for what it measures and understates the surface; the engine seam is covered by `probe_n177`'s string assertion on `run_phase3b2_walkforward.py`, not by that number.
+2. **No committed test drives `forced_exit_isins`.** `grep` over `tests/` finds no reference to it, and `test_max_hold_bound_refuses_the_session_past_it` calls `Position.require_within_hold_bound` directly. The engine seam therefore rests on §92.2's attack, which is my measurement and not the suite's. Work order item 4 asks for the test; the finding closes on the property, not on the missing test, because I drove the property end to end.
+3. **A partial fill at the bound counts as a forced exit** and the residue is refused again next session. That is correct for the hold (never extended) but the reported counter is per ISIN, not per share, so a partially exited position reads as one forced exit and zero refusals on the session it partially filled.
+
+### 92.3 N-176 — CLOSED: the attribution is computed from the archive it describes, and the zero is asserted
+
+| Measurement | Result |
+|---|---|
+| Helper | `attribute_unresolved_eq_scrips(master, session)` in `scripts/verify_cash_universe_coverage.py`, four buckets, no literal |
+| Measured split at `1aff4c6` | **1,174** unresolved = **933** with no row in the Bhavcopy + **224** in `BE`/`BZ` + **17** in another non-`EQ` series + **0** reported as `EQ` and unresolved |
+| Gate assertions | `attribution["unresolved"] != summary.unresolved_isin_count` → `return False`; `attribution["eq_unresolved"] != 0` → `return False` naming Gate COV-2's 100 % invariant |
+| Printed | the computed split, ending `… <n> reported as EQ and unresolved` — the one number that matters is now in the output because it is asserted in the code |
+| Typed literals | gone; re-adding a `930 untraded` string makes `probe_n176` exit 1 (`Gate COV-3 still prints typed attribution literals`) |
+| `probe_n176` | recomputes the split independently from `sec_list_20240116.csv` + `cm16JAN2024bhav.csv.zip`, asserts `(1174, 933, 224, 17)` and `eq_rows == 0`, then runs the gate function under `redirect_stdout`, parses the printed tuple and asserts it equals its own computation |
+| Fail-closed containment | `attribute_unresolved_eq_scrips(master, 2024-01-17)` raises `BhavcopyIngestError` — `Row trade_date 2024-01-16 does not match partition date 2024-01-17 … (H-24)` — rather than attributing from another session's archive |
+
+**Residual.** The archive filename (`cm16JAN2024bhav.csv.zip`) and the gate's session (`t_date = 2024-01-16`) are still two literals that must move together. They cannot drift silently — H-24 refuses the mismatch as measured above — but a COV-3 that moves to another session and forgets the filename fails closed with an ingest error rather than an attribution, which is a harder failure to read. Work order item 3 does not move this session; naming it here is enough while the gate asserts one date.
+
+### 92.4 N-174 — CLOSED: the counter now sees the scan, five of five
+
+| Measurement | Result |
+|---|---|
+| Accessors instrumented | **7** — `__contains__`, `__iter__`, `keys`, `values`, `items`, `__getitem__`, `__len__`, each incrementing `access_counts` through one `count()` |
+| Test assertions | iteration-shaped accesses (`__iter__`, `keys`, `values`, `items`, `__getitem__`) **== 0**; `__contains__` **== fill_count**; `__len__` **≤ fill_count** |
+| Ceilings | `per_fill_1k_us < 250.0`, `per_fill_4k_us < 250.0`, `scaling_ratio < 2.5` — asserted present by `probe_n174` and untouched by this commit |
+| **Acceptance attack, at `1aff4c6`** | §90.3's per-fill scan over every held instance installed in `Portfolio.process_fill` in a detached worktree: **failed 5 of 5 runs** (2.2–2.9 s each), against 1 of 5 at `abf198f` and a pass outright for the cheap variant at `fb02eea` |
+| Probe flip | deleting the `def __iter__` counter makes `probe_n174` exit 1: the replay-guard counter does not instrument `__iter__` |
+
+**Residual.** Two accessors named in §91.9 item 3 are not counted — `get` and `popitem` — and I measured that this is not harmless in form even if it is in effect: a per-fill `self._processed_fill_instances.get(id(fill))` inserted into `process_fill` leaves the benchmark **passing** (`1 passed`). It does not hide an `O(n)` regression, because `.get` is a hash lookup, but the work order asked for the accessor and the counter does not have it. A scan expressed as `super().__iter__()` or `OrderedDict.__iter__(guard)` likewise bypasses the override. `__len__` is allowed up to one access per fill. The closure rests on the named regression being caught 5 of 5, which is the acceptance §91.9 item 3 wrote.
+
+### 92.5 Criteria 1.1.13 — one value moved, everything it was pinned against measured intact
+
+| Measure | `abf198f` (1.1.12) | `1aff4c6` (1.1.13) |
+|---|---|---|
+| `version` | 1.1.12 | **1.1.13**, effective 2026-11-18 |
+| `min_binding_evaluation_start_date` | 2022-01-03 | **2018-04-01** — in `configs/go_no_go_criteria.yaml`, the `criteria.py` dataclass default, the loader's fallback, `storage/gating.py:BINDING_EVALUATION_START_DATE` and the module docstrings |
+| `SOURCED_WINDOW_START_DATE` | did not exist | **2022-01-03**, `storage/calendar.py`; the three places that had used the binding start as a stand-in now read it: the calendar loader's session count and sourced fingerprint, `reporting/verdicts.py`'s CRIT-DATA-06 window, `verify_cash_universe_coverage.py`'s COV-2 reconciliation window, `generate_phase2d_tier_a_report.py` |
+| `expected_manifest_fingerprint` | `MAN-FPR-V1-e95ddf90…` | **unchanged**, and `data/reference/manifest.jsonl` has no diff |
+| `expected_calendar_fingerprint` | `CAL-FPR-V1-6acb5f45…` | **unchanged**; the loaded calendar still reports 2,936 sessions and that fingerprint |
+| `expected_sourced_window_calendar_fingerprint` | `CAL-FPR-V1-2d5ac7ac…` | **unchanged**; recomputed over 1,196 sessions |
+| Session anchors | 2,936 / 1,201 / 1,196 | **unchanged**, and the arm that reads 1,196 now reads `SOURCED_WINDOW_START_DATE` rather than the moved binding start |
+| `max_hold_trading_sessions` | 21 | **21** |
+| Trials | N = 9, N_eval = 5 | **N = 9**, `evaluation_count` **5**, registry rows seq 1–9, head `50de55e9…`, eval head `ec66b016…` |
+| Fold / holdout | in-sample to 2023-12-31, validation 2024, holdout sealed | **unchanged**; partition spec identical, all-zero token hash, no `HOLDOUT_UNLOCK` sentinel |
+| Phase 2D artifacts | 27 rows, PASS=2 / FAIL=0 / NOT RUN=25, NO-GO | **identical counts**, overall **NO-GO**, window `2022-01-03..2026-10-30`, criteria 1.1.13, `CRIT-FPR-V1-3aaac725…`; the two files changed **9 lines** in total (5/5 json, 4/4 md) and no evaluation row moved |
+
+**The adversarial dates moved with the pin, and that is the Ruling rather than a weakened assertion.** `verify_phase2d_verdicts`'s pre-binding probe used `2019-01-01`; it now uses `2016-01-01`. `verify_phase2b5_storage`'s Gate G2B.5-7 used `2019-01-01`; it now uses `2018-03-29`. `test_storage`'s warm-up date and `test_pre2022_gating_mode`'s window moved the same way. 2019 is now **inside** the binding window, so a probe that used it would assert the opposite of the criteria; the property tested — a date before the binding start cannot reach GO and is classified `PRE_SURVEILLANCE_WARMUP` — is still tested, with a date before the start. What is lost is coverage of the *old* boundary: no committed test now proves that 2022-01-03 is no longer special, which is exactly what the promotion claims. `test_walkforward.test_n32_pre_window_fold_refused_fail_closed` covers the analogous shape for folds (a 2017 fold refused, `execution_config` carrying `2018-04-01`).
+
+**Residual, carried from §91.6 and now one reseal worse.** `phase2d_tier_a_2022_2026_verdict.json` still carries `timestamp_utc 2026-11-16T10:00:00+00:00` while its `criteria_version` is now 1.1.13, effective 2026-11-18: the third version this one artifact has held against one timestamp. The reseal is forced (`verify_phase2d_verdicts` compares the artifact's fingerprint to the loaded criteria), and it is honest where it matters — no threshold moved, so no row moved — but the artifact cannot tell a reader that its 25 `NOT RUN` rows were computed under 1.1.11. The yaml note is again the only place that records it.
+
+### 92.6 §91.9 item 4 — PARTIAL: the criteria moved, the labels did not, and the certificate enforces the stale half
+
+| Measurement | Result |
+|---|---|
+| `grep -c WARMUP_NOT_GATABLE data/reference/manifest.jsonl` | **931** — every warm-up row, unrelabelled |
+| `probe_pre2022_bronze_coverage.py:179` | `if row.get("gating_mode") != WARMUP_LABEL:` → a problem; `WARMUP_LABEL = "WARMUP_NOT_GATABLE"` is a module constant |
+| Does the certificate read the criteria? | **no** — zero matches for `criteria`, `go_no_go`, `BINDING` in that script |
+| Certificate on this tree (criteria 2018-04-01, labels `WARMUP_NOT_GATABLE`) | **exit 0**, `COVERED — 931/931 … WARMUP_NOT_GATABLE on every row` |
+| Certificate after relabelling **one** row to `BINDING_EVALUATION` | **exit 1** — `[FAIL] session 2018-04-02 (FULL): … carries gating_mode 'BINDING_EVALUATION', expected 'WARMUP_NOT_GATABLE'` |
+| Is seq 10 mechanically blocked by the stale label? | **no** — the guard is date-based (`warmup_sessions_in` compares `session_date < binding_start_date` and never reads a label), and A5 already reports `0 of 4,903` against 2018-04-01 |
+
+So §91.9 item 4's acceptance is not met, and the failure is worse than a missing check: the certificate passes a tree whose criteria and manifest disagree, and **fails** on the only edit that would make them agree. The implementer records the gap in `CURRENT_STAGE_OF_WORK.md` ("the remaining promotion mechanic"), which is why this is `PARTIAL` rather than a new defect. Two claims in that note are contradicted by measurement and are corrected here: it says work-order items 5 and 6 "were not ordered" — §91.9 orders six items, and seq-10 registration and N-150 are items 5 and 6; and it calls the relabel "outside the ordered scope", when item 4 orders it by name ("the 931 `gating_mode` rows superseded by append, `MAN-FPR` re-pinned").
+
+### 92.7 Ruling 1 — the 931 labels and the certificate's label rule move before seq 10 registers
+
+*Evidence:* §92.6, measured at `1aff4c6`: binding start 2018-04-01, **931** rows still `WARMUP_NOT_GATABLE`, the certificate exits **0** on that contradiction and **1** on the relabel that resolves it, and it reads no criteria to notice either.
+
+*Ruling:* the binding start is `2018-04-01` (criteria 1.1.13, verified in §92.5), and a capture label must describe the same fact or the manifest is wrong about the sessions a result rests on. The **931** rows are superseded by **append** with the label the criteria now imply, `MAN-FPR` is re-pinned over the grown manifest as criteria **1.1.14**, and `probe_pre2022_bronze_coverage.py`'s label rule is re-expressed against `min_binding_evaluation_start_date` in the same commit, so the certificate and the guard read one source. This lands **before** candidate seq 10 is registered, because the registry row names the criteria version the run is made under (§8.2): registering against 1.1.13 and re-pinning afterwards would leave the run's provenance describing its own in-sample sessions as not gatable.
+
+*It does not change:* any archive's bytes, byte count or digest; the 931 sessions' calendar, identity or dividend evidence; the binding start; the sourced-window pins (`CAL-FPR-V1-2d5ac7ac…`, 1,196); any threshold, fold or trial count; the holdout seal. A relabel states the maturity of an input A1, A2 and A4 have already certified; it asserts nothing new about prices.
+
+*Work item:* §92.10 item 1, serving `§10.8` / Phase 3B-2. *Probe:* the coverage certificate exits non-zero on a tree whose criteria and labels disagree (today it exits 0, and the aligned relabel makes it exit 1), `probe_pre2022_preconditions.py` stays READY 9/9, W0.5-5 still attests all **931** archives, and the manifest diff is additions only.
+
+*Falsified by:* a 1.1.14 that relabels while leaving the hard-coded label rule in place (the certificate would then fail on its own tree); a relabel that edits a row instead of appending one; a relabel that changes any Bronze digest; or a seq 10 registered against 1.1.13 with the labels as they stand.
+
+### 92.8 Ruling 2 — eight-trial hold-bound invariance is a claim without a measurement, and needs a targeted run
+
+*Evidence:* §92.2 establishes the enforcement is real. The committed artifacts cannot bound it: `in_sample_metrics` carries `{cagr, closed_trades, end_equity, fold, max_drawdown, profit_factor, sessions, start_equity, win_rate, window}` and `validation_metrics` is `null` in `trial_009`, so no holding period is recoverable from any of the eight. Seven of the eight verdict artifacts are byte-identical to `abf198f` **because they were not re-run** — a fact about files, not about outcomes — and the eighth (`phase2d_tier_a`) moved only its version and fingerprint. The commit's own note says it in the implementer's words: "NOT RUN: the eight post-2022 trial outcomes were not re-run … outcome invariance is not measured here."
+
+*Ruling:* §90.9 item 4's condition ("no existing post-2022 trial outcome may move") is **not satisfied by this round** and cannot be satisfied by inspection. Before any seq-10 result is compared with the eight recorded trials, one recorded trial's in-sample window (`2022-01-03..2023-12-29`) is re-run under the committed engine and criteria with the new counters, and the run must report `hold_bound_forced_exits == 0` and reproduce `closed_trades`, `end_equity`, `profit_factor`, `win_rate` and `max_drawdown` from its committed artifact. A non-zero forced exit is a finding about comparability and is reported as one, never smoothed into "the bound was unlikely to bind".
+
+*It does not change:* the bound (**21**), the window, the fold, the cost schedule or any threshold. It adds a measurement the round said it would make and did not.
+
+*Work item:* §92.10 item 2, serving `§13.2` / Phase 3B-2. *Probe:* the re-run's result carries `hold_bound_forced_exits` and `hold_bound_refusals`, and the metric comparison is an equality assertion against the committed artifact; a run whose evaluated sessions include any date in `2025-01-01..2026-11-11` fails closed.
+
+*Falsified by:* a targeted run with 0 forced exits whose metrics differ — the enforcement path perturbs the engine another way, for example the `declared_exit_reason` precedence now applied to every SELL — or a run that produces a forced exit yet still reproduces the committed metrics, in which case the bound was reached but did not change a fill and invariance was the wrong question.
+
+*Why the run is expected to be cheap:* with `forced_exit_isins` empty the new path is inert — `raw_intents` is untouched when `forced` is empty — so a zero-forced-exit run measures the enforcement the round asks about, plus the reordering (sorted forced intents first) only when one exists.
+
+### 92.9 Phase verdicts
+
+| Phase | Verdict at `1aff4c6` | Named residuals |
+|---|---|---|
+| `§13.2` A4 max hold (N-177) | **CLOSED** — consumer in the session loop, one forced SELL through the same simulator, a locked bid leaves the position open and counts a refusal | the engine seam has no committed test; the A4 "1 production call site" counts the portfolio wrapper, not the script |
+| `§12.4` Gate COV-3 (N-176) | **CLOSED** — split computed from the session Bhavcopy, `0` Bhavcopy-`EQ` unresolved asserted in code | archive filename and session are literals, bound together by H-24 |
+| `§12.4` test invariant (N-174) | **CLOSED** — §90.3's scan fails **5 of 5**; ceilings unchanged | `get`/`popitem` uncounted; `super().__iter__()` bypasses the override |
+| `§10.8` A1 / A2 | **PASS / PASS** — 246/245/252/248 from 7 sourced artifacts; 17,864 of 19,283 rows over 931 sessions | — |
+| `§10.8` A4 dividends / max hold | **PASS / PASS** — 4,357 ex-dates; enforced with `refusals=1` | invariance run outstanding (Ruling 2) |
+| `§10.8` A5 | **PASS** — 0 of 4,903 evaluated sessions before 2018-04-01 | the corpus is still the post-2022 one; A5 tests the pin, not the new window's roll-forward |
+| Criteria and pins | **1.1.13** — one value moved, every other pin measured unchanged; Phase 2D regenerated to `PASS=2 / FAIL=0 / NOT RUN=25 / NO-GO` | the artifact's timestamp predates the criteria version it carries |
+| `§91.9` item 4 promotion mechanics | **PARTIAL** — criteria and guard moved; labels and certificate did not (§92.6) | Ruling 1 |
+| `§91.9` item 5 (seq 10) / item 6 (N-150) | **not done** — N = 9, `N_eval = 5`, registry untouched | blocked behind Ruling 1; N-150 stays OPEN |
+| Gate / cache | **GO** — 544 passed, 9/9 verifiers, tree already recorded, no duplicate row appended | — |
+
+### 92.10 Work order for feat-s93
+
+Ordered by what it unblocks. Each item names the probe that must fail closed before it closes, and the phase it serves.
+
+1. **Ruling 1 — relabel the 931 rows by append, re-express the certificate, re-pin `MAN-FPR` as 1.1.14** (serves `§10.8` / Phase 3B-2). Supersede the 931 `WARMUP_NOT_GATABLE` rows with the label the binding start implies, never editing one; re-express `probe_pre2022_bronze_coverage.py`'s label rule against `load_go_no_go_criteria().min_binding_evaluation_start_date`; re-pin `expected_manifest_fingerprint` by measurement over the grown manifest. **Probe:** the certificate exits non-zero on a tree whose criteria and labels disagree and zero on the aligned tree; `probe_pre2022_preconditions.py` READY 9/9; W0.5-5 attests all 931 archives; the manifest diff is additions only. **Blocks item 3.**
+2. **Ruling 2 — the targeted eight-trial invariant run** (serves `§13.2`). Re-run one recorded trial's in-sample window with the enforcement in place and compare the five metrics to its committed artifact. **Probe:** the result carries `hold_bound_forced_exits` / `hold_bound_refusals`; the equality assertion fails loudly on any metric drift; a sealed-era session in the evaluated set fails closed.
+3. **Register seq 10 against 1.1.14** (§91.9 item 5, re-issued): one registry row, in-sample `2018-04-01..2023-12-31`, fold spec naming **2024** as validation, `N` 9 → 10 with `evaluation_count` still 5, registry manifest re-pinned, no path under `data/raw/2025` or `2026` in its provenance. **Probe:** the registry's `N`, `criteria_version` and pin agree with the criteria; a run that evaluates a sealed session fails closed.
+4. **A committed test at the swing seam** (serves `§12.4`). `forced_exit_isins` through `execute_swing_strategy_session`: one `MAX_HOLD_BOUND_EXIT` fill on a normal bar, `REJECTED_LOWER_CIRCUIT` with the position still open on a locked bar, and nothing at all one session inside the bound. **Probe:** `probe_n177` asserts that test exists — today it asserts the consumer call and a string in the script, so a call that is unreachable still passes it.
+5. **N-150 — CRIT-OVERFIT-06 needs a second fold or a recorded admission** (carried, MEDIUM; §91.9 item 6). **Probe:** the verdict bundle names the fold count it used, and a `PASS` on fewer than two folds fails closed.
+6. **The counter's named accessors** (serves `§12.4`). `get` and `popitem` were ordered in §91.9 item 3 and are not counted; either instrument them or record why iteration-shaped access is the whole surface. **Probe:** `probe_n174` asserts the accessor set it can measure, so a narrowed counter fails it.
+
+### 92.11 What would falsify this verdict
+
+- If a position at the bound is refused but its SELL is not routed through the harness — two tickets, or none — N-177 rests on the wrong seam. Measured here: one ticket, `MAX_HOLD_BOUND_EXIT`, position closed.
+- If a bar locked at the lower circuit still fills a forced SELL, §5.3 is violated and the refusal counter is decorative. Measured `REJECTED_LOWER_CIRCUIT` with `qty_left=10`.
+- If 933/224/17 is reproducible only from the price-band report or from another session's archive, N-176's closure rests on the wrong artifact and should be withdrawn.
+- If the regression that actually returns is a `super().__iter__()` scan or a per-fill `.get()`, the closure is about the shape the counter watches and not about `O(1)`; the residual is named, and the finding should be re-opened rather than re-scoped.
+- If the certificate still exits 0 on a tree whose criteria and labels disagree after 1.1.14, Ruling 1 was applied additively — a new label beside the old rule.
+- If a targeted re-run yields 0 forced exits and moved metrics, the enforcement is not inert when the bound is not reached, and Ruling 2's condition is unmet for a different reason.
+- If any pin measured unchanged in §92.1 (`MAN-FPR`, `CAL-FPR`, `2d5ac7ac`, 2,936 / 1,201 / 1,196, N = 9, `N_eval = 5`, the 2024 fold, the all-zero token hash) moves later without being named, this baseline described the wrong tree.
