@@ -6,7 +6,7 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | Volume | Path | Sections | Lines | Frozen | SHA-256 |
 |---|---|---|---|---|---|
 | `signal_atlas_phase1c_audit_deepseek_review_.md` | `reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md` | 1-78 | 8442 | yes | `f4ca03d58466bebb…` |
-| `volume2.md` | `reports/audit/volume2.md` | 79+ | 1850 | no | `cd66692c59515faf…` |
+| `volume2.md` | `reports/audit/volume2.md` | 79+ | 1975 | no | `fd584f7e78dd0a57…` |
 
 | Section | Title | Volume | Lines | Finding ids |
 |---|---|---|---|---|
@@ -97,5 +97,6 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | §85 | Audit of `0b3c56d` (tag `feat-s84-0b3c56d`): the four named configs are state, the fifth name pytest reads is not | `volume2.md` | 1334–1462 | N-150, N-152, N-165, N-166, N-167, N-168, N-169 |
 | §86 | Audit of `a3be813` (tag `feat-s85-a3be813`): the legacy ini is state; the 2019 grid is one session short, and the Ruling that authorises closing it | `volume2.md` | 1463–1603 | N-150, N-152, N-165, N-167, N-168, N-169, N-170 |
 | §87 | Audit of `e081886` (tag `feat-s86-3fb8f64`): the archives are bytes, the 2019 grid is sourced, A1 passes on all four years, and capture is authorised while gating is not | `volume2.md` | 1604–1726 | N-169, N-170 |
-| §88 | Audit of `df97173` (tag `feat-s87-df97173`): the 931 warm-up sessions are captured and certified, the guard refuses them, and the certificate cannot see a transposed label | `volume2.md` | 1727–1850 | N-170, N-171, N-172 |
+| §88 | Audit of `df97173` (tag `feat-s87-df97173`): the 931 warm-up sessions are captured and certified, the guard refuses them, and the certificate cannot see a transposed label | `volume2.md` | 1727–1852 | N-170, N-171, N-172 |
+| §89 | Audit of `2e7f51b` (tag `feat-s89-2e7f51b`): both §88 findings close, the suite halves its wall time with the same assertions, and the replacement clock ticks in 15.6 ms | `volume2.md` | 1853–1975 | N-171, N-172, N-173, N-999 |
 

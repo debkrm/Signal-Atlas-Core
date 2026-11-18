@@ -1848,3 +1848,128 @@ Capture eligibility and gating eligibility stayed separate in the code, not only
 - If any numeric leaf differs between 1.1.10 and 1.1.11, or `min_binding_evaluation_start_date`, `2d5ac7ac…`, 1201, 1196, the trial pin or the 2024 fold moved, the Ruling was used to re-baseline.
 - If `build_historical_dataset_from_raw_bhavcopy` accepts a pre-2022 directory, or a committed verdict's evaluated set contains a session before 2022-01-03, the guard is bypassable and this section's A5 verdict is wrong.
 - If a transposed pair of archives exits 0 from *every* gate that inspects the corpus, N-171 is understated; if it now exits 1, N-171 is closed and this section's finding is stale — the probe would say so.
+---
+
+## §89 — Audit of `2e7f51b` (tag `feat-s89-2e7f51b`): both §88 findings close, the suite halves its wall time with the same assertions, and the replacement clock ticks in 15.6 ms
+
+**Date:** 18 November 2026
+**Commit under review:** `eb05053` (8 files, +293/−77: the coverage certificate reads the archives, the two-digit year is bounded, the gate gains a parallel invocation and a tolerant decoder, the ledger test drops its duplicate probe execution, one benchmark changes its clock), plus `2e7f51b` (the implementer's `CURRENT_STAGE_OF_WORK.md` note, not audited here).
+**Verdicts:** **N-171 CLOSED** · **N-172 CLOSED** with a named residual · gate speedup **verified as invariant** (543 passed both ways, zero skip/xfail) · §88 work order item 5 **ratified as an accepted residual** (Ruling 1) · invariants **unchanged** · **N-173** registered `OPEN`
+
+### 89.1 Baseline re-measured at `2e7f51b`
+
+| Measurement | Result |
+|---|---|
+| `scripts/verify_audit_append_only.py --force-full` | **exit 0** — `ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Suite invocation the gate chose | `-m pytest -n auto --dist loadfile -q` (printed by the gate) |
+| Suite under the gate | **543 passed** in **50.66 s** (gate total 51.81 s); green row `eb05053` records 543 in 48.84 s |
+| Suite sequential, same commit, for invariance | **543 passed** in **121.91 s**, zero `skipped`/`xfail` in the log |
+| Verifiers | 9/9 exit 0; W0.5-2 executes **24/24** ledger probes; W0.5-1c index reproduces (88 sections); W0.5-5 **985** current / **23** superseded |
+| Tags | 94 commit-bearing (W0.5-4 PASS) |
+| Green cache | **20** rows, last `b5d9cb027d86…` at `eb05053`, `suite_count` 543 |
+| Findings ledger before this round | 37 rows / 24 ids (N-171, N-172 `OPEN` §88); 40 rows / 25 ids after §89 |
+| `probe_pre2022_bronze_coverage.py` | **exit 0** — `COVERED — 931/931 … each archive's own session date equal to its row` |
+| `probe_pre2022_preconditions.py` | **exit 1** — A1 **5/5 PASS** (246/245/252/248), A5 **PASS** (8 artifacts, 0 of 4,903), A2 **NO** (4,510 rows begin 2022-01-03, 0 reach 2021-12-31), A4 dividends **NO** (0 of 138 ex-dates), A4 max hold **NO** |
+| `probe_n171` / `probe_n172` | **PASS** / **PASS** (both flipped to assert closure) |
+| Criteria / pins | **1.1.11**, `MAN-FPR-V1-7131c213…`, `CAL-FPR-V1-6acb5f45…`, `2d5ac7ac…`, binding **2022-01-03**, 1,196 / 1,201 |
+| Trials / fold / holdout | **N = 9**, `N_eval = 5`, pin `3326b1b2…`; 2024 validation fold frozen; holdout `2025-01-01..2026-11-11` sealed |
+| Files the range touches | 8 — none under `configs/`, `data/trials/`, `reports/verdicts/`, `data/raw/`; volume 1 and the audit report untouched |
+
+### 89.2 N-171 — CLOSED, the certificate now reads what the exchange wrote
+
+The coverage probe gained `embedded_session_dates`, which opens the archive, requires exactly one CSV member, reads `TIMESTAMP` (or `TRADEDATE` in the unified format), parses each distinct value and requires the set to equal the row's `session_date` exactly. Attacked in a detached worktree at `2e7f51b` (`/tmp/s89w`, restored clean after each), all four shapes refuse:
+
+| Attack | Exit | Message |
+|---|---|---|
+| Transpose `session_date` between `cm02APR2018` and `cm03APR2018`, bytes and digests untouched | **1** | `session 2018-04-02 (FULL): … cm03APR2018bhav.csv.zip carries its own session date(s) 2018-04-03, so the row's session_date is not on these bytes` (+ the mirror row) → `NOT COVERED — 929/931, 2 problem(s)` |
+| Overwrite one archive with the other session's bytes **and re-attest the row's `sha256`/`byte_count` to the new bytes** | **1** | the same embedded-date refusal — the digest check cannot catch this and does not need to |
+| Truncate an archive to 23 bytes and re-attest its digest | **1** | `… cannot be read for its own session date: File is not a zip file` |
+| Committed corpus, unmodified | **0** | `COVERED — 931/931 … each archive's own session date equal to its row` |
+
+`probe_n171` is flipped: it first asserts the reader resolves both fixture archives to their own dates (so a refusal cannot come from a broken fixture), then asserts the tampered manifest exits 1 naming **both** dates, then asserts the committed manifest exits 0 at `931/931`. That is the closure direction §88.8 item 1 specified — the transposition attack must exit 1 — measured at the probe, not only at the script.
+
+**Additive-fix check (§14.4).** The archive-date reader is used by the coverage probe and by `probe_n171`; no second certifier claims "covered" without opening the bytes, and no unguarded path beside the guarded one was added. The capture's own `validate()` still compares the parsed row date to the scheduled session (H-24), which is the same invariant one stage earlier. Nothing else in the repository consumes `parse_bhavcopy_date` on archive bytes except `parse_bhavcopy_archive`, which refuses a row whose date differs from the partition date.
+
+### 89.3 N-172 — CLOSED, with the bound's residual named
+
+`parse_bhavcopy_date` now refuses a `%d-%b-%y` value whose parsed year falls outside **1990–2030**, before returning it. Boundaries measured exactly:
+
+| Input | Result |
+|---|---|
+| `13-Jul-68` | **REFUSED** — `Implausible two-digit year in Bhavcopy: '13-Jul-68' parses to 2068-07-13, outside the plausible 1990-2030 range` |
+| `13-Jul-69`, `13-Jul-88`, `13-Jul-89`, `13-Jul-67` | refused (1969, 1988, 1989, 2067) |
+| `13-Jul-90` | 1990-07-13 — accepted, the low edge |
+| `13-Jul-29`, `13-Jul-30` | 2029-07-13, 2030-07-13 — accepted, the high edge |
+| `01-Jan-31` | refused (2031) |
+| `13-Jul-20`, `13-JUL-2020` | 2020-07-13 — the archive that needs the branch still parses |
+| `13-Jul-99`, `13-Jul-00` | 1999-07-13, 2000-07-13 — accepted (inside the window) |
+| `13-Jul-2`, `13-Jul-2O` | refused as unrecognized, as before |
+| `cm13JUL2020bhav.csv.zip` at its own partition date | resolves to 2020-07-13 with **1,392 EQ** records |
+| the same archive at a 2068 partition date | H-24 refuses: `Row trade_date 2020-07-13 does not match partition date 2068-07-13 for ISIN INE144J01027` |
+
+`probe_n172` is flipped: it asserts the refusals by name and by the date they would have become, asserts the three in-window years beside the bound, asserts the archive's **1,392** EQ count, and keeps the H-24 containment.
+
+**Residual, named rather than implied.** §88's row asked for "0 two-digit-year inputs accepted outside the year of the corpus they are filed under (±1)". A parser that sees only a string has no filed year to compare against, so the implemented bound is a plausible-century filter (1990–2030) rather than a ±1 window: `13-Jul-99` is still accepted by the bare parser. The ±1 clause is satisfied where the archive context exists and more strongly than written — H-24 requires the parsed date to equal the partition date **exactly**, so an archive whose two-digit year misstates its session is refused at parse time (measured above at the 2068 partition). What the bound buys is that a stray two-digit year can no longer silently name a session inside the sealed holdout era without an archive to be wrong against. That is the danger §88 registered, and it is refused.
+
+### 89.4 The gate speedup — same suite, same assertions, and one new clock defect
+
+| Claim | Measured |
+|---|---|
+| `-n auto --dist loadfile` runs the same suite | **543 passed** parallel (50.66 s) vs **543 passed** sequential (121.91 s), zero skip, zero xfail in both logs; the gate prints which invocation it used |
+| Sequential fallback when xdist is absent | `pytest_command()` returns `-m pytest -q` with `find_spec("xdist")` stubbed to `None`, and the real binary with it present; `pytest-xdist` is **absent** from `pyproject.toml`, so a fresh environment takes the fallback and the sequential run above is that exact command |
+| A failure is still a failure under the tolerant decoder | Deliberate failing test that writes non-UTF-8 bytes (`0x81`, `0x8d`, `0x9d`) plus a `pytest.skip`: the gate returned **False** (`1 failed, 543 passed, 3 errors`), printed the summary, raised no decode error and did not report a pass |
+| The ledger test no longer executes the probes twice | `--list` reports **24**; appending a ledger row for an unregistered `N-999` makes `verify_audit_findings.py` exit **1** (`FAIL N-999: no probe registered`) and the ledger test fail (`assert 'N-999' in registered`) — the mapping check still bites, and W0.5-2 still executes all 24 each pass |
+| Ceilings unchanged | `per_fill_1k_us < 250.0`, `per_fill_4k_us < 250.0`, `scaling_ratio < 2.5` — read unchanged at `2e7f51b` |
+| Instrument, live | 1,000 fills: **46.9 µs/fill CPU** (wall 51–54 µs); 4,000 fills: **46.9–66.4 µs/fill CPU**; ratio **0.75–1.42** over five repetitions — comfortably inside both ceilings |
+| Instrument resolution | **15.625 ms**, with **2 distinct values in 20,000 calls** on this Windows interpreter |
+
+**N-173 — the new clock is quantized, so a faster implementation fails the test.** Because `process_time()` advances in 15.625 ms steps, a 1,000-fill loop costing under half a tick measures **0.0 µs/fill**; the guard's `max(per_fill_1k_us, 1.0)` then divides the 4,000-fill figure by 1.0. Quantized from a 5 µs/fill implementation the two measurements are 0.0 and 3.91 µs → ratio **3.91 ≥ 2.5**, so the benchmark fails on a 9× speedup of the same O(1) code, and reports "Replay guard scaling superlinearly". The wall clock it replaced had nanosecond resolution and no such window. The defect is Windows-bound — on a host with a fine-grained `process_time` the same workload measures near 1.0 — and test-only (no gate assertion is weakened; a false failure is fail-closed for the gate but misdirects the implementer). Severity **LOW**, `OPEN`, probe `probe_n173` registered: it asserts the benchmark still uses `process_time()` and the `max(..., 1.0)` floor, measures the tick, and on a coarse-tick host reproduces the 3.91 ratio while on a fine-grained host asserts the near-1.0 result.
+
+### 89.5 Ruling 1 — §88 work order item 5 is ratified as an accepted residual
+
+**Evidence first.** At `2e7f51b` the A5 block still reads each verdict's declared `evaluation_start_date`/`evaluation_end_date` and intersects that window with the calendar (§89.1: `[PASS] A5 … 0 of 4,903`), while the load-bearing refusal is the call-site guard, which raises on the session dates actually read from archives (§88.5: `248 of 248`). No code changed in this round to move A5 onto the ledger, and the criteria comment carries no residual statement.
+
+**Ruling.** §88.8 item 5 is satisfied by acceptance rather than by code: the A5 declared-window read is a **named accepted residual**, registered here and citable, not a defect awaiting closure. It changes nothing about what A5 measures and no threshold; it changes the item's completion condition from "A5 reads the ledger or the criteria comment records the residual" to "the residual is recorded in the auditor's report and cited by the criteria comment at its next revision". It does not change the guard, the probe's `PASS` semantics, or any verdict.
+
+**Falsifier.** If a committed verdict is ever found whose declared window is 2022-onward while its evaluated fills or sessions reach before 2022-01-03, acceptance was wrong and the item returns as a defect. The probe that must fail closed before any future re-opening is the fabricated-verdict attack already measured in §88.5 (`148 of 148` refused) plus the call-site guard measured here.
+
+### 89.6 Invariants confirmed unchanged
+
+| Invariant | Value at `2e7f51b` | How confirmed |
+|---|---|---|
+| Criteria version / manifest pin | **1.1.11** / `MAN-FPR-V1-7131c213…` | read from the committed YAML; no `configs/` path in the range |
+| Binding evaluation start | **2022-01-03** | read; A5 intersects against it |
+| Calendar pins | `CAL-FPR-V1-6acb5f45…`, `2d5ac7ac…`, 1,196 authoritative / 1,201 baseline | read; gate W0.5-? green |
+| Trials | **N = 9**, `N_eval = 5`, pin `3326b1b2…` | registry manifest; no `data/trials/` path in the range |
+| 2024 validation fold | frozen | criteria untouched; no fold artifact in the range |
+| Holdout | `2025-01-01..2026-11-11` sealed, no `HOLDOUT_UNLOCK` | no holdout path, no `data/raw/2025` or `2026` in the range |
+| A1 / A5 | **PASS / PASS** | precondition probe at `2e7f51b` |
+| A2 / A4 | **NO / NO** | precondition probe: 4,510 interval rows begin 2022-01-03; 0 of 138 ex-dates; no max-hold bound |
+| Pre-2022 gating | **NOT ELIGIBLE** | guard refuses a warm-up directory (§88.5), A2/A4 `NO` |
+
+### 89.7 Phase verdicts and residuals
+
+| Phase / claim | Verdict at `2e7f51b` | Residuals |
+|---|---|---|
+| §88.8 item 1 (N-171) | **CLOSED** — four attacks refused, flipped probe passes, corpus still 931/931 | — |
+| §88.8 item 2 (N-172) | **CLOSED** — bound exact at 1990/2030, H-24 exact equality retained, 1,392 EQ records preserved | bare parser accepts 1990–2030 without archive context |
+| §12.3 / §12.4 gate | **GO** — 543 passed both modes, 9/9 verifiers, zero skip/xfail, 94 tags | **N-173** (quantized CPU clock) |
+| §88.8 item 5 (A5 residual) | **RATIFIED** (Ruling 1) — accepted residual, call-site guard remains the defence | A5 trusts declared windows |
+| `§10.8` A1 / A5 | **PASS / PASS** | — |
+| `§10.8` A2 / A4 | **NO / NO** — unchanged, still blocking a pre-2022 verdict | A2, A4 dividends, A4 max hold |
+
+### 89.8 Work order
+
+1. **Close N-173** (serves §12.4). Make the scaling guard resolution-aware: either time with a high-resolution counter on a quiet worker, or skip the ratio assertion when the 1,000-fill loop measures below two clock ticks, keeping both ceilings. Probe: `probe_n173` fails on the changed instrument (`the benchmark no longer uses process_time`) and the replacement must show the 5 µs/fill workload measuring near 1.0 on a coarse-tick host; the 250 µs and 2.5 ceilings stay.
+2. **A2 — identity intervals reaching 2018-04-01** (serves Phase 3B-2, unchanged from §88.8 item 3). Probe: the A2 line prints `PASS` with a first row at or before 2018-04-01.
+3. **A4 — dividends or a committed maximum-hold bound** (serves Phase 3B-2, §13.2, unchanged from §88.8 item 4). Probe: both A4 lines print `PASS` with the bound read from criteria.
+4. **Record Ruling 1's residual at the next criteria revision** (documentation carry, no gate). The criteria comment should cite §89.5 so a reader of the YAML sees why A5 reads declared windows. Probe: none is required; the citation is the check.
+
+### 89.9 What would falsify this verdict
+
+- If the transposed pair of archives exits 0 from the coverage probe, N-171 is not closed; if the committed corpus exits 1, the closure broke the certificate.
+- If any two-digit year outside 1990–2030 is accepted by `parse_bhavcopy_date`, or `cm13JUL2020bhav.csv.zip` stops yielding 1,392 EQ records, N-172 is not closed.
+- If the parallel and sequential runs ever disagree on the suite count or on skip/xfail, §12.4 invariance is false and the speedup is a different suite.
+- If a failing test can produce a gate pass under the tolerant decoder, or the ledger test can pass with an unregistered id, the two "same assertions" claims are wrong.
+- If `time.process_time()` on the gate host advances in finer steps than 15.625 ms, or the 1,000-fill loop measures two or more ticks at a 5 µs/fill workload, N-173 is host-specific in the other direction and should be re-registered with that measurement.
+- If a committed verdict's evaluated set is ever shown to reach before 2022-01-03 while declaring a 2022 window, Ruling 1's acceptance was wrong.
