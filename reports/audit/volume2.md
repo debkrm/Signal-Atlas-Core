@@ -2615,3 +2615,129 @@ Ordered by what it unblocks. Each item names the probe that must fail closed bef
 - If the 175/203 counters count anything other than `MAX_HOLD_BOUND_EXIT` tickets, the bound's effect is overstated. The counter is `len(forced_exits - forced_filled)` over tickets carrying that reason; a partial fill reads as a forced exit and no refusal, so 203 is a floor on refusals, not a ceiling.
 - If seq 10 is registered against the `1.1.5` artifacts as its comparison, Ruling 3 was ignored and any "improvement" it reports is uninterpretable.
 - If `data/trials/` gains a row without a new numbered section and a registry row naming 1.1.14, the N = 9 baseline in §93.1 described the wrong tree.
+
+## §94 — Audit of `0287aae` (tag `feat-s94-0287aae`): the seam is asserted in the source and the row in its fields, seq 10 refuses on a measured block, and neither new check can see a live path
+
+**Date:** 18 November 2026
+**Commit under review:** `d726e38` (6 files, +1,108/−2: the AST passthrough check and its mutation self-check in `probe_n177`, `superseded_archive_problems` in the Bronze certificate, the seq-10 runner and its certificate, four tests, and the phase note), plus `0287aae` (the green-cache row, +19 lines). Neither commit touches a path under `reports/audit/`, `data/trials/`, `data/raw/2025`, `data/raw/2026` or `configs/partition_spec.yaml`.
+**Verdicts:** **§93.7 item 2 CLOSED as ordered** — the check parses the call and refuses both the deletion and the emptied keyword, a committed test binds the same mutation, and the probe builds it · **§93.7 item 3 CLOSED as ordered** — 931/931 superseded session rows are compared field-by-field against their current row, and an edited digest, byte count, URL, retrieval time or session fails the certificate · **§93.5 Ruling 3 block PASS** — seq 10 refuses on a measured precondition, every invariant the Ruling fixed still holds, and **seq 10 is not registered** (`N = 9`, `N_eval = 5`) · **three new findings**: **N-178** the passthrough check cannot see an unreachable call, **N-179** a deleted superseded row is invisible, **N-180** the registration path writes seq 9's fold specification for the expanded window.
+
+### 94.1 Baseline re-measured at `0287aae`
+
+| Measurement | Result |
+|---|---|
+| `scripts/verify_audit_append_only.py --force-full` | **exit 0** — `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Suite under the gate | **552 passed in 57.38 s** (58.43 s wall), **0 skipped / 0 xfailed** — 548 at `e5e9217`; the four added tests are `test_phase3b2_audit_s94_items.py`'s |
+| Verifiers | **9/9 exit 0** — Gate W0.5-2 |
+| W0.5-4 / W0.5-5 | every tag verified, including `feat-s94-0287aae` → `0287aae`; **1,000** current artifacts match byte count and sha256, **957** superseded rows skipped as history |
+| Green cache | source tree `4a273db3…` already recorded at this commit; the forced run printed `already recorded; not appending a duplicate row`; `git status` clean before and after |
+| Findings ledger | **49** rows / **29** ids; **27 CLOSED**, **1 OPEN** (N-150), **1 ACCEPTED** (N-152); `verify_audit_findings.py` **exit 0**, `ALL 29 FINDING PROBE(S) PASSED` |
+| Criteria / pins | **1.1.14** (45 dataclass fields), `MAN-FPR-V1-a421d3d2…`, trial-registry pin `3326b1b2…` (recomputed, matches), binding start **2018-04-01**, `max_hold_trading_sessions` **21** |
+| Trials / fold / holdout | **9** rows, seq 1–9, criteria versions `1.1.0/1.1.1/1.1.2/1.1.4/1.1.5`, **5** evaluation rows, registry manifest sha256 **3326b1b2…**; partition spec in-sample `2018-04-01..2023-12-31`, validation `2024-01-01..2024-12-31`, holdout `2025-01-01..2026-11-11` with the all-zero token hash; `data/trials/` byte-identical after every run below |
+| `probe_pre2022_preconditions.py` | **exit 0, READY 9/9** — A1 246/245/252/248, A4 **4,357** dividend ex-dates `2018-04-03..2021-12-30`, A4 max hold `enforced at 1 production call site(s); refusals=1`, A5 `0 of 4,903` before 2018-04-01 |
+| `probe_pre2022_bronze_coverage.py` | **exit 0** — `COVERED — 931/931 … 931 BINDING_EVALUATION, 0 WARMUP_NOT_GATABLE; 931 superseded session row(s) retain their archive digest and provenance` |
+| `probe_audit_findings.py N-177` | **exit 0** — `PASS N-177` |
+| `tests/unit/test_phase3b2_audit_s94_items.py` | **4 passed in 0.69 s** |
+| `scripts/run_seq10_candidate.py` | **exit 1** — `NOT REGISTERED`, corpus precondition (§94.4) |
+| `scripts/probe_seq10_candidate.py` | **exit 1** — `NOT CERTIFIED … seq 10 is NOT REGISTERED; the registry is N = 9 / N_eval = 5` |
+| Files the code commit touches | 6; **no** path under `reports/audit/`, `data/trials/`, `data/raw/2025`, `data/raw/2026`, `configs/partition_spec.yaml` |
+
+### 94.2 §93.7 item 2 — CLOSED as ordered: the call is parsed, the mutation is built, and a dead guard still passes
+
+The check §93.3 asked for exists: `_session_loop_passthrough_problem` walks the module's AST, collects every `execute_swing_strategy_session` call, and compares `ast.unparse` of the `forced_exit_isins` keyword to `tuple(sorted(forced_exits))`, so a comment, a dead branch and an edited expression are distinguishable. `probe_n177` then builds the mutation the work order names — it strips the passthrough line from the source text, asserts the text actually changed, and requires the stripped source to be refused, which makes a check that cannot fail a failure of the probe itself (§14.4). A committed test asserts the same pair.
+
+Attacks in a detached worktree at `0287aae`:
+
+| Mutation | `probe_n177` | `tests/unit/test_phase3b2_audit_s94_items.py` |
+|---|---|---|
+| none (control) | **exit 0**, `PASS N-177` | 4 passed |
+| **A — passthrough line deleted** from the session loop | **exit 1**, `… does not hand the hold bound's exits to the harness (line 1241: no forced_exit_isins keyword)` | **1 failed / 3 passed** (`test_session_loop_hands_the_hold_bound_exits_to_the_harness`) |
+| **B — expression emptied** (`forced_exit_isins=()`) | **exit 1**, `(line 1241: forced_exit_isins=())` | **1 failed / 3 passed** |
+| **D — live call wrapped in `if forced_exits is None:`** (lines 1241–1256, keyword intact, source parses) | **exit 0**, `PASS N-177` | **4 passed** |
+
+Row D is the §14.4 shape one level down: the check reads an expression wherever it is written, not the call that executes. The two mutations the work order named both fail closed, so the item is **CLOSED as ordered**; the reachability gap is registered separately as **N-178** rather than used to reopen it (§14.5). Note also that `probe_hold_bound_invariance.py` — the only instrument that observes the seam at run time, 175 forced exits — is a `probe_*.py`, not a `verify_*.py`, and is therefore not executed by the gate.
+
+### 94.3 §93.7 item 3 — CLOSED as ordered over 931 rows: an edit fails, a deletion does not
+
+`superseded_archive_problems(rows)` groups the whole manifest by `artifact`, requires exactly one current row for every artifact that carries a `session_date`, and compares each superseded row's six archive fields (`sha256`, `byte_count`, `source_url`, `retrieved_at`, `session_date`, `session_type`) against that current row. The Bronze certificate now prints the count it checked, which is the number that makes the scope auditable rather than implied.
+
+| Measurement | Result |
+|---|---|
+| Scope | 1,957 manifest rows = 1,000 current + **957** superseded; **931** superseded rows carry a `session_date` and are all checked |
+| The 26 superseded rows not checked | **23** are content artifacts whose digest is meant to move (`cash_equity_symbol_intervals.csv` 6, `corporate_actions.jsonl` 4, `calendar_reconciliation_2022_2026.json` 3, `configs/trading_calendar_nse.json` 3, circulars 7) and each has exactly one current row; **3** are circulars with no current row at all. Scoping them out is correct: a content artifact is superseded *because* its content changed |
+| Committed tree | **0** divergences across 931 rows, `(0 problem(s))` |
+| **T1 — superseded `sha256` edited** (`data/raw/2018/cm02APR2018bhav.csv.zip`) | certificate **exit 1**, naming the field; suite **2 failed / 2 passed** (`…keep_their_archive_fields` and `…edited_superseded_sha256_is_refused`, the latter because its own "committed row is intact" control now fails) |
+| **T2 — superseded `retrieved_at` edited** | certificate **exit 1**, `931 (1 problem(s))` |
+| **T4 — superseded `gating_mode` edited** | certificate **exit 0** — correct: a relabel is what a supersession is allowed to move |
+| **T3 — a superseded row deleted** | certificate **exit 0**, `COVERED — 931/931 …`; suite **4 passed** |
+
+T3 is the hole: the check verifies that a superseded row, *if present*, still attests its archive, and nothing pins how many there are. §93.2 adopted "the prior row survives" as the acceptance wording, and a deletion satisfies every assertion made today. Registered as **N-179**. The item itself named only the edit probe, which passes, so it is **CLOSED as ordered** with the deletion hole as the new finding.
+
+### 94.4 §93.5 Ruling 3 — the refusal is measured, every precondition is true, and the run is correctly blocked
+
+`run_seq10_candidate.py` refuses before it registers anything, and the refusal names its evidence. Each claim in it was re-measured independently rather than read:
+
+| Claim in the refusal | Measured at `0287aae` |
+|---|---|
+| The committed snapshot covers 2022+ only | `historical_dev_dataset_2022_2024.json` / `.gz`: `2022-01-03..2024-12-31`, `adjustment_version=v1.4`, `corporate_actions_fingerprint=CA-FPR-6d7aae6d8…` — neither covers `2018-04-01..2023-12-29`, so both are rejected by the coverage test, not by their name |
+| **74** pre-2022 split/bonus ex-dates | **74** `SPLIT`/`BONUS` rows (`SPLIT` 72, `BONUS` 2) with `ex_date < 2022-01-03`, over **71** distinct ex-dates, out of 5,016 CA rows of which 4,533 pre-date 2022 (`DIVIDEND` 4,357, `ISIN_TRANSITION` 102, split/bonus 74). The count is right; the noun is approximate — 74 rows, not 74 distinct dates |
+| `data/silver/bhavcopy` holds no partitions | **0** entries (`data/silver/bhavcopy` and `data/silver/price_bands` both empty) |
+| Defect 1 — `symbols_by_instrument` is not a fingerprint parameter | `compute_legacy_dataset_content_fingerprint(trading_dates, prices_by_instrument, benchmark_prices=None, legacy_adjustments=None)` at `contracts/legacy_compat.py:49`, while `run_phase3b2_walkforward.py:645-649` passes `symbols_by_instrument=symbols_by_isin` — a latent `TypeError` on the fallback path only |
+| Defect 2 — `PriceConvention.UNADJUSTED_CLOSE` no longer exists | `contracts/dataset.py:30-34` holds `UNADJUSTED_RAW`, `SPLIT_BONUS_ADJUSTED`, `FULLY_ADJUSTED`; `run_phase3b2_walkforward.py:655` names `UNADJUSTED_CLOSE` — a latent `AttributeError` on the same path |
+
+| Refusal / certificate measurement | Result |
+|---|---|
+| `run_seq10_candidate.py` | **exit 1**, `NOT REGISTERED — no committed corpus covers … with split/bonus-adjusted prices derived from the committed corporate-action table`, naming both candidate snapshots |
+| `probe_seq10_candidate.py` | **exit 1**, `NOT CERTIFIED`; `Registry: N = 9 (expected 9), N_eval = 5, seq 10 rows = 0`; `Registry manifest 3326b1b221b2e026… vs criteria pin 3326b1b221b2e026…`; `Corpus check: ABSENT` |
+| Sealed-era refusal | the certificate drives the engine at `2025-01-02..2025-03-31` and gets `HoldoutSealedError` — `Requested evaluation window [2025-01-02..2025-03-31] touches sealed Holdout partition` |
+| Registry containment | 9 rows, seqs `1..9`, 5 evaluation rows, `git status` clean after both script runs; no row's provenance names `data/raw/2025`, `data/raw/2026` or `2025-01-01` |
+| Ruling-3 invariants | **N = 9** (not 10), **N_eval = 5**, criteria **1.1.14**, pin **3326b1b2…**, validation **2024** frozen in `configs/partition_spec.yaml`, holdout `2025-01-01..2026-11-11` sealed with the all-zero token hash |
+
+The block is honest and the state is preserved. Two latents survive it:
+
+1. **The registration path and the certificate disagree about the fold (N-180).** `probe_seq10_candidate._expected_fold_fingerprint()` builds the fold the authorised window implies — train `2018-04-01..2022-12-30`, test `2023-01-02..2023-12-31`, embargo 0, `IN_SAMPLE` — and gets `FOLD-SPEC-V1-36a39987dcade377…`. `run_seq10_candidate._register` copies `fold_spec_fingerprint=template["fold_spec_fingerprint"]` from the last registry row (seq 9), whose value is `FOLD-SPEC-V1-4b44a1f2…`. Measured: the two differ. A run that cleared the corpus precondition would therefore append a row the certificate is built to refuse — after `N` had already moved to 10. Fail-closed at the certificate, mutating at the registry.
+2. **The engine's in-sample fold is hardcoded.** `run_phase3b2_walkforward.py:1024-1032` fixes train `2022-01-03..2022-12-30` / test `2023-01-02..2023-12-29`, `:1732` derives the artifact's `window` from that fold, and `:2616` carries the literal `2022-01-03 .. 2023-12-29 (In-Sample only; 2024 Validation FROZEN)`. So the runner's own second precondition (`in_sample_metrics['window']` must equal the requested window) would refuse the run even with a corpus in place — the block is two-deep, not one.
+
+Nit, measured: the committed `RATIONALE` names `criteria 1.1.13` for the binding start while the tree loads 1.1.14. The string would be written into the registry row verbatim; a trial row may not misstate the criteria version it ran under.
+
+### 94.5 Phase verdicts
+
+| Phase | Verdict at `0287aae` | Named residuals |
+|---|---|---|
+| `§12.4` / `§14.4` §93.7 item 2 — engine → harness seam | **CLOSED as ordered** — AST check, mutation self-check, 3 seam tests + 1 passthrough test, both named mutations fail closed | reachability is unasserted (N-178); the only run-time witness, `probe_hold_bound_invariance.py`, is not gated |
+| `§10.1` / `§10.5` §93.7 item 3 — superseded rows | **CLOSED as ordered** — 931/931 checked, 0 divergences, digest/byte-count/URL/retrieval-date/session edits refuse | a deleted superseded row is invisible (N-179); the 26 undated rows are out of scope by design (23 content artifacts, 3 circulars with no current row) |
+| `§13.2` / Phase 3B-2 §93.7 item 1 — seq 10 | **BLOCKED, correctly** — refusal names a measured corpus block, certificate `NOT CERTIFIED`, N and N_eval unchanged, 2024 frozen, holdout sealed | corpus + expanded fold are the blockers (work order 1–2); the runner would register seq 9's fold (N-180); a stale `1.1.13` in the rationale |
+| `§10.8` labels / certificate | **PASS** — `931 BINDING_EVALUATION, 0 WARMUP_NOT_GATABLE` under criteria 1.1.14 | — (carried from §93.2) |
+| `§10.8` A1 / A2 / A4 / A5 | **PASS** — READY 9/9 on the expanded window | A5 still evaluates the post-2022 verdict corpus only |
+| Trials / fold / holdout | **N = 9 / N_eval = 5**, `data/trials/` unchanged, 2024 fold frozen, holdout sealed | seq 10 remains unregistered |
+| Gate / cache | **GO** — 552 passed, 9/9 verifiers, tree `4a273db3…` already recorded, no duplicate row | — |
+
+### 94.6 Work order for feat-s95
+
+Ordered by what it unblocks. Items 1–3 are one chain: the corpus, then the fold, then the run.
+
+1. **Build the derived-layer `SPLIT_BONUS_ADJUSTED` 2018–2023 corpus** (serves `§5.4`, `§10.3`, `§13.2`; unblocks seq 10). Two admissible routes; the certificate reads the header contract, not the route.
+   - *Route A (Silver → Gold, preferred).* Promote the **931** attested Bronze archives `2018-04-01..2021-12-31` into `data/silver/bhavcopy/` as one append-only partition per session, atomic on promotion, prices and turnover persisted as `DECIMAL` and read back as `Decimal` (§10.1, §10.6, §10.7); then derive with `GoldEngine(SilverStorage, TradingCalendar, SecurityMaster)` over the committed 5,016-row corporate-action table.
+   - *Route B (attested back-adjustment).* Back-adjust the same raw archives with exact integer split/bonus ratios applied strictly before each ex-date, adjusting the price side only.
+   - *Either route must write* a snapshot matching `data/reference/historical*dataset*.json*` whose header declares `start_date` ≤ `2018-04-01`, `end_date` ≥ `2023-12-29`, a non-empty `adjustment_version`, and `corporate_actions_fingerprint` equal to `sha256` of `data/reference/corporate_actions.jsonl`.
+   - *Adjustment rules, non-negotiable:* the **74** pre-2022 `SPLIT`/`BONUS` rows (71 ex-dates) are price adjustments; the **102** pre-2022 `ISIN_TRANSITION` rows are identity events that are never stitched across; the **4,357** dividends are held-position cash inflows, never price adjustments; no forward-fill, no interpolation, and a missing expected session fails closed with the window partitioned rather than bridged (§6.3, §13.2).
+   - **Probe:** `python scripts/probe_seq10_candidate.py` prints `Corpus check: available at …` instead of `ABSENT`; `python scripts/run_seq10_candidate.py` clears the corpus check and stops at the fold precondition (item 2); a corpus that covers 2022+ only, omits `adjustment_version`, or carries a `corporate_actions_fingerprint` other than the committed digest is still refused with exit 1. Today: exit 1, `NOT REGISTERED`.
+2. **Define the expanded in-sample fold as committed configuration** (serves `§12.4`, `§93.5 Ruling 3`; unblocks seq 10). Replace the hardcoded fold at `run_phase3b2_walkforward.py:1024-1032` and the literal at `:2616` with a fold derived from the requested window: **train `2018-04-01..2022-12-30`, test `2023-01-02..2023-12-31`, `embargo_sessions=0`, `partition_role=IN_SAMPLE`**, i.e. `FOLD-SPEC-V1-36a39987dcade377…`, with validation `2024-01-01..2024-12-31` unchanged and frozen. The definition is committed **before** the run (§9.2): the certificate already encodes this expectation, so this item makes the rule explicit rather than adding a threshold. If the maintainer prefers `2023-12-29` as `test_end`, that is a fold change and must be recorded before execution, never after seeing a result (§8.2).
+   - **Probe:** the artifact's `in_sample_metrics['window']` reads `2018-04-01 .. 2023-12-31`; the registered row's `fold_spec_fingerprint` equals `FOLD-SPEC-V1-36a39987…`; `probe_n180` is flipped to assert that agreement. Today: `4b44a1f2…` vs `36a39987…`, and `probe_n180` passes on the disagreement.
+3. **Register and run candidate seq 10 after items 1–2** (serves `§13.2`, Phase 3B-2). One registry row: `N` 9 → 10, `evaluation_count` **5**, criteria **1.1.14** in both the row and the `RATIONALE` text (today the constant says 1.1.13), in-sample `2018-04-01..2023-12-31`, validation 2024 frozen, manifest re-pinned by measurement, no path under `data/raw/2025` or `data/raw/2026` in its provenance; the artifact carries `hold_bound_forced_exits` and `hold_bound_refusals`; the comparator is the current-tree baseline run written to `reports/analysis/s94/`, with the bound-disabled counterfactual reporting **0** forced exits. **Probe:** `probe_seq10_candidate.py` exits 0 at `CERTIFIED`; a row whose window, version, fold or pin disagrees with the criteria fails it; an evaluated session on/after `2025-01-01` fails closed through `HoldoutSealedError`; a baseline block naming `reports/verdicts/…` or criteria `1.1.5` is refused (already measured in the certificate's two mutant arms, which only execute once a row exists).
+4. **Repair or retire `build_historical_dataset_from_raw_bhavcopy`** (serves `§7.4`, `§10.3`). Two lines, named: `:648` passes `symbols_by_instrument=`, which `compute_legacy_dataset_content_fingerprint` does not accept; `:655` names `PriceConvention.UNADJUSTED_CLOSE`, which does not exist. Either fix both and assert the fallback's snapshot declares `ProvenanceStatus.CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED`, or delete the function and any caller — a dead fallback that raises is a §14.4 path beside the live one. **Probe:** constructing it over a two-archive fixture produces a dataset whose `price_convention` is stated, or `grep` finds no reference to the symbol anywhere in `src/` and `scripts/`.
+5. **N-178 — assert the seam's reachability, not only its shape** (serves `§12.4`, `§14.4`). Either drive one session through `run_phase3b2_walkforward`'s loop and assert non-zero forced exits, or assert that the call's enclosing function is the session loop. **Probe:** the dead-guarded mutation in §94.2 (live call beneath `if forced_exits is None:`, keyword intact) makes `probe_n177` exit 1 and a committed test fail; today both stay green.
+6. **N-179 — pin the superseded-row count** (serves `§10.1`, `§10.5`). A count, or a digest over the superseded session rows, must be asserted against a committed value so that removal is a failure rather than a smaller check. **Probe:** deleting one superseded session-dated row makes the Bronze certificate exit 1 and name the missing artifact; today exit 0 at `931/931`.
+7. **N-150 — `CRIT-OVERFIT-06` needs a second fold or a recorded admission** (carried, MEDIUM). **Probe:** the verdict bundle names the fold count it used, and a `PASS` on fewer than two folds fails closed.
+8. **The replay counter's `get` and `popitem`** (carried, `§92.10` item 6). **Probe:** `probe_n174` asserts the accessor set it can measure, so a narrowed counter fails it.
+9. **Restate the Phase 2D artifact's timestamp** (carried, LOW). **Probe:** the artifact's `timestamp_utc` is later than its `criteria_version`'s effective date, or a `restatement_history` block names each version it has carried.
+
+### 94.7 What would falsify this verdict
+
+- If the passthrough check still passed with the keyword deleted, item 2 was applied additively. Measured: `probe_n177` exit 1 and one test failing on that mutation.
+- If an edited superseded `sha256` still certified, item 3 was a print rather than a check. Measured: certificate exit 1 naming the field, two tests failing.
+- If N-178 were a branch no reviewer could ever write by accident, calling it a finding would overstate the risk. Measured: the tree parses, the four tests pass, and `probe_n177` prints `PASS N-177`, so nothing in the gate distinguishes it.
+- If `run_seq10_candidate` had registered a row, the block would be a report rather than a refusal. Measured: exit 1 before any write, registry still 9 rows / 5 evaluations.
+- If the corpus it refuses over actually existed, the block would be a false NOT RUN. Measured: both committed snapshots declare `2022-01-03..2024-12-31` and `CA-FPR-6d7aae6d8…`; `data/silver/bhavcopy` is empty; the alternative path raises at two named lines.
+- If N-180 were harmless because the certificate catches it, the registry would still have moved to 10 before the catch. Measured: the two fold fingerprints differ, and `_register` writes the template's.
+- If a superseded row's `gating_mode` were meant to be pinned too, §94.3's T4 would be a missed failure rather than a correct pass. Measured: the relabel is exactly what the flip moves, so it is excluded by design.

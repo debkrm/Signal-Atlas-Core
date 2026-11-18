@@ -2054,6 +2054,140 @@ def probe_n177() -> None:
     )
 
 
+def _dead_guarded_harness_call(source: str) -> str:
+    """
+    The live harness call indented under a false condition, its keyword expression untouched.
+
+    Audit §94.2 built this mutation at `0287aae`: wrapping the assignment and its keyword arguments in
+    `if forced_exits is None:` leaves `_session_loop_passthrough_problem` looking at exactly the
+    expression it requires, while the session loop never calls the harness at all.
+    """
+    lines = source.splitlines()
+    start = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.strip().startswith("summary = execute_swing_strategy_session(")
+        ),
+        None,
+    )
+    assert start is not None, "the walk-forward script no longer assigns a harness summary"
+    depth = 0
+    end = None
+    for index in range(start, len(lines)):
+        depth += lines[index].count("(") - lines[index].count(")")
+        if depth == 0 and index > start:
+            end = index
+            break
+    assert end is not None, "the harness call does not close, so the dead-guard mutation cannot be built"
+    block = ["    " + lines[index] for index in range(start, end + 1)]
+    lines[start : end + 1] = ["        if forced_exits is None:"] + block
+    return "\n".join(lines)
+
+
+def probe_n178() -> None:
+    """
+    The engine-to-harness check must see a live call, not merely an expression (N-178).
+
+    Measured at `0287aae` (Audit §94.2): `_session_loop_passthrough_problem` walks the module's AST and
+    compares the `forced_exit_isins` keyword's unparsed expression. The call is therefore found wherever
+    it is written, not where it is executed: indenting the live call under `if forced_exits is None:`
+    leaves `PASS N-177` and four committed tests green while the loop hands the harness nothing.
+
+    This probe asserts the defect as measured, so the reachability check the work order names — a run
+    whose counters are non-zero, or an assertion that the call sits in the session loop — flips it to
+    exit 1 and closes N-178.
+    """
+    source = (REPO_ROOT / "scripts" / "run_phase3b2_walkforward.py").read_text(encoding="utf-8")
+    assert _session_loop_passthrough_problem(source) is None, (
+        "the committed session loop does not pass forced_exit_isins, so N-178's premise has changed"
+    )
+    guarded = _dead_guarded_harness_call(source)
+    assert guarded != source
+    assert _session_loop_passthrough_problem(guarded) is None, (
+        "a guarded-but-present harness call is now refused, so N-178 is fixed: flip this probe to "
+        "assert the refusal and close the finding"
+    )
+
+
+def probe_n179() -> None:
+    """
+    A superseded manifest row must survive its flip, and a deletion is not a divergence (N-179).
+
+    Measured at `0287aae` (Audit §94.3): `superseded_archive_problems` compares each superseded row's
+    six archive fields against its current row, so an edited `sha256`, `byte_count`, `source_url`,
+    `retrieved_at`, `session_date` or `session_type` fails the certificate. It counts the rows it read
+    and never compares that count to anything, so removing a superseded row entirely exits 0 at
+    `COVERED — 931/931` with four tests passing.
+
+    This probe asserts the defect as measured, so pinning the superseded-row count (or a digest over
+    those rows) flips it to exit 1 and closes N-179.
+    """
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from scripts.probe_pre2022_bronze_coverage import manifest_rows, superseded_archive_problems
+
+    rows = manifest_rows()
+    problems, checked = superseded_archive_problems(rows)
+    assert problems == [], problems[:3]
+    assert checked >= 931, (
+        f"the certificate checks {checked} superseded session row(s), fewer than the 931 Audit §94.3 measured"
+    )
+    index = next(
+        position
+        for position, row in enumerate(rows)
+        if row.get("session_date") and row.get("is_current") is not True
+    )
+    trimmed = rows[:index] + rows[index + 1 :]
+    problems_after, checked_after = superseded_archive_problems(trimmed)
+    assert checked_after == checked - 1, (
+        f"deleting one superseded row changed the checked count by {checked - checked_after}, not 1"
+    )
+    assert problems_after == [], (
+        "a deleted superseded manifest row is now refused, so N-179 is fixed: flip this probe to "
+        "assert the refusal and close the finding"
+    )
+
+
+def probe_n180() -> None:
+    """
+    The seq-10 registration path must write the fold specification its window implies (N-180).
+
+    Measured at `0287aae` (Audit §94.4): `run_seq10_candidate._register` copies `partition`,
+    `canonical_params`, `fold_spec_fingerprint`, `dataset_fingerprint` and `execution_config` from the
+    last registry row (seq 9), while `probe_seq10_candidate` recomputes the fold the window implies.
+    The two values differ — `FOLD-SPEC-V1-4b44a1f2…` against `FOLD-SPEC-V1-36a39987…` — so a row
+    registered through the runner would be refused by its own certificate after the registry had
+    already moved to N = 10.
+
+    This probe asserts the defect as measured, so deriving the fold from the requested window flips it
+    to exit 1 and closes N-180.
+    """
+    import json
+
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from scripts import probe_seq10_candidate as certificate
+
+    source = (REPO_ROOT / "scripts" / "run_seq10_candidate.py").read_text(encoding="utf-8")
+    assert 'fold_spec_fingerprint=template["fold_spec_fingerprint"]' in source, (
+        "the registration path no longer copies the previous row's fold specification, so N-180 may be "
+        "fixed: flip this probe to assert the expanded fold it now computes"
+    )
+    rows = [
+        json.loads(line)
+        for line in (REPO_ROOT / "data" / "trials" / "trial_registry.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    expanded = certificate._expected_fold_fingerprint()
+    assert expanded != rows[-1]["fold_spec_fingerprint"], (
+        "the certificate's expanded fold and the last registry row now agree, so a row registered from "
+        "the template would no longer be refused (N-180): re-measure before closing"
+    )
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -2084,6 +2218,9 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-175": probe_n175,
     "N-176": probe_n176,
     "N-177": probe_n177,
+    "N-178": probe_n178,
+    "N-179": probe_n179,
+    "N-180": probe_n180,
 }
 
 
