@@ -1538,30 +1538,50 @@ def probe_n172() -> None:
 
 def probe_n173() -> None:
     """
-    The replay-guard benchmark measures CPU time, and on Windows `time.process_time()` steps in
-    15.625 ms units (N-173).
+    The replay-guard benchmark pools enough CPU work that its quantized clock can resolve it (N-173).
 
-    `test_n1_replay_guard_o1_lookup_and_bounded_memory` now times its two loops with `process_time()` and
-    keeps the 250 µs ceiling and the `< 2.5` scaling ratio (§89.4). On this host the clock returns only
-    two distinct values in 20,000 calls — it advances in one 15.625 ms step — so a 1,000-fill loop that
-    costs less than half a tick measures **0.0 µs/fill**, and the ratio guard's `max(per_fill_1k_us, 1.0)`
-    floor then divides the 4,000-fill figure by 1.0: at 5 µs/fill the true ratio is 1.0 and the measured
-    ratio is 3.91, so a *faster* implementation fails the test. The probe asserts the instrument is still
-    the one under review and, on a coarse-tick host, that the window reproduces; on a host with a
-    nanosecond clock it asserts the same workload stays near 1.0, which is why the defect is
-    Windows-bound rather than universal.
+    At `2e7f51b` `test_n1_replay_guard_o1_lookup_and_bounded_memory` timed one 1,000-fill pass and one
+    4,000-fill pass with `time.process_time()`, which steps in 15.625 ms units on Windows (§89.4). A
+    1,000-fill loop inside half a tick measured 0.0 µs/fill, so the ratio guard's `max(per_fill_1k_us,
+    1.0)` floor divided the 4,000-fill figure by 1.0: a 5 µs/fill implementation measured 3.91 and failed
+    a *faster* guard. The test now sizes each measurement by `MIN_MEASURABLE_CPU_S` and `MAX_PASSES`, and
+    this probe asserts the closure arithmetically at three clock resolutions — the host's own step, a
+    15.625 ms step, and a 1 µs step — so the result does not depend on which machine runs it: the pooled
+    instrument must read 5 µs/fill as a ratio near 1.0 everywhere, while the single-pass instrument must
+    still show the ≥ 2.5 artifact on a coarse clock (the defect is reproduced, not assumed).
     """
+    import math
     import time as _time
 
     source = (REPO_ROOT / "tests" / "unit" / "test_portfolio.py").read_text(encoding="utf-8")
-    assert "time.process_time()" in source, (
-        "the benchmark no longer uses process_time, so N-173 is closed and this probe should assert the "
-        "replacement instrument's resolution instead"
+    assert "MIN_MEASURABLE_CPU_S = 0.25" in source, (
+        "the benchmark no longer sizes its measurement, so N-173's quantized single pass is back"
     )
+    assert "MAX_PASSES = 20" in source, "the benchmark lost the cap that bounds its pooling cost"
+    assert "time.process_time()" in source, "the benchmark left the contention-robust CPU clock"
     assert "max(per_fill_1k_us, 1.0)" in source, "the ratio guard no longer floors the 1k measurement"
+    for ceiling in ("per_fill_1k_us < 250.0", "per_fill_4k_us < 250.0", "scaling_ratio < 2.5"):
+        assert ceiling in source, f"the ceiling `{ceiling}` was removed or widened"
+
+    min_cpu_s, max_passes = 0.25, 20
+    true_per_fill_us = 5.0  # the implementation the finding says a coarse clock misreads
+
+    def passes_for(fill_count: int) -> int:
+        estimate_s = fill_count * true_per_fill_us * 1e-6
+        if estimate_s >= min_cpu_s:
+            return 1
+        return min(max_passes, max(2, math.ceil(min_cpu_s / estimate_s)))
+
+    def pooled_per_fill_us(fill_count: int, tick_s: float) -> float:
+        passes = passes_for(fill_count)
+        cpu_s = passes * fill_count * true_per_fill_us * 1e-6
+        return round(cpu_s / tick_s) * tick_s / (passes * fill_count) * 1e6
+
+    def single_pass_per_fill_us(fill_count: int, tick_s: float) -> float:
+        return round(fill_count * true_per_fill_us * 1e-6 / tick_s) * tick_s / fill_count * 1e6
 
     # Sample the clock while burning CPU: spin until it advances, so one step is observable even when a
-    # single sample per tick would otherwise make 20,000 adjacent reads look constant.
+    # single sample per tick would otherwise make adjacent reads look constant.
     def time_to_tick_us() -> float:
         best = 0.0
         for _ in range(5):
@@ -1572,35 +1592,37 @@ def probe_n173() -> None:
             best = max(best, (_time.perf_counter() - wall) * 1e6)
         return best
 
-    tick_us = time_to_tick_us()
-    assert tick_us > 0.0, "process_time never advanced under a CPU-bound spin, so its step cannot be measured"
+    host_tick_us = time_to_tick_us()
+    assert host_tick_us > 0.0, "process_time never advanced under a CPU-bound spin, so its step cannot be measured"
 
-    # A 5 us/fill implementation: 5 ms for 1,000 fills, 20 ms for 4,000 — the true ratio is 1.0.
-    true_ratio = 1.0
-
-    if tick_us >= 1000.0:
-        # Quantize the honest 5 us/fill workload to the clock the test actually reads.
+    for label, tick_us in (
+        ("host", host_tick_us),
+        ("15.625 ms", 15625.0),
+        ("1 us", 1.0),
+    ):
         tick_s = tick_us * 1e-6
-        one_k = round((1000 * 5e-6) / tick_s) * tick_s / 1000 * 1e6
-        four_k = round((4000 * 5e-6) / tick_s) * tick_s / 4000 * 1e6
-        ratio = four_k / max(one_k, 1.0)
-        assert one_k == 0.0, (
-            f"the coarse clock measured {one_k:.1f} us/fill for a 5 us/fill loop, so the zero-floor "
-            f"window this finding describes does not reproduce"
+        old_ratio = single_pass_per_fill_us(4000, tick_s) / max(single_pass_per_fill_us(1000, tick_s), 1.0)
+        one_k = pooled_per_fill_us(1000, tick_s)
+        four_k = pooled_per_fill_us(4000, tick_s)
+        new_ratio = four_k / max(one_k, 1.0)
+        assert new_ratio < 2.5, (
+            f"on a {label} clock the pooled instrument reads a 5 us/fill guard as ratio {new_ratio:.2f}, "
+            f"which the ceiling still refuses: {one_k:.2f}/{four_k:.2f} us per fill"
         )
-        assert ratio >= 2.5, (
-            f"quantization of a 5 us/fill loop over a {tick_us:.1f} us clock gives ratio {ratio:.2f}, "
-            f"under the 2.5 ceiling, so N-173 does not reproduce on this host"
+        assert abs(one_k - true_per_fill_us) / true_per_fill_us <= 0.25, (
+            f"on a {label} clock the pooled 1,000-fill figure reads {one_k:.2f} us/fill for a "
+            f"{true_per_fill_us:.0f} us/fill guard, outside 25%"
         )
-        assert ratio != true_ratio
-    else:
-        tick_s = tick_us * 1e-6
-        one_k = round((1000 * 5e-6) / tick_s) * tick_s / 1000 * 1e6
-        four_k = round((4000 * 5e-6) / tick_s) * tick_s / 4000 * 1e6
-        assert abs(four_k / max(one_k, 1.0) - true_ratio) < 0.5, (
-            f"a {tick_us:.3f} us clock quantizes a 5 us/fill workload to "
-            f"{one_k:.1f}/{four_k:.1f} us, so the zero-floor window is not host-bound as described"
-        )
+        if tick_us >= 1000.0:
+            assert old_ratio >= 2.5, (
+                f"on a {label} clock the single-pass instrument reads ratio {old_ratio:.2f}, so the "
+                "defect N-173 describes does not reproduce and the closure proves nothing"
+            )
+        else:
+            assert abs(old_ratio - 1.0) < 0.5, (
+                f"on a {label} clock the single-pass instrument reads ratio {old_ratio:.2f} rather than "
+                "the near-1.0 result that makes this defect host-bound"
+            )
 
 
 PROBES: Dict[str, Callable[[], None]] = {

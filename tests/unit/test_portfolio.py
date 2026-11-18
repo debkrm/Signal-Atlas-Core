@@ -789,43 +789,72 @@ def test_n1_replay_guard_o1_lookup_and_bounded_memory():
     and memory cannot exceed max_pinned_instances.
     """
     import time
+
+    # CPU time, not wall clock: the gate runs this suite under `pytest -n auto`, and a wall-clock ceiling
+    # on a machine shared with 15 other workers measures the scheduler rather than per-fill overhead (same
+    # code, 24 competing CPU-bound processes: 357.6 µs/fill wall clock against 78-148 µs/fill CPU time).
+    #
+    # CPU time is quantized, though: `time.process_time()` steps in 15.625 ms units on Windows, so a
+    # 1,000-fill loop that fits inside half a tick measures 0.0 µs/fill and the ratio guard's floor then
+    # divides the 4,000-fill figure by 1.0 -- quantization reads a 5 µs/fill implementation as a 3.91
+    # ratio and fails a *faster* replay guard (N-173). So no loop is timed once: each is timed over as
+    # many fresh portfolios as it takes to spend MIN_MEASURABLE_CPU_S of CPU, and the per-fill figure is
+    # the pooled average over that work. The 250 µs ceilings and the < 2.5 ratio are unchanged; they are
+    # read off a measurement with resolution to spare instead of one rounded to the clock's tick.
+    MIN_MEASURABLE_CPU_S = 0.25  # ~16 ticks of the coarsest clock Python exposes on this host
+    MAX_PASSES = 20
     start_date = datetime.date(2026, 1, 1)
 
+    def measure(fill_count: int):
+        """(per-fill CPU µs, passes timed, last portfolio, fills) over `fill_count` fills per pass."""
+        fills = [
+            _make_dummy_fill(
+                f"SCRIP_{i}", OrderSide.BUY, 10, Decimal("100.00"), start_date + datetime.timedelta(days=i)
+            )
+            for i in range(fill_count)
+        ]
+
+        def time_one_pass():
+            # A fresh portfolio per pass, built outside the timed region: the fill cost must not rise
+            # with how much the guard already holds, which is the O(1) claim itself.
+            portfolio = Portfolio(initial_capital=Decimal("500000000.00"), initial_date=start_date)
+            cpu_start = time.process_time()
+            for fill in fills:
+                portfolio.process_fill(fill, enforce_risk_limits=False)
+            return time.process_time() - cpu_start, portfolio
+
+        # Accumulate whole passes until the pooled CPU time can be resolved by a coarse clock. The
+        # budget is read from the clock after each pass rather than extrapolated from the first one: a
+        # cold first pass is slower than a warm second, so a pass count fixed in advance can undershoot
+        # the budget (measured: 6 passes of a warm 15 µs/fill loop is 90 ms, not the 282 ms the cold
+        # estimate implied).
+        cpu_s = 0.0
+        passes = 0
+        portfolio = None
+        while passes < MAX_PASSES and cpu_s < MIN_MEASURABLE_CPU_S:
+            pass_s, portfolio = time_one_pass()
+            cpu_s += pass_s
+            passes += 1
+        return cpu_s / (passes * fill_count) * 1e6, passes, portfolio, fills
+
     # 1. Benchmark 1,000 fills
-    portfolio_1k = Portfolio(initial_capital=Decimal("500000000.00"), initial_date=start_date)
-    fills_1k = [
-        _make_dummy_fill(f"SCRIP_{i}", OrderSide.BUY, 10, Decimal("100.00"), start_date + datetime.timedelta(days=i))
-        for i in range(1000)
-    ]
-    # CPU time, not wall clock: the gate runs this suite under `pytest -n auto`, and a wall-clock ceiling
-    # on a machine shared with 15 other workers measures the scheduler rather than per-fill overhead. Same
-    # code, 24 competing CPU-bound processes: 357.6 µs/fill wall clock (refused) against 78-148 µs/fill
-    # CPU time (accepted). The ceilings are unchanged; the property asserted -- flat, sub-250 µs per-fill
-    # overhead -- is now the one being measured.
-    t0 = time.process_time()
-    for fill in fills_1k:
-        portfolio_1k.process_fill(fill, enforce_risk_limits=False)
-    t1 = time.process_time()
-    per_fill_1k_us = ((t1 - t0) / 1000) * 1e6
+    per_fill_1k_us, passes_1k, portfolio_1k, _ = measure(1000)
 
     # 2. Benchmark 4,000 fills
-    portfolio_4k = Portfolio(initial_capital=Decimal("500000000.00"), initial_date=start_date)
-    fills_4k = [
-        _make_dummy_fill(f"SCRIP_{i}", OrderSide.BUY, 10, Decimal("100.00"), start_date + datetime.timedelta(days=i))
-        for i in range(4000)
-    ]
-    t2 = time.process_time()
-    for fill in fills_4k:
-        portfolio_4k.process_fill(fill, enforce_risk_limits=False)
-    t3 = time.process_time()
-    per_fill_4k_us = ((t3 - t2) / 4000) * 1e6
+    per_fill_4k_us, passes_4k, portfolio_4k, fills_4k = measure(4000)
 
     # O(1) dict lookup overhead must be strictly flat and sub-250 µs per fill
     assert per_fill_1k_us < 250.0, f"Per fill 1k time too high: {per_fill_1k_us:.2f} µs"
     assert per_fill_4k_us < 250.0, f"Per fill 4k time too high: {per_fill_4k_us:.2f} µs"
 
-    # Scaling ratio must be flat (ratio < 2.5), ruling out quadratic O(n^2) scaling (~4.0x)
+    # Scaling ratio must be flat (ratio < 2.5), ruling out quadratic O(n^2) scaling (~4.0x). Both
+    # figures are pooled over enough passes to leave the clock's tick well behind (N-173).
     scaling_ratio = per_fill_4k_us / max(per_fill_1k_us, 1.0)
+    pooled_1k_cpu_s = passes_1k * 1000 * per_fill_1k_us / 1e6
+    assert pooled_1k_cpu_s >= MIN_MEASURABLE_CPU_S or passes_1k == MAX_PASSES, (
+        f"the 1,000-fill figure pools only {pooled_1k_cpu_s:.3f} s of CPU over {passes_1k} pass(es), "
+        "which a clock ticking at 15.625 ms cannot resolve"
+    )
     assert scaling_ratio < 2.5, f"Replay guard scaling superlinearly: ratio={scaling_ratio:.2f}"
 
     # Memory retention is bounded
