@@ -1640,30 +1640,29 @@ def probe_n173() -> None:
 
 def probe_n174() -> None:
     """
-    The replay guard's O(1) claim is still certified by a timing ratio that cannot see a linear scan (N-174).
+    The replay guard's counter must see every access, not one dunder (N-174).
 
-    Measured at `fb02eea` in a detached worktree: reintroducing the linear scan N-1 replaced — a per-fill
-    loop over every instance the guard already holds — leaves both ceilings satisfied for a cheap scan
-    (1,000 fills 83.3 us/fill, 4,000 fills 187.5 us/fill, ratio 2.25) and makes the verdict a coin flip
-    for a comparison scan (ratio 1.96-2.60; 3 failed / 2 passed in five runs). The arithmetic reason is
-    that `250 - 47` us/fill of room at 4,000 fills buys about 2,000 scanned entries at ~78 ns each.
+    Measured at `abf198f` (§91.4): the structural check added by §90.9 item 5 counts `__contains__`
+    alone. Iterating an `OrderedDict` calls no dunder this class overrides, so with §90.3's per-fill
+    scan installed the counter still reads exactly 1,000 lookups for 1,000 fills and the check passes
+    while an `O(n)` loop runs on every fill; the timing ceilings caught that scan in 1 of 5 runs.
 
-    So this probe asserts what the timing guard cannot: that the test carries a structural count of the
-    replay path's membership lookups. It fails closed at the parent commit because no such assertion is
-    there yet; closure replaces the negative checks below with the positive one, and the 250 us / 2.5
-    ceilings must stay unchanged in either direction.
+    This probe therefore requires the counter to instrument the iteration-shaped accessors
+    (`__iter__`, `keys`, `values`, `items`), the subscript/length paths (`__getitem__`, `__len__`) and
+    `__contains__`, and requires the test to assert that grading-shaped iteration stays at zero. The
+    250 us / 2.5 ceilings are asserted unchanged in either direction (§12.4).
     """
     source = (REPO_ROOT / "tests" / "unit" / "test_portfolio.py").read_text(encoding="utf-8")
     for ceiling in ("per_fill_1k_us < 250.0", "per_fill_4k_us < 250.0", "scaling_ratio < 2.5"):
         assert ceiling in source, f"the ceiling `{ceiling}` was removed or widened"
-    # Closure (§90.9 item 5): the O(1) claim is asserted structurally -- a counting guard wrapped around
-    # the replay index, requiring exactly one membership lookup per fill regardless of how many
-    # instances the guard holds -- so the probe asserts that check exists rather than its absence.
-    structural = ("CountingReplayGuard", "lookup_count", "one dict lookup per fill")
-    missing = [token for token in structural if token not in source]
+    accessors = ("__contains__", "__iter__", "keys", "values", "items", "__getitem__", "__len__")
+    missing = [token for token in accessors if f"def {token}" not in source]
     assert not missing, (
-        f"the replay guard's O(1) claim has no structural assertion (`{missing[0]}` is absent); a timing "
-        "ratio cannot see a per-fill linear scan (N-174)"
+        f"the replay-guard counter does not instrument `{missing[0] if missing else '?'}`; iterating an "
+        "OrderedDict calls no dunder `__contains__`, so a per-fill linear scan stays invisible (N-174)"
+    )
+    assert "CountingReplayGuard" in source and "iteration_accesses" in source, (
+        "the replay guard's O(1) claim has no structural count of its non-membership accesses (N-174)"
     )
 
 
@@ -1735,29 +1734,36 @@ def probe_n175() -> None:
 
 def probe_n176() -> None:
     """
-    Gate COV-3's unresolved attribution is typed prose, and three of its four numbers are wrong (N-176).
+    Gate COV-3's attribution must be computed and its load-bearing invariant asserted (N-176).
 
     Measured at `abf198f` (§91.5) from `data/reference/sec_list_20240116.csv` and the same session's
     `cm16JAN2024bhav.csv.zip`, independently of the gate: of the **1,174** in-scope EQ scrips that do
     not resolve to an ISIN, **933** have no row at all in the Bhavcopy, **224** traded in `BE`/`BZ` and
-    **17** in `SM`; the gate prints `930` / `220` / `24` as literals in a `print`, so its attribution
-    is not a computation and does not describe the archive it claims to. The load-bearing part of the
-    claim — **0** scrips the Bhavcopy reports as `EQ` fail to resolve — is true by this measurement and
-    is asserted nowhere in code (§9.1).
+    **17** in `SM`; the gate printed `930` / `220` / `24` as literals, and the claim that matters —
+    **0** scrips the Bhavcopy reports as `EQ` fail to resolve — was asserted in no code (§9.1).
 
-    The probe fails closed when the literals are gone, which is what closure requires: the gate must
-    print the split it computed, and a probe must assert the printed split against the Bhavcopy.
+    This probe now fails closed unless the literals are gone, the gate's printed split is the one it
+    recomputed from the archive, and the zero-EQ-unresolved invariant is a hard assertion in the gate.
     """
+    import contextlib
     import csv
     import datetime
+    import importlib
+    import io
+    import re
 
     gate_source = (REPO_ROOT / "scripts" / "verify_cash_universe_coverage.py").read_text(encoding="utf-8")
     typed = ("930 untraded", "220 trading in BE", "24 in another non-EQ series")
     present = [token for token in typed if token in gate_source]
-    assert present, (
-        "Gate COV-3 no longer prints typed attribution literals; close N-176 by asserting the printed "
-        "split equals one recomputed from the session's Bhavcopy"
+    assert not present, (
+        f"Gate COV-3 still prints typed attribution literals ({present[0]!r}); the split must be the one "
+        "it computed from the session's own Bhavcopy (N-176, §9.1)"
     )
+    if 'attribution["eq_unresolved"] != 0' not in gate_source:
+        raise AssertionError(
+            "Gate COV-3 does not assert that 0 scrips the Bhavcopy reports as EQ fail to resolve; that "
+            "is the invariant the attribution exists to support (N-176)"
+        )
 
     from signal_core.storage.ingest import parse_bhavcopy_archive
     from signal_core.storage.security_master import (
@@ -1799,23 +1805,47 @@ def probe_n176() -> None:
         f"{eq_rows} scrip(s) the Bhavcopy reports as EQ on 2024-01-16 do not resolve to an ISIN; "
         "that is Gate COV-2's invariant, not an attribution footnote"
     )
-    assert (untraded, trade_to_trade, other_non_eq) != (930, 220, 24), (
-        "the gate's typed attribution now agrees with the archive, which it did not at `abf198f` "
-        f"({untraded} untraded, {trade_to_trade} trade-to-trade, {other_non_eq} other non-EQ): re-measure "
-        "§91.5 before closing N-176"
+    measured = (untraded, trade_to_trade, other_non_eq)
+    assert measured == (933, 224, 17) and len(unresolved) == 1174, (
+        f"the attribution measured here is {len(unresolved)} unresolved as {measured}, not the "
+        "1,174 / 933 / 224 / 17 registered in §91.5; the archive moved, so the comparison is not the "
+        "one this finding was measured on"
+    )
+
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    gate = importlib.import_module("scripts.verify_cash_universe_coverage")
+    captured = io.StringIO()
+    with contextlib.redirect_stdout(captured):
+        passed = gate.verify_gate_cov3_series_partitioned_accounting()
+    output = captured.getvalue()
+    assert passed, "Gate COV-3 failed on the committed 2024-01-16 artifacts"
+    match = re.search(
+        r"(\d+)\s+unresolved EQ scrips on 2024-01-16: (\d+) untraded.*?(\d+) trading in BE(?:/BZ)? "
+        r"and (\d+) in another non-EQ series",
+        output,
+        re.S,
+    )
+    assert match, (
+        "Gate COV-3 does not print the attribution it computed; expected '<N> unresolved EQ scrips on "
+        "2024-01-16: <u> untraded ... <t> trading in BE and <o> in another non-EQ series'"
+    )
+    printed = tuple(int(group) for group in match.groups())
+    assert printed == (1174,) + measured, (
+        f"Gate COV-3 prints {printed} but the Bhavcopy yields (1174, {untraded}, {trade_to_trade}, "
+        f"{other_non_eq}); a printed split that disagrees with the archive is not an attribution (N-176)"
     )
 
 
 def probe_n177() -> None:
     """
-    The hold bound is declared and modelled, and no production path calls it (N-177).
+    The hold bound must have a production consumer, and a hold past it must be refused (N-177).
 
-    Measured at `abf198f` (§91.6): `max_hold_trading_sessions: 21` is committed, `Position.entry_date`,
-    `Position.holding_sessions` and `Position.require_within_hold_bound` exist and the unit test drives
-    them, and a repository-wide search finds **no** caller of `require_within_hold_bound` outside
-    `position.py` and the test — so a simulated position can be carried past the bound in silence, and
-    the A4 line ``max_hold_trading_sessions=21 is committed`` is the whole of the gate's evidence. The
-    probe fails closed when a production consumer appears, which is what closure requires.
+    Measured at `abf198f` (§91.6): the bound was declared in criteria model and unit-tested on
+    `Position`, and no production path called it, so an engine run could carry a delivery position
+    past 21 authoritative sessions in silence. This probe fails closed unless the single engine
+    consults the bound and a synthetic over-bound hold is refused through the portfolio-level
+    consumer — no direct `Position` call — with the readiness probe printing the refusal count.
     """
     source_root = REPO_ROOT / "src" / "signal_core"
     callers = [
@@ -1827,9 +1857,110 @@ def probe_n177() -> None:
     position_source = (source_root / "portfolio" / "position.py").read_text(encoding="utf-8")
     for token in ("def entry_date", "def holding_sessions", "def require_within_hold_bound"):
         assert token in position_source, f"the hold-bound model `{token}` was removed"
-    assert not callers, (
-        f"the hold bound now has a production consumer ({callers}); close N-177 by asserting that the "
-        "simulator refuses a hold one session past the bound without a direct Position call"
+    assert callers, (
+        "the hold bound still has no production consumer outside position.py; a simulated position "
+        "can be carried past the bound in silence (N-177)"
+    )
+    walkforward_source = (REPO_ROOT / "scripts" / "run_phase3b2_walkforward.py").read_text(encoding="utf-8")
+    assert "require_hold_bounds(" in walkforward_source, (
+        "the walk-forward session loop does not consult the hold bound; the production consumer is "
+        "never reached by a run (N-177, §13.2)"
+    )
+
+    import datetime
+
+    from signal_core.contracts.criteria import load_go_no_go_criteria
+    from signal_core.contracts.order_types import (
+        ExecutionFillResult,
+        ExecutionOrder,
+        FillStatus,
+        OrderProduct,
+        OrderSide,
+        OrderType,
+    )
+    from signal_core.execution.costs import TransactionCostBreakdown
+    from signal_core.portfolio.portfolio import Portfolio
+    from signal_core.storage.calendar import load_anchored_nse_trading_calendar
+
+    criteria = load_go_no_go_criteria()
+    bound = criteria.max_hold_trading_sessions
+    calendar = load_anchored_nse_trading_calendar()
+    sessions = [s for s in calendar.sessions if s >= datetime.date(2024, 1, 1)]
+    entry, past = sessions[0], sessions[bound]
+    previous = calendar.sessions[calendar.sessions.index(entry) - 1]
+    isin = "INE000A01001"
+
+    portfolio = Portfolio(
+        initial_capital=Decimal("1000000.00"), criteria=criteria, initial_date=entry
+    )
+    order = ExecutionOrder(
+        instrument_id=isin,
+        side=OrderSide.BUY,
+        product=OrderProduct.DELIVERY,
+        quantity=10,
+        signal_date=previous,
+        target_date=entry,
+        order_type=OrderType.MARKET_ON_OPEN,
+        order_id="N177_PROBE",
+    )
+    costs = TransactionCostBreakdown(
+        trade_date=entry,
+        side=OrderSide.BUY,
+        product=OrderProduct.DELIVERY,
+        quantity=10,
+        price=Decimal("100.00"),
+        gross_amount=Decimal("1000.00"),
+        brokerage=Decimal("20.00"),
+        stt=Decimal("1.00"),
+        exchange_turnover_fee=Decimal("0.03"),
+        ipft=Decimal("0.00"),
+        sebi_turnover_fee=Decimal("0.00"),
+        stamp_duty=Decimal("0.15"),
+        gst=Decimal("3.60"),
+        total_statutory_taxes=Decimal("4.78"),
+        total_charges=Decimal("24.78"),
+        net_cash_flow=Decimal("-1024.78"),
+        effective_cost_bps=Decimal("247.8000"),
+        circular_ref="N177_PROBE",
+        disclosures=(),
+    )
+    fill = ExecutionFillResult(
+        order=order,
+        status=FillStatus.FILLED,
+        fill_date=entry,
+        latency_sessions=1,
+        filled_quantity=10,
+        unfilled_quantity=0,
+        executed_price=Decimal("100.00"),
+        slippage=None,
+        costs=costs,
+        circuit_evidence_present=True,
+        rejection_reason=None,
+        fill_id="N177_PROBE_FILL",
+    )
+    portfolio.process_fill(fill, enforce_risk_limits=False)
+    inside = sessions[bound - 1]
+    assert portfolio.require_hold_bounds(inside, bound, calendar) == {}, (
+        "a hold one session inside the bound was refused, so the consumer cannot be measuring the "
+        "bound at all (N-177)"
+    )
+    refusals = portfolio.require_hold_bounds(past, bound, calendar)
+    assert len(refusals) == 1, (
+        f"a synthetic position held {bound} authoritative sessions was not refused through the "
+        f"portfolio-level consumer ({refusals!r}); N-177 is not closed"
+    )
+    assert "Hold bound refused" in next(iter(refusals.values())), (
+        "the refusal does not name the hold bound, so it is not the refusal N-177 asks for"
+    )
+
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from scripts.probe_pre2022_preconditions import check_a4
+
+    hold_lines = [message for status, message in check_a4() if message.startswith("A4 max hold")]
+    assert hold_lines, "the readiness probe prints no A4 max-hold line"
+    assert any("refusals=" in line and "refusals=0" not in line for line in hold_lines), (
+        f"the A4 max-hold line reports no measured refusal count: {hold_lines}"
     )
 
 

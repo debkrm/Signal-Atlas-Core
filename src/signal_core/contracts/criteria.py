@@ -164,7 +164,7 @@ class GoNoGoCriteria:
     min_dataset_instrument_resolution_pct: Decimal = Decimal("100.0")
 
     # Market data and accounting invariants (§10.8, Audit §40.5, Finding H-54, H-61, H-62, H-64, H-72)
-    min_binding_evaluation_start_date: datetime.date = datetime.date(2022, 1, 3)
+    min_binding_evaluation_start_date: datetime.date = datetime.date(2018, 4, 1)
     min_traded_eq_resolution_pct: Decimal = Decimal("100.0")
     # H-72: Authoritative reference manifest fingerprint pinned as human criteria anchor
     expected_manifest_fingerprint: str = ""
@@ -373,7 +373,7 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         min_entry_notional=min_entry_notional,
         min_fill_notional=min_fill_notional,
         min_binding_evaluation_start_date=datetime.date.fromisoformat(
-            str(mda.get("min_binding_evaluation_start_date", "2022-01-03"))
+            str(mda.get("min_binding_evaluation_start_date", "2018-04-01"))
         ),
         min_traded_eq_resolution_pct=_to_decimal(
             mda.get("min_traded_eq_resolution_pct", "100.0"),

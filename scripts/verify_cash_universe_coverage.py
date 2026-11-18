@@ -27,7 +27,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
-from typing import Optional, Sequence
+from typing import List, Optional, Sequence
 import zipfile
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -39,6 +39,7 @@ from signal_core.research.containment import PartitionRole, WalkForwardFold
 from signal_core.research.walkforward import WalkForwardEngine
 from signal_core.storage.bronze import BronzeStorage
 from signal_core.storage.calendar import (
+    SOURCED_WINDOW_START_DATE,
     CalendarError,
     load_anchored_nse_trading_calendar,
 )
@@ -47,6 +48,7 @@ from signal_core.storage.gold import GoldEngine
 from signal_core.storage.ingest import (
     ingest_daily_bhavcopy_archive,
     ingest_daily_price_bands,
+    parse_bhavcopy_archive,
     parse_price_band_report,
 )
 from signal_core.storage.security_master import (
@@ -386,7 +388,9 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
         print(f"[FAIL] Calendar content fingerprint mismatch (Finding H-64):\n  {e}")
         return False
     print(f"[PASS] Calendar identity fingerprint verified: {cal.fingerprint}")
-    window_start = criteria.min_binding_evaluation_start_date
+    # The reconciliation covers the Bhavcopy-sourced corpus, which begins 2022-01-03, not the binding
+    # start promoted to 2018-04-01 by Audit §91.8 Ruling 1.
+    window_start = SOURCED_WINDOW_START_DATE
     window_end = datetime.date(2026, 10, 31)
 
     cal_sessions = set(s for s in cal.sessions if window_start <= s <= window_end)
@@ -706,6 +710,50 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
     return True
 
 
+def attribute_unresolved_eq_scrips(master: SecurityMaster, session: datetime.date) -> dict:
+    """
+    Classifies every in-scope EQ scrip that fails point-in-time resolution against the Bhavcopy of
+    the same session (Audit §91.9 item 2, N-176).
+
+    Four buckets, computed rather than typed: no row at all (identity begins at first trade, §40.5),
+    traded only in `BE`/`BZ`, traded in another non-`EQ` series, and the one that must be zero — the
+    Bhavcopy reports the scrip as `EQ` and it still does not resolve, which would contradict Gate
+    COV-2's 100% resolution invariant.
+    """
+    unresolved: List[str] = []
+    with SEC_LIST_CSV.open(encoding="utf-8-sig", newline="") as handle:
+        for row in csv.DictReader(handle):
+            if (row.get("Series") or "EQ").strip().upper() != "EQ":
+                continue
+            symbol = (row.get("Symbol") or "").strip().upper()
+            resolved = master.resolve_isin_by_symbol(symbol, session, series="EQ") if symbol else None
+            if not resolved or len(resolved) != 12:
+                unresolved.append(symbol)
+
+    _, records = parse_bhavcopy_archive(
+        str(resolve_raw_bhavcopy_archive("cm16JAN2024bhav.csv.zip")), trade_date=session
+    )
+    series_by_symbol: dict = {}
+    for record in records:
+        series_by_symbol.setdefault(record.symbol, set()).add(record.series)
+
+    untraded = sum(1 for symbol in unresolved if symbol not in series_by_symbol)
+    eq_unresolved = sum(1 for symbol in unresolved if "EQ" in series_by_symbol.get(symbol, set()))
+    trade_to_trade = sum(
+        1
+        for symbol in unresolved
+        if series_by_symbol.get(symbol) and series_by_symbol[symbol] <= {"BE", "BZ"}
+    )
+    other_non_eq = len(unresolved) - untraded - eq_unresolved - trade_to_trade
+    return {
+        "unresolved": len(unresolved),
+        "untraded": untraded,
+        "trade_to_trade": trade_to_trade,
+        "other_non_eq": other_non_eq,
+        "eq_unresolved": eq_unresolved,
+    }
+
+
 def verify_gate_cov3_series_partitioned_accounting() -> bool:
     """Verifies pipeline consumption on real 16-Jan-2024 sec_list.csv (Findings H-52, H-44, Notes N-24, N-26)."""
     print("--- Gate COV-3: Published Price Band Pipeline Coverage & Accounting (H-52, H-44, N-24, N-26) ---")
@@ -758,10 +806,29 @@ def verify_gate_cov3_series_partitioned_accounting() -> bool:
 
     coverage_pct = (Decimal(str(summary.extracted_records)) / Decimal(str(summary.in_scope_series_count))) * Decimal("100")
     print(f"[INFO] Listed EQ Universe Coverage on 2024-01-16 (Informational): {summary.extracted_records} / {summary.in_scope_series_count} ({coverage_pct:.2f}%)")
+
+    # Audit §91.9 item 2 (N-176): the attribution is measured from the same session's Bhavcopy, not
+    # typed, and the invariant it exists to support is a hard assertion rather than a sentence.
+    attribution = attribute_unresolved_eq_scrips(sm, t_date)
+    if attribution["unresolved"] != summary.unresolved_isin_count:
+        print(
+            f"[FAIL] Unresolved attribution covers {attribution['unresolved']} scrip(s); Gate COV-3 "
+            f"counts {summary.unresolved_isin_count} (N-176)"
+        )
+        return False
+    if attribution["eq_unresolved"] != 0:
+        print(
+            f"[FAIL] {attribution['eq_unresolved']} scrip(s) the Bhavcopy reports as EQ on 2024-01-16 "
+            "do not resolve to an ISIN; 0 must be reported as EQ and unresolved, because that is Gate "
+            "COV-2's 100% invariant, not an attribution footnote (N-176)"
+        )
+        return False
     print(
-        "[INFO] 1,174 unresolved EQ scrips on 2024-01-16: 930 untraded on or before the session (identity "
-        "begins at first trade per §40.5; Finding H-54), 220 trading in BE and 24 in another non-EQ series "
-        "per the authoritative Bhavcopy of the same session."
+        f"[INFO] {attribution['unresolved']} unresolved EQ scrips on 2024-01-16: "
+        f"{attribution['untraded']} untraded on or before the session (identity begins at first trade "
+        f"per §40.5; Finding H-54), {attribution['trade_to_trade']} trading in BE/BZ and "
+        f"{attribution['other_non_eq']} in another non-EQ series per the authoritative Bhavcopy of the "
+        f"same session; {attribution['eq_unresolved']} reported as EQ and unresolved."
     )
     print("[PASS] Gate COV-3: Series partitioning and dropped-row accounting verified with exact row conservation.\n")
     return True

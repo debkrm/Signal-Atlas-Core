@@ -297,14 +297,14 @@ def verify_gate_2d4_adversarial_fail_closed() -> bool:
 
     # 5. Pre-binding evaluation start date (e.g. 2019-01-01) must FAIL closed to NO-GO (Finding H-66, §10.8)
     rep_pre2022 = evaluate_verdicts({
-        "evaluation_start_date": "2019-01-01",
-        "evaluation_end_date": "2019-12-31",
+        "evaluation_start_date": "2016-01-01",
+        "evaluation_end_date": "2016-12-31",
     })
     eval_win = next(e for e in rep_pre2022.evaluations if e.criterion_id == "CRIT-WINDOW-01")
     if eval_win.status != VerdictStatus.FAIL or rep_pre2022.overall_verdict != OverallVerdict.NO_GO:
         print(f"[FAIL] Pre-binding evaluation window was not rejected with FAIL / NO-GO! Got: {eval_win.status}, {rep_pre2022.overall_verdict}")
         return False
-    print("[PASS] Pre-binding evaluation window (2019) rejected fail-closed to NO-GO (Finding H-66).")
+    print("[PASS] Pre-binding evaluation window (2016) rejected fail-closed to NO-GO (Finding H-66).")
 
     # 6. Unattested VERIFIED provenance claim must evaluate CRIT-PROV-01 to NOT RUN and NO-GO (Finding H-67)
     rep_unattested = evaluate_verdicts({

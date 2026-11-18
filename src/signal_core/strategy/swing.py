@@ -356,6 +356,7 @@ def execute_swing_strategy_session(
     corporate_actions: Optional[Sequence[Any]] = None,
     security_master: Optional[Any] = None,
     price_convention: Optional[PriceConvention] = None,
+    forced_exit_isins: Optional[Sequence[str]] = None,
 ) -> SwingSessionExecutionSummary:
     """
     Authoritative execution harness that routes DeliverySwingTrendStrategy signals through
@@ -403,6 +404,29 @@ def execute_swing_strategy_session(
         portfolio=runner.portfolio,
         latest_market_prices=latest_market_prices,
     )
+
+    # Audit §91.9 item 1 / §13.2: a position the hold bound refuses exits through this same harness,
+    # at next_session's open, like every other exit — one order, not two, and never a silent carry.
+    forced = {isin for isin in (forced_exit_isins or ()) if isin}
+    if forced:
+        raw_intents = tuple(intent for intent in raw_intents if intent.instrument_id not in forced)
+        forced_intents: List[OrderIntent] = []
+        for isin in sorted(forced):
+            held = runner.portfolio.get_position(isin)
+            if held is None or held.is_closed or held.quantity <= 0:
+                continue
+            forced_intents.append(
+                OrderIntent(
+                    instrument_id=isin,
+                    signal_date=as_of,
+                    target_date=next_session,
+                    side=OrderSide.SELL,
+                    quantity=held.quantity,
+                    intent_id=f"SWING_HOLD_BOUND_EXIT_{isin}_{as_of.isoformat()}",
+                    metadata={"exit_reason": "MAX_HOLD_BOUND_EXIT"},
+                )
+            )
+        raw_intents = tuple(forced_intents) + tuple(raw_intents)
 
     tickets: List[DailyExecutionTicket] = []
     skipped_missing_bar = 0
@@ -456,10 +480,14 @@ def execute_swing_strategy_session(
         if intent.side == OrderSide.SELL:
             # Audit §72 / N-129: every exit states why it happened, so the committed trade ledger
             # can distinguish a stop-loss exit from a moving-average signal exit or a trim.
+            declared_exit_reason = (intent.metadata or {}).get("exit_reason")
             cand_metadata["exit_reason"] = (
-                "MAX_POSITION_WEIGHT_TRIM"
-                if (intent.metadata or {}).get("trim_reason")
-                else "SIGNAL_EXIT"
+                declared_exit_reason
+                or (
+                    "MAX_POSITION_WEIGHT_TRIM"
+                    if (intent.metadata or {}).get("trim_reason")
+                    else "SIGNAL_EXIT"
+                )
             )
 
         cand = DailySignalCandidate(

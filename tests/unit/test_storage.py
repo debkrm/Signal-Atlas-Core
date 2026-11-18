@@ -408,28 +408,28 @@ def test_gate_g2b5_3_isin_transition_and_delisting_exact_date_pruning():
 
 
 def test_gate_g2b5_7_no_session_before_binding_start_can_reach_go_verdict():
-    """Finding H-65: Align binding evaluation start date to 2022-01-03."""
+    """Finding H-65 / Audit §91.8 Ruling 1: the binding start is 2018-04-01."""
     warmup_start_2017 = datetime.date(2017, 1, 1)
-    warmup_start_2019 = datetime.date(2019, 1, 1)
-    binding_start = datetime.date(2022, 1, 3)
+    warmup_start_2018 = datetime.date(2018, 3, 29)
+    binding_start = datetime.date(2018, 4, 1)
     binding_end = datetime.date(2023, 12, 31)
 
     assert classify_gating_window(warmup_start_2017, datetime.date(2017, 12, 31)) == GatingWindowClassification.PRE_SURVEILLANCE_WARMUP
-    assert classify_gating_window(warmup_start_2019, datetime.date(2019, 12, 31)) == GatingWindowClassification.PRE_SURVEILLANCE_WARMUP
+    assert classify_gating_window(warmup_start_2018, datetime.date(2018, 3, 29)) == GatingWindowClassification.PRE_SURVEILLANCE_WARMUP
     assert classify_gating_window(binding_start, binding_end) == GatingWindowClassification.BINDING_EVALUATION
 
-    # Probe H-65: 2019-01-01 must be rejected fail-closed
+    # Probe H-65: a session before the binding start must be rejected fail-closed
     with pytest.raises(GatingWindowValidationError, match="Gate G2B.5-7 Violation"):
-        check_gating_verdict_eligibility(warmup_start_2019, "GO")
+        check_gating_verdict_eligibility(warmup_start_2018, "GO")
     with pytest.raises(GatingWindowValidationError, match="Gate G2B.5-7 Violation"):
-        check_gating_verdict_eligibility(warmup_start_2019, "APPROVED")
+        check_gating_verdict_eligibility(warmup_start_2018, "APPROVED")
     with pytest.raises(GatingWindowValidationError, match="Gate G2B.5-7 Violation"):
-        check_gating_verdict_eligibility(warmup_start_2019, "PASS")
+        check_gating_verdict_eligibility(warmup_start_2018, "PASS")
 
     check_gating_verdict_eligibility(binding_start, "GO")
 
-    assert resolve_gating_verdict(warmup_start_2019, "GO") == "NOT RUN"
-    assert resolve_gating_verdict(warmup_start_2019, "PASS") == "NOT RUN"
+    assert resolve_gating_verdict(warmup_start_2018, "GO") == "NOT RUN"
+    assert resolve_gating_verdict(warmup_start_2018, "PASS") == "NOT RUN"
     assert resolve_gating_verdict(binding_start, "GO") == "GO"
     assert resolve_gating_verdict(binding_start, "NO-GO") == "NO-GO"
 

@@ -10,7 +10,7 @@ Enforces:
 from collections import OrderedDict
 import datetime
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from signal_core.contracts.criteria import GoNoGoCriteria, load_go_no_go_criteria
 from signal_core.contracts.dataset import PriceConvention
@@ -119,6 +119,29 @@ class Portfolio:
     def get_open_positions(self) -> Dict[str, Position]:
         """Returns a dictionary of all currently active (non-zero quantity) positions."""
         return {inst_id: pos for inst_id, pos in self._positions.items() if not pos.is_closed}
+
+    def require_hold_bounds(
+        self,
+        as_of: datetime.date,
+        max_hold_trading_sessions: int,
+        calendar: Any,
+    ) -> Dict[str, str]:
+        """
+        Refuses every open position whose hold reaches `max_hold_trading_sessions` (Audit §91.9
+        item 1, AGENTS.md §13.2). Returns each refused ISIN beside the refusal, so the session loop
+        can exit it through the same simulator instead of carrying it in silence.
+
+        The bound is passed in from the criteria; there is no module default (§10.8). A bid locked at
+        the lower circuit leaves the position open, and it is refused again on the next session: an
+        unbounded exit delay is a refusal, never an extension (§5.3).
+        """
+        refusals: Dict[str, str] = {}
+        for isin, pos in self.get_open_positions().items():
+            try:
+                pos.require_within_hold_bound(as_of, max_hold_trading_sessions, calendar)
+            except LedgerValidationError as exc:
+                refusals[isin] = str(exc)
+        return refusals
 
     def deposit(
         self,

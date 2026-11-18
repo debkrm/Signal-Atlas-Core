@@ -25,6 +25,7 @@ from signal_core.contracts.criteria import (
 from signal_core.contracts.price_band import SOURCED_PRICE_BAND_START, is_price_band_sourced
 from signal_core.contracts.provenance import ProvenanceStatus
 from signal_core.storage.calendar import (
+    SOURCED_WINDOW_START_DATE,
     CalendarError,
     TradingCalendar,
     compute_calendar_fingerprint,
@@ -1269,7 +1270,9 @@ def evaluate_verdicts(
 
     # D6: Calendar Identity Fingerprint Anchor (Residual R-6, Finding H-64, Residual R-4)
     cal_fp_match = (active_cal.fingerprint == active_criteria.expected_calendar_fingerprint)
-    eval_start_dt = active_criteria.min_binding_evaluation_start_date
+    # Audit §91.8 Ruling 1 separates the two facts: the binding start is 2018-04-01, while the
+    # sourced-window fingerprint is pinned over the Bhavcopy corpus that begins 2022-01-03.
+    eval_start_dt = SOURCED_WINDOW_START_DATE
     if isinstance(eval_start_dt, str):
         eval_start_dt = datetime.date.fromisoformat(eval_start_dt)
     sourced_recs = active_cal.session_records_in_range(

@@ -872,17 +872,55 @@ def test_n1_replay_guard_o1_lookup_and_bounded_memory():
     # instances the guard already holds. The two ceilings and the ratio above stay as coarser bounds.
     from collections import OrderedDict
 
+    # N-174 (§91.4): counting `__contains__` alone cannot see §90.3's scan, because iterating an
+    # OrderedDict calls no dunder this class overrides. Every access shape the regression can take is
+    # counted, so `for instance in guard` fails the structural assertion deterministically instead of
+    # relying on a timing ratio that caught the scan 1 of 5 runs.
+    ACCESSORS = ("__contains__", "__iter__", "keys", "values", "items", "__getitem__", "__len__")
+
     class CountingReplayGuard(OrderedDict):
-        lookup_count = 0
+        access_counts = {name: 0 for name in ACCESSORS}
+
+        @classmethod
+        def reset(cls) -> None:
+            cls.access_counts = {name: 0 for name in ACCESSORS}
+
+        @classmethod
+        def count(cls, name: str) -> None:
+            cls.access_counts[name] += 1
 
         def __contains__(self, key):
-            CountingReplayGuard.lookup_count += 1
+            CountingReplayGuard.count("__contains__")
             return super().__contains__(key)
+
+        def __iter__(self):
+            CountingReplayGuard.count("__iter__")
+            return super().__iter__()
+
+        def keys(self):
+            CountingReplayGuard.count("keys")
+            return super().keys()
+
+        def values(self):
+            CountingReplayGuard.count("values")
+            return super().values()
+
+        def items(self):
+            CountingReplayGuard.count("items")
+            return super().items()
+
+        def __getitem__(self, key):
+            CountingReplayGuard.count("__getitem__")
+            return super().__getitem__(key)
+
+        def __len__(self):
+            CountingReplayGuard.count("__len__")
+            return super().__len__()
 
     for fill_count in (1_000, 4_000):
         portfolio = Portfolio(initial_capital=Decimal("500000000.00"), initial_date=start_date)
         portfolio._processed_fill_instances = CountingReplayGuard()
-        CountingReplayGuard.lookup_count = 0
+        CountingReplayGuard.reset()
         for fill in [
             _make_dummy_fill(
                 f"SCAN_{i}",
@@ -894,9 +932,20 @@ def test_n1_replay_guard_o1_lookup_and_bounded_memory():
             for i in range(fill_count)
         ]:
             portfolio.process_fill(fill, enforce_risk_limits=False)
-        assert CountingReplayGuard.lookup_count == fill_count, (
-            f"{CountingReplayGuard.lookup_count} replay-guard membership lookup(s) for {fill_count} "
-            "fill(s): the replay path is not one dict lookup per fill, which is the O(1) claim (N-174)"
+        counts = CountingReplayGuard.access_counts
+        iteration_accesses = sum(counts[name] for name in ("__iter__", "keys", "values", "items", "__getitem__"))
+        assert iteration_accesses == 0, (
+            f"{iteration_accesses} iteration-shaped access(es) to the replay guard over {fill_count} "
+            "fill(s): a per-fill scan of every held instance is running, which is the O(n) regression "
+            "this test names (N-174)"
+        )
+        assert counts["__contains__"] == fill_count, (
+            f"{counts['__contains__']} replay-guard membership lookup(s) for {fill_count} fill(s): the "
+            "replay path is not one dict lookup per fill, which is the O(1) claim (N-174)"
+        )
+        assert counts["__len__"] <= fill_count, (
+            f"{counts['__len__']} length access(es) for {fill_count} fill(s): the replay path is not "
+            "bounded per fill (N-174)"
         )
 
 

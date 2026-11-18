@@ -21,7 +21,10 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 DEFAULT_CALENDAR_PATH = Path(__file__).resolve().parent.parent.parent.parent / "configs" / "trading_calendar_nse.json"
-BINDING_EVALUATION_START_DATE = datetime.date(2022, 1, 3)
+BINDING_EVALUATION_START_DATE = datetime.date(2018, 4, 1)
+# The Bhavcopy source corpus begins on this session; the sourced-window count (1,196) and fingerprint
+# are pinned over it, independently of the binding start (Audit §91.8 Ruling 1).
+SOURCED_WINDOW_START_DATE = datetime.date(2022, 1, 3)
 
 
 class CalendarError(ValueError):
@@ -383,8 +386,12 @@ def load_nse_trading_calendar(
                 f"loaded={calendar.total_sessions} != criteria={criteria.expected_total_calendar_sessions}"
             )
 
-        # 3. Evaluation window session count anchor
-        eval_start = criteria.min_binding_evaluation_start_date
+        # 3. Sourced window session count anchor. Audit §91.8 Ruling 1 promotes the *binding* start
+        # to 2018-04-01, but `expected_authoritative_calendar_sessions` (1,196) and the sourced-window
+        # fingerprint pin the Bhavcopy-sourced window, which still begins 2022-01-03. The two facts are
+        # therefore read from their own sources: the binding start no longer stands in for the source
+        # coverage start.
+        eval_start = SOURCED_WINDOW_START_DATE
         if isinstance(eval_start, str):
             eval_start = datetime.date.fromisoformat(eval_start)
         eval_end = datetime.date(2026, 10, 31)

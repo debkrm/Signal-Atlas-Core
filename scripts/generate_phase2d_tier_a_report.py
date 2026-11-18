@@ -42,7 +42,11 @@ from signal_core.reporting.verdicts import (
     VerdictStatus,
     evaluate_verdicts,
 )
-from signal_core.storage.calendar import TradingCalendar, load_anchored_nse_trading_calendar
+from signal_core.storage.calendar import (
+    SOURCED_WINDOW_START_DATE,
+    TradingCalendar,
+    load_anchored_nse_trading_calendar,
+)
 
 
 def build_tier_a_results_bundle(
@@ -105,8 +109,11 @@ def build_tier_a_results_bundle(
                 Decimal(str(total_traded_rows)) / Decimal(str(expected_total_rows))
             ) * Decimal("100")
 
-    # 3. Resolve evaluation window dates dynamically from criteria and archive manifest (Finding H-73)
-    start_date_str = active_criteria.min_binding_evaluation_start_date.isoformat()
+    # 3. Resolve evaluation window dates dynamically from the sourced corpus and archive manifest
+    # (Finding H-73). Audit §91.8 Ruling 1 promotes the *binding* start to 2018-04-01; this Phase 2D
+    # bundle is the 2022-2026 sourced window, so it reads the source coverage start, not the binding
+    # start. The two facts are distinct and neither stands in for the other.
+    start_date_str = SOURCED_WINDOW_START_DATE.isoformat()
     end_date_limit = max(archive_dates) if archive_dates else active_calendar.end_date
     eligible_sessions = [s for s in active_calendar.sessions if s <= end_date_limit]
     end_date_str = eligible_sessions[-1].isoformat() if eligible_sessions else end_date_limit.isoformat()
@@ -127,6 +134,12 @@ def build_tier_a_results_bundle(
         # not a threshold, and they enter the criteria fingerprint, so the committed artifact is
         # restated rather than left describing a criteria version that no longer governs.
         "restatement_note": (
+            "Restatement 2026-11-18 (Audit §91.8 Ruling 1, criteria 1.1.13): supersedes the §87 "
+            "restatement recorded below. Criteria 1.1.13 changes no numeric threshold and no criterion. "
+            "It moves min_binding_evaluation_start_date from 2022-01-03 to 2018-04-01, so the 931 "
+            "captured sessions 2018-04-01..2021-12-31 become gating-eligible; the sourced-window "
+            "fingerprint, the 1,196 and 1,201 calendar pins, every fold, trial count and threshold are "
+            "unchanged, and no evaluation row on this bundle is computed differently. "
             "Restatement 2026-11-18 (Audit §87.5 Ruling 1, criteria 1.1.11): supersedes the §86 "
             "restatement recorded below. Criteria 1.1.11 changes no numeric threshold and no criterion. "
             "It reseals expected_manifest_fingerprint because the Audit §87.5 Ruling 1 capture registers "

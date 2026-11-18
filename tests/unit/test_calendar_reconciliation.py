@@ -138,7 +138,10 @@ def test_calendar_reconciliation_exact_session_set_closure():
     """Verify exact algebraic reconciliation between unified calendar and archive manifest (Findings H-56, H-59, H-60)."""
     cal = load_nse_trading_calendar()
     criteria = load_go_no_go_criteria()
-    window_start = criteria.min_binding_evaluation_start_date
+    # Criteria 1.1.13 promotes the binding start to 2018-04-01 (Audit §91.8 Ruling 1); this test
+    # reconciles the *sourced* Bhavcopy window, which still begins 2022-01-03 with 1,196 sessions and
+    # the same sourced-window calendar fingerprint the criteria pin.
+    window_start = datetime.date(2022, 1, 3)
     window_end = datetime.date(2026, 10, 31)
 
     cal_sessions = set(s for s in cal.sessions if window_start <= s <= window_end)
@@ -211,7 +214,7 @@ def test_calendar_reconciliation_summary_block_matches_computed_counts():
 
     cal = load_nse_trading_calendar()
     criteria = load_go_no_go_criteria()
-    cal_sessions = set(s for s in cal.sessions if criteria.min_binding_evaluation_start_date <= s <= datetime.date(2026, 10, 31))
+    cal_sessions = set(s for s in cal.sessions if datetime.date(2022, 1, 3) <= s <= datetime.date(2026, 10, 31))
 
     holiday_dates = {datetime.date.fromisoformat(e["session_date"]) for e in excluded_holidays}
     special_dates = {datetime.date.fromisoformat(e["session_date"]) for e in excluded_special}

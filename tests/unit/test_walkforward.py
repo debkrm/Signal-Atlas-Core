@@ -604,7 +604,7 @@ def test_walk_forward_trial_registry_integration(wf_environment):
     assert record.seq == 1
     assert record.trial_id == "TRIAL-WF-001"
     assert record.dataset_fingerprint == res.dataset_content_fingerprint
-    assert record.criteria_version == "1.1.12"
+    assert record.criteria_version == "1.1.13"
     assert record.execution_config is not None
     assert record.execution_config == res.execution_config
     assert record.sharpe_ratio == res.annualized_sharpe
@@ -1137,13 +1137,13 @@ def test_wave2_dataset_content_fingerprint_binding_and_rejection(wf_environment)
         )
 
     # Criteria version dynamic default (Audit §31 H-34)
-    assert res.criteria_version == "1.1.12"
-    assert trial_rec.criteria_version == "1.1.12"
+    assert res.criteria_version == "1.1.13"
+    assert trial_rec.criteria_version == "1.1.13"
 
     # Execution configuration bound to WalkForwardResult, TrialRecord, and hashed into result fingerprint (Audit §31 H-33 / §32 H-37)
     assert res.execution_config is not None
     assert res.execution_config["execution_latency_sessions"] == 1
-    assert res.execution_config["criteria_version"] == "1.1.12"
+    assert res.execution_config["criteria_version"] == "1.1.13"
     assert trial_rec.execution_config == res.execution_config
     assert isinstance(res.execution_config["cost_model"], dict)
     assert res.execution_config["cost_model"]["model"] == "TransactionCostModel"
@@ -1562,7 +1562,7 @@ def test_audit33_h38_h39_criteria_and_exec_config_sealing(wf_environment):
 
 def test_n32_pre_window_fold_refused_fail_closed(wf_environment):
     """
-    Finding N-32: min_binding_evaluation_start_date (2022-01-03) is load-bearing.
+    Finding N-32: min_binding_evaluation_start_date (2018-04-01, criteria 1.1.13) is load-bearing.
     A fold, walk-forward run, or trial registration on dates prior to min_binding_evaluation_start_date
     must refuse fail-closed with WalkForwardEngineError (AGENTS.md Rule 10.8).
     """
@@ -1575,13 +1575,13 @@ def test_n32_pre_window_fold_refused_fail_closed(wf_environment):
     )
     engine = WalkForwardEngine(calendar=cal, gold_engine=gold, execution_latency_sessions=1)
 
-    # Pre-2022 fold (2021-12-01 to 2021-12-31)
+    # Pre-binding fold (2017-12-01 to 2017-12-31): before the criteria 1.1.13 start of 2018-04-01.
     pre_window_fold = WalkForwardFold(
         fold_index=0,
-        train_start=datetime.date(2021, 12, 1),
-        train_end=datetime.date(2021, 12, 15),
-        test_start=datetime.date(2021, 12, 20),
-        test_end=datetime.date(2021, 12, 31),
+        train_start=datetime.date(2017, 12, 1),
+        train_end=datetime.date(2017, 12, 15),
+        test_start=datetime.date(2017, 12, 20),
+        test_end=datetime.date(2017, 12, 31),
         embargo_sessions=1,
         partition_role=PartitionRole.VALIDATION,
     )
@@ -1605,7 +1605,7 @@ def test_n32_pre_window_fold_refused_fail_closed(wf_environment):
         partition_role=PartitionRole.VALIDATION,
     )
     valid_res = engine.run_walk_forward(strategy=strat, folds=[valid_fold])
-    assert valid_res.execution_config.get("min_binding_evaluation_start_date") == "2022-01-03"
+    assert valid_res.execution_config.get("min_binding_evaluation_start_date") == "2018-04-01"
 
     # Create a result carrying a pre-window fold result
     pre_window_f_res = dataclasses.replace(valid_res.fold_results[0], fold=pre_window_fold)

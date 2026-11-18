@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import csv
 import datetime
+from decimal import Decimal
 import hashlib
 import json
 from pathlib import Path
@@ -263,6 +264,94 @@ def _find_key(node, needles: Sequence[str]) -> Optional[str]:
     return None
 
 
+def measure_hold_bound_enforcement(criteria) -> Tuple[int, int]:
+    """
+    Audit §91.9 item 1 / §13.2: the hold bound's production consumers and one measured refusal.
+
+    Drives the portfolio-level consumer with a synthetic position held exactly `bound` authoritative
+    sessions after its entry: no direct `Position` call is involved, so a tree that only models the
+    bound fails to produce the refusal this measures. Returns (call-site count, refusal count).
+    """
+    from signal_core.contracts.order_types import (
+        ExecutionFillResult,
+        ExecutionOrder,
+        FillStatus,
+        OrderProduct,
+        OrderSide,
+        OrderType,
+    )
+    from signal_core.execution.costs import TransactionCostBreakdown
+    from signal_core.portfolio.portfolio import Portfolio
+
+    bound = criteria.max_hold_trading_sessions
+    calendar = load_anchored_nse_trading_calendar()
+    sessions = [s for s in calendar.sessions if s >= datetime.date(2024, 1, 1)]
+    if len(sessions) <= bound:
+        return 0, 0
+    entry, past = sessions[0], sessions[bound]
+    previous = calendar.sessions[calendar.sessions.index(entry) - 1]
+    isin = "INE000A01001"
+
+    portfolio = Portfolio(
+        initial_capital=Decimal("1000000.00"), criteria=criteria, initial_date=entry
+    )
+    order = ExecutionOrder(
+        instrument_id=isin,
+        side=OrderSide.BUY,
+        product=OrderProduct.DELIVERY,
+        quantity=10,
+        signal_date=previous,
+        target_date=entry,
+        order_type=OrderType.MARKET_ON_OPEN,
+    )
+    costs = TransactionCostBreakdown(
+        trade_date=entry,
+        side=OrderSide.BUY,
+        product=OrderProduct.DELIVERY,
+        quantity=10,
+        price=Decimal("100.00"),
+        gross_amount=Decimal("1000.00"),
+        brokerage=Decimal("20.00"),
+        stt=Decimal("1.00"),
+        exchange_turnover_fee=Decimal("0.03"),
+        ipft=Decimal("0.00"),
+        sebi_turnover_fee=Decimal("0.00"),
+        stamp_duty=Decimal("0.15"),
+        gst=Decimal("3.60"),
+        total_statutory_taxes=Decimal("4.78"),
+        total_charges=Decimal("24.78"),
+        net_cash_flow=Decimal("-1024.78"),
+        effective_cost_bps=Decimal("247.8000"),
+        circular_ref="A4_HOLD_BOUND_PROBE",
+        disclosures=(),
+    )
+    portfolio.process_fill(
+        ExecutionFillResult(
+            order=order,
+            status=FillStatus.FILLED,
+            fill_date=entry,
+            latency_sessions=1,
+            filled_quantity=10,
+            unfilled_quantity=0,
+            executed_price=Decimal("100.00"),
+            slippage=None,
+            costs=costs,
+            circuit_evidence_present=True,
+            rejection_reason=None,
+            fill_id="A4_HOLD_BOUND_PROBE",
+        ),
+        enforce_risk_limits=False,
+    )
+    refusals = portfolio.require_hold_bounds(past, bound, calendar)
+    call_sites = [
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in (REPO_ROOT / "src" / "signal_core").rglob("*.py")
+        if path.name != "position.py"
+        and "require_within_hold_bound(" in path.read_text(encoding="utf-8")
+    ]
+    return len(call_sites), len(refusals)
+
+
 def check_a4() -> List[Tuple[str, str]]:
     """§80.13 item 4: 2018-2021 dividends, or a committed maximum-hold bound below the ex-date gap."""
     dividends = [
@@ -298,7 +387,16 @@ def check_a4() -> List[Tuple[str, str]]:
         ))
 
     if bound:
-        results.append(("PASS", f"A4 max hold: {bound} is committed"))
+        from signal_core.contracts.criteria import load_go_no_go_criteria
+
+        typed_criteria = load_go_no_go_criteria(CRITERIA_PATH)
+        call_sites, refusals = measure_hold_bound_enforcement(typed_criteria)
+        results.append((
+            "PASS" if call_sites and refusals else "NO",
+            f"A4 max hold: {bound} is committed and enforced at {call_sites} production call site(s); "
+            f"refusals={refusals} for one synthetic hold "
+            f"{typed_criteria.max_hold_trading_sessions} sessions after entry",
+        ))
     else:
         results.append((
             "NO",

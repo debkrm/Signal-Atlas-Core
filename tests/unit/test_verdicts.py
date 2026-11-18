@@ -125,6 +125,8 @@ def test_verdict_report_reproducibility():
     # CRIT-PROV-01, CRIT-INFO-01, and CRIT-EXEC-03/04 (H-120: the window includes sessions with no
     # sourced price-band report, so circuit compliance is unassertable).
     assert report1.summary_counts["NOT_RUN"] == 4
+    # A bundle that omits its window is evaluated over the sourced corpus, which begins 2022-01-03;
+    # the binding start promoted to 2018-04-01 by Audit §91.8 Ruling 1 is a different fact.
     assert report1.evaluation_start_date == "2022-01-03"
     assert report1.evaluation_end_date == "2026-10-31"
     assert "- **Evaluation Window:** `2022-01-03` to `2026-10-31`" in report1.to_markdown()
@@ -388,18 +390,18 @@ def test_synthetic_fixture_end_to_end_regression():
 
 
 def test_h65_binding_evaluation_start_date_guard():
-    """H-65: Align binding evaluation start date guard to 2022-01-03 (§52.9 Item 1)."""
+    """H-65: the binding start guard follows criteria 1.1.13 (2018-04-01, §91.8 Ruling 1)."""
     from signal_core.storage.gating import (
         resolve_gating_verdict,
         check_gating_verdict_eligibility,
         GatingWindowValidationError,
     )
-    # Acceptance probe (§52.9 Item 1):
-    assert resolve_gating_verdict(datetime.date(2019, 1, 1), "GO") == "NOT RUN"
+    # Acceptance probe: a session before the promoted binding start cannot reach GO.
+    assert resolve_gating_verdict(datetime.date(2018, 3, 29), "GO") == "NOT RUN"
     with pytest.raises(GatingWindowValidationError, match="Gate G2B.5-7 Violation"):
-        check_gating_verdict_eligibility(datetime.date(2019, 1, 1), "GO")
-    assert resolve_gating_verdict(datetime.date(2022, 1, 3), "GO") == "GO"
-    check_gating_verdict_eligibility(datetime.date(2022, 1, 3), "GO")
+        check_gating_verdict_eligibility(datetime.date(2018, 3, 29), "GO")
+    assert resolve_gating_verdict(datetime.date(2018, 4, 2), "GO") == "GO"
+    check_gating_verdict_eligibility(datetime.date(2018, 4, 2), "GO")
 
 
 def test_r6_deriver_tampered_calendar_fails_closed():
@@ -458,19 +460,19 @@ def test_h67_unattested_verified_provenance_rejected():
 
 
 def test_h66_evaluation_window_dates_in_report():
-    """H-66: Evaluation window dates must be in report, and pre-2022 start date yields NO-GO (§52.5, §52.9)."""
-    # 1. 2019 start date yields NO-GO naming the invalid window
+    """H-66: Evaluation window dates must be in report, and a pre-binding start yields NO-GO (§52.5)."""
+    # 1. A 2017 start date yields NO-GO naming the invalid window (binding start 2018-04-01, 1.1.13).
     bad_bundle = {
-        "evaluation_start_date": "2019-01-01",
+        "evaluation_start_date": "2017-01-01",
         "evaluation_end_date": "2023-12-31",
         "evaluated_at_utc": "2026-11-14T12:00:00+00:00",
     }
     bad_report = evaluate_verdicts(bad_bundle)
     eval_win = next(e for e in bad_report.evaluations if e.criterion_id == "CRIT-WINDOW-01")
     assert eval_win.status == VerdictStatus.FAIL
-    assert "Evaluation start date 2019-01-01 precedes authoritative binding evaluation start date 2022-01-03" in eval_win.evidence
+    assert "Evaluation start date 2017-01-01 precedes authoritative binding evaluation start date 2018-04-01" in eval_win.evidence
     assert bad_report.overall_verdict == OverallVerdict.NO_GO
-    assert "- **Evaluation Window:** `2019-01-01` to `2023-12-31`" in bad_report.to_markdown()
+    assert "- **Evaluation Window:** `2017-01-01` to `2023-12-31`" in bad_report.to_markdown()
 
     # 2. Missing dates evaluate to NOT RUN and NO-GO
     missing_bundle = {"evaluated_at_utc": "2026-11-14T12:00:00+00:00"}

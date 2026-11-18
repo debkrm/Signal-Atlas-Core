@@ -1853,3 +1853,70 @@ W0.5-1 append-only, W0.5-1b volumes, W0.5-1c index, W0.5-2 **9/9 verifiers exit 
 / 0 skipped / 0 xfailed**, W0.5-4 tags, W0.5-5 **1000 current artifacts** matched. `verify_audit_findings.py`
 27/27 probes. Not audited: no §91 verdict exists yet, so nothing here is signed off, and the round's
 green row and tag are recorded after this commit, not by it.
+
+### Audit §91 work order (feat-s92): the hold bound gets a consumer, Gate COV-3 computes its attribution, the replay counter sees iteration, and the binding start moves to 2018-04-01 (implemented; gates measured; not audited)
+
+Round: audit §91 at `9c79fdb` (tag `audit-s91-6068cf5`, reviewing `35e2050`), work order §91.9 items 1-4
+and §91.8 Ruling 1. Criteria **1.1.13**. **Not audited** — no verdict judges this commit; every number
+below is a measurement taken on this tree, and no ledger row was appended (the findings ledger is the
+auditor's, §11.1).
+
+**The three probes were flipped first, and measured failing at the parent.** At `9c79fdb`:
+`probe_n174` exit 1 (`the replay-guard counter does not instrument __iter__`), `probe_n176` exit 1
+(`Gate COV-3 still prints typed attribution literals ('930 untraded')`), `probe_n177` exit 1 (`the hold
+bound still has no production consumer outside position.py`). Each is now `PASS` on this tree.
+
+**Item 1 — N-177, the bound has a consumer.** `Portfolio.require_hold_bounds(as_of, bound, calendar)`
+calls `Position.require_within_hold_bound` for every open position and returns each refused ISIN with its
+refusal; `execute_swing_strategy_session` accepts `forced_exit_isins`, drops any strategy SELL for that
+name, and emits one `MAX_HOLD_BOUND_EXIT` SELL at `next_session` through the same runner; the session loop
+calls the consumer with `criteria.max_hold_trading_sessions` (21) and the authoritative calendar, and
+counts a forced fill or a refusal (a locked bid or a missing bar leaves the position open and it is
+refused again next session, never extended — §5.3). The result carries `hold_bound_forced_exits` and
+`hold_bound_refusals`, and the A4 line now prints
+`max_hold_trading_sessions=21 is committed and enforced at 1 production call site(s); refusals=1 for one
+synthetic hold 21 sessions after entry`. **NOT RUN: the eight post-2022 trial outcomes were not re-run.**
+The committed trial artifacts persist verdict metrics, digests and evaluation hashes, not per-trade
+entry/exit dates, so no hold length can be read from them and outcome invariance is not measured here.
+The enforcement emits nothing unless a hold reaches 21 authoritative sessions, but that is an argument,
+not a measurement.
+
+**Item 2 — N-176, the attribution is computed.** `scripts/verify_cash_universe_coverage.py` derives the
+split from `sec_list_20240116.csv` and the same session's `cm16JAN2024bhav.csv.zip`
+(`attribute_unresolved_eq_scrips`): **1,174** unresolved, **933** untraded, **224** trading in `BE`/`BZ`,
+**17** in another non-`EQ` series, and **0** the Bhavcopy reports as `EQ` and unresolved. The three typed
+literals are gone, the zero-`EQ` invariant is a hard `return False`, and `probe_n176` runs the gate
+function, parses the printed split and asserts it equals its own recomputation.
+
+**Item 3 — N-174, every access is counted.** `CountingReplayGuard` now counts `__contains__`, `__iter__`,
+`keys`, `values`, `items`, `__getitem__` and `__len__`; the test asserts iteration-shaped accesses are
+**0** and `__contains__` is exactly one per fill. §90.3's scan installed over 1,000 fills was detected
+**5 of 5** runs (`iteration_accesses=1000`, `contains=1000` each), against 1 of 5 for the timing guard.
+The 250 µs ceilings and the 2.5 ratio are unchanged.
+
+**Item 4 / Ruling 1 — the binding start moves, and the sourced window does not.** Criteria **1.1.13**
+sets `min_binding_evaluation_start_date: 2018-04-01`; `storage/gating.py`, `storage/calendar.py` and the
+`criteria.py` defaults move with it. Three places had used the binding start as a stand-in for the
+Bhavcopy source coverage start and now read the new `SOURCED_WINDOW_START_DATE = 2022-01-03`: the
+calendar loader's 1,196-session and sourced-fingerprint anchors, reporting's `CRIT-DATA-06`, and the
+Phase 2D generator's window. Unchanged by measurement: `MAN-FPR-V1-e95ddf90…`, sourced-window
+`CAL-FPR-V1-2d5ac7ac…`, `1201` / `1196`, `CAL-FPR-V1-6acb5f45…`, **2,936** total sessions, every fold,
+trial count, cost parameter and threshold. `probe_pre2022_preconditions.py`: **READY, 9/9** — A1 5/5,
+A2 17,864 active of 19,283 earliest 2018-04-02 over 931 sessions, A4 4,357 ex-dates, A4 max hold
+enforced with 1 refusal, A5 **0 of 4,903** evaluated sessions before 2018-04-01.
+
+**What the promotion did NOT do.** The **931** manifest rows still read `WARMUP_NOT_GATABLE`, and
+`probe_pre2022_bronze_coverage.py` still requires that label, so §91.9 item 4's acceptance — a tree whose
+criteria move while its archive labels stay must fail the coverage certificate — is **not met**. The
+relabel-by-append and `MAN-FPR` re-pin it implies were outside the ordered scope. Work-order items 5
+(seq 10 registration) and 6 (N-150) were not ordered and were not done: **N = 9**, `N_eval = 5`, the
+registry pin `3326b1b2…` unchanged, the 2024 fold frozen, holdout `2025-01-01..2026-11-11` sealed and
+unread.
+
+**Gate.** `verify_audit_append_only.py --force-full`: **ALL REPOSITORY FOUNDATION GATES PASSED** —
+suite **544 passed, 0 skipped, 0 xfailed**; **9/9 verifiers exit 0**; W0.5-5 **1,000 current artifacts**
+matched; the working copy differed from HEAD in 27 source paths, so no green row was recorded by that
+run. `reports/verdicts/phase2d_tier_a_2022_2026_verdict.{json,md}` were regenerated: **9 lines** changed
+(version, fingerprint, the 1.1.13 restatement), window still `2022-01-03..2026-10-30`,
+`PASS=2 / FAIL=0 / NOT RUN=25`, overall **NO-GO**. Protected paths untouched: `reports/audit/**`,
+`AGENTS.md`, `.agents/`, `configs/trading_calendar_nse.json`, `data/trials/`, `reports/verdicts/trial_00*`.

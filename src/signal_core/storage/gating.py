@@ -14,7 +14,7 @@ import datetime
 from enum import Enum
 from typing import List, Optional, Sequence, Union
 
-BINDING_EVALUATION_START_DATE = datetime.date(2022, 1, 3)
+BINDING_EVALUATION_START_DATE = datetime.date(2018, 4, 1)
 
 # Audit §87.5 Ruling 1: a captured pre-2022 session is a valid price observation and an ineligible
 # gating session. This is the label the capture writes and the only spelling the guard accepts.

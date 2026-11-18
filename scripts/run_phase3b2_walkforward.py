@@ -169,6 +169,10 @@ class Phase3B2WalkForwardRunResult:
     liquidated_mean_net_expectancy: Optional[Decimal] = None
     open_positions_at_end_count: int = 0
     open_positions_unrealized_pnl: Optional[Decimal] = None
+    # Audit §91.9 item 1 / §13.2: the hold bound enforced at the exit-evaluation point, and the
+    # exits a frozen bid refused there (§5.3).
+    hold_bound_forced_exits: int = 0
+    hold_bound_refusals: int = 0
 
 
 def build_authoritative_runner(
@@ -1088,6 +1092,9 @@ def run_phase3b2_walkforward(
     total_protective_stop_untriggered = 0
     # Audit §73.4 H-125: held positions left without a stop by a merger / ISIN transition.
     total_unprotected_ca_positions = 0
+    # Audit §91.9 item 1: exits forced by the hold bound and refusals where the bid was locked.
+    total_hold_bound_forced_exits = 0
+    total_hold_bound_refusals = 0
 
     num_sessions = len(sessions_to_run)
     for i in range(num_sessions - 1):
@@ -1221,6 +1228,15 @@ def run_phase3b2_walkforward(
             if (isin, as_of) in bars_by_isin_date
         }
 
+        # Audit §91.9 item 1 / §13.2: the declared hold bound is consulted where the hold is evaluated.
+        # A position that would be carried into `next_session` at or past the bound is refused here and
+        # exits through the same harness; a locked bid defers the exit, never the bound (§5.3).
+        forced_exits = set(
+            portfolio.require_hold_bounds(
+                next_session, criteria.max_hold_trading_sessions, cal
+            )
+        )
+
         # Execute session through authoritative harness
         summary = execute_swing_strategy_session(
             strategy=strategy,
@@ -1236,6 +1252,7 @@ def run_phase3b2_walkforward(
             corporate_actions=actions_today,
             security_master=sec_master,
             price_convention=price_convention,
+            forced_exit_isins=tuple(sorted(forced_exits)),
         )
         session_summaries.append(summary)
 
@@ -1314,6 +1331,18 @@ def run_phase3b2_walkforward(
                         sell_qty -= matched_qty
                         if lot["quantity"] == 0:
                             open_lots[isin].pop(0)
+
+        # Audit §91.9 item 1: an exit the bound forced but the session could not fill (a frozen bid, a
+        # missing bar) is counted as a refusal, and the position is refused again next session.
+        forced_filled = {
+            ticket.candidate.instrument_id
+            for ticket in summary.tickets
+            if (ticket.candidate.metadata or {}).get("exit_reason") == "MAX_HOLD_BOUND_EXIT"
+            and ticket.fill_result is not None
+            and ticket.fill_result.filled_quantity > 0
+        }
+        total_hold_bound_forced_exits += len(forced_filled)
+        total_hold_bound_refusals += len(forced_exits - forced_filled)
 
         # Mark-to-Market Session Valuation across active holdings
         mtm_prices: Dict[str, Decimal] = {}
@@ -2126,6 +2155,8 @@ def run_phase3b2_walkforward(
         "closed_trade_exit_reasons": ledger_exit_reasons,
         "atr_stop_multiple": str(runner.atr_stop_multiple),
         "protective_stop_exits": total_protective_stop_exits,
+        "hold_bound_forced_exits": total_hold_bound_forced_exits,
+        "hold_bound_refusals": total_hold_bound_refusals,
         "protective_stop_deferrals": total_protective_stop_deferrals,
         "protective_stop_circuit_deferrals": total_protective_stop_circuit_deferrals,
         "protective_stop_untriggered": total_protective_stop_untriggered,
@@ -2263,6 +2294,8 @@ def run_phase3b2_walkforward(
         report_dict["closed_trade_exit_reasons"] = ledger_exit_reasons
         report_dict["atr_stop_multiple"] = str(runner.atr_stop_multiple)
         report_dict["protective_stop_exits"] = total_protective_stop_exits
+        report_dict["hold_bound_forced_exits"] = total_hold_bound_forced_exits
+        report_dict["hold_bound_refusals"] = total_hold_bound_refusals
         report_dict["protective_stop_deferrals"] = total_protective_stop_deferrals
         report_dict["protective_stop_circuit_deferrals"] = total_protective_stop_circuit_deferrals
         report_dict["unprotected_corporate_action_positions"] = total_unprotected_ca_positions
@@ -2491,6 +2524,8 @@ def run_phase3b2_walkforward(
         liquidated_mean_net_expectancy=liquidated_mean_net_expectancy,
         open_positions_at_end_count=len(liquidation_rows),
         open_positions_unrealized_pnl=open_positions_unrealized,
+        hold_bound_forced_exits=total_hold_bound_forced_exits,
+        hold_bound_refusals=total_hold_bound_refusals,
     )
 
 
