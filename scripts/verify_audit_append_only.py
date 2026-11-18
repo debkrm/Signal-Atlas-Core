@@ -24,6 +24,15 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import yaml
 
+# Ensure stdout handles UTF-8 on Windows consoles without error (Audit §30 H-22): a captured pytest
+# log is decoded with errors="replace", and printing the replacement character to a cp1252 console
+# would otherwise raise UnicodeEncodeError in place of the failure it was about to report.
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 AUDIT_FILE = REPO_ROOT / "reports" / "audit" / "signal_atlas_phase1c_audit_deepseek_review_.md"
 RULE_11_BASE_COMMIT = "a3a40f1"  # Commit ratifying Rule 11 & §37 verdict
@@ -703,8 +712,21 @@ def check_verification_scripts() -> Tuple[bool, Dict[str, int]]:
     return all_passed, exits
 
 
+def pytest_command() -> List[str]:
+    """
+    The suite command. `-n auto --dist loadfile` when `pytest-xdist` is importable — same suite, same
+    zero-skip/xfail assertions, one worker per test file — and the plain sequential run otherwise, so
+    the gate's verdict does not depend on an optional package being installed (§12.3).
+    """
+    import importlib.util
+
+    if importlib.util.find_spec("xdist") is None:
+        return [sys.executable, "-m", "pytest", "-q"]
+    return [sys.executable, "-m", "pytest", "-n", "auto", "--dist", "loadfile", "-q"]
+
+
 def check_test_suite_zero_skip_xfail() -> Tuple[bool, int, float]:
-    """Runs pytest -q and asserts exit 0 with zero skip, zero xfail, and zero failures (§12.4)."""
+    """Runs the suite and asserts exit 0 with zero skip, zero xfail, and zero failures (§12.4)."""
     print("--- Gate W0.5-3: Offline Test Suite with Zero Skip/Xfail (§12.3, §12.4) ---")
     env = os.environ.copy()
     src_path = str(REPO_ROOT / "src")
@@ -714,12 +736,18 @@ def check_test_suite_zero_skip_xfail() -> Tuple[bool, int, float]:
         env["PYTHONPATH"] = src_path
 
     start_t = time.perf_counter()
+    command = pytest_command()
+    print(f"[INFO] pytest invocation: {' '.join(command[1:])}")
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q"],
+        command,
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
         encoding="utf-8",
+        # A Windows console hands pytest cp1252 on stdout, and a `§` in a test name is then not valid
+        # UTF-8: without this the reader raises UnicodeDecodeError and the failure traceback it was
+        # about to print is lost, leaving `[FAIL] pytest exited with code 1` as the only evidence.
+        errors="replace",
         env=env,
     )
     elapsed = time.perf_counter() - start_t

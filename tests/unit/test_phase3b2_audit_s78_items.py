@@ -21,6 +21,8 @@ import hashlib
 import json
 from decimal import Decimal
 from pathlib import Path
+import subprocess
+import sys
 
 import yaml
 
@@ -35,7 +37,6 @@ from scripts.derive_2022_2024_corpora import (
     generate_corporate_actions_corpus,
     generate_isin_transition_rows,
 )
-from scripts.probe_audit_findings import PROBES
 from scripts.verify_audit_append_only import (
     GREEN_CACHE_SCHEME,
     compute_source_tree_hash,
@@ -352,12 +353,25 @@ def test_findings_ledger_rows_carry_executable_probes():
     for expected in ("N-148", "N-149", "N-150", "N-151", "N-152", "N-153"):
         assert expected in ids
 
+    # Audit §89 item 3: W0.5-2 (`verify_audit_findings.py`) already executes every probe in this same
+    # gate pass, so the ledger test verifies the mapping instead of re-running the 24 probes: a row whose
+    # id `--list` does not report is a row with no acceptance test.
+    listed = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "probe_audit_findings.py"), "--list"],
+        cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    assert listed.returncode == 0, listed.stderr[-500:]
+    registered = {line.strip() for line in listed.stdout.splitlines() if line.strip()}
+    assert registered, "probe_audit_findings.py --list reports no probe"
+
     for row in rows:
         assert row["probe"]["command"].endswith(row["id"])
         assert row["probe"]["expect_exit"] == 0
         if row["status"] != "ACCEPTED":
-            assert row["id"] in PROBES, f"{row['id']} has no probe implementation"
-            PROBES[row["id"]]()
+            assert row["id"] in registered, (
+                f"{row['id']} is registered {row['status']} in the ledger but "
+                f"probe_audit_findings.py --list does not report it"
+            )
 
 
 # --- Criteria reseal the pin and move nothing else ----------------------------------------------

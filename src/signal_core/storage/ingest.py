@@ -43,6 +43,10 @@ _LEGACY_DATE_FORMAT = "%d-%b-%Y"  # e.g. 01-JAN-2024
 # The exchange printed a two-digit year in the legacy TIMESTAMP column for part of 2020-2021
 # (e.g. `13-Jul-20` for the 2020-07-13 session), so those archives are parsed rather than refused.
 _LEGACY_TWO_DIGIT_YEAR_DATE_FORMAT = "%d-%b-%y"
+# `%y` maps 00-68 to 2000-2068 and 69-99 to 1969-1999, so an unbounded branch turns `13-Jul-68` into
+# 2068-07-13 (inside the sealed holdout era). No NSE Bhavcopy carries a two-digit year outside this
+# window: the format was used for part of 2020-2021 and the corpus begins in 2018 (N-172).
+_TWO_DIGIT_YEAR_PLAUSIBLE_RANGE = (1990, 2030)
 
 
 class BhavcopyIngestError(Exception):
@@ -160,11 +164,20 @@ def parse_bhavcopy_date(date_str: str) -> datetime.date:
         return datetime.datetime.strptime(cleaned, _LEGACY_DATE_FORMAT).date()
     except ValueError:
         pass
-    # Try the two-digit-year legacy format (DD-MON-YY, e.g. 13-Jul-20)
+    # Try the two-digit-year legacy format (DD-MON-YY, e.g. 13-Jul-20), refusing a year no archive can
+    # carry rather than returning the century `%y` guessed (N-172).
     try:
-        return datetime.datetime.strptime(cleaned, _LEGACY_TWO_DIGIT_YEAR_DATE_FORMAT).date()
+        parsed = datetime.datetime.strptime(cleaned, _LEGACY_TWO_DIGIT_YEAR_DATE_FORMAT).date()
     except ValueError:
         pass
+    else:
+        low, high = _TWO_DIGIT_YEAR_PLAUSIBLE_RANGE
+        if not low <= parsed.year <= high:
+            raise BhavcopyIngestError(
+                f"Implausible two-digit year in Bhavcopy: {date_str!r} parses to {parsed.isoformat()}, "
+                f"outside the plausible {low}-{high} range"
+            )
+        return parsed
     # Try ISO format (YYYY-MM-DD)
     try:
         return datetime.date.fromisoformat(cleaned)

@@ -9,11 +9,13 @@ calendar, and which carries the explicit `WARMUP_NOT_GATABLE` label. Every manif
 calendar session in the window, and every archive on disk must be attested, so the reconciliation is
 bidirectional rather than a lower bound.
 
-It fails closed by construction on all six shapes the Ruling names:
+It fails closed by construction on all seven shapes the Ruling names:
 
 - a calendar session with no archive (or no current manifest row) — `no current manifest row`;
 - an archive (or manifest row) with no calendar session — `not a calendar session in the window`;
 - an archive whose bytes disagree with its row — `sha256 mismatch` / `byte_count mismatch`;
+- an archive whose own `TIMESTAMP` column names another session — `carries its own session date(s)`,
+  so a correctly hashed but transposed pair of archives is refused rather than certified (N-171);
 - a muhurat or special bar stored as a full session — `session_type mismatch`;
 - an unlabelled capture — `gating_mode` must read `WARMUP_NOT_GATABLE`;
 - two current rows claiming the same session — `duplicate current row(s)`.
@@ -27,14 +29,23 @@ Usage:
 
 from __future__ import annotations
 
+import csv
 import datetime
 import hashlib
+import io
 import json
 from pathlib import Path
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Set, Tuple
+import zipfile
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+for _p in (str(REPO_ROOT / "src"), str(REPO_ROOT / "scripts")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+from signal_core.storage.ingest import BhavcopyIngestError, parse_bhavcopy_date  # noqa: E402
+
 CALENDAR_PATH = REPO_ROOT / "configs" / "trading_calendar_nse.json"
 MANIFEST_PATH = REPO_ROOT / "data" / "reference" / "manifest.jsonl"
 RAW_ROOT = REPO_ROOT / "data" / "raw"
@@ -95,6 +106,26 @@ def archives_on_disk() -> Dict[str, Path]:
         for path in sorted(directory.glob("*.zip")):
             found[f"data/raw/{year}/{path.name}"] = path
     return found
+
+
+def embedded_session_dates(path: Path) -> Set[datetime.date]:
+    """
+    The distinct session dates the archive's own rows carry, parsed from its `TIMESTAMP` (or the
+    unified-format `TRADEDATE`) column — the exchange's statement about which session these bytes are.
+    """
+    with zipfile.ZipFile(path) as archive:
+        members = [name for name in archive.namelist() if name.lower().endswith(".csv")]
+        if len(members) != 1:
+            raise BhavcopyIngestError(f"{path.name} holds {len(members)} CSV member(s), expected 1")
+        text = archive.read(members[0]).decode("utf-8", "replace")
+    reader = csv.reader(io.StringIO(text))
+    header = [cell.strip().upper() for cell in next(reader)]
+    column = header.index("TIMESTAMP") if "TIMESTAMP" in header else header.index("TRADEDATE")
+    raw: Set[str] = set()
+    for row in reader:
+        if len(row) > column and row[column].strip():
+            raw.add(row[column].strip())
+    return {parse_bhavcopy_date(value) for value in raw}
 
 
 def main() -> int:
@@ -176,6 +207,25 @@ def main() -> int:
                 f"(disk {digest}, row {row.get('sha256')})"
             )
             continue
+        # The bytes are the numbers the row attests; the archive's own date column is what makes the row's
+        # label true. Without this, two archives filed under each other's session satisfy every check above.
+        try:
+            embedded = embedded_session_dates(path)
+        except (
+            BhavcopyIngestError, KeyError, OSError, StopIteration, UnicodeError, ValueError, zipfile.BadZipFile,
+        ) as exc:
+            problems.append(
+                f"session {session_date.isoformat()} ({session_type}): {artifact} cannot be read for its own "
+                f"session date: {exc}"
+            )
+            continue
+        if embedded != {session_date}:
+            problems.append(
+                f"session {session_date.isoformat()} ({session_type}): {artifact} carries its own session "
+                f"date(s) {', '.join(d.isoformat() for d in sorted(embedded)) or '<none>'}, so the row's "
+                f"session_date is not on these bytes"
+            )
+            continue
         verified += 1
 
     for session_date, rows in sorted(by_date.items()):
@@ -211,7 +261,8 @@ def main() -> int:
         return 1
     print(
         f"OVERALL: COVERED — {verified}/{EXPECTED_SESSIONS} session(s) attested by one current manifest row each, "
-        f"bytes matching byte_count and sha256, {WARMUP_LABEL} on every row"
+        f"bytes matching byte_count and sha256, each archive's own session date equal to its row, "
+        f"{WARMUP_LABEL} on every row"
     )
     print("=" * 96)
     return 0

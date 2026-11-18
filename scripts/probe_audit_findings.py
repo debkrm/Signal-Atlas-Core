@@ -1412,51 +1412,33 @@ def probe_n170() -> None:
 
 def probe_n171() -> None:
     """
-    The Bronze coverage certificate reconciles labels to bytes and to the calendar, never to the
-    archive's own TIMESTAMP (N-171).
+    The Bronze coverage certificate reconciles each archive's own TIMESTAMP, not only its row's label
+    (N-171).
 
-    `probe_pre2022_bronze_coverage.py` attests a session by the `session_date` on its manifest row and
-    the row's `sha256`/`byte_count` against the bytes on disk, but it never opens the archive. Swapping
-    `session_date` between two captured archives therefore leaves it printing
-    `COVERED — 931/931`, exit 0, while each archive's own TIMESTAMP column still names the other
-    session. The probe asserts the defect reproduces on a tampered manifest copy over the committed
-    corpus, and that the downstream check which would catch it — H-24's row-date/partition equality in
-    `parse_bhavcopy_archive` — still refuses the transposition, so this is a certificate gap rather
-    than a silent price shift today.
+    At `df97173` `probe_pre2022_bronze_coverage.py` attested a session by the `session_date` its manifest
+    row declared and the row's `sha256`/`byte_count` against the bytes, but it never opened the archive,
+    so swapping `session_date` between two captured archives left it printing `COVERED — 931/931`, exit
+    0, while each archive's own TIMESTAMP column still named the other session (§88.3). The certificate
+    now reads that column, and this probe asserts the closure: on a copy of the committed manifest with
+    two rows transposed the probe exits 1 naming both dates, and the committed corpus still prints
+    `COVERED — 931/931`, exit 0. The archive-date reader itself is asserted on both files first, so a
+    refusal cannot come from a broken fixture.
     """
     import contextlib
-    import csv
     import datetime
     import io
     import json
     import shutil
     import tempfile
-    import zipfile
 
     import probe_pre2022_bronze_coverage as bronze
-    from signal_core.storage.ingest import BhavcopyIngestError, parse_bhavcopy_archive, parse_bhavcopy_date
 
     left = REPO_ROOT / "data" / "raw" / "2018" / "cm02APR2018bhav.csv.zip"
     right = REPO_ROOT / "data" / "raw" / "2018" / "cm03APR2018bhav.csv.zip"
     left_date, right_date = datetime.date(2018, 4, 2), datetime.date(2018, 4, 3)
 
-    def internal_session_date(archive: Path) -> datetime.date:
-        with zipfile.ZipFile(archive) as zf:
-            name = [n for n in zf.namelist() if n.lower().endswith(".csv")][0]
-            text = zf.read(name).decode("utf-8", "replace")
-        reader = csv.reader(io.StringIO(text))
-        header = [h.strip().upper() for h in next(reader)]
-        index = header.index("TIMESTAMP") if "TIMESTAMP" in header else header.index("TRADEDATE")
-        dates = {
-            parse_bhavcopy_date(row[index].strip())
-            for row in reader
-            if len(row) > index and row[index].strip()
-        }
-        assert len(dates) == 1, f"{archive.name} carries {len(dates)} distinct TIMESTAMP values"
-        return dates.pop()
-
-    assert internal_session_date(left) == left_date
-    assert internal_session_date(right) == right_date
+    assert bronze.embedded_session_dates(left) == {left_date}, bronze.embedded_session_dates(left)
+    assert bronze.embedded_session_dates(right) == {right_date}, bronze.embedded_session_dates(right)
 
     scratch = Path(tempfile.mkdtemp())
     try:
@@ -1478,43 +1460,44 @@ def probe_n171() -> None:
             newline="\n",
         )
 
-        original_manifest = bronze.MANIFEST_PATH
-        bronze.MANIFEST_PATH = tampered
-        try:
-            with contextlib.redirect_stdout(io.StringIO()) as captured:
-                exit_code = bronze.main()
-        finally:
-            bronze.MANIFEST_PATH = original_manifest
-        output = captured.getvalue()
-        assert exit_code == 0, (
-            "the coverage probe now refuses a transposed corpus, so N-171 is closed: "
-            f"{output.strip().splitlines()[-1] if output.strip() else '<no output>'}"
-        )
-        assert "COVERED" in output and "931/931" in output, output[-400:]
+        def run(manifest: Path) -> tuple:
+            original_manifest = bronze.MANIFEST_PATH
+            bronze.MANIFEST_PATH = manifest
+            try:
+                with contextlib.redirect_stdout(io.StringIO()) as captured:
+                    code = bronze.main()
+            finally:
+                bronze.MANIFEST_PATH = original_manifest
+            return code, captured.getvalue()
 
-        try:
-            parse_bhavcopy_archive(left, trade_date=right_date)
-        except BhavcopyIngestError as exc:
-            assert "does not match partition date" in str(exc), str(exc)
-        else:
-            raise AssertionError(
-                "the transposed archive parsed under the other session's partition date, so nothing "
-                "downstream refuses the mislabel either"
+        transposed_code, transposed_output = run(tampered)
+        assert transposed_code == 1, (
+            "a corpus whose session_date labels are transposed between two archives is still certified: "
+            f"{transposed_output.strip().splitlines()[-1] if transposed_output.strip() else '<no output>'}"
+        )
+        assert "carries its own session date(s)" in transposed_output, transposed_output[-600:]
+        for expected in (left_date.isoformat(), right_date.isoformat()):
+            assert expected in transposed_output, (
+                f"the refusal does not name {expected}: {transposed_output[-600:]}"
             )
+
+        # The same code on the committed manifest: the certificate still covers the corpus it certifies.
+        committed_code, committed_output = run(REPO_ROOT / "data" / "reference" / "manifest.jsonl")
+        assert committed_code == 0, committed_output[-600:]
+        assert "COVERED" in committed_output and "931/931" in committed_output, committed_output[-600:]
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
 
 def probe_n172() -> None:
     """
-    The two-digit-year Bhavcopy parser has no plausibility bound (N-172).
+    The two-digit-year Bhavcopy branch refuses a year no archive can carry (N-172).
 
     `parse_bhavcopy_date` gained `%d-%b-%y` so the one 2020-2021 archive printed with a two-digit year
-    parses. Python's `%y` maps 00-68 to 2000-2068 and 69-99 to 1969-1999, and the parser accepts the
-    result without comparing it to the session the archive is filed under, so `13-Jul-68` becomes
-    2068-07-13 — a date inside the sealed holdout era. The probe asserts the acceptance and the
-    containment that holds today: H-24's row-date/partition equality refuses the archive when it is
-    parsed for its declared session.
+    parses, and Python's `%y` maps 00-68 to 2000-2068 and 69-99 to 1969-1999. Unbounded, `13-Jul-68`
+    became 2068-07-13 — a date inside the sealed holdout era (§88.6). The branch is now bounded to the
+    plausible 1990-2030 range and refuses by name; the archive that needs the branch, and the in-range
+    years beside the bound, still parse to their own dates.
     """
     import datetime
 
@@ -1522,15 +1505,29 @@ def probe_n172() -> None:
 
     assert parse_bhavcopy_date("13-Jul-20") == datetime.date(2020, 7, 13)
     assert parse_bhavcopy_date("13-JUL-2020") == datetime.date(2020, 7, 13)
-    assert parse_bhavcopy_date("13-Jul-68") == datetime.date(2068, 7, 13), (
-        "the parser now bounds a two-digit year, so N-172 is closed and this probe should assert the refusal"
-    )
     assert parse_bhavcopy_date("13-Jul-99") == datetime.date(1999, 7, 13)
+    assert parse_bhavcopy_date("31-Dec-30") == datetime.date(2030, 12, 31)
+
+    for refused, guessed in (("13-Jul-68", "2068-07-13"), ("13-Jul-89", "1989-07-13"), ("01-Jan-31", "2031-01-01")):
+        try:
+            parsed = parse_bhavcopy_date(refused)
+        except BhavcopyIngestError as exc:
+            assert "Implausible two-digit year" in str(exc), str(exc)
+            assert refused in str(exc) and guessed in str(exc), str(exc)
+        else:
+            raise AssertionError(
+                f"{refused!r} is still accepted as {parsed.isoformat()}, so an unbounded `%y` century "
+                f"can name a session inside the sealed holdout era"
+            )
 
     archive = REPO_ROOT / "data" / "raw" / "2020" / "cm13JUL2020bhav.csv.zip"
-    resolved, records = parse_bhavcopy_archive(archive, trade_date=datetime.date(2020, 7, 13))
-    assert resolved == datetime.date(2020, 7, 13) and records
+    resolved, records = parse_bhavcopy_archive(
+        archive, trade_date=datetime.date(2020, 7, 13), target_series=("EQ",),
+    )
+    assert resolved == datetime.date(2020, 7, 13), resolved
+    assert len(records) == 1392, f"the archive parses to {len(records)} EQ record(s), not 1,392"
 
+    # H-24 still holds beside the parser bound: the archive is only ever read for its own session.
     try:
         parse_bhavcopy_archive(archive, trade_date=datetime.date(2068, 7, 13))
     except BhavcopyIngestError as exc:
