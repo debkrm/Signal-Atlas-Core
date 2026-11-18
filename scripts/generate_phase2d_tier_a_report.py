@@ -134,6 +134,20 @@ def build_tier_a_results_bundle(
         # not a threshold, and they enter the criteria fingerprint, so the committed artifact is
         # restated rather than left describing a criteria version that no longer governs.
         "restatement_note": (
+            "Restatement 2026-11-18 (Audit §94.6 items 1-3, criteria 1.1.15): supersedes the §92.7 "
+            "restatement recorded below. Criteria 1.1.15 changes no numeric threshold and no criterion. "
+            "It registers `data/reference/historical_dataset_2018_2023.json.gz` — the derived-layer "
+            "SPLIT_BONUS_ADJUSTED panel for 2018-04-01..2023-12-29 (1,082 ISINs, 1,425 sessions) built "
+            "from the committed Bronze archives by exact split/bonus ratios applied strictly before each "
+            "ex-date — as one current manifest row, and reseals `expected_manifest_fingerprint` over the "
+            "grown manifest by measurement. It also derives the walk-forward in-sample fold from the "
+            "requested window instead of typing it beside the loop; the committed 2022-01-03..2023-12-29 "
+            "fold and the frozen 2024 validation fold are byte-identical. Candidate seq 10 on "
+            "2018-04-01..2023-12-31 is NOT RUN: the committed statutory cost schedule's earliest "
+            "exchange-fee row starts 2021-01-01, so the window's 2018 sessions cannot be priced without "
+            "an unsourced rate, and the runner refuses by name with the registry at N = 9 / N_eval = 5. "
+            "No evaluation row on this Tier-A bundle is computed differently, and its provenance remains "
+            "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED. "
             "Restatement 2026-11-18 (Audit §92.7 Ruling 1, criteria 1.1.14): supersedes the §91.8 "
             "restatement recorded below. Criteria 1.1.14 changes no numeric threshold, no criterion and "
             "no evaluation input. It supersedes the 931 warm-up Bhavcopy manifest rows by append so their "
