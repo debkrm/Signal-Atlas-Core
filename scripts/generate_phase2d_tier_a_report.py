@@ -127,6 +127,14 @@ def build_tier_a_results_bundle(
         # not a threshold, and they enter the criteria fingerprint, so the committed artifact is
         # restated rather than left describing a criteria version that no longer governs.
         "restatement_note": (
+            "Restatement 2026-11-18 (Audit §86.5 Ruling 1, §86.6, criteria 1.1.10): supersedes the "
+            "§79 restatement recorded below. Criteria 1.1.10 changes no numeric threshold and no "
+            "criterion. It corrects the 2019 calendar grid by restoring Tuesday 2019-10-29 as a regular "
+            "session (2019: 244 -> 245; total 2935 -> 2936; warm-up window 2018-04-01..2021-12-31 "
+            "930 -> 931), reseals expected_calendar_fingerprint to the recomputed CAL-FPR, and reseals "
+            "the manifest pin after the seven 2018-2021 A1 circular artifacts are registered. The "
+            "corrected date is pre-binding, so no row on this bundle is computed differently and the "
+            "verdict is unchanged. "
             "Restatement 2026-11-17 (Audit §79.12 items 2, 4 and 5, criteria 1.1.9): supersedes the "
             "§78.11 restatement recorded below. Criteria version 1.1.9 changes no numeric threshold "
             "and no criterion; it reseals expected_manifest_fingerprint because TATASTEEL's "

@@ -1,0 +1,92 @@
+{
+  "bundle_id": "NSE_CALENDAR_PROVENANCE_2018_2021",
+  "market": "NSE_CASH_EQUITY",
+  "segment": "Capital Market",
+  "calendar": "configs/trading_calendar_nse.json",
+  "scope": "Binding-window warm-up years 2018-2021 (AGENTS.md \u00a710.8); A1 per-year source digests",
+  "years": {
+    "2018": {
+      "sessions": 246,
+      "circulars": [
+        {
+          "circular_id": "NSE/CMTR/36475",
+          "artifact": "circulars/NSE_CMTR_36475.json",
+          "issue_date": "2017-12-12",
+          "sha256": "d4810c84bab623f9e68968ac007d2d18f5492ae01f84a82bbc8614d4005ef85b",
+          "byte_count": 2749,
+          "source_pdf_sha256": "d80ac64d32806f9ada629bc96ba91c6d85546dfde405f4468bbfcb194fdb22fb",
+          "source_pdf_byte_count": 183198
+        }
+      ]
+    },
+    "2019": {
+      "sessions": 245,
+      "circulars": [
+        {
+          "circular_id": "NSE/CMTR/39612",
+          "artifact": "circulars/NSE_CMTR_39612.json",
+          "issue_date": "2018-12-07",
+          "sha256": "e211db7af29e01252d56e4407424a85ec006f3e77890ef64dfb9f4c0ac286618",
+          "byte_count": 3032,
+          "source_pdf_sha256": "3fe8f7356085b75a14efec16e765216d09b99be6f00ff2305d813a864394ab88",
+          "source_pdf_byte_count": 205887
+        },
+        {
+          "circular_id": "NSE/CMTR/40536",
+          "artifact": "circulars/NSE_CMTR_40536.json",
+          "issue_date": "2019-03-26",
+          "sha256": "0964a848bd1950711940800290be37828b645ab3fa258fde2da3ef00758be13d",
+          "byte_count": 910,
+          "source_pdf_sha256": "0ffd5d5c6f2e967947b0fafc45f285c2eff70abbde138b06e35d4ac8169ebc65",
+          "source_pdf_byte_count": 214283
+        },
+        {
+          "circular_id": "NSE/MSD/42319",
+          "artifact": "circulars/NSE_MSD_42319.json",
+          "issue_date": "2019-10-07",
+          "sha256": "9352cb524af96d7ddb62c9f0b7092288006bd0bafb47e7486edb273f3890d0cd",
+          "byte_count": 919,
+          "source_pdf_sha256": "bc49d7698fefa2b9ed3a5fbb2477dd74e5ed04dc69cec3ff5e9aca074fcc1b8a",
+          "source_pdf_byte_count": 112758
+        }
+      ]
+    },
+    "2020": {
+      "sessions": 252,
+      "circulars": [
+        {
+          "circular_id": "NSE/CMTR/42877",
+          "artifact": "circulars/NSE_CMTR_42877.json",
+          "issue_date": "2019-12-11",
+          "sha256": "2088cb5d855cc27d475cd428629ae6ca0d12151f508aa58b175c69a59e29d81b",
+          "byte_count": 2860,
+          "source_pdf_sha256": "635535e35ddc37e79b188d9f21409210cfdef00f44cde1cb980c4f64ed005eaf",
+          "source_pdf_byte_count": 192477
+        },
+        {
+          "circular_id": "NSE/CMTR/43290",
+          "artifact": "circulars/NSE_CMTR_43290.json",
+          "issue_date": "2020-01-22",
+          "sha256": "ff5aa643aff3b228213d68f05cb3d2e0fb19a4278b756dc9971e41f83459a865",
+          "byte_count": 914,
+          "source_pdf_sha256": "2f667503047c3399bc7c013271dd64b3119bc532b0cbb6d988d4d9a6998da4a9",
+          "source_pdf_byte_count": 204418
+        }
+      ]
+    },
+    "2021": {
+      "sessions": 248,
+      "circulars": [
+        {
+          "circular_id": "NSE/CMTR/46623",
+          "artifact": "circulars/NSE_CMTR_46623.json",
+          "issue_date": "2020-12-11",
+          "sha256": "d1e25a9fdf9dc7aec3d9de429c3ede572133c2d09b03f332a371fb9f051c87f7",
+          "byte_count": 2747,
+          "source_pdf_sha256": "3c922e234ad2cbe8320cc34507e281477e0ce273ba9ee39d73da2a49d5629add",
+          "source_pdf_byte_count": 75512
+        }
+      ]
+    }
+  }
+}

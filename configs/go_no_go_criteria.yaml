@@ -67,8 +67,16 @@ metadata:
   #   N-158 — `corporate_actions.jsonl` dates TATASTEEL's ISIN transition 2022-07-29 (the successor
   #           ISIN's first session) instead of 2022-07-28, and the generator now asserts that every
   #           documented pair meets its interval boundary instead of skipping it silently (§79.5).
-  version: "1.1.9"
-  effective_date: "2026-11-17"
+  # 1.1.10 (2026-11-18): no numeric threshold and no criterion changed. Audit §86.5 Ruling 1 corrects the
+  # 2019 calendar grid: Tuesday 2019-10-29 is a regular session the grid omitted, and the committed
+  # NSE/CMTR/39612 annual holiday list declares no holiday on that date. `expected_total_calendar_sessions`
+  # therefore moves 2935 -> 2936, 2019 moves 244 -> 245, the warm-up window 2018-04-01..2021-12-31 moves
+  # 930 -> 931, `expected_calendar_fingerprint` is resealed to the recomputed CAL-FPR, and the manifest pin
+  # is resealed because seven 2018-2021 A1 circular artifacts are registered (§86.6 items 1-3, 9). Every
+  # gating window, count, tolerance, weight and criterion is otherwise byte-identical to 1.1.9; the
+  # corrected date is pre-binding (warm-up only, §10.8), so no verdict computed on the binding window moves.
+  version: "1.1.10"
+  effective_date: "2026-11-18"
   market: "NSE_CASH_EQUITY"
   currency: "INR"
 
@@ -225,10 +233,11 @@ market_data_and_accounting_invariants:
   zero_data_fabrication_required: true
 
   # Finding H-72: Authoritative reference manifest fingerprint pinned as criteria anchor (Audit §54.5, §54.10, §60.6 Item 4, §62.6 Item 4)
-  # MAN-FPR-V1 covers data/reference/manifest.jsonl content (37,597 bytes, SHA-256 0b9b0d7c24887049b13d68374b195215052584df594993119226d0b9fe0d00e6); re-pinned
-  # 2026-11-17 with the corporate_actions.jsonl restatement append (Audit §77.11, N-145), the only
-  # manifest change in that commit.
-  expected_manifest_fingerprint: "MAN-FPR-V1-23200ba8825533929fe96128994641814f1b4737b18991c6a91ca63ddde2c92c"
+  # MAN-FPR-V1 covers data/reference/manifest.jsonl content (47,639 bytes, SHA-256 d05b87e19ca57dc7ce8acd2a0a3b666fde7c112c5444f3dfc9178479bdde7998); re-pinned 2026-11-18 with the seven 2018-2021 A1 circular
+  # artifact rows, the calendar restatement of 2019-10-29 and the new provenance bundle (Audit §86.5
+  # Ruling 1, §86.6 items 1-3, §86.8 items 2-3), the only manifest changes in that commit.
+  # 54 current rows and 23 superseded rows are verified by Gate W0.5-5 and Gate 2D-6.
+  expected_manifest_fingerprint: "MAN-FPR-V1-d05b87e19ca57dc7ce8acd2a0a3b666fde7c112c5444f3dfc9178479bdde7998"
 
   # Finding N-128 (Audit §72.3, §72.5 item 3): the trial-registry manifest witnesses
   # {evaluation_count, head_eval_hash} outside the (sidecar, anchor) pair. Pinning its SHA-256 here
@@ -243,7 +252,7 @@ market_data_and_accounting_invariants:
   # H-64: Calendar identity anchor — computed from session_records (dates, session_types, open/close times) at load time
   # and compared against this human-authored string. A date swap that preserves counting passes H-61 but fails H-64.
   # This string is the ONLY copy that is not derived from the calendar file itself.
-  expected_calendar_fingerprint: "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad"
+  expected_calendar_fingerprint: "CAL-FPR-V1-6acb5f45ce5686a503a53e7fc96c12a41391d16bde5abbe2f9c91073c47a9ac9"
   # R-4: Calendar identity anchor scoped strictly to the 1,196 sourced sessions in binding window 2022-01-03..2026-10-31
   expected_sourced_window_calendar_fingerprint: "CAL-FPR-V1-2d5ac7ac32455327cd636d64a4e15a1f689f25eb42a815e151ea31c3cf61cda1"
   # Pinned uncurated baseline schedule sessions in evaluation window 2022-01-03..2026-10-31
@@ -251,7 +260,7 @@ market_data_and_accounting_invariants:
   # Pinned authoritative exchange trading sessions held in evaluation window 2022-01-03..2026-10-31
   expected_authoritative_calendar_sessions: 1196
   # Pinned total authoritative trading sessions across full calendar 2015-01-01..2026-11-11
-  expected_total_calendar_sessions: 2935
+  expected_total_calendar_sessions: 2936
   # Strict enumeration of authorized unarchived special session data gaps (Finding H-62)
   # Unarchived session gaps are strictly capped and cannot be extended without human criteria commit
   authorized_unarchived_special_sessions:
@@ -277,4 +286,4 @@ market_data_and_accounting_invariants:
   # classifications carry no document proof beyond the annual aggregate counts.
   # Per AGENTS.md §10.8, the binding evaluation window starts 2022-01-03; warm-up sessions are
   # used only for feature warm-up and are explicitly NOT RUN for gating purposes.
-  pre_binding_calendar_provenance_note: "N-52: 930 binding-range warm-up sessions (2018-04-01..2021-12-31) cite no per-session NSE circular document. Sessions in this range are warm-up only; metrics computed on them are NOT RUN for gating per AGENTS.md §10.8."
+  pre_binding_calendar_provenance_note: "N-52: 931 binding-range warm-up sessions (2018-04-01..2021-12-31) cite no per-session NSE circular document. Sessions in this range are warm-up only; metrics computed on them are NOT RUN for gating per AGENTS.md §10.8."

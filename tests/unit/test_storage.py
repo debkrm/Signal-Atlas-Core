@@ -110,7 +110,7 @@ def test_e1_calendar_completeness_and_provenance():
     cal = load_nse_trading_calendar()
 
     # 1. Total session count and date range (Audit §30 H-26, §45 H-59, §46 H-60)
-    assert cal.total_sessions == len(cal.sessions) == 2935
+    assert cal.total_sessions == len(cal.sessions) == 2936
     assert cal.start_date == datetime.date(2015, 1, 1)
     assert cal.end_date == datetime.date(2026, 11, 11)
     assert cal.binding_start_date == datetime.date(2018, 4, 1)
@@ -122,7 +122,13 @@ def test_e1_calendar_completeness_and_provenance():
     assert len(prov["circular_references"]) >= 12
     assert "NSE/MSD/60300" in prov["circular_references"]
     assert "NSE/MSD/60318" in prov["circular_references"]
-    assert prov["sha256"] == cal.fingerprint.replace("CAL-FPR-V1-", "")
+    # Audit §86.6 item 7: provenance.sha256 names the committed source bundle, never the calendar's
+    # own content digest -- the self-seal it replaced attested nothing beyond self-agreement.
+    import hashlib
+    from pathlib import Path as _Path
+    assert prov["sha256"] != cal.fingerprint.replace("CAL-FPR-V1-", "")
+    _bundle = _Path(__file__).resolve().parents[2] / prov["source_bundle"]
+    assert hashlib.sha256(_bundle.read_bytes()).hexdigest() == prov["sha256"]
 
     # 3. All special/muhurat sessions identified in §23 are present
     budget_sats = [datetime.date(2020, 2, 1), datetime.date(2025, 2, 1)]

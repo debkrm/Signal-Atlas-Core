@@ -1,0 +1,118 @@
+{
+  "circular_id": "NSE/CMTR/46623",
+  "circular_ref_no": "113/2020",
+  "download_ref_no": "NSE/CMTR/46623",
+  "issue_date": "2020-12-11",
+  "market": "NSE_CASH_EQUITY",
+  "segment": "Capital Market",
+  "subject": "Trading holidays for the calendar year 2021",
+  "source_url": "https://archives.nseindia.com/content/circulars/CMTR46623.pdf",
+  "http_status": 200,
+  "retrieved_at": "2026-11-18T12:05:00+05:30",
+  "source_pdf_sha256": "3c922e234ad2cbe8320cc34507e281477e0ce273ba9ee39d73da2a49d5629add",
+  "source_pdf_byte_count": 75512,
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "trading_holidays": [
+    {
+      "date": "2021-01-26",
+      "day": "Tuesday",
+      "description": "Republic Day"
+    },
+    {
+      "date": "2021-03-11",
+      "day": "Thursday",
+      "description": "Mahashivratri"
+    },
+    {
+      "date": "2021-03-29",
+      "day": "Monday",
+      "description": "Holi"
+    },
+    {
+      "date": "2021-04-02",
+      "day": "Friday",
+      "description": "Good Friday"
+    },
+    {
+      "date": "2021-04-14",
+      "day": "Wednesday",
+      "description": "Dr.Baba Saheb Ambedkar Jayanti"
+    },
+    {
+      "date": "2021-04-21",
+      "day": "Wednesday",
+      "description": "Ram Navami"
+    },
+    {
+      "date": "2021-05-13",
+      "day": "Thursday",
+      "description": "Id-Ul-Fitr (Ramzan ID)"
+    },
+    {
+      "date": "2021-07-21",
+      "day": "Wednesday",
+      "description": "Bakri Id"
+    },
+    {
+      "date": "2021-08-19",
+      "day": "Thursday",
+      "description": "Moharram"
+    },
+    {
+      "date": "2021-09-10",
+      "day": "Friday",
+      "description": "Ganesh Chaturthi"
+    },
+    {
+      "date": "2021-10-15",
+      "day": "Friday",
+      "description": "Dussehra"
+    },
+    {
+      "date": "2021-11-05",
+      "day": "Friday",
+      "description": "Diwali-Balipratipada"
+    },
+    {
+      "date": "2021-11-19",
+      "day": "Friday",
+      "description": "Gurunanak Jayanti"
+    }
+  ],
+  "weekend_holidays": [
+    {
+      "date": "2021-04-25",
+      "day": "Sunday",
+      "description": "Mahavir Jayanti"
+    },
+    {
+      "date": "2021-05-01",
+      "day": "Saturday",
+      "description": "Maharashtra Day"
+    },
+    {
+      "date": "2021-08-15",
+      "day": "Sunday",
+      "description": "Independence Day"
+    },
+    {
+      "date": "2021-10-02",
+      "day": "Saturday",
+      "description": "Mahatma Gandhi Jayanti"
+    },
+    {
+      "date": "2021-12-25",
+      "day": "Saturday",
+      "description": "Christmas"
+    }
+  ],
+  "special_sessions": [
+    {
+      "date": "2021-11-04",
+      "day": "Thursday",
+      "description": "Diwali-Laxmi Pujan (Muhurat Trading)",
+      "session_type": "MUHURAT"
+    }
+  ],
+  "inferred_trading_sessions": []
+}

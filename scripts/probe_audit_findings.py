@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import csv
 import io
+import subprocess
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -1332,6 +1333,83 @@ def probe_n169() -> None:
     )
 
 
+ARCHIVE_SUFFIXES = (".csv.zip", ".json.gz")
+
+
+def _tracked_archives() -> List[str]:
+    out = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=str(REPO_ROOT), capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    ).stdout
+    return [path for path in out.split("\0") if path.endswith(ARCHIVE_SUFFIXES)]
+
+
+def probe_n170() -> None:
+    """
+    Every tracked archive is stored and checked out as bytes (N-170).
+
+    `.gitattributes` applied `text=auto eol=lf` to `*.csv.zip` / `*.json.gz`, and git auto-detected
+    many of those containers as text, so a fresh clone rewrote their CRLF bytes on checkout and the
+    green cache could never be reused ("24 source path(s) differ from HEAD"). The repair is an
+    attribute decision, not a byte rewrite: the archives are marked `-text` and the object's own
+    bytes are what a checkout materialises. The probe asserts both halves over every tracked
+    archive -- no text/eol conversion is configured, and each working file hashes to its index
+    object -- and that the repository is therefore clean. `git hash-object` reads the file as it
+    sits on disk and applies no clean filter, so a conversion shows up as a digest mismatch here.
+    """
+    archives = _tracked_archives()
+    assert archives, f"no tracked {' / '.join(ARCHIVE_SUFFIXES)} archive is present to measure"
+
+    attrs = subprocess.run(
+        ["git", "check-attr", "--stdin", "-z", "text"],
+        cwd=str(REPO_ROOT), input="\0".join(archives), capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
+    fields = attrs.stdout.split("\0")
+    triples = [(fields[i], fields[i + 2]) for i in range(0, len(fields) - 2, 3) if fields[i]]
+    converted = [path for path, value in triples if value != "unset"]
+    assert not converted, (
+        f"{len(converted)} tracked archive(s) still carry a text attribute, so a checkout rewrites "
+        f"their bytes: {converted[:3]}"
+    )
+
+    index: Dict[str, str] = {}
+    listing = subprocess.run(
+        ["git", "ls-files", "-s", "-z"], cwd=str(REPO_ROOT), capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    ).stdout
+    for record in listing.split("\0"):
+        if not record:
+            continue
+        meta, _, path = record.partition("\t")
+        _mode, oid, _stage = meta.split()
+        index[path] = oid
+
+    worktree = subprocess.run(
+        ["git", "hash-object", "--stdin-paths"], cwd=str(REPO_ROOT),
+        input="\n".join(archives) + "\n", capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
+    hashes = worktree.stdout.split()
+    assert len(hashes) == len(archives), (
+        f"git hash-object returned {len(hashes)} digest(s) for {len(archives)} archive(s): "
+        f"{worktree.stderr.strip()[:300]}"
+    )
+    mismatched = [path for path, digest in zip(archives, hashes) if index.get(path) != digest]
+    assert not mismatched, (
+        f"{len(mismatched)} archive(s) on disk are not the bytes git stored, so every fresh clone "
+        f"reports them modified: {mismatched[:3]}"
+    )
+    # Scoped to archives on purpose: this probe measures the attribute decision, and the
+    # whole-tree clean assertion is the green cache's job on a committed tree (verify_audit_append_only).
+    from verify_audit_append_only import dirty_source_paths
+    dirty_archives = [path for path in dirty_source_paths() if path.endswith(ARCHIVE_SUFFIXES)]
+    assert not dirty_archives, (
+        f"{len(dirty_archives)} archive(s) differ from their blobs, so a fresh clone reports them "
+        f"modified: {dirty_archives[:3]}"
+    )
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -1354,6 +1432,7 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-167": probe_n167,
     "N-168": probe_n168,
     "N-169": probe_n169,
+    "N-170": probe_n170,
 }
 
 

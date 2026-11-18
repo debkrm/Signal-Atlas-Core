@@ -317,13 +317,37 @@ def load_nse_trading_calendar(
     fingerprint = compute_calendar_fingerprint(session_records_tuple)
     expected_digest = fingerprint.replace("CAL-FPR-V1-", "")
 
-    # Audit §30 H-26: Reconcile declared provenance SHA-256 against actual session content digest
-    prov_sha256 = provenance.get("sha256")
-    if prov_sha256 is not None and prov_sha256.lower() != expected_digest.lower():
+    # Audit §30 H-26 / §86.6 item 7: the content seal is the declared `fingerprint` field checked
+    # against the recomputed session digest, and the external anchor is the criteria pin (H-64).
+    # `provenance.sha256` names a *source*, so it must not be the calendar's own digest: a
+    # self-referential value is refused rather than accepted as evidence, and when the provenance
+    # names a committed `source_bundle` that bundle's bytes must hash to the declared digest.
+    declared_fingerprint = data.get("fingerprint")
+    if declared_fingerprint is not None and str(declared_fingerprint) != fingerprint:
         raise CalendarError(
-            f"Calendar provenance sha256 mismatch in {file_path}: declared {prov_sha256!r} != "
-            f"computed session content digest {expected_digest!r} per AGENTS.md Rule 6.5 (Audit §30 H-26)."
+            f"Calendar declared fingerprint mismatch in {file_path}: declared {declared_fingerprint!r} != "
+            f"computed session content digest {fingerprint!r} per AGENTS.md Rule 6.3 (Audit §30 H-26)."
         )
+    prov_sha256 = provenance.get("sha256")
+    if prov_sha256 is not None and str(prov_sha256).lower() == expected_digest.lower():
+        raise CalendarError(
+            f"Calendar provenance sha256 in {file_path} is its own session content digest "
+            f"{expected_digest!r}; provenance must name a source artifact, not the calendar itself "
+            f"(Audit §86.6 item 7)."
+        )
+    source_bundle = provenance.get("source_bundle")
+    if source_bundle:
+        bundle_path = (file_path.resolve().parent.parent / str(source_bundle)).resolve()
+        if not bundle_path.is_file():
+            raise CalendarError(
+                f"Calendar provenance source bundle not found at {bundle_path} (Audit §86.6 item 7)."
+            )
+        bundle_digest = hashlib.sha256(bundle_path.read_bytes()).hexdigest()
+        if str(prov_sha256).lower() != bundle_digest:
+            raise CalendarError(
+                f"Calendar provenance sha256 mismatch in {file_path}: declared {prov_sha256!r} != "
+                f"committed source bundle digest {bundle_digest!r} (Audit §86.6 item 7)."
+            )
 
     binding_start_raw = data.get("binding_start_date", "2018-04-01")
     binding_start = datetime.date.fromisoformat(binding_start_raw)

@@ -1,0 +1,26 @@
+{
+  "circular_id": "NSE/CMTR/40536",
+  "circular_ref_no": "30/2019",
+  "download_ref_no": "NSE/CMTR/40536",
+  "issue_date": "2019-03-26",
+  "market": "NSE_CASH_EQUITY",
+  "segment": "Capital Market",
+  "subject": "Trading Holiday on April 29, 2019 on account of Parliamentary Elections",
+  "source_url": "https://archives.nseindia.com/content/circulars/CMTR40536.pdf",
+  "http_status": 200,
+  "retrieved_at": "2026-11-18T12:05:00+05:30",
+  "source_pdf_sha256": "0ffd5d5c6f2e967947b0fafc45f285c2eff70abbde138b06e35d4ac8169ebc65",
+  "source_pdf_byte_count": 214283,
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "trading_holidays": [
+    {
+      "date": "2019-04-29",
+      "day": "Monday",
+      "description": "Parliamentary Elections in Mumbai"
+    }
+  ],
+  "weekend_holidays": [],
+  "special_sessions": [],
+  "inferred_trading_sessions": [],
+  "amends_circular": "NSE/CMTR/39612"
+}

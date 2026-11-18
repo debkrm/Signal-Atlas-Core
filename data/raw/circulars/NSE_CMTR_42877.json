@@ -1,0 +1,123 @@
+{
+  "circular_id": "NSE/CMTR/42877",
+  "circular_ref_no": "146/2019",
+  "download_ref_no": "NSE/CMTR/42877",
+  "issue_date": "2019-12-11",
+  "market": "NSE_CASH_EQUITY",
+  "segment": "Capital Market",
+  "subject": "Trading holidays for the calendar year 2020",
+  "source_url": "https://archives.nseindia.com/content/circulars/CMTR42877.pdf",
+  "http_status": 200,
+  "retrieved_at": "2026-11-18T12:05:00+05:30",
+  "source_pdf_sha256": "635535e35ddc37e79b188d9f21409210cfdef00f44cde1cb980c4f64ed005eaf",
+  "source_pdf_byte_count": 192477,
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "trading_holidays": [
+    {
+      "date": "2020-02-21",
+      "day": "Friday",
+      "description": "Mahashivratri"
+    },
+    {
+      "date": "2020-03-10",
+      "day": "Tuesday",
+      "description": "Holi"
+    },
+    {
+      "date": "2020-04-02",
+      "day": "Thursday",
+      "description": "Ram Navami"
+    },
+    {
+      "date": "2020-04-06",
+      "day": "Monday",
+      "description": "Mahavir Jayanti"
+    },
+    {
+      "date": "2020-04-10",
+      "day": "Friday",
+      "description": "Good Friday"
+    },
+    {
+      "date": "2020-04-14",
+      "day": "Tuesday",
+      "description": "Dr.Baba Saheb Ambedkar Jayanti"
+    },
+    {
+      "date": "2020-05-01",
+      "day": "Friday",
+      "description": "Maharashtra Day"
+    },
+    {
+      "date": "2020-05-25",
+      "day": "Monday",
+      "description": "Id-Ul-Fitr (Ramzan ID)"
+    },
+    {
+      "date": "2020-10-02",
+      "day": "Friday",
+      "description": "Mahatma Gandhi Jayanti"
+    },
+    {
+      "date": "2020-11-16",
+      "day": "Monday",
+      "description": "Diwali-Balipratipada"
+    },
+    {
+      "date": "2020-11-30",
+      "day": "Monday",
+      "description": "Gurunanak Jayanti"
+    },
+    {
+      "date": "2020-12-25",
+      "day": "Friday",
+      "description": "Christmas"
+    }
+  ],
+  "weekend_holidays": [
+    {
+      "date": "2020-01-26",
+      "day": "Sunday",
+      "description": "Republic Day"
+    },
+    {
+      "date": "2020-08-01",
+      "day": "Saturday",
+      "description": "Bakri Id"
+    },
+    {
+      "date": "2020-08-15",
+      "day": "Saturday",
+      "description": "Independence Day"
+    },
+    {
+      "date": "2020-08-22",
+      "day": "Saturday",
+      "description": "Ganesh Chaturthi"
+    },
+    {
+      "date": "2020-08-30",
+      "day": "Sunday",
+      "description": "Moharram"
+    },
+    {
+      "date": "2020-10-25",
+      "day": "Sunday",
+      "description": "Dasera"
+    },
+    {
+      "date": "2020-11-14",
+      "day": "Saturday",
+      "description": "Diwali-Laxmi Pujan (Muhurat Trading)"
+    }
+  ],
+  "special_sessions": [
+    {
+      "date": "2020-11-14",
+      "day": "Saturday",
+      "description": "Diwali-Laxmi Pujan (Muhurat Trading)",
+      "session_type": "MUHURAT"
+    }
+  ],
+  "inferred_trading_sessions": []
+}

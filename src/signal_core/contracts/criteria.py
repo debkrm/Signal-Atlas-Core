@@ -177,7 +177,7 @@ class GoNoGoCriteria:
     expected_sourced_window_calendar_fingerprint: str = ""
     expected_baseline_calendar_sessions: int = 1201
     expected_authoritative_calendar_sessions: int = 1196
-    expected_total_calendar_sessions: int = 2935
+    expected_total_calendar_sessions: int = 2936
     authorized_unarchived_special_sessions: Tuple[str, ...] = ("2025-02-01",)
     authorized_calendar_holiday_exclusions: Tuple[str, ...] = (
         "2025-10-22",

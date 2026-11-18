@@ -15,6 +15,7 @@ All verdicts are derived from runtime assertions and computed booleans. Zero han
 
 import datetime
 from decimal import Decimal
+import hashlib
 from pathlib import Path
 import shutil
 import sys
@@ -94,7 +95,7 @@ def run_phase_2b5_verification() -> bool:
         # 1. Total sessions and provenance (Audit §30 H-26, §45 H-59, §46 H-60)
         cal_total = cal.total_sessions
         cal_ok = (
-            cal_total == 2935
+            cal_total == 2936
             and cal_total == len(cal.sessions)
             and cal.start_date == datetime.date(2015, 1, 1)
             and cal.end_date == datetime.date(2026, 11, 11)
@@ -102,10 +103,18 @@ def run_phase_2b5_verification() -> bool:
         )
 
         prov = cal.provenance
+        # Audit §86.6 item 7: provenance.sha256 is the digest of the committed source bundle named by
+        # source_bundle, never the calendar's own content digest (the self-seal it replaced attested
+        # nothing beyond the file agreeing with itself).
+        bundle_rel = prov.get("source_bundle")
+        bundle_path = (Path(__file__).resolve().parent.parent / str(bundle_rel)) if bundle_rel else None
         prov_ok = (
             prov.get("source") == "NSE_CIRCULARS_ANNUAL_TRADING_HOLIDAYS_AND_SPECIAL_SESSIONS"
             and len(prov.get("circular_references", [])) >= 12
-            and prov.get("sha256") == cal.fingerprint.replace("CAL-FPR-V1-", "")
+            and prov.get("sha256") != cal.fingerprint.replace("CAL-FPR-V1-", "")
+            and bundle_path is not None
+            and bundle_path.is_file()
+            and hashlib.sha256(bundle_path.read_bytes()).hexdigest() == prov.get("sha256")
         )
 
         # 2. Check special budget and DR sessions

@@ -1,0 +1,26 @@
+{
+  "circular_id": "NSE/MSD/42319",
+  "circular_ref_no": "53/2019",
+  "download_ref_no": "NSE/MSD/42319",
+  "issue_date": "2019-10-07",
+  "market": "NSE_CASH_EQUITY",
+  "segment": "Capital Market",
+  "subject": "Trading Holiday on October 21, 2019 on account of Assembly Elections in Maharashtra",
+  "source_url": "https://archives.nseindia.com/content/circulars/MSD42319.pdf",
+  "http_status": 200,
+  "retrieved_at": "2026-11-18T12:05:00+05:30",
+  "source_pdf_sha256": "bc49d7698fefa2b9ed3a5fbb2477dd74e5ed04dc69cec3ff5e9aca074fcc1b8a",
+  "source_pdf_byte_count": 112758,
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "trading_holidays": [
+    {
+      "date": "2019-10-21",
+      "day": "Monday",
+      "description": "Assembly Elections in Maharashtra"
+    }
+  ],
+  "weekend_holidays": [],
+  "special_sessions": [],
+  "inferred_trading_sessions": [],
+  "amends_circular": "NSE/CMTR/39612"
+}

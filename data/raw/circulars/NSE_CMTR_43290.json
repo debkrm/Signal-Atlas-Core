@@ -1,0 +1,26 @@
+{
+  "circular_id": "NSE/CMTR/43290",
+  "circular_ref_no": "05/2020",
+  "download_ref_no": "NSE/CMTR/43290",
+  "issue_date": "2020-01-22",
+  "market": "NSE_CASH_EQUITY",
+  "segment": "Capital Market",
+  "subject": "Live Trading Session on February 01, 2020",
+  "source_url": "https://archives.nseindia.com/content/circulars/CMTR43290.pdf",
+  "http_status": 200,
+  "retrieved_at": "2026-11-18T12:05:00+05:30",
+  "source_pdf_sha256": "2f667503047c3399bc7c013271dd64b3119bc532b0cbb6d988d4d9a6998da4a9",
+  "source_pdf_byte_count": 204418,
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "trading_holidays": [],
+  "weekend_holidays": [],
+  "special_sessions": [
+    {
+      "date": "2020-02-01",
+      "day": "Saturday",
+      "description": "Live trading session on account of the presentation of the Union Budget",
+      "session_type": "SPECIAL"
+    }
+  ],
+  "inferred_trading_sessions": []
+}

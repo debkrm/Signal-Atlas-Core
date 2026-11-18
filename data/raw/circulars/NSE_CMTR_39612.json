@@ -1,0 +1,129 @@
+{
+  "circular_id": "NSE/CMTR/39612",
+  "circular_ref_no": "115/2018",
+  "download_ref_no": "NSE/CMTR/39612",
+  "issue_date": "2018-12-07",
+  "market": "NSE_CASH_EQUITY",
+  "segment": "Capital Market",
+  "subject": "Trading holidays for the calendar year 2019",
+  "source_url": "https://archives.nseindia.com/content/circulars/CMTR39612.pdf",
+  "http_status": 200,
+  "retrieved_at": "2026-11-18T12:05:00+05:30",
+  "source_pdf_sha256": "3fe8f7356085b75a14efec16e765216d09b99be6f00ff2305d813a864394ab88",
+  "source_pdf_byte_count": 205887,
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "trading_holidays": [
+    {
+      "date": "2019-03-04",
+      "day": "Monday",
+      "description": "Mahashivratri"
+    },
+    {
+      "date": "2019-03-21",
+      "day": "Thursday",
+      "description": "Holi"
+    },
+    {
+      "date": "2019-04-17",
+      "day": "Wednesday",
+      "description": "Mahavir Jayanti"
+    },
+    {
+      "date": "2019-04-19",
+      "day": "Friday",
+      "description": "Good Friday"
+    },
+    {
+      "date": "2019-05-01",
+      "day": "Wednesday",
+      "description": "Maharashtra Day"
+    },
+    {
+      "date": "2019-06-05",
+      "day": "Wednesday",
+      "description": "Id-Ul-Fitr (Ramzan ID)"
+    },
+    {
+      "date": "2019-08-12",
+      "day": "Monday",
+      "description": "Bakri Id"
+    },
+    {
+      "date": "2019-08-15",
+      "day": "Thursday",
+      "description": "Independence Day"
+    },
+    {
+      "date": "2019-09-02",
+      "day": "Monday",
+      "description": "Ganesh Chaturthi"
+    },
+    {
+      "date": "2019-09-10",
+      "day": "Tuesday",
+      "description": "Moharram"
+    },
+    {
+      "date": "2019-10-02",
+      "day": "Wednesday",
+      "description": "Mahatma Gandhi Jayanti"
+    },
+    {
+      "date": "2019-10-08",
+      "day": "Tuesday",
+      "description": "Dasera"
+    },
+    {
+      "date": "2019-10-28",
+      "day": "Monday",
+      "description": "Diwali-Balipratipada"
+    },
+    {
+      "date": "2019-11-12",
+      "day": "Tuesday",
+      "description": "Gurunanak Jayanti"
+    },
+    {
+      "date": "2019-12-25",
+      "day": "Wednesday",
+      "description": "Christmas"
+    }
+  ],
+  "weekend_holidays": [
+    {
+      "date": "2019-01-26",
+      "day": "Saturday",
+      "description": "Republic Day"
+    },
+    {
+      "date": "2019-04-13",
+      "day": "Saturday",
+      "description": "Ram Navami"
+    },
+    {
+      "date": "2019-04-14",
+      "day": "Sunday",
+      "description": "Dr.Baba Saheb Ambedkar Jayanti"
+    },
+    {
+      "date": "2019-10-27",
+      "day": "Sunday",
+      "description": "Diwali-Laxmi Pujan (Muhurat Trading)"
+    }
+  ],
+  "special_sessions": [
+    {
+      "date": "2019-10-27",
+      "day": "Sunday",
+      "description": "Diwali-Laxmi Pujan (Muhurat Trading)",
+      "session_type": "MUHURAT"
+    }
+  ],
+  "inferred_trading_sessions": [
+    {
+      "date": "2019-10-29",
+      "day": "Tuesday",
+      "description": "Regular session: the annual circular declares no holiday on this date"
+    }
+  ]
+}

@@ -12,4 +12,13 @@ configs/** text eol=lf
 # Audit §79.7 (N-154): the audit volumes are frozen by sha256, so their bytes are part of the
 # verification instrument. Pin them to LF in the working copy as well as in the stored blob.
 reports/audit/** text eol=lf
+# Audit §86.8 item 1 (N-170): a compressed archive is bytes, not lines. Under `text=auto eol=lf`
+# git auto-detected many of these containers as text and checkout rewrote their CRLF bytes, so a
+# fresh clone reported every rewritten archive as modified and the green cache could never be
+# reused. Attribute rules are last-match-wins, so these sit after every `text` rule above and
+# store the object's own bytes.
+*.csv.zip -text
+*.json.gz -text
+*.zip -text
+*.gz -text
 

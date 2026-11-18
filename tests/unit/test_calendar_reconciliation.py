@@ -371,7 +371,7 @@ def test_calendar_annual_session_counts_reconciliation_failure():
 def test_criteria_calendar_invariants_and_unauthorized_special_rejection():
     """Verify criteria pins calendar session counts and authorized special session sets (Findings H-61, H-62, H-64)."""
     criteria = load_go_no_go_criteria()
-    assert criteria.expected_total_calendar_sessions == 2935
+    assert criteria.expected_total_calendar_sessions == 2936
     assert criteria.expected_authoritative_calendar_sessions == 1196
     assert criteria.expected_baseline_calendar_sessions == 1201
     assert criteria.authorized_unarchived_special_sessions == ("2025-02-01",)
@@ -435,7 +435,7 @@ def test_r6_load_anchored_nse_trading_calendar():
     # Clean calendar loads cleanly
     cal = load_anchored_nse_trading_calendar()
     assert cal is not None
-    assert cal.total_sessions == 2935
+    assert cal.total_sessions == 2936
 
     # Tampered criteria fingerprint fails closed
     criteria = load_go_no_go_criteria()

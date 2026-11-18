@@ -5,6 +5,13 @@
   "provenance": {
     "source": "NSE_CIRCULARS_ANNUAL_TRADING_HOLIDAYS_AND_SPECIAL_SESSIONS",
     "circular_references": [
+      "NSE/CMTR/36475",
+      "NSE/CMTR/39612",
+      "NSE/CMTR/40536",
+      "NSE/MSD/42319",
+      "NSE/CMTR/42877",
+      "NSE/CMTR/43290",
+      "NSE/CMTR/46623",
       "NSE/CMTR/50560",
       "NSE/CMTR/54823",
       "NSE/CMTR/59722",
@@ -19,8 +26,10 @@
       "NSE/MSD/60318",
       "NSE/CMTR/72260"
     ],
-    "retrieved_at": "2026-11-12T06:00:00Z",
-    "sha256": "af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad",
+    "retrieved_at": "2026-11-18T12:05:00+05:30",
+    "sha256": "7622fbf4633683df7161d6f88f93b4fa8fe170191b6ee93da6274171f4536440",
+    "source_bundle": "data/reference/calendar_provenance_bundle.json",
+    "source_digest_of": "per-year 2018-2021 annual, amendment and special-session circular artifacts listed in data/reference/calendar_provenance_bundle.json",
     "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED"
   },
   "annual_session_counts": {
@@ -28,7 +37,7 @@
     "2016": 246,
     "2017": 248,
     "2018": 246,
-    "2019": 244,
+    "2019": 245,
     "2020": 252,
     "2021": 248,
     "2022": 248,
@@ -1226,6 +1235,7 @@
     "2019-10-24",
     "2019-10-25",
     "2019-10-27",
+    "2019-10-29",
     "2019-10-30",
     "2019-10-31",
     "2019-11-01",
@@ -11290,6 +11300,13 @@
       "open_time": "18:15:00",
       "close_time": "19:15:00",
       "description": "Diwali Laxmi Pujan Muhurat Trading"
+    },
+    {
+      "date": "2019-10-29",
+      "session_type": "FULL",
+      "open_time": "09:15:00",
+      "close_time": "15:30:00",
+      "description": "Regular Trading Session"
     },
     {
       "date": "2019-10-30",
@@ -23521,5 +23538,5 @@
       "description": "Regular Trading Session"
     }
   ],
-  "fingerprint": "CAL-FPR-V1-af8e309a6f897a670725a342aa821ec4134c5d40e56e7c3c7b1043549abfe5ad"
+  "fingerprint": "CAL-FPR-V1-6acb5f45ce5686a503a53e7fc96c12a41391d16bde5abbe2f9c91073c47a9ac9"
 }
