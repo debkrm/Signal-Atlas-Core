@@ -1570,3 +1570,70 @@ below is a measurement from this round, and none of it carries an auditor verdic
   validation partition stays frozen; Holdout `2025-01-01..2026-11-11` remains sealed with no
   `HOLDOUT_UNLOCK` sentinel; `reports/audit/**`, `AGENTS.md` and
   `.agents/skills/audit-round/SKILL.md` are untouched.
+
+### Audit §87 — the 931 warm-up sessions are captured, and gating them is still refused
+
+Round: audit §87 (audit of `20ba5ee`, tag `audit-s87-20ba5ee`). Items 1-2 of §87.7 are delivered in
+`e35d8b1`, with `6cb7a81` following it because the first gate run on `e35d8b1` exited 1 on five stale
+`criteria_version` literals; the tree `6cb7a81` names is the one the gate recorded. Item 3 (A2) and
+item 4 (A4) are untouched, `probe_pre2022_preconditions.py` still exits 1, and no pre-2022 session is
+`PASS`/`FAIL`-eligible. Criteria **1.1.11**, zero numeric changes, no trial registered. **Not
+audited** — every number below is a measurement from this round (§9.3), and none of it carries an
+auditor verdict (§11.3).
+
+- **931 archives captured, zero failures.** `2018-04-01..2021-12-31` from the committed calendar:
+  2018 **186**, 2019 **245**, 2020 **252**, 2021 **248**; **926 FULL**, **4 MUHURAT**, **1 SPECIAL**.
+  Each archive is promoted atomically (temporary sibling, fsync, `os.replace`) only after it opens,
+  holds exactly one CSV, parses through `parse_bhavcopy_archive` and reports the scheduled session
+  date, so a refused session leaves neither file nor row. One archive per session was re-used rather
+  than re-fetched on resume; `CAPTURED: 369 new archive(s); REUSED: 562 attested archive(s); FAILED: 0`.
+- **The capture surfaced an ingest defect, and fixed it rather than storing around it.** Part of
+  2020-2021 prints the legacy TIMESTAMP with a two-digit year (`13-Jul-20`, e.g. the 2020-07-13
+  archive), which `parse_bhavcopy_date` refused; it now accepts `%d-%b-%y` as well as `%d-%b-%Y`. The
+  first capture run stopped at that architve with no partial file promoted; the rerun completed.
+- **931 current manifest rows, 931 added and 0 removed** (`git diff --numstat`), each carrying
+  `source_url`, `retrieved_at`, `byte_count`, `sha256`, `session_date`, `session_type` and
+  `gating_mode: WARMUP_NOT_GATABLE`. Gate W0.5-5/2D-6 now verify **985** current artifacts (54 prior +
+  931) and skip **23** superseded rows as history.
+- **Ruling probe 1.** `scripts/probe_pre2022_bronze_coverage.py` exits 0 printing
+  `931/931 session(s) attested by one current manifest row each, bytes matching byte_count and sha256,
+  WARMUP_NOT_GATABLE on every row`, after failing closed at `0/931, 931 problem(s)` before the capture.
+  Three attacks, each restored afterwards: deleting `cm27OCT2019bhav.csv.zip` →
+  `attested archive ... is absent from disk` (exit 1); appending one byte to
+  `cm01FEB2020bhav.csv.zip` → `is 67477 bytes on disk but the row attests 67476` (exit 1); relabelling
+  the 2020-11-14 muhurat row `session_type FULL` / `gating_mode GATABLE` → both the
+  `session_type ... instead of the calendar's 'MUHURAT'` and the `gating_mode 'GATABLE'` refusals
+  (exit 1). Each restored tree returns `OVERALL: COVERED` exit 0.
+- **Ruling probe 2.** `scripts/probe_pre2022_preconditions.py` gained A5: it resolves every committed
+  verdict artifact in `reports/verdicts/` against the calendar and refuses when an evaluated session
+  precedes the criteria' `min_binding_evaluation_start_date`. It prints `[PASS] A5 gating mode: 8
+  verdict artifact(s) evaluated, 0 of 4,903 evaluated session(s) precede the binding start 2022-01-03`,
+  and a deliberately mis-scoped 2019 window is refused by name in
+  `tests/unit/test_pre2022_gating_mode.py`. The same `assert_no_warmup_sessions_in_evaluation` guard is
+  called by `build_historical_dataset_from_raw_bhavcopy`, so adding a pre-2022 directory to an
+  evaluation corpus raises `WarmupSessionGatingViolation` rather than building a dataset.
+- **A1 is unchanged at 5/5 PASS** with `CAL-FPR-V1-6acb5f45…` and provenance `7622fbf4…` untouched —
+  capture adds archives, it does not re-date the grid. A2 (`4,510` interval rows begin `2022-01-03`,
+  `0` reach `2021-12-31`) and A4 (`0` of `138` ex-dates in the window; no maximum-hold bound) still
+  print `NO`, so the probe exits 1 at **3 of 9** checks.
+- **Criteria 1.1.11 reseals one pin.** `expected_manifest_fingerprint` moves to
+  `MAN-FPR-V1-7131c213…` (714,265 B). A walk of every numeric value in both revisions finds **zero**
+  changes; `min_binding_evaluation_start_date` stays `2022-01-03`, `expected_calendar_fingerprint`,
+  `expected_sourced_window_calendar_fingerprint`, `1201`, `1196`, `2936` and
+  `expected_trial_registry_manifest_sha256` are byte-identical. The Phase 2D artifacts were
+  regenerated: 3 changed lines each, being the version, the criteria fingerprint and the restatement
+  note — no criterion row moved, and `verify_phase2d_verdicts.py` exits 0 byte-for-byte.
+- **The coverage gate was scoped, not weakened.** `verify_cash_universe_coverage.py` had been
+  asserting "every archive under `data/raw/<year>/` is in the binding-window archive manifest", which
+  the capture makes false by construction. It now sweeps the years its own manifest names and prints
+  that the **931** new archives are warm-up Bronze verified per-artifact by Gate W0.5-5/2D-6 and by the
+  coverage probe: `Gate COV-2 ... (2,390,165 / 2,390,165 across 1,195 sessions, 100.0000%)`, unchanged.
+- **The gate is green on the committed tree.** `verify_audit_append_only.py --force-full` at `6cb7a81`:
+  **543 passed, 0 skipped, 0 xfailed** (149.78 s), **9/9** verifiers exit 0, **87** commit-bearing tags
+  verified, audit index reproduces at **87** section rows, green row 18 recorded against tree
+  `8ed078a9…`. The first run at `e35d8b1` had exited 1 on the five version literals; `6cb7a81` moves
+  them, with no assertion relaxed and no threshold touched (§12.4).
+- **Invariants held.** No trial row was appended or scored: **N = 9, N_eval = 5**; the 2024 validation
+  partition stays frozen; Holdout `2025-01-01..2026-11-11` remains sealed with no `HOLDOUT_UNLOCK`
+  sentinel; `reports/audit/**`, `AGENTS.md`, `.agents/skills/audit-round/SKILL.md` and
+  `configs/trading_calendar_nse.json` (`CAL-FPR-V1-6acb5f45…`) are untouched.
