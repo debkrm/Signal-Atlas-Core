@@ -6,7 +6,7 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | Volume | Path | Sections | Lines | Frozen | SHA-256 |
 |---|---|---|---|---|---|
 | `signal_atlas_phase1c_audit_deepseek_review_.md` | `reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md` | 1-78 | 8442 | yes | `f4ca03d58466bebb…` |
-| `volume2.md` | `reports/audit/volume2.md` | 79+ | 2315 | no | `85ddf4d53a28e8a4…` |
+| `volume2.md` | `reports/audit/volume2.md` | 79+ | 2315 | no | `852ecc11705d846d…` |
 
 | Section | Title | Volume | Lines | Finding ids |
 |---|---|---|---|---|
