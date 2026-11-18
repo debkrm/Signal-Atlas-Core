@@ -1517,3 +1517,56 @@ or provenance field was written for A1. N-169's ledger row stays `OPEN`: closure
 - **Invariants held.** No trial row was appended or scored: **N = 9, N_eval = 5**; the 2024 validation
   partition stays frozen; Holdout `2025-01-01..2026-11-11` remains sealed with no `HOLDOUT_UNLOCK`
   sentinel; `reports/audit/**`, `AGENTS.md` and `.agents/skills/audit-round/SKILL.md` are untouched.
+
+### Audit §86 — the attributes, the restored 2019 session, and A1 at PASS
+
+Round: audit §86 (audit of `cd36177`, tag `audit-s86-cd36177`). Items 1-3 of §86.8 are delivered in
+`3fb8f64`; item 4 (parallel pytest) is **not run** because `pytest-xdist` is not installed, so the
+suite ran serially. Criteria **1.1.10**, no numeric threshold moved, no trial registered. N-170's
+ledger row stays `OPEN`: closure rows are the auditor's (§11.1). **Not audited** — every number
+below is a measurement from this round, and none of it carries an auditor verdict (§11.3).
+
+- **N-170, measured on a fresh clone.** `.gitattributes` now marks `*.csv.zip` and `*.json.gz`
+  (and their bare `*.zip` / `*.gz` forms) `-text`, and `probe N-170` reads the attribute back as
+  `unset` for all **1,221** tracked archives, matches each worktree file's `git hash-object` against
+  its index oid (**0** mismatches), and finds **0** archives in the dirty set. A fresh
+  `git clone --no-hardlinks` of `3fb8f64` reports `git status --porcelain` **empty (0 paths)**: the
+  24 rewritten paths the audit measured are gone, and the repair is an attribute decision rather
+  than a byte rewrite, so no blob changed.
+- **2019-10-29 is restored from the circulars, not from arithmetic.** `NSE/CMTR/39612` (2018-12-07,
+  Ref 115/2018) declares 15 weekday holidays and **no** holiday on 2019-10-29; `NSE/CMTR/40536`
+  (2019-03-26, Ref 30/2019) adds 2019-04-29 for the Parliamentary Elections and `NSE/MSD/42319`
+  (2019-10-07, Ref 53/2019) adds 2019-10-21 for the Maharashtra Assembly Elections, with the Sunday
+  muhurat on 2019-10-27: `261 − 17 + 1 = 245` sessions. The calendar now holds 2019 = **245**,
+  **2936** sessions in total and **931** in `2018-04-01..2021-12-31`; `CAL-FPR-V1-6acb5f45…`
+  replaces `af8e309a…`, and `load_anchored_nse_trading_calendar()` accepts the file at 2936.
+- **A1 prints PASS for all four years.** `python scripts/probe_pre2022_preconditions.py` reports
+  `[PASS] A1 2018: 246 session(s) reproduced by 1 sourced circular artifact(s), 18 declared
+  holiday(s)`, `[PASS] A1 2019: 245 … 3 … 21`, `[PASS] A1 2020: 252 … 2 … 19`, `[PASS] A1 2021: 248
+  … 1 … 18` and `[PASS] A1 provenance: the calendar names a source digest 7622fbf4…`. A2 and A4
+  still print `NO`, the probe still exits 1, and the pre-2022 window stays warm-up only (§10.8).
+- **The provenance field stopped naming itself (§86.6 item 7).** `provenance.sha256` is now the
+  digest of `data/reference/calendar_provenance_bundle.json` (3,483 B, `7622fbf4…`), which names
+  each year's circular artifacts by `sha256` and `byte_count` with the session count that year
+  reconciles to; `source_bundle` says which file it is. `load_nse_trading_calendar()` seals on the
+  declared `fingerprint` instead, refuses a provenance digest equal to the content digest, and
+  fails closed if the bundle is missing or its bytes do not hash to the declared digest. The
+  manifest attests the calendar row as a restatement (585,546 → 586,148 B, previous row superseded)
+  and the bundle as a new artifact: 47,639 B, `MAN-FPR-V1-d05b87e1…`, **54** current and **23**
+  superseded rows.
+- **Re-pins, all computed.** Criteria `1.1.10` moves only the calendar identity anchor, the total
+  session pin 2935 → 2936, the manifest pin and the warm-up note 930 → 931; `criteria.py`'s default
+  total, `verify_phase2b5_storage.py` (2936 plus a bundle-digest check), the two calendar-count unit
+  tests and `test_storage.py` follow. Untouched as ordered: `expected_sourced_window_calendar_
+  fingerprint` `2d5ac7ac…`, `expected_baseline_calendar_sessions` 1201, `expected_authoritative_
+  calendar_sessions` 1196 and window start `2022-01-03`.
+- **The Phase 2D verdict did not move.** Regenerated under 1.1.10 and every criterion row
+  (`criterion_id`, verdict, measured value) is identical to the pre-change artifact — only the
+  criteria version, the pins and the restatement note differ. `verify_phase2d_verdicts.py` exits 0
+  with Gate 2D-6 matching all 54 current rows; `verify_phase2b5_storage.py` exits 0 at 2936 sessions.
+- **The suite is green serially.** **536 passed, 0 skipped, 0 xfailed** (142 s), and all **10**
+  `scripts/verify_*.py` exit 0. Nothing was skipped, deselected or relaxed to reach it (§12.4).
+- **Invariants held.** No trial row was appended or scored: **N = 9, N_eval = 5**; the 2024
+  validation partition stays frozen; Holdout `2025-01-01..2026-11-11` remains sealed with no
+  `HOLDOUT_UNLOCK` sentinel; `reports/audit/**`, `AGENTS.md` and
+  `.agents/skills/audit-round/SKILL.md` are untouched.
