@@ -1708,3 +1708,66 @@ numbers below are measurements of this round (§9.3), and the ledger rows for N-
   measure the parallel path; it is **not** added to `pyproject.toml`, so a fresh environment falls
   back to the sequential run with the same assertions. Adding `pytest-xdist` to the `dev` extra is a
   maintainer decision, not this round's.
+
+### Audit §89 — N-173 delivered; A2, A4 and the criteria re-pin are **not** (round stopped with evidence)
+
+Round: audit §89 (audit of `2e7f51b`, tag `audit-s89-75f5fb5`). One of the five ordered items is delivered,
+in `6e11d91`. The other four were started, measured, and are reported here as **not delivered**, with the
+measurement that stopped each. Nothing below is audited; the ledger row for N-173 stays `OPEN` for the
+auditor to close (§11.1).
+
+**Item 1 — N-173, delivered.** `test_n1_replay_guard_o1_lookup_and_bounded_memory` no longer times a
+single pass per size. Each measurement accumulates whole passes, on a fresh portfolio each, until the
+pooled CPU time exceeds `MIN_MEASURABLE_CPU_S` (0.25 s) or `MAX_PASSES` (20) is reached, and divides by
+the work actually timed; the pass count is read from the clock after each pass, because a count
+extrapolated from a cold first pass undershot the budget and failed intermittently (measured: one
+failure in nine runs before the loop was changed, at the pooled-budget assertion). Both ceilings —
+250 µs per fill and the 2.5 ratio — are byte-identical. `probe_n173` is flipped: it fails at the parent
+instrument by name (`the benchmark no longer sizes its measurement`), and now asserts the closure
+arithmetically at three clock resolutions — the host's own step, 15.625 ms, and 1 µs — requiring a
+5 µs/fill implementation to read near 1.0 under the pooled instrument at every resolution while the
+single-pass instrument still shows the ≥ 2.5 artifact on a coarse clock (host tick measured at
+15,625 µs; the artifact computes to 3.91 there). Benchmark: 6/6 runs pass at ~1.46 s (was 1.85-1.94 s).
+`verify_audit_findings.py`: 25/25 probes pass.
+
+**Item 2 — A2, not delivered.** The identity table was rebuilt from all 2,126 committed archives and it
+does what the item asks: 15,824 rows, earliest `effective_from` **2018-04-02** (the first session of the
+binding window; `2018-04-01` is a Sunday and is not a session in `CAL-FPR-V1-6acb5f45…`, and the
+derivation refuses a non-session effective date by construction), every one of the 931 warm-up sessions
+covered by a row, and `A2` printing `PASS`. Measured against the archives' own rows, the rebuilt table
+disagrees with **0 of 1,646,985** post-2022 `(symbol → isin, series)` observations; the committed table
+disagrees with **186,996** of them, because its `EQ`-wins-for-the-whole-pair rule let a warm-up `EQ`
+observation rewrite the series of every later `BE` row. Fixing that required the interval key to become
+`(isin, symbol, series)`, which changes the number of adjacent identity pairs from **324** to **426** —
+and `probe_n158` (CLOSED, MEDIUM) asserts `len(pairs) == 324` exactly. Regenerating
+`corporate_actions.jsonl` from the new table restores N-151 (it passes) but not N-158. The rebuilt table,
+the regenerated corpus and the criteria edit were therefore **reverted**, not committed: resolving this
+means either an auditor ruling that the constant in N-158 is a measurement of the old lossy shape rather
+than an invariant, or a definition of "adjacent identity pair" that is series-aware. The A2 acceptance as
+written also cannot hold literally — "a first row at or before 2018-04-01" asks for a row on a date the
+calendar does not schedule — so the probe line was restated as coverage of all 931 window sessions, which
+is strictly stronger; that restatement is part of the same reverted change and should be ruled on
+together.
+
+**Item 3a — A4 dividends, blocked.** `scripts/ingest_pre2022_dividends.py` was written to capture
+`2018-04-01..2021-12-31` from `https://www.nseindia.com/api/corporates-corporateActions` per quarter with
+byte-exact Bronze payloads and one manifest attestation per payload. Every capture attempt ended in
+`HTTP Error 403: Forbidden` after four retries with a fresh cookie jar, the landing-page seed request and
+browser-shaped headers — while an interactive `curl` against the same URL and headers returned `200`, so
+the endpoint is refusing this client rather than the window. No payload was retrieved, so **no dividend
+row was written and nothing was fabricated**; the script and its empty Bronze directory were removed
+rather than committed as dead code.
+
+**Items 3b, 4, 5 — not started.** The maximum-hold bound has no enforcement point yet: `Position` carries
+no entry date, so a bound read from criteria would be a threshold with nothing behind it — the probe
+`A4 max hold` would pass while the exposure it bounds stayed in place, which §9.1 and §10.8 both forbid.
+The criteria re-pin is unnecessary while the manifest is unchanged: no artifact was added, so `1.1.11`,
+`MAN-FPR-V1-7131c213…` and `A5`'s `PASS` stand exactly as audited, and `min_binding_evaluation_start_date`
+remains **2022-01-03**, N = 9, N_eval = 5, the 2024 fold frozen and the holdout `2025-01-01..2026-11-11`
+sealed. `probe_pre2022_preconditions.py` still exits 1 with `A1` 5/5 `PASS`, `A5` `PASS`, and `A2`, both
+`A4` lines `NO`.
+
+**Gate.** `verify_audit_append_only.py` at `6e11d91`: ALL REPOSITORY FOUNDATION GATES PASSED, **543
+passed / 0 skipped / 0 xfailed** in 46.82 s, 9/9 verifiers exit 0, green row recorded against tree
+`b90a9393…`. `reports/audit/**`, `AGENTS.md`, `.agents/skills/audit-round/SKILL.md` and
+`configs/trading_calendar_nse.json` are untouched, as are `data/trials/` and `data/raw/`.
