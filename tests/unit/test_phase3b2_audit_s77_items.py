@@ -293,7 +293,7 @@ def test_overfit05_gates_the_ex_top_1_margin():
 
 def test_criteria_1_1_7_adds_only_the_three_committed_bindings():
     crit = _criteria()
-    assert crit.version == "1.1.10"
+    assert crit.version == "1.1.11"
     assert crit.min_positive_is_fold_ratio == Decimal("0.75")
     assert crit.min_fold_liquidated_pf == Decimal("1.30")
     assert crit.min_liquidated_pf_ex_top_1 == Decimal("1.40")

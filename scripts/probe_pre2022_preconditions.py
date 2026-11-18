@@ -7,8 +7,14 @@ gate: A1 has no 2018-2021 holiday circular artifact, A2's identity table begins 
 (2022-01-03), and A4 has no 2018-2021 dividend rows or committed maximum-hold bound. This probe is the
 executable form of those three preconditions, so the gap is a computation rather than prose (§9.1).
 
+Audit §87.5 Ruling 1 added a fourth precondition that is not a data gate but a mode gate: a captured
+pre-2022 session is `WARMUP_NOT_GATABLE`, so no verdict or evaluation set may contain one. A5 reads
+every committed verdict artifact in `reports/verdicts/`, resolves its declared window against the
+calendar, and refuses (exit 1, refusal printed by name) if any evaluated session precedes the
+criteria' `min_binding_evaluation_start_date`.
+
 Each gate prints `PASS` / `NO` / `NOT RUN` with the measurement that decided it, and the process exits
-0 only when all three pass. It is expected to fail until the ingestion lands, so it is deliberately
+0 only when all of them pass. It is expected to fail until the ingestion lands, so it is deliberately
 NOT named `verify_*.py`: the Wave 0.5 gate executes only checks that are actionable today, and a
 permanently red check in that list would make green meaningless (§12.4).
 
@@ -23,17 +29,24 @@ import datetime
 import hashlib
 import json
 from pathlib import Path
+import sys
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+for _p in (str(REPO_ROOT / "src"),):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+from signal_core.storage.gating import WARMUP_NOT_GATABLE, warmup_sessions_in  # noqa: E402
 CALENDAR_PATH = REPO_ROOT / "configs" / "trading_calendar_nse.json"
 CRITERIA_PATH = REPO_ROOT / "configs" / "go_no_go_criteria.yaml"
 MANIFEST_PATH = REPO_ROOT / "data" / "reference" / "manifest.jsonl"
 INTERVALS_PATH = REPO_ROOT / "data" / "reference" / "cash_equity_symbol_intervals.csv"
 CORPORATE_ACTIONS_PATH = REPO_ROOT / "data" / "reference" / "corporate_actions.jsonl"
 CIRCULARS_DIR = REPO_ROOT / "data" / "raw" / "circulars"
+VERDICTS_DIR = REPO_ROOT / "reports" / "verdicts"
 
 WINDOW_START = datetime.date(2018, 4, 1)
 WINDOW_END = datetime.date(2021, 12, 31)
@@ -274,12 +287,75 @@ def check_a4() -> List[Tuple[str, str]]:
     return results
 
 
+def check_gating_mode(verdict_paths: Optional[Iterable[Path]] = None) -> List[Tuple[str, str]]:
+    """§87.5 probe (2): no verdict's evaluated session set may contain a WARMUP_NOT_GATABLE session."""
+    criteria = yaml.safe_load(CRITERIA_PATH.read_text(encoding="utf-8")) or {}
+    binding_start = datetime.date.fromisoformat(
+        str(criteria["market_data_and_accounting_invariants"]["min_binding_evaluation_start_date"])
+    )
+    sessions = [
+        datetime.date.fromisoformat(raw)
+        for raw in _load_json(CALENDAR_PATH).get("sessions") or []
+    ]
+
+    artifacts = (
+        sorted(Path(p) for p in verdict_paths)
+        if verdict_paths is not None
+        else sorted(VERDICTS_DIR.rglob("*.json"))
+    )
+
+    evaluated = 0
+    violations: List[str] = []
+    undated: List[str] = []
+    for path in artifacts:
+        verdict = _load_json(path)
+        try:
+            name = path.relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            name = path.as_posix()
+        start_raw = verdict.get("evaluation_start_date")
+        end_raw = verdict.get("evaluation_end_date")
+        if not start_raw or not end_raw:
+            undated.append(name)
+            continue
+        start = datetime.date.fromisoformat(str(start_raw)[:10])
+        end = datetime.date.fromisoformat(str(end_raw)[:10])
+        window = [session for session in sessions if start <= session <= end]
+        evaluated += len(window)
+        offending = warmup_sessions_in(window, binding_start_date=binding_start)
+        if offending:
+            violations.append(
+                f"{name} evaluates {len(offending)} of {len(window)} session(s) labelled "
+                f"{WARMUP_NOT_GATABLE} ({start.isoformat()}..{end.isoformat()}), "
+                f"e.g. {', '.join(d.isoformat() for d in offending[:3])}"
+            )
+
+    results: List[Tuple[str, str]] = []
+    for violation in violations:
+        results.append(("NO", f"A5 gating mode: {violation} — the set may not be gated (§87.5)"))
+    for name in undated:
+        results.append((
+            "NO",
+            f"A5 gating mode: {name} declares no evaluation window, so its session set cannot be "
+            f"checked against the {WARMUP_NOT_GATABLE} boundary",
+        ))
+    if not artifacts:
+        results.append(("NO", f"A5 gating mode: no verdict artifact found under {VERDICTS_DIR.relative_to(REPO_ROOT).as_posix()}"))
+    elif not results:
+        results.append((
+            "PASS",
+            f"A5 gating mode: {len(artifacts)} verdict artifact(s) evaluated, 0 of {evaluated:,} evaluated "
+            f"session(s) precede the binding start {binding_start.isoformat()}",
+        ))
+    return results
+
+
 def main() -> int:
     print("=" * 96)
-    print("PRE-2022 INGESTION READINESS — Audit §80.13 items 3-5 (A1, A2, A4)")
+    print("PRE-2022 INGESTION READINESS — Audit §80.13 items 3-5 (A1, A2, A4) and §87.5 probe 2 (A5)")
     print(f"Binding window under test: {WINDOW_START.isoformat()}..{WINDOW_END.isoformat()} (§10.8)")
     print("=" * 96)
-    results = check_a1() + check_a2() + check_a4()
+    results = check_a1() + check_a2() + check_a4() + check_gating_mode()
     for status, message in results:
         print(f"[{status}] {message}")
 

@@ -622,6 +622,17 @@ def build_historical_dataset_from_raw_bhavcopy(
             )
 
     sorted_dates = sorted(trading_dates_set)
+
+    # Audit §87.5 Ruling 1, probe 2: a session captured as WARMUP_NOT_GATABLE may never enter an
+    # evaluation set. The pin is read from the committed criteria, so this refuses the moment a
+    # pre-pin directory is added to `raw_dirs` and stops refusing when the pin itself moves.
+    from signal_core.storage.gating import assert_no_warmup_sessions_in_evaluation
+
+    assert_no_warmup_sessions_in_evaluation(
+        sorted_dates,
+        label=f"build_historical_dataset_from_raw_bhavcopy(raw_dirs={[str(d) for d in raw_dirs]})",
+        binding_start_date=load_go_no_go_criteria().min_binding_evaluation_start_date,
+    )
     for isin in prices_by_isin:
         prices_by_isin[isin].sort(key=lambda b: b.trade_date)
 

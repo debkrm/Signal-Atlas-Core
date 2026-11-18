@@ -51,6 +51,10 @@ def test_parse_bhavcopy_date_formats():
     d1 = parse_bhavcopy_date("01-JAN-2024")
     assert d1 == datetime.date(2024, 1, 1)
 
+    # Legacy DD-MON-YY format, printed by the exchange for part of 2020-2021 (Audit §87.5 capture)
+    d_two_digit = parse_bhavcopy_date("13-Jul-20")
+    assert d_two_digit == datetime.date(2020, 7, 13)
+
     # ISO YYYY-MM-DD format
     d2 = parse_bhavcopy_date("2024-01-20")
     assert d2 == datetime.date(2024, 1, 20)

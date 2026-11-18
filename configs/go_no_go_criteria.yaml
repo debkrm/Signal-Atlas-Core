@@ -75,7 +75,15 @@ metadata:
   # is resealed because seven 2018-2021 A1 circular artifacts are registered (§86.6 items 1-3, 9). Every
   # gating window, count, tolerance, weight and criterion is otherwise byte-identical to 1.1.9; the
   # corrected date is pre-binding (warm-up only, §10.8), so no verdict computed on the binding window moves.
-  version: "1.1.10"
+  # 1.1.11 (2026-11-18): no numeric threshold and no criterion changed. Audit §87.5 Ruling 1 authorises Bronze
+  # capture of the 931 warm-up sessions 2018-04-01..2021-12-31, and that capture registers one current
+  # manifest row per archive (931 rows, carrying source_url, retrieved_at, byte_count, sha256, session_type
+  # and the WARMUP_NOT_GATABLE label), so `expected_manifest_fingerprint` is resealed over the grown manifest.
+  # `min_binding_evaluation_start_date` stays 2022-01-03, `expected_calendar_fingerprint` stays
+  # CAL-FPR-V1-6acb5f45..., `expected_sourced_window_calendar_fingerprint` stays, every count, tolerance,
+  # weight, cost parameter and criterion is byte-identical to 1.1.10, and capture eligibility grants no
+  # gating eligibility: no verdict, metric or trial may be computed over a WARMUP_NOT_GATABLE session.
+  version: "1.1.11"
   effective_date: "2026-11-18"
   market: "NSE_CASH_EQUITY"
   currency: "INR"
@@ -233,11 +241,11 @@ market_data_and_accounting_invariants:
   zero_data_fabrication_required: true
 
   # Finding H-72: Authoritative reference manifest fingerprint pinned as criteria anchor (Audit §54.5, §54.10, §60.6 Item 4, §62.6 Item 4)
-  # MAN-FPR-V1 covers data/reference/manifest.jsonl content (47,639 bytes, SHA-256 d05b87e19ca57dc7ce8acd2a0a3b666fde7c112c5444f3dfc9178479bdde7998); re-pinned 2026-11-18 with the seven 2018-2021 A1 circular
-  # artifact rows, the calendar restatement of 2019-10-29 and the new provenance bundle (Audit §86.5
-  # Ruling 1, §86.6 items 1-3, §86.8 items 2-3), the only manifest changes in that commit.
-  # 54 current rows and 23 superseded rows are verified by Gate W0.5-5 and Gate 2D-6.
-  expected_manifest_fingerprint: "MAN-FPR-V1-d05b87e19ca57dc7ce8acd2a0a3b666fde7c112c5444f3dfc9178479bdde7998"
+  # MAN-FPR-V1 covers data/reference/manifest.jsonl content (714,265 bytes, SHA-256 7131c2136b54ebd557c288170f00b2facec7d5e775231ecaa5bd4dedce0012ec);
+  # re-pinned 2026-11-18 with the 931 warm-up Bhavcopy archive rows registered by the Audit §87.5 Ruling 1
+  # capture, the only manifest changes in that commit (931 added lines, 0 removed).
+  # 985 current rows (54 prior + 931 archives) and 23 superseded rows are verified by Gate W0.5-5 and Gate 2D-6.
+  expected_manifest_fingerprint: "MAN-FPR-V1-7131c2136b54ebd557c288170f00b2facec7d5e775231ecaa5bd4dedce0012ec"
 
   # Finding N-128 (Audit §72.3, §72.5 item 3): the trial-registry manifest witnesses
   # {evaluation_count, head_eval_hash} outside the (sidecar, anchor) pair. Pinning its SHA-256 here

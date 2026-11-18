@@ -127,6 +127,13 @@ def build_tier_a_results_bundle(
         # not a threshold, and they enter the criteria fingerprint, so the committed artifact is
         # restated rather than left describing a criteria version that no longer governs.
         "restatement_note": (
+            "Restatement 2026-11-18 (Audit §87.5 Ruling 1, criteria 1.1.11): supersedes the §86 "
+            "restatement recorded below. Criteria 1.1.11 changes no numeric threshold and no criterion. "
+            "It reseals expected_manifest_fingerprint because the Audit §87.5 Ruling 1 capture registers "
+            "one current manifest row per archive for the 931 warm-up sessions 2018-04-01..2021-12-31, "
+            "every row labelled WARMUP_NOT_GATABLE. min_binding_evaluation_start_date stays 2022-01-03 "
+            "and the calendar fingerprint is unchanged, so capture grants no gating eligibility: no row "
+            "on this bundle is computed differently and the verdict is unchanged. "
             "Restatement 2026-11-18 (Audit §86.5 Ruling 1, §86.6, criteria 1.1.10): supersedes the "
             "§79 restatement recorded below. Criteria 1.1.10 changes no numeric threshold and no "
             "criterion. It corrects the 2019 calendar grid by restoring Tuesday 2019-10-29 as a regular "

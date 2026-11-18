@@ -13,6 +13,7 @@ This policy establishes the repository storage and lifecycle rules for raw Bronz
   To satisfy AGENTS.md §12.3 and §12.5 (offline, zero-network continuous verification without external repository dependencies), the 1,195 raw daily NSE Bhavcopy archives (~156 MB) covering the active evaluation window are tracked in git under `data/raw/{YEAR}/` and cataloged in `data/reference/bhavcopy_archive_manifest.jsonl`.
 - **Pre-Window Historical Partitions (2018-04-01 to 2021-12-31):**
   Pre-window historical archives remain separate. Ingestion of additional historical years must be performed as explicit, atomic partition releases accompanied by manifest registration and verification scripts, avoiding uncontrolled growth of cloned repository size.
+  The first such release is the 931-archive warm-up capture authorised by Audit §87.5 Ruling 1: byte-exact archives under `data/raw/2018..2021`, one current `data/reference/manifest.jsonl` row per archive labelled `WARMUP_NOT_GATABLE`, coverage and digest measured by `scripts/probe_pre2022_bronze_coverage.py`. Capture grants no gating eligibility: the pre-2022 window stays `NOT RUN` until A2 and A4 land.
 - **Derived Layer Rule (§10.3):**
   All corporate actions, universe schedules, and security master intervals reside strictly in derived tables (e.g. `cash_equity_symbol_intervals.csv`) and are not back-propagated into raw Bronze archives.
 

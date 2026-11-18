@@ -363,18 +363,20 @@ def test_findings_ledger_rows_carry_executable_probes():
 # --- Criteria reseal the pin and move nothing else ----------------------------------------------
 
 
-def test_criteria_1_1_10_reseals_only_the_calendar_and_manifest_pins():
+def test_criteria_reseals_only_the_calendar_and_manifest_pins():
     """
-    1.1.10 moves no threshold (Audit §86.5 Ruling 1, §86.6).
+    1.1.10 (Audit §86.5 Ruling 1, §86.6) and 1.1.11 (Audit §87.5 Ruling 1) move no threshold.
 
-    It reseals the calendar identity anchor and the total-session pin that follows from restoring
+    1.1.10 reseals the calendar identity anchor and the total-session pin that follows from restoring
     2019-10-29, and reseals the manifest pin after the 2018-2021 A1 circular artifacts are
-    registered. Both reseals are checked against the artifacts, not against a copied string.
+    registered. 1.1.11 reseals the manifest pin again after the 931 warm-up archive rows are
+    registered and leaves the calendar pin untouched. Both reseals are checked against the
+    artifacts, not against a copied string.
     """
     from signal_core.storage.calendar import load_anchored_nse_trading_calendar
 
     crit = load_go_no_go_criteria()
-    assert crit.version == "1.1.10"
+    assert crit.version == "1.1.11"
     assert crit.expected_manifest_fingerprint == compute_manifest_fingerprint(
         REPO_ROOT / "data" / "reference" / "manifest.jsonl"
     )

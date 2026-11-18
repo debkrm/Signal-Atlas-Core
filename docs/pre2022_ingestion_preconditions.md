@@ -1,10 +1,13 @@
 # Pre-2022 ingestion preconditions — Audit §80.13 items 3-5 (A1, A2, A4)
 
-**Status: prepared, not ingested.** No 2018-2021 archive was downloaded, no corpus row, manifest row,
-criteria value or interval row was written by this work. The readiness measurement is
-`scripts/probe_pre2022_preconditions.py`, which exits **1** today because every precondition fails.
-This document records what each precondition requires, what artifact satisfies it, and the order the
-work has to happen in. Nothing here is audited: no verdict judges it.
+**Status: A1 met, Bronze captured, gating still closed.** Audit §86.5 Ruling 1 restored the 2019 grid,
+so A1 now prints `PASS` for all four years, and Audit §87.5 Ruling 1 authorised the Bronze capture of
+the 931 sessions in `2018-04-01..2021-12-31` as `WARMUP_NOT_GATABLE`; §8 below records that capture.
+A2 (identity intervals) and A4 (dividends / maximum hold) are still unmet, so
+`scripts/probe_pre2022_preconditions.py` still exits **1** (3 of 9 checks) and no pre-2022 session is
+`PASS`/`FAIL`-eligible. This document records what each precondition requires, what artifact satisfies
+it, and the order the work has to happen in. Capture eligibility is not gating eligibility. The capture
+is **not audited**: no audit section judges the commit that carries it.
 
 ## 1. Why the window is still closed
 
@@ -16,7 +19,7 @@ extended in-sample `930 + 494`). Extending the corpus does **not** move the DSR 
 sessions a pre-2022 ingest adds are `NOT RUN` for gating until A1, A2 and A4 are satisfied — so the
 constraint is provenance, identity and dividends, in that order, not sample size.
 
-Measured at the tree this file is committed in:
+Measured when this document was first committed, the Audit §80 baseline (current status in §8):
 
 ```
 [NO] A1 2018: no committed holiday circular artifact names a 2018 date in data/raw/circulars
@@ -144,3 +147,44 @@ executes every `scripts/verify_*.py` and requires exit 0 (§12.3), and this prob
 until the ingestion exists; registering it would either turn the gate permanently red or tempt a
 skip/xfail, which §12.4 forbids. It is a readiness measurement a human or the implementer runs, whose
 statuses are computed per check rather than asserted in prose (§9.1).
+
+## 8. The capture that happened, and the gate that did not open (Audit §87.5 Ruling 1)
+
+Captured, measured on the tree this section is committed in — **not audited**:
+
+- **931 archives, byte-exact, under `data/raw/<year>/`** — 2018 186, 2019 245, 2020 252, 2021 248;
+  by session type 926 `FULL`, 4 `MUHURAT` and 1 `SPECIAL`, matching the calendar record for record
+  (`scripts/probe_pre2022_bronze_coverage.py` prints the counts and the type split).
+- **One current `data/reference/manifest.jsonl` row per archive**, 931 added lines and 0 removed,
+  each carrying `source_url`, `retrieved_at`, `byte_count`, `sha256`, `session_date`, `session_type`
+  and `gating_mode: WARMUP_NOT_GATABLE`. Promotion is atomic (temporary sibling, fsync, `os.replace`)
+  and only after the archive opens, holds one CSV, parses through `parse_bhavcopy_archive` and reports
+  the session date the calendar schedules, so a refused session leaves no file and no row.
+- **Coverage probe (Ruling probe 1).** `scripts/probe_pre2022_bronze_coverage.py` exits 0 printing
+  `931/931 session(s) attested by one current manifest row each, bytes matching byte_count and sha256,
+  WARMUP_NOT_GATABLE on every row`. It fails closed on the attacks it names: deleting
+  `cm27OCT2019bhav.csv.zip` gives `attested archive ... is absent from disk` (exit 1), appending one
+  byte to `cm01FEB2020bhav.csv.zip` gives `is 67477 bytes on disk but the row attests 67476` (exit 1),
+  and relabelling the 2020-11-14 muhurat row `session_type FULL` / `gating_mode GATABLE` gives both
+  the `session_type mismatch` and the `gating_mode` refusal (exit 1). Each restored tree returns 0.
+- **Gating-mode probe (Ruling probe 2).** `scripts/probe_pre2022_preconditions.py` gained check A5:
+  it resolves every committed verdict artifact in `reports/verdicts/` against the calendar and refuses
+  when an evaluated session precedes `min_binding_evaluation_start_date`. It prints
+  `[PASS] A5 gating mode: 8 verdict artifact(s) evaluated, 0 of 4,903 evaluated session(s) precede the
+  binding start 2022-01-03`, and a deliberately mis-scoped window (2019) is refused by name in
+  `tests/unit/test_pre2022_gating_mode.py`. The same guard is called by
+  `build_historical_dataset_from_raw_bhavcopy`, so adding a pre-2022 directory to an evaluation corpus
+  raises `WarmupSessionGatingViolation` instead of building a dataset.
+- **Criteria 1.1.11**, manifest pin `MAN-FPR-V1-7131c213…` over 714,265 bytes. A walk of every numeric
+  value in both revisions finds **zero** changes; `min_binding_evaluation_start_date` stays
+  `2022-01-03`, `expected_calendar_fingerprint` stays `CAL-FPR-V1-6acb5f45…`, the sourced-window
+  fingerprint, 1201, 1196, 2936 and the trials manifest pin are byte-identical, and N = 9 / N_eval = 5
+  is untouched.
+- **An ingest defect the capture surfaced.** Part of the 2020-2021 legacy corpus prints the TIMESTAMP
+  column with a two-digit year (`13-Jul-20`), which `parse_bhavcopy_date` refused; the parser now
+  accepts `%d-%b-%y` as well as `%d-%b-%Y`, so those archives are ingestible rather than merely stored.
+- **What is not measured here.** A2 and A4 remain `NO`, so nothing pre-2022 is `PASS`/`FAIL`-eligible
+  and every pre-2022 verdict stays `NOT RUN`. `scripts/verify_cash_universe_coverage.py` now scopes its
+  archive sweep to the years its own archive manifest names (2022-2026) and prints that the 931 new
+  archives are warm-up Bronze verified per-artifact by Gate W0.5-5/2D-6 and by the coverage probe. No
+  trial was registered, no fold run, no holdout session read.

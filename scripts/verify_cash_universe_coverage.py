@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from typing import Optional, Sequence
 import zipfile
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -60,13 +61,20 @@ BHAVCOPY_ARCHIVE_MANIFEST = REPO_ROOT / "data" / "reference" / "bhavcopy_archive
 CALENDAR_RECONCILIATION_FILE = REPO_ROOT / "data" / "reference" / "calendar_reconciliation_2022_2026.json"
 
 
-def resolve_all_bhavcopy_archives() -> List[Path]:
+def resolve_all_bhavcopy_archives(years: Optional[Sequence[int]] = None) -> List[Path]:
     """
     Discovers all raw Bhavcopy archives for per-session identity verification (Findings N-34, H-55).
     Checks:
     1. NSE_RAW_ARCHIVES_DIR environment variable
     2. REPO_ROOT / "data" / "raw"
     Note: External-repo fallback to sibling Signal-Atlas removed per Finding H-55.
+
+    `years` scopes the sweep to the archive-manifest corpus the gate is asserting coverage for. Audit
+    §87.5 captured `2018-04-01..2021-12-31` as `WARMUP_NOT_GATABLE` Bronze under its own `data/raw/<year>/`
+    partitions; those archives are attested per-artifact in `data/reference/manifest.jsonl` and are not
+    part of this window's archive manifest, so the gate scopes by the years that manifest names rather
+    than by whatever directories exist (§12.4: the warm-up corpus is verified by Gate W0.5-5/2D-6 and
+    `scripts/probe_pre2022_bronze_coverage.py`, not silently exempted here).
     """
     env_dir = os.environ.get("NSE_RAW_ARCHIVES_DIR")
     search_dirs = []
@@ -79,6 +87,8 @@ def resolve_all_bhavcopy_archives() -> List[Path]:
             zips = []
             for sub in sorted(base_dir.iterdir()):
                 if sub.is_dir() and sub.name.isdigit():
+                    if years is not None and int(sub.name) not in years:
+                        continue
                     zips.extend(sorted(sub.glob("*.zip")))
             if zips:
                 return zips
@@ -255,8 +265,18 @@ def verify_gate_cov2_bhavcopy_resolution() -> bool:
         f"{manifest_expected_eq_rows:,} traded EQ rows across {len(manifest_dates):,} session dates."
     )
 
-    # 2. Discover archives
-    archives = resolve_all_bhavcopy_archives()
+    # 2. Discover archives — scoped to the years the committed archive manifest names (§87.5)
+    manifest_years = sorted({entry_date.year for entry_date in manifest_dates})
+    archives = resolve_all_bhavcopy_archives(years=manifest_years)
+    outside = [
+        p for p in resolve_all_bhavcopy_archives() if p.parent.name.isdigit() and int(p.parent.name) not in manifest_years
+    ]
+    if outside:
+        print(
+            f"[INFO] {len(outside):,} archive(s) under data/raw/<year>/ lie outside this gate's manifest years "
+            f"{manifest_years}; they are warm-up Bronze labelled WARMUP_NOT_GATABLE and are verified by Gate "
+            f"W0.5-5/2D-6 (per-artifact digest) and scripts/probe_pre2022_bronze_coverage.py (§87.5)."
+        )
     if not archives:
         print("[FAIL] No raw Bhavcopy archives found for Gate COV-2 per-session sweep (Finding H-53, H-55).")
         return False

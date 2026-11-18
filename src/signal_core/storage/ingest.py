@@ -40,6 +40,9 @@ from signal_core.storage.silver import (
 
 # Date formats used in NSE Bhavcopy CSV files
 _LEGACY_DATE_FORMAT = "%d-%b-%Y"  # e.g. 01-JAN-2024
+# The exchange printed a two-digit year in the legacy TIMESTAMP column for part of 2020-2021
+# (e.g. `13-Jul-20` for the 2020-07-13 session), so those archives are parsed rather than refused.
+_LEGACY_TWO_DIGIT_YEAR_DATE_FORMAT = "%d-%b-%y"
 
 
 class BhavcopyIngestError(Exception):
@@ -155,6 +158,11 @@ def parse_bhavcopy_date(date_str: str) -> datetime.date:
     # Try legacy format (DD-MON-YYYY, e.g. 01-JAN-2024)
     try:
         return datetime.datetime.strptime(cleaned, _LEGACY_DATE_FORMAT).date()
+    except ValueError:
+        pass
+    # Try the two-digit-year legacy format (DD-MON-YY, e.g. 13-Jul-20)
+    try:
+        return datetime.datetime.strptime(cleaned, _LEGACY_TWO_DIGIT_YEAR_DATE_FORMAT).date()
     except ValueError:
         pass
     # Try ISO format (YYYY-MM-DD)

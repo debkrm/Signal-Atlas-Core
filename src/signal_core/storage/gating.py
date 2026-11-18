@@ -12,13 +12,22 @@ Implements evaluation window restrictions per AGENTS.md Rule 10.8:
 from dataclasses import dataclass
 import datetime
 from enum import Enum
-from typing import Optional, Union
+from typing import List, Optional, Sequence, Union
 
 BINDING_EVALUATION_START_DATE = datetime.date(2022, 1, 3)
+
+# Audit §87.5 Ruling 1: a captured pre-2022 session is a valid price observation and an ineligible
+# gating session. This is the label the capture writes and the only spelling the guard accepts.
+WARMUP_NOT_GATABLE = "WARMUP_NOT_GATABLE"
 
 
 class GatingWindowValidationError(ValueError):
     """Raised when an evaluation window violates gating validity or attempts GO on warm-up data."""
+    pass
+
+
+class WarmupSessionGatingViolation(GatingWindowValidationError):
+    """Raised when an evaluation set contains a session labelled WARMUP_NOT_GATABLE (Audit §87.5)."""
     pass
 
 
@@ -66,6 +75,54 @@ def check_gating_verdict_eligibility(
             "Prior sessions lack authoritative surveillance history and are restricted to warm-up only; "
             "metrics computed on them must be classified as 'NOT RUN'."
         )
+
+
+def warmup_sessions_in(
+    session_dates: Sequence[datetime.date],
+    *,
+    binding_start_date: datetime.date,
+) -> List[datetime.date]:
+    """Returns the sessions that precede the binding evaluation start, i.e. WARMUP_NOT_GATABLE."""
+    if type(binding_start_date) is not datetime.date:
+        raise GatingWindowValidationError(
+            f"binding_start_date must be genuine datetime.date, got {type(binding_start_date).__name__}"
+        )
+    offending: List[datetime.date] = []
+    for session_date in session_dates:
+        if type(session_date) is not datetime.date:
+            raise GatingWindowValidationError(
+                f"session dates must be genuine datetime.date, got {type(session_date).__name__}"
+            )
+        if session_date < binding_start_date:
+            offending.append(session_date)
+    return sorted(offending)
+
+
+def assert_no_warmup_sessions_in_evaluation(
+    session_dates: Sequence[datetime.date],
+    *,
+    label: str,
+    binding_start_date: datetime.date,
+) -> int:
+    """
+    Fails closed if an evaluation set contains a WARMUP_NOT_GATABLE session (Audit §87.5, probe 2).
+
+    `binding_start_date` is a required argument so a caller must name the pin it read — the criteria'
+    `min_binding_evaluation_start_date` — rather than inherit a module default (§10.8). Returns the
+    number of sessions inspected; raises `WarmupSessionGatingViolation` naming the set and the first
+    offending sessions otherwise.
+    """
+    offending = warmup_sessions_in(session_dates, binding_start_date=binding_start_date)
+    if offending:
+        preview = ", ".join(date.isoformat() for date in offending[:5])
+        suffix = "" if len(offending) <= 5 else f", … (+{len(offending) - 5} more)"
+        raise WarmupSessionGatingViolation(
+            f"{label}: {len(offending)} of {len(session_dates)} evaluated session(s) are "
+            f"{WARMUP_NOT_GATABLE} because they precede the binding evaluation start "
+            f"{binding_start_date.isoformat()}: {preview}{suffix}. No metric, verdict or trial may be "
+            f"computed over these sessions (Audit §87.5 Ruling 1)."
+        )
+    return len(session_dates)
 
 
 def resolve_gating_verdict(
