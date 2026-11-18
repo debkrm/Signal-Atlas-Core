@@ -1410,6 +1410,135 @@ def probe_n170() -> None:
     )
 
 
+def probe_n171() -> None:
+    """
+    The Bronze coverage certificate reconciles labels to bytes and to the calendar, never to the
+    archive's own TIMESTAMP (N-171).
+
+    `probe_pre2022_bronze_coverage.py` attests a session by the `session_date` on its manifest row and
+    the row's `sha256`/`byte_count` against the bytes on disk, but it never opens the archive. Swapping
+    `session_date` between two captured archives therefore leaves it printing
+    `COVERED — 931/931`, exit 0, while each archive's own TIMESTAMP column still names the other
+    session. The probe asserts the defect reproduces on a tampered manifest copy over the committed
+    corpus, and that the downstream check which would catch it — H-24's row-date/partition equality in
+    `parse_bhavcopy_archive` — still refuses the transposition, so this is a certificate gap rather
+    than a silent price shift today.
+    """
+    import contextlib
+    import csv
+    import datetime
+    import io
+    import json
+    import shutil
+    import tempfile
+    import zipfile
+
+    import probe_pre2022_bronze_coverage as bronze
+    from signal_core.storage.ingest import BhavcopyIngestError, parse_bhavcopy_archive, parse_bhavcopy_date
+
+    left = REPO_ROOT / "data" / "raw" / "2018" / "cm02APR2018bhav.csv.zip"
+    right = REPO_ROOT / "data" / "raw" / "2018" / "cm03APR2018bhav.csv.zip"
+    left_date, right_date = datetime.date(2018, 4, 2), datetime.date(2018, 4, 3)
+
+    def internal_session_date(archive: Path) -> datetime.date:
+        with zipfile.ZipFile(archive) as zf:
+            name = [n for n in zf.namelist() if n.lower().endswith(".csv")][0]
+            text = zf.read(name).decode("utf-8", "replace")
+        reader = csv.reader(io.StringIO(text))
+        header = [h.strip().upper() for h in next(reader)]
+        index = header.index("TIMESTAMP") if "TIMESTAMP" in header else header.index("TRADEDATE")
+        dates = {
+            parse_bhavcopy_date(row[index].strip())
+            for row in reader
+            if len(row) > index and row[index].strip()
+        }
+        assert len(dates) == 1, f"{archive.name} carries {len(dates)} distinct TIMESTAMP values"
+        return dates.pop()
+
+    assert internal_session_date(left) == left_date
+    assert internal_session_date(right) == right_date
+
+    scratch = Path(tempfile.mkdtemp())
+    try:
+        tampered = scratch / "manifest.jsonl"
+        shutil.copyfile(REPO_ROOT / "data" / "reference" / "manifest.jsonl", tampered)
+        rows = [json.loads(line) for line in tampered.read_text(encoding="utf-8").splitlines() if line.strip()]
+        swapped = 0
+        for row in rows:
+            if row.get("session_date") == left_date.isoformat():
+                row["session_date"] = right_date.isoformat()
+                swapped += 1
+            elif row.get("session_date") == right_date.isoformat():
+                row["session_date"] = left_date.isoformat()
+                swapped += 1
+        assert swapped == 2, f"expected to transpose 2 rows, transposed {swapped}"
+        tampered.write_text(
+            "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+
+        original_manifest = bronze.MANIFEST_PATH
+        bronze.MANIFEST_PATH = tampered
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as captured:
+                exit_code = bronze.main()
+        finally:
+            bronze.MANIFEST_PATH = original_manifest
+        output = captured.getvalue()
+        assert exit_code == 0, (
+            "the coverage probe now refuses a transposed corpus, so N-171 is closed: "
+            f"{output.strip().splitlines()[-1] if output.strip() else '<no output>'}"
+        )
+        assert "COVERED" in output and "931/931" in output, output[-400:]
+
+        try:
+            parse_bhavcopy_archive(left, trade_date=right_date)
+        except BhavcopyIngestError as exc:
+            assert "does not match partition date" in str(exc), str(exc)
+        else:
+            raise AssertionError(
+                "the transposed archive parsed under the other session's partition date, so nothing "
+                "downstream refuses the mislabel either"
+            )
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def probe_n172() -> None:
+    """
+    The two-digit-year Bhavcopy parser has no plausibility bound (N-172).
+
+    `parse_bhavcopy_date` gained `%d-%b-%y` so the one 2020-2021 archive printed with a two-digit year
+    parses. Python's `%y` maps 00-68 to 2000-2068 and 69-99 to 1969-1999, and the parser accepts the
+    result without comparing it to the session the archive is filed under, so `13-Jul-68` becomes
+    2068-07-13 — a date inside the sealed holdout era. The probe asserts the acceptance and the
+    containment that holds today: H-24's row-date/partition equality refuses the archive when it is
+    parsed for its declared session.
+    """
+    import datetime
+
+    from signal_core.storage.ingest import BhavcopyIngestError, parse_bhavcopy_archive, parse_bhavcopy_date
+
+    assert parse_bhavcopy_date("13-Jul-20") == datetime.date(2020, 7, 13)
+    assert parse_bhavcopy_date("13-JUL-2020") == datetime.date(2020, 7, 13)
+    assert parse_bhavcopy_date("13-Jul-68") == datetime.date(2068, 7, 13), (
+        "the parser now bounds a two-digit year, so N-172 is closed and this probe should assert the refusal"
+    )
+    assert parse_bhavcopy_date("13-Jul-99") == datetime.date(1999, 7, 13)
+
+    archive = REPO_ROOT / "data" / "raw" / "2020" / "cm13JUL2020bhav.csv.zip"
+    resolved, records = parse_bhavcopy_archive(archive, trade_date=datetime.date(2020, 7, 13))
+    assert resolved == datetime.date(2020, 7, 13) and records
+
+    try:
+        parse_bhavcopy_archive(archive, trade_date=datetime.date(2068, 7, 13))
+    except BhavcopyIngestError as exc:
+        assert "does not match partition date" in str(exc), str(exc)
+    else:
+        raise AssertionError("a 2020 archive parsed under a 2068 partition date: H-24 no longer contains this")
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -1433,6 +1562,8 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-168": probe_n168,
     "N-169": probe_n169,
     "N-170": probe_n170,
+    "N-171": probe_n171,
+    "N-172": probe_n172,
 }
 
 

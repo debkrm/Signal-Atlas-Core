@@ -1722,3 +1722,129 @@ Every one of the seven artifact files and the bundle matches its **current** man
 - If `expected_sourced_window_calendar_fingerprint`, 1201, 1196 or the 2022-01-03 start differs between `a3be813` and `3fb8f64`, the re-pin drifted into the binding window.
 - If any A1 year passes with a circular whose bytes disagree with its manifest row, or with an artifact not cited in `provenance.circular_references`, the A1 measurement does not mean what §87.4 says.
 - If a metric, verdict or trial is computed over a pre-2022 session while A2 or A4 is unmet, the capture authorisation was read as a gating authorisation and this Ruling's intent is violated regardless of what it says.
+---
+
+## §88 — Audit of `df97173` (tag `feat-s87-df97173`): the 931 warm-up sessions are captured and certified, the guard refuses them, and the certificate cannot see a transposed label
+
+**Date:** 18 November 2026
+**Commits under review:** `e35d8b1` (capture, criteria 1.1.11, guard, probes; 955 files, +1,903/−40, of which 931 are archives and 931 are manifest lines), `6cb7a81` (the five version literals in four test files, +7/−7), `4ebcc5e` and `df97173` (docs `CURRENT_STAGE_OF_WORK.md`, 4 files' worth of prose). Every measurement below is at `df97173`.
+**Verdicts:** capture **DELIVERED and verified** · criteria 1.1.11 **reseal only, zero numeric changes, verdict artifacts correct** · A5 guard and probe **DELIVERED**, refuses a warm-up session at the call site · A1 **PASS 5/5**, A2 and A4 **NO** · capture grants no gating eligibility · **N-171** and **N-172** registered `OPEN`
+
+### 88.1 Baseline re-measured at `df97173`
+
+| Measurement | Result |
+|---|---|
+| `scripts/verify_audit_append_only.py --force-full` | **exit 0** — `ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Verifiers discovered / executed | 9 / 9, every exit 0; `verify_audit_findings.py` **22/22 probes** at the commit |
+| pytest | **543 passed** in 180.27 s (7 new tests in `tests/unit/test_pre2022_gating_mode.py` over §87's 536) |
+| W0.5-1c | PASS — audit index reproduces at **86** section rows |
+| W0.5-4 | PASS — **92** commit-bearing tags |
+| W0.5-5 | PASS — **985** current manifest rows match `byte_count` + `sha256`; **23** superseded skipped as history |
+| Findings ledger before this round | 35 rows / 22 ids (N-170 `CLOSED` §87); 37 rows / 24 ids after §88.2 |
+| Criteria | **1.1.11**, effective 2026-11-18, `CRIT-FPR-V1-1c0131d6…` |
+| `scripts/probe_pre2022_bronze_coverage.py` | **exit 0** — `COVERED — 931/931` |
+| `scripts/probe_pre2022_preconditions.py` | **exit 1** — A1 5/5 `PASS`, A5 `PASS`, A2 `NO`, A4 dividends `NO`, A4 max hold `NO` (3 of 9 unmet) |
+| Trials / fold / holdout | **9** registry rows, `evaluation_count` **5**, pin `3326b1b2…` unchanged, no trial file in the diff; 2024 validation fold untouched; no `data/raw/2025` or `2026` path in the diff; `2025-01-01..2026-11-11` sealed |
+| Worktree | `git status` clean; 2,146 tracked `data/raw` archives hash to their index oid with **0 mismatches** |
+
+### 88.2 The capture — 931 sessions, 931 rows, bytes that match
+
+| Measurement | Result |
+|---|---|
+| Calendar sessions in `2018-04-01..2021-12-31` | **931** — `FULL` 926, `MUHURAT` 4 (2018-11-07, 2019-10-27, 2020-11-14, 2021-11-04), `SPECIAL` 1 (2020-02-01) |
+| Archives on disk under `data/raw/2018..2021` | **931**, one per session, no non-`.zip` files |
+| Current manifest rows naming those archives | **931** — 2018 186 / 2019 245 / 2020 252 / 2021 248, **every one** `gating_mode: WARMUP_NOT_GATABLE` |
+| `byte_count` / `sha256` against disk, recomputed by me | **0 size mismatches, 0 digest mismatches of 931** |
+| Required row fields | `source_url`, `retrieved_at`, `byte_count`, `sha256`, `session_date`, `session_type`, `gating_mode`, `provenance_status` present on **931/931**; one host (`archives.nseindia.com`); retrieval timestamps span `05:06:55`–`05:13:46Z` on 2026-11-18; every row `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` (§6.5) |
+| Manifest growth | `data/reference/manifest.jsonl` **+931 / −0** lines → 1,008 rows = **985 current** (54 + 931) + **23 superseded**; **0** superseded row concerns a warm-up archive; 714,265 bytes, sha256 `7131c213…` |
+| Internal dates — the check the probe omits | I opened all 931 archives and parsed every distinct `TIMESTAMP` value: **931/931 archive-internal dates equal their `session_date`**, one archive carries a two-digit year (`cm13JUL2020bhav.csv.zip`, `13-Jul-20`) |
+| Bytes vs git | `git hash-object` over all 2,146 tracked `data/raw` archives equals the index oid for **2,146/2,146**; `git check-attr text` returns `unset` on the new archives, so the capture inherits §87.2's attribute repair |
+| Promotion and refusal rules, read in `scripts/ingest_pre2022_bhavcopy.py` | payload validated before promotion (one CSV member, parses to ≥ 1 record, **parsed trade_date == scheduled session**), atomic `.part` + `fsync` + `os.replace`, append-only row with `fsync`, a failed session writes neither file nor row, re-run reuses an attested archive instead of duplicating, exit non-zero on any failure |
+
+The count is reconstructed in both directions: the probe walks the calendar and demands a row per session, then walks disk and demands a row per archive, so a missing session, an extra archive, a duplicate current row and a dead row each fail. `EXPECTED_SESSIONS = 931` is a literal in the probe; the calendar is still the authority it measures against, and the literal is the number §87.5 Ruling 1 authorised.
+
+### 88.3 Probe attacks — five shapes refused, and one that is not
+
+Run against a copy of the corpus (`/tmp/s88c`), each attack reverted before the next:
+
+| Attack | Exit | Message |
+|---|---|---|
+| Delete one archive | **1** | `session 2019-01-03 (FULL): attested archive … is absent from disk` → `930/931` |
+| Flip one byte inside an archive (size unchanged, 67,993 B) | **1** | `… sha256 mismatch (disk c6a971aa…, row 0ce5fd92…)` → `930/931` |
+| Relabel the 2018-11-07 `MUHURAT` session `FULL` | **1** | `… declares session_type 'FULL' instead of the calendar's 'MUHURAT'` |
+| Drop `gating_mode` from the 2020-02-01 `SPECIAL` row | **1** | `… carries gating_mode None, expected 'WARMUP_NOT_GATABLE'` |
+| Add a second current row for one session | **1** | `session 2018-04-02 (FULL): 2 duplicate current row(s)` (+ an orphaned-row problem) |
+| Drop an unattested archive into `data/raw/2018/` | **1** | `archive … (67993 bytes): no current manifest row attests it` |
+| **Transpose `session_date` between two archives, bytes and labels otherwise untouched** | **0** | `OVERALL: COVERED — 931/931 … WARMUP_NOT_GATABLE on every row` |
+
+The last row is **N-171**. The probe keys each archive by the `session_date` its row declares and checks the row's digest against the bytes; it never opens the archive, so a corpus in which two archives are filed under each other's session satisfies every check it makes. Each archive's own `TIMESTAMP` column still names the other date, and `parse_bhavcopy_archive` under the declared partition date refuses it (`Row trade_date 2018-04-02 does not match partition date 2018-04-03 … H-24`), so the mislabel cannot silently reach a price series — but between capture and the first Silver build, the only artefact that certifies the corpus cannot distinguish 931 correctly dated sessions from 931 labels placed on the wrong bytes. The committed corpus is not transposed (§88.2: 931/931 internal dates match); the certificate is what is short. Severity **MEDIUM**, because the property the Ruling's falsifier named — "a Bhavcopy archive whose bytes disagree with its manifest row" — holds byte-for-byte here while the row and the session disagree, and the probe was written to be that falsifier.
+
+### 88.4 Criteria 1.1.11 and the Phase 2D artifacts
+
+| Condition | Measured |
+|---|---|
+| Version and date | `1.1.10 → 1.1.11`, `effective_date 2026-11-18` |
+| Zero numeric threshold changes | every numeric leaf of both revisions parsed and compared: **7 of 7 identical**; the file's own diff contains three hunks — the version line, its comment block, and the manifest pin — and **no** other line |
+| The one value that moved | `expected_manifest_fingerprint`: `MAN-FPR-V1-d05b87e1… → MAN-FPR-V1-7131c2136b54ebd557c288170f00b2facec7d5e775231ecaa5bd4dedce0012ec`, recomputed from the committed manifest and equal |
+| Manifest pin integrity | 1,008 rows, 714,265 bytes, sha256 `7131c213…` — the byte count and digest quoted in the criteria comment are the file's |
+| Pins that must not move | `expected_calendar_fingerprint` **CAL-FPR-V1-6acb5f45…** unchanged; `expected_sourced_window_calendar_fingerprint` **2d5ac7ac…** unchanged; `min_binding_evaluation_start_date` **2022-01-03**; `expected_authoritative_calendar_sessions` **1196**; `expected_baseline_calendar_sessions` **1201**; trial pin **3326b1b2…** |
+| Phase 2D verdict artifacts | both files changed **3 leaves**: `criteria_version 1.1.10 → 1.1.11`, `criteria_fingerprint 3744b520… → 1c0131d6…`, and the prepended 1.1.11 restatement paragraph. `overall_verdict` **NO-GO** unchanged, no criterion row changed, `CAL-FPR-V1-6acb5f45` appears 4× in the JSON and 2× in the Markdown, `2d5ac7ac` once in each |
+| Generator | `scripts/generate_phase2d_tier_a_report.py` changed only by the new restatement string; the artifact is generator output, not hand-edited |
+| Trials / fold / holdout | 9 registry rows with `evaluation_count: 5` and manifest pin `3326b1b2…`, none of them in the diff; the 2024 validation fold is untouched because no numeric value moved; no path under `data/raw/2025` or `2026`, no trial, no holdout artefact is touched |
+| Test literals (`6cb7a81`) | seven `criteria_version` assertions across four files follow the bump; suite green at 543 |
+
+A reseal that changes exactly the fingerprint its own comment explains, leaves every threshold byte-identical, and moves no verdict row is what §87.5 Ruling 1 permitted. The Ruling authorised capture, not a re-baseline, and the artifacts show no re-baseline.
+
+### 88.5 A5 — the guard refuses a warm-up session where the corpus is built
+
+| Measurement | Result |
+|---|---|
+| `assert_no_warmup_sessions_in_evaluation` | requires `binding_start_date` as a keyword (no module default to inherit), refuses with `WarmupSessionGatingViolation` naming the label, the pin, the set label and the first offending dates, and returns the inspected count otherwise |
+| Call site | `build_historical_dataset_from_raw_bhavcopy`, after the archives are read and **before** either fingerprint or any verdict input is computed — the only function in the repository that builds an evaluation corpus from `data/raw` |
+| Attack at the call site | `build_historical_dataset_from_raw_bhavcopy(raw_dirs=[data/raw/2021])` → `WarmupSessionGatingViolation: … 248 of 248 evaluated session(s) are WARMUP_NOT_GATABLE because they precede the binding evaluation start 2022-01-03: 2021-01-01, … (+243 more)` |
+| `probe_pre2022_preconditions.py` A5 | `[PASS] A5 gating mode: 8 verdict artifact(s) evaluated, 0 of 4,903 evaluated session(s) precede the binding start 2022-01-03` |
+| Probe attacks | a fabricated verdict declaring `2021-06-01..2021-12-31` → `NO … evaluates 148 of 148 session(s) labelled WARMUP_NOT_GATABLE`; a verdict declaring no window → `NO … declares no evaluation window, so its session set cannot be checked` |
+| Wiring | `tests/unit/test_pre2022_gating_mode.py` — 7 tests, including the guard, the refusal at the builder, the shipped verdict corpus at `PASS`, and `probe_pre2022_bronze_coverage.main() == 0` with `931/931` |
+
+**Residual, named rather than implied.** A5 measures *declared* windows: it reads `evaluation_start_date`/`evaluation_end_date` from each verdict and intersects them with the calendar. A verdict that computed over warm-up sessions while declaring a 2022 start would pass A5. The defence against that is the call-site guard, which refuses on the session dates actually read from archives rather than on a label; the probe is a corpus audit over the artifacts that exist, not a proof that each artifact was computed from the window it declares.
+
+### 88.6 The two engineering changes the corpus forced
+
+**`%d-%b-%y` TIMESTAMP parsing (`src/signal_core/storage/ingest.py`, +8 lines).** Exactly **one** of the 931 archives prints a two-digit year — `data/raw/2020/cm13JUL2020bhav.csv.zip`, whose `TIMESTAMP` cells read `13-Jul-20`. It parses to `2020-07-13` and yields 1,392 `EQ` records under `trade_date=2020-07-13`. The four-digit branch is tried first and does not swallow the string (`%d-%b-%Y` on `13-Jul-20` raises, so no year-20 date is produced), and the two-digit branch does not swallow a four-digit one (`%d-%b-%y` on `13-JUL-2020` raises). Without the branch the capture could not have included 2020-07-13 at all, so this is a necessary change, not a convenience — and it is what the probe's `validate()` relies on when it compares the parsed date to the scheduled session.
+
+**N-172 — the branch is unbounded.** `13-Jul-68` parses to **2068-07-13** and `13-Jul-99` to 1999-07-13: Python's `%y` maps 00–68 to 2000–2068 and 69–99 to 1969–1999, and the parser never compares the result to the session the archive is filed under. `13-Jul-68` lands **inside the sealed holdout era**. Measured containment: parsing any archive with a partition date its rows do not carry raises H-24 (`Row trade_date … does not match partition date …`), and the archive's partition date comes from the calendar or filename rather than from the row, so a stray two-digit year cannot route data past the holdout check today. Severity **LOW** — a latent acceptance, contained downstream, in new code. The fix is a plausibility bound (the parsed year must lie within the corpus year it is filed under, ±1) with the refusal named.
+
+**Binding-window year scoping (`scripts/verify_cash_universe_coverage.py`, +26/−7).** Before the capture, Gate COV-2 swept every `data/raw/<year>/` directory and would have discovered 2,126 archives against a 1,195-row archive manifest. The gate now scopes the sweep to the years the archive manifest names and prints an `[INFO]` naming the **931** archives it excludes and the instrument that does verify them. Measured at `df97173`: `1,195 / 1,195` digests and reverse coverage, `100.0000%` COV-2, `ALL CASH UNIVERSE COVERAGE GATES PASSED`, exit 0. The 1,195 is not the calendar's 1,196: the calendar holds **1,196** binding sessions and the archive manifest **1,195**, and the single difference is **2025-02-01**, a Saturday Budget session that lies inside the sealed holdout. So the gate certifies coverage of the corpus it has against the manifest derived from it, and cannot by construction certify the calendar — that comparison is made here, in this section, and its one-row deficit is holdout, not error.
+
+**Additive-fix check (§14.4).** `resolve_all_bhavcopy_archives` has exactly one consumer, the gate itself, and it is now scoped. The only evaluation-corpus builder from raw archives is `build_historical_dataset_from_raw_bhavcopy`, and it is the guarded path — there is no second, unguarded loader beside it. `scripts/reconcile_bhavcopy_series.py` reads `data/raw` by trade date for snapshot reconciliation; it is not a gate, computes no verdict, and is unchanged.
+
+### 88.7 Phase verdicts and residuals
+
+| Phase / claim | Verdict at `df97173` | Residuals named |
+|---|---|---|
+| §87.5 Ruling 1 probe (1) — Bronze coverage | **DELIVERED and verified** — 931/931, digests, labels, bidirectional reconciliation, six attacks refused | **N-171**: the certificate cannot see a transposed `session_date` |
+| §87.7 item 2 — gating-mode guard | **DELIVERED** — call site measured refusing 248/248, probe `PASS` at 0/4,903, fabricated mis-scope refused | A5 trusts declared windows (§88.5) |
+| `§10.8` A1 (2018–2021 grid) | **PASS 5/5**, unchanged at 246 / 245 / 252 / 248 | — |
+| `§10.8` A2 / A4 | **NO / NO** — intervals still begin 2022-01-03; 0 of 138 ex-dates in the warm-up window; no max-hold bound | A2, A4 |
+| Pre-2022 gating | **NOT ELIGIBLE, and now refused** — `[NO]` A2/A4, guard raises, no verdict covers a warm-up session | A2, A4 |
+| Criteria 1.1.11 | **RESEAL ONLY** — one non-threshold value moved; verdict unchanged | — |
+| `§12.3` gate machinery | **GO** — 543 passed, 9/9 verifiers, 92 tags, 985 manifest rows verified | N-171, N-172 |
+
+Capture eligibility and gating eligibility stayed separate in the code, not only in the prose: the label is written by the capture, the guard reads the calendar boundary rather than the label, and A2/A4 still print `NO`.
+
+### 88.8 Work order
+
+1. **Close N-171** (serves §87.5 Ruling 1 probe (1), Phase 3B-2 / `§10.8`). `scripts/probe_pre2022_bronze_coverage.py` must open each archive once and require its distinct `TIMESTAMP` values to be exactly the row's `session_date`. Probe: the transposition attack exits 1 naming both dates; the committed corpus still prints `COVERED 931/931`, exit 0.
+2. **Close N-172** (serves the capture's ingest path, `§10.8`). Bound the two-digit-year branch to the session the archive is filed under. Probe: `13-Jul-68` is refused by name; `cm13JUL2020bhav.csv.zip` still parses to 2020-07-13 with 1,392 `EQ` records, and the corpus stays 931/931.
+3. **A2 — identity intervals reaching 2018-04-01** (serves Phase 3B-2, unchanged from §87.7 item 3). Probe: the A2 line prints `PASS` with a first row at or before 2018-04-01.
+4. **A4 — dividends or a committed maximum-hold bound** (serves Phase 3B-2, §13.2, unchanged from §87.7 item 4). Probe: both A4 lines print `PASS` and the bound is read from criteria.
+5. **Ratify the A5 residual** (serves §87.5 probe (2) as a corpus audit): either A5 reads the evaluated session set from the trial/evaluation ledger rather than the verdict's declared window, or the residual is accepted in the criteria comment. Probe: a verdict whose declared window is 2022 while its ledger rows reach 2021 is refused.
+
+### 88.9 What would falsify this verdict
+
+- If any of the 931 archives hashes to something other than its manifest row, or a session in the window has no row, §88.2 is wrong and the capture is not delivered.
+- If a row in the warm-up corpus lacks `gating_mode`, or carries a `session_type` the calendar does not, the label is not a property of the corpus.
+- If `expected_manifest_fingerprint` does not equal the recomputed `MAN-FPR-V1` over `manifest.jsonl`, criteria 1.1.11 does not pin the corpus it claims to pin.
+- If any numeric leaf differs between 1.1.10 and 1.1.11, or `min_binding_evaluation_start_date`, `2d5ac7ac…`, 1201, 1196, the trial pin or the 2024 fold moved, the Ruling was used to re-baseline.
+- If `build_historical_dataset_from_raw_bhavcopy` accepts a pre-2022 directory, or a committed verdict's evaluated set contains a session before 2022-01-03, the guard is bypassable and this section's A5 verdict is wrong.
+- If a transposed pair of archives exits 0 from *every* gate that inspects the corpus, N-171 is understated; if it now exits 1, N-171 is closed and this section's finding is stale — the probe would say so.
