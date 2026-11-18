@@ -288,7 +288,7 @@ def test_short_walkforward_emits_the_s76_disclosures(tmp_path):
             encoding="utf-8"
         )
     )
-    assert art["criteria_version"] == "1.1.10"
+    assert art["criteria_version"] == "1.1.11"
     ids = {e["criterion_id"] for e in art["evaluations"]}
     assert {"CRIT-DATA-07", "CRIT-OVERFIT-04"} <= ids
 

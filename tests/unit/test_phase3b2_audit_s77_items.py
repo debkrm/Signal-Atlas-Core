@@ -172,7 +172,7 @@ def test_n145_undocumented_transition_still_fails_closed(security_master):
 
 def test_n145_every_dataset_instrument_resolves(short_run):
     artifact, _markdown = short_run
-    assert artifact["criteria_version"] == "1.1.10"
+    assert artifact["criteria_version"] == "1.1.11"
     assert artifact["dataset_instrument_resolution_denominator"] == 211
     assert artifact["dataset_instrument_resolution_numerator"] == 211
     assert Decimal(str(artifact["dataset_instrument_resolution_pct"])) == Decimal("100")
