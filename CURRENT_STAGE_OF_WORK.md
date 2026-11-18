@@ -1590,7 +1590,7 @@ auditor verdict (§11.3).
 - **The capture surfaced an ingest defect, and fixed it rather than storing around it.** Part of
   2020-2021 prints the legacy TIMESTAMP with a two-digit year (`13-Jul-20`, e.g. the 2020-07-13
   archive), which `parse_bhavcopy_date` refused; it now accepts `%d-%b-%y` as well as `%d-%b-%Y`. The
-  first capture run stopped at that architve with no partial file promoted; the rerun completed.
+  first capture run stopped at that archive with no partial file promoted; the rerun completed.
 - **931 current manifest rows, 931 added and 0 removed** (`git diff --numstat`), each carrying
   `source_url`, `retrieved_at`, `byte_count`, `sha256`, `session_date`, `session_type` and
   `gating_mode: WARMUP_NOT_GATABLE`. Gate W0.5-5/2D-6 now verify **985** current artifacts (54 prior +
@@ -1629,8 +1629,9 @@ auditor verdict (§11.3).
   that the **931** new archives are warm-up Bronze verified per-artifact by Gate W0.5-5/2D-6 and by the
   coverage probe: `Gate COV-2 ... (2,390,165 / 2,390,165 across 1,195 sessions, 100.0000%)`, unchanged.
 - **The gate is green on the committed tree.** `verify_audit_append_only.py --force-full` at `6cb7a81`:
-  **543 passed, 0 skipped, 0 xfailed** (149.78 s), **9/9** verifiers exit 0, **87** commit-bearing tags
-  verified, audit index reproduces at **87** section rows, green row 18 recorded against tree
+  **543 passed, 0 skipped, 0 xfailed** (149.78 s), **9/9** verifiers exit 0, **91** commit-bearing tags
+  discovered and verified (87 general plus the 4 derived wave sign-off tags), audit index reproduces
+  at **87** section rows, green row 18 recorded against tree
   `8ed078a9…`. The first run at `e35d8b1` had exited 1 on the five version literals; `6cb7a81` moves
   them, with no assertion relaxed and no threshold touched (§12.4).
 - **Invariants held.** No trial row was appended or scored: **N = 9, N_eval = 5**; the 2024 validation
