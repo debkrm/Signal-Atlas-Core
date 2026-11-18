@@ -2479,3 +2479,139 @@ Ordered by what it unblocks. Each item names the probe that must fail closed bef
 - If the certificate still exits 0 on a tree whose criteria and labels disagree after 1.1.14, Ruling 1 was applied additively — a new label beside the old rule.
 - If a targeted re-run yields 0 forced exits and moved metrics, the enforcement is not inert when the bound is not reached, and Ruling 2's condition is unmet for a different reason.
 - If any pin measured unchanged in §92.1 (`MAN-FPR`, `CAL-FPR`, `2d5ac7ac`, 2,936 / 1,201 / 1,196, N = 9, `N_eval = 5`, the 2024 fold, the all-zero token hash) moves later without being named, this baseline described the wrong tree.
+## §93 — Audit of `e5e9217` (tag `feat-s93-e5e9217`): the 931 labels align with the binding start and the certificate reads the criteria, the seam test binds the harness but not the engine, and seq 10's baseline does not reproduce
+
+**Date:** 18 November 2026
+**Commit under review:** `bd204a2` (19 files, +2,625/−964: the 931-row relabel by supersession, the certificate's derived label rule, criteria 1.1.14, the Phase 2D regeneration, `probe_hold_bound_invariance.py`, and the swing-seam test), plus `e5e9217` (the green-cache row, +19 lines).
+**Verdicts:** **§92.7 Ruling 1 CLOSED** — 931/931 rows read `BINDING_EVALUATION`, the certificate exits 1 on a tree whose criteria and labels disagree and 0 on the aligned tree, and 1.1.14 moves no numeric value · **§92.10 item 4 CLOSED as ordered** — three committed tests drive the seam and `probe_n177` executes them, though the session loop's use of the harness is still asserted by no test · **§92.8 Ruling 2 NOT SATISFIED** — the bound binds 175 times rather than 0, and 0 of 5 recorded metrics reproduce either with or without the consumer · **Ruling 3** — seq 10 may register and run on `2018-04-01..2023-12-31`, but the eight `1.1.5` artifacts are history, not its baseline.
+
+### 93.1 Baseline re-measured at `e5e9217`
+
+| Measurement | Result |
+|---|---|
+| `scripts/verify_audit_append_only.py --force-full` | **exit 0** — `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Suite under the gate | **548 passed in 57.27 s**, **0 skipped / 0 xfailed** (544 at `1aff4c6`; the four added tests are the three seam tests and the certificate's misaligned-pin test) |
+| Verifiers | **9/9 exit 0** — Gate W0.5-2 |
+| W0.5-4 / W0.5-5 | every tag verified, including `feat-s93-e5e9217` → `e5e9217`; **1,000** current artifacts match byte count and sha256, **957** superseded rows skipped as history |
+| Green cache | the source tree `ad5f0737…` was already recorded at this commit; the forced run printed `already recorded; not appending a duplicate row`; `git status` clean before and after |
+| Findings ledger | **49** rows / **29** ids; **27 CLOSED**, **1 OPEN** (N-150), **1 ACCEPTED** (N-152) |
+| Criteria / pins | **1.1.14**, `MAN-FPR-V1-a421d3d2…`, `CRIT-FPR-V1-a2f83d04…`, `CAL-FPR-V1-6acb5f45…`, sourced-window `CAL-FPR-V1-2d5ac7ac…`, **2,936** / **1,201** / **1,196** sessions, binding start **2018-04-01**, `max_hold_trading_sessions` **21** |
+| Trials / fold / holdout | **N = 9** (seq 1–9), `evaluation_count` **5**, heads `50de55e9…` / `ec66b016…`, registry pin `3326b1b2…`; in-sample `2018-04-01..2023-12-31`, validation `2024-01-01..2024-12-31`, holdout `2025-01-01..2026-11-11` with the all-zero token hash; `data/trials/` byte-identical to `abf198f`, `git status` clean after every run below |
+| `probe_pre2022_preconditions.py` | **exit 0, READY 9/9** — A1 5/5 (246/245/252/248), A2 17,864 active of 19,283 over all 931 sessions, A4 **4,357** ex-dates, A4 max hold `enforced at 1 production call site(s); refusals=1`, A5 `0 of 4,903` before 2018-04-01 |
+| `probe_pre2022_bronze_coverage.py` | **exit 0** — `931/931 … 931 BINDING_EVALUATION, 0 WARMUP_NOT_GATABLE` |
+| `probe_audit_findings.py N-177` | **exit 0** — `PASS N-177` |
+| `probe_hold_bound_invariance.py` | **exit 1** — `NOT INVARIANT`, 175 forced exits / 203 refusals, 5/5 metrics drifted (§93.4) |
+| Files the code commit touches | 19; **no** path under `reports/audit/`, `data/trials/`, `data/raw/2025`, `data/raw/2026`, `configs/partition_spec.yaml` |
+
+The calendar arithmetic is unchanged from §92.5: 2,127 sessions in `2018-04-01..2026-10-31` less 1,196 in `2022-01-03..2026-10-31` is the 931 relabelled sessions.
+
+### 93.2 §92.7 Ruling 1 — CLOSED: the labels, the certificate and the pin moved together, and the certificate now fails on the contradiction it used to pass
+
+| Measurement | Result |
+|---|---|
+| Manifest rows | **1,026 → 1,957**; current **1,000 → 1,000**; superseded **26 → 957** |
+| The 931 superseded rows | every archive field byte-identical to the row they supersede (`artifact`, `byte_count`, `sha256`, `source_url`, `retrieved_at`, `session_date`, `session_type`); **only** `is_current: true → false` and `status: active → superseded` differ — measured field-by-field, **0** exceptions |
+| The 931 appended rows | `is_current: true`, `gating_mode: BINDING_EVALUATION`, and a `retrieval_reference` naming §92.7 Ruling 1 / 1.1.14; every archive field identical to the superseded row; **0** exceptions |
+| Code diff shape | 931 removed / 1,862 added lines — **not** additions only. See the correction below |
+| Certificate on the aligned tree | **exit 0**, `931 BINDING_EVALUATION, 0 WARMUP_NOT_GATABLE` |
+| **Attack — criteria pushed forward** (pin `2022-01-03`, labels unchanged) | **exit 1**, `931 problem(s)`, first reading `session 2018-04-02 (FULL): … carries gating_mode 'BINDING_EVALUATION', expected 'WARMUP_NOT_GATABLE' for a session before the binding start 2022-01-03 (criteria 1.1.14)` |
+| **Attack — criteria pushed back** (pin `2015-01-01`) | **exit 0** — correct: every captured session is still on/after the pin, so the label is right |
+| **Attack — one current row mislabelled `WARMUP_NOT_GATABLE`** | **exit 1**, one problem naming `2018-08-01` and the expected `BINDING_EVALUATION` |
+| **Attack — one current row's `sha256` forged** | **exit 1**, `sha256 mismatch (disk 37f26540…, row 0000…)` |
+| **Attack — one current row duplicated** | **exit 1**, `2 duplicate current row(s)` |
+| Criteria 1.1.14 | **45** dataclass fields; **97** yaml leaves; **4** leaves changed — `metadata.version`, `expected_manifest_fingerprint`, `min_binding_evaluation_start_date`, `pre_binding_calendar_provenance_note`; **8** numeric leaves and **33** numeric-as-string leaves unchanged, **0** moved |
+| Manifest pin | recomputed over 1,865,503 bytes → `MAN-FPR-V1-a421d3d2de37ada0cf03c536782c64ffb305627ebef7baca15fdd8bfc59646b6`; Gate W0.5-5 verifies it |
+| Phase 2D artifacts | 27 rows, **PASS=2 / FAIL=0 / NOT RUN=25**, overall **NO-GO**, window `2022-01-03..2026-10-30`, criteria **1.1.14**, `CRIT-FPR-V1-a2f83d04…`; only the version, the fingerprint, the restatement and the derived `CRIT-WINDOW-01` threshold moved |
+
+**Correction to §92.7's own probe wording, appended rather than edited.** The Ruling asked that "the manifest diff is additions only". The diff is **931 removed / 1,862 added**, because the repository's supersession convention rewrites the superseded row's `is_current`/`status` in place and appends the new current row (the same shape `append_series_restatements.py` uses for the interval table). The invariant the Ruling was protecting — no archive byte, digest, URL or retrieval time changes, and the prior row survives — holds on measurement, and the implementer measured it precisely in `CURRENT_STAGE_OF_WORK.md` rather than repeating my wording. The probe as written was measuring the wrong shape; the correct acceptance, which I adopt from here, is "no archive field of a superseded row changed, and the count of current rows per archive is one". This is a correction of a probe's wording, not a relaxation of a threshold (§12.4 is untouched).
+
+**Residual, carried.** No verifier asserts the superseded rows' archive fields are intact; the check I ran above is this round's measurement, not the suite's. Work order item 3 asks for it.
+
+### 93.3 §92.10 item 4 — CLOSED as ordered: the harness seam is driven by the suite, and the engine's use of it is not
+
+| Measurement | Result |
+|---|---|
+| Test file | `tests/unit/test_phase3b2_audit_s93_items.py`, **3** tests |
+| Surfaces driven | `Portfolio.require_hold_bounds(execution_session, 21, calendar)` returns the refused ISIN with `Hold bound refused`; `execute_swing_strategy_session(..., forced_exit_isins=tuple(sorted(refusals)))` carries the exit |
+| **At the bound, normal bar** | one ticket, `FILLED`, `exit_reason=MAX_HOLD_BOUND_EXIT`, position `is_closed`, counters `(1 forced, 0 refused)` |
+| **At the bound, bar locked at the lower circuit** (`LOW = LOWER_LIMIT`, volume 100,000) | one ticket, `REJECTED_LOWER_CIRCUIT`, position open at quantity 10, counters `(0, 1)` — §5.3 measured, not inferred |
+| **One session inside the bound** | no refusal, no ticket, position untouched, counters `(0, 0)` |
+| Run | **3 passed in 0.90 s** |
+| `probe_n177` | **PASS**; it asserts the file exists, asserts the four tokens (`forced_exit_isins=`, `MAX_HOLD_BOUND_EXIT`, `REJECTED_LOWER_CIRCUIT`, `require_hold_bounds(`), and **executes** `pytest -q <file>` rather than naming it |
+| **Mutation — harness ignores the argument** (`forced = set()`) | **2 failed / 1 passed**, `probe_n177` **exit 1** — the test binds the harness |
+| **Mutation — the session loop stops passing it** (line removed) | **3 passed**, `probe_n177` **exit 0** — nothing fails |
+
+The last row is the §14.4 shape and is named as a residual rather than smoothed: the seam is proven at the harness, and the edge from the session loop into the harness is asserted by no committed test. It is not unmeasured, however — `probe_hold_bound_invariance.py`'s run A reports **175** forced exits produced by the real session loop (§93.4), so the edge is live at this commit; what is missing is a check that would notice if it were cut later. Work order item 2.
+
+### 93.4 §92.8 Ruling 2 — NOT SATISFIED on both clauses: the bound binds 175 times, and the drift is not the bound's
+
+`scripts/probe_hold_bound_invariance.py`, measured here (exit **1**):
+
+| Run | Sessions | `hold_bound_forced_exits` | `hold_bound_refusals` | Metrics vs `trial_009` / criteria `1.1.5` |
+|---|---|---|---|---|
+| A — committed engine, bound **21** | 494, `2022-01-03..2023-12-29` | **175** | **203** | **5/5 differ** |
+| B — same engine, bound raised to 10⁶ in the loaded criteria only | 494, same window | **0** | **0** | **5/5 differ** |
+
+| Metric | Committed `trial_009` (1.1.5) | Run A (bound 21) | Run B (bound disabled) |
+|---|---|---|---|
+| `closed_trades` | 193 | **382** | **194** |
+| `end_equity` | 1,283,327.73 | **1,086,020.54** | **1,164,053.76** |
+| `profit_factor` | 0.99196 | **1.10696** | **0.84146** |
+| `win_rate` | 0.25389 | **0.40838** | **0.26289** |
+| `max_drawdown` | 0.20733 | **0.32642** | **0.28422** |
+
+What this establishes, in the probe's own attribution logic:
+
+1. **Ruling 2's acceptance is not met.** It required `hold_bound_forced_exits == 0` and five metrics reproduced. Measured 175 forced exits / 203 refusals and 0 of 5 reproduced. The Ruling's expectation that the run would be cheap because the path is inert when the set is empty was half right — run B is inert (0 / 0), which is the path's own behaviour — and wrong about the world: a 21-session bound is reached 175 times in one 493-session fold. The assumption, not the code, was falsified.
+2. **The drift is not the bound's.** Run B disables the consumer and still fails all five metrics (194 vs 193 closed trades, end equity short by ₹119,273.97). The engine or its inputs moved between the `1.1.5` artifact (2026-11-17T05:30:30) and this tree. The probe's docstring names the likely cause — `security_master_fingerprint` moved when the interval table was restated under §91.2, which N-130 correctly refuses to treat as a re-render — and that remains a named, unmeasured hypothesis.
+3. **The bound is materially not inert.** A-vs-B on the same window: 194 → 382 closed trades, PF 0.841 → 1.107, end equity 1,164,053.76 → 1,086,020.54, win rate 0.263 → 0.408, max drawdown 0.284 → 0.326. Any trial that did not enforce the bound is a different strategy from one that does.
+4. **Registry containment is measured.** `data/trials/trial_registry.jsonl` and its three sidecars hash identically before and after both runs (the probe asserts it and would have raised); `data/trials/` is **N = 9**, `evaluation_count` **5**, heads `50de55e9…` / `ec66b016…`, `git status` clean. The two verification rows live only in the temporary registry copies the probe deletes.
+5. **One more honest difference.** Run A reports **494** executed sessions against the artifact's **493**. The bound cannot change how many sessions are traversed, so this is an input/traversal difference of the same family as (2); it is named, not asserted to be an error.
+
+**Residual for comparability.** The eight recorded trial artifacts were produced under criteria `1.1.5`, and neither the bound's presence nor the engine's current inputs reproduce them. Nothing in this round re-ran them under the current tree. A seq-10 result must therefore carry its own current-tree baseline, and the eight remain history.
+
+### 93.5 Ruling 3 — seq 10 may register and run; its baseline is the current tree, never the `1.1.5` artifacts
+
+*Evidence:* §93.4, measured at `e5e9217`: the bound binds 175 times / 203 refusals on the 2022–2023 fold, the bound's own effect is 194 → 382 closed trades, and both the bound-live and bound-disabled runs fail 5/5 against `trial_009`'s `1.1.5` artifact. §93.2: the 931 rows now carry `BINDING_EVALUATION`, so a 2018-start in-sample window is label-consistent and `probe_pre2022_preconditions.py` is READY 9/9 over it (§93.1). §92.10 item 3 ordered seq 10 only after Ruling 1, and Ruling 1 is closed.
+
+*Ruling:* candidate **seq 10** is authorised to be registered and run on the expanded in-sample window **`2018-04-01..2023-12-31`**, with **2024** frozen as the validation fold and `2025-01-01..2026-11-11` sealed. Its comparability baseline is **a current-tree run of the same configuration over its own window**, not `trial_001..009`. The registry moves `N` 9 → 10 with `evaluation_count` still **5**, its manifest re-pinned by measurement, and the row names criteria **1.1.14** and the in-sample window. The report of seq 10 must carry `hold_bound_forced_exits` and `hold_bound_refusals`, and it must state that trials 1–9 were run without an enforced hold bound.
+
+*It does not change:* the bound (**21**), any threshold, the cost schedule, the fold boundaries, the trial count's meaning (`N` counts registered hypotheses, `evaluation_count` counts evaluations of the sealed/validation set), the holdout seal, or the trial registry's history. It opens no new scope: delivery swing on `EQ`, no intraday, no F&O, no `BE` entry.
+
+*Work item:* §93.7 item 1, serving `§13.2` / Phase 3B-2. *Probe:* the registry row's `N`, `criteria_version`, window and manifest pin agree with the committed criteria; a run whose evaluated set contains any session in `2025-01-01..2026-11-11` fails closed; the artifact carries both counters; a report that names a `1.1.5` artifact as its baseline fails review.
+
+*Falsified by:* a seq 10 presented against `trial_009` or any `1.1.5` artifact as its comparison; a seq-10 run with **0** forced exits over a 1,400-session window reported as evidence the bound is inert; a registry row that moves `evaluation_count`; or any evaluated session on/after `2025-01-01`.
+
+### 93.6 Phase verdicts
+
+| Phase | Verdict at `e5e9217` | Named residuals |
+|---|---|---|
+| `§10.8` Ruling 1 — labels, certificate, pin | **CLOSED** — 931/931 `BINDING_EVALUATION`, certificate exit 0 aligned / exit 1 misaligned, pin `a421d3d2…`, 1.1.14 moves no numeric value | §92.7's "additions only" wording corrected to "no archive field changed"; no verifier asserts the superseded rows' archive fields (§93.7 item 3) |
+| `§12.4` / `§13.2` §92.10 item 4 — seam test | **CLOSED as ordered** — 3 tests through the harness, `probe_n177` executes them, locked bid refuses and leaves the position open | the session loop → harness edge is unasserted: removing it leaves 3 passed / `PASS N-177` |
+| `§13.2` §92.8 Ruling 2 — invariance | **NOT SATISFIED** — 175 forced exits, 203 refusals, 5/5 metrics drift; bound-disabled run also 5/5 | the drift's cause is named (interval restatement / engine movement since 1.1.5) and unmeasured; the eight artifacts are not re-run under the current tree |
+| `§10.8` A1 / A2 / A4 / A5 | **PASS** — READY 9/9 on the expanded window | A5 still evaluates the post-2022 verdict corpus only; it tests the pin, not a 2018-start run |
+| `§10.8` / `§10.5` manifest provenance | **PASS** — 1,000 current / 957 superseded rows attested, archive digests unchanged | a superseded row's digest is not re-verified after the flip |
+| Phase 2D | **NO-GO** — PASS=2 / FAIL=0 / NOT RUN=25, criteria 1.1.14 | artifact `timestamp_utc` still 2026-11-16T10:00:00 under a 1.1.14 fingerprint (carried from §91.6, §92.5) |
+| Trials / fold / holdout | **N = 9 / N_eval = 5**, data/trials byte-identical; 2024 fold frozen; holdout sealed, all-zero token hash | seq 10 not yet registered (Ruling 3 authorises it) |
+| Gate / cache | **GO** — 548 passed, 9/9 verifiers, tree `ad5f0737…` already recorded, no duplicate row | — |
+
+### 93.7 Work order for feat-s94
+
+Ordered by what it unblocks. Each item names the probe that must fail closed before it closes, and the phase it serves.
+
+1. **Register and run candidate seq 10 under Ruling 3** (serves `§13.2` / Phase 3B-2). One registry row: in-sample `2018-04-01..2023-12-31`, validation fold **2024** frozen, `N` 9 → 10, `evaluation_count` **5**, manifest re-pinned, criteria **1.1.14** named, no path under `data/raw/2025` or `2026` in its provenance, and a current-tree baseline run rather than a `1.1.5` artifact. **Probe:** the registry row's `N`, version, window and pin agree with the criteria; a sealed-era session in the evaluated set fails closed; the artifact carries `hold_bound_forced_exits` / `hold_bound_refusals`; a report naming a `1.1.5` baseline is refused.
+2. **Assert the engine → harness edge** (serves `§12.4`, `§14.4`). Removing `forced_exit_isins=tuple(sorted(forced_exits))` from the session loop must make a committed check fail; today 3 tests pass and `probe_n177` exits 0. Either assert the passthrough in `probe_n177` (source, plus a short run whose counters are non-zero) or drive one session through `run_phase3b2_walkforward`'s loop. **Probe:** the mutation above makes `probe_n177` exit 1.
+3. **Verify the superseded rows survive their own flip** (serves `§10.1`, `§10.5`). A verifier must assert that for every superseded manifest row there is exactly one current row for the same artifact and that `byte_count`, `sha256`, `source_url`, `retrieved_at`, `session_date` and `session_type` are unchanged. **Probe:** editing a superseded row's `sha256` must fail the verifier; today only this round's measurement checks it.
+4. **N-150 — CRIT-OVERFIT-06 needs a second fold or a recorded admission** (carried, MEDIUM). **Probe:** the verdict bundle names the fold count it used, and a `PASS` on fewer than two folds fails closed.
+5. **The replay counter's `get` and `popitem`** (carried, `§92.10` item 6). **Probe:** `probe_n174` asserts the accessor set it can measure, so a narrowed counter fails it.
+6. **Restate the Phase 2D artifact's timestamp** (carried, LOW). The artifact has carried `2026-11-16T10:00:00+00:00` through 1.1.11, 1.1.12, 1.1.13 and now 1.1.14; the yaml note is the only record of which criteria its 25 `NOT RUN` rows were computed under. **Probe:** the artifact's `timestamp_utc` is later than its `criteria_version`'s effective date, or a `restatement_history` block names each version it has carried.
+
+### 93.8 What would falsify this verdict
+
+- If the certificate still exits 0 with a single current row mislabelled `WARMUP_NOT_GATABLE`, Ruling 1 was applied additively and this closure is wrong. Measured: exit 1 on that row.
+- If a superseded manifest row's `sha256` differs from the row it supersedes, the relabel edited history rather than appending over it. Measured: 0 exceptions across 931.
+- If 1.1.14 changed a numeric threshold that my leaf comparison did not cover (a value embedded in a note or a new field), the "no numeric change" claim is a scan artefact. Measured: 97 leaves, 8 numeric + 33 numeric-string, 0 moved.
+- If run B was not actually bound-disabled, the attribution in §93.4 collapses. Measured: 0 forced exits / 0 refusals and metrics that differ from run A's, so the switch took effect.
+- If the 175/203 counters count anything other than `MAX_HOLD_BOUND_EXIT` tickets, the bound's effect is overstated. The counter is `len(forced_exits - forced_filled)` over tickets carrying that reason; a partial fill reads as a forced exit and no refusal, so 203 is a floor on refusals, not a ceiling.
+- If seq 10 is registered against the `1.1.5` artifacts as its comparison, Ruling 3 was ignored and any "improvement" it reports is uninterpretable.
+- If `data/trials/` gains a row without a new numbered section and a registry row naming 1.1.14, the N = 9 baseline in §93.1 described the wrong tree.
