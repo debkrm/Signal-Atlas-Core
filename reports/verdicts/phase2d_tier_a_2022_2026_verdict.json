@@ -1,6 +1,6 @@
 {
-  "criteria_version": "1.1.11",
-  "criteria_fingerprint": "CRIT-FPR-V1-1c0131d6ab7302f2cfef41021c4c2e6a94061c3a2965915901c2520290751cc3",
+  "criteria_version": "1.1.12",
+  "criteria_fingerprint": "CRIT-FPR-V1-50784f1a07929fc11567e56321f7357b4f1466de57b6f5b06058e03b18b3ff0d",
   "calendar_fingerprint": "CAL-FPR-V1-6acb5f45ce5686a503a53e7fc96c12a41391d16bde5abbe2f9c91073c47a9ac9",
   "timestamp_utc": "2026-11-16T10:00:00+00:00",
   "evaluation_start_date": "2022-01-03",

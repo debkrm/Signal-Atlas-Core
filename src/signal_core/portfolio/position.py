@@ -56,6 +56,9 @@ class Position:
         self._realized_net_pnl: Decimal = Decimal("0.00")
         self._total_charges_paid: Decimal = Decimal("0.00")
         self._unallocated_buy_charges: Decimal = Decimal("0.00")
+        # Audit §90.9 item 4: the session the open position was first built on, so a holding-period
+        # bound can be measured in authoritative calendar sessions (§13.2).
+        self._entry_date: Optional[datetime.date] = None
 
     @property
     def instrument_id(self) -> str:
@@ -68,6 +71,59 @@ class Position:
     @property
     def is_closed(self) -> bool:
         return self._quantity == 0
+
+    @property
+    def entry_date(self) -> Optional[datetime.date]:
+        """The session that opened the currently held quantity, or None when nothing is held."""
+        return self._entry_date
+
+    def holding_sessions(self, as_of: datetime.date, calendar) -> int:
+        """
+        Sessions elapsed between the entry session and `as_of`, counted on the authoritative calendar.
+
+        Zero on the entry session itself. A date the calendar does not schedule is refused rather than
+        approximated, because a holding bound counted on an invented session count is not a bound
+        (§6.3).
+        """
+        if self._quantity <= 0 or self._entry_date is None:
+            return 0
+        sessions = calendar.sessions
+        try:
+            return sessions.index(as_of) - sessions.index(self._entry_date)
+        except ValueError as exc:
+            raise LedgerValidationError(
+                f"Holding-period measurement needs authoritative sessions for {self._instrument_id}: "
+                f"entry {self._entry_date}, as-of {as_of} (AGENTS.md §6.3)"
+            ) from exc
+
+    def require_within_hold_bound(
+        self, as_of: datetime.date, max_hold_trading_sessions: int, calendar
+    ) -> None:
+        """
+        Refuses a hold that reaches `max_hold_trading_sessions` (Audit §90.9 item 4, AGENTS.md §13.2).
+
+        The bound is passed in from `configs/go_no_go_criteria.yaml`; there is no module default (§10.8).
+        A position that cannot exit inside the bound because the bid is locked at the lower circuit is
+        still refused here: an unbounded exit delay is not an extension of the holding period (§5.3).
+        """
+        if (
+            isinstance(max_hold_trading_sessions, bool)
+            or not isinstance(max_hold_trading_sessions, int)
+            or max_hold_trading_sessions < 1
+        ):
+            raise LedgerValidationError(
+                f"max_hold_trading_sessions must be a positive integer, got {max_hold_trading_sessions!r}"
+            )
+        if self._quantity <= 0:
+            return
+        elapsed = self.holding_sessions(as_of, calendar)
+        if elapsed >= max_hold_trading_sessions:
+            raise LedgerValidationError(
+                f"Hold bound refused: {self._instrument_id} entered {self._entry_date} would be held "
+                f"{elapsed} session(s) into {as_of}, at or past max_hold_trading_sessions="
+                f"{max_hold_trading_sessions} (Audit §90.9 item 4); a lower-circuit freeze is a refusal, "
+                f"never an extension (§5.3)"
+            )
 
     @property
     def average_entry_price(self) -> Decimal:
@@ -144,6 +200,7 @@ class Position:
         price = fill.executed_price
 
         if fill.order.side == OrderSide.BUY:
+            was_flat = self._quantity == 0
             gross = _quantize_paise(Decimal(qty) * price)
             new_qty = self._quantity + qty
             new_cost_basis = self._total_cost_basis + gross
@@ -154,6 +211,8 @@ class Position:
             self._average_entry_price = new_avg_price
             self._unallocated_buy_charges += charges
             self._total_charges_paid += charges
+            if was_flat:
+                self._entry_date = fill.fill_date
 
             return (Decimal("0.00"), Decimal("0.00"))
 
@@ -170,6 +229,7 @@ class Position:
                 self._total_cost_basis = Decimal("0.00")
                 self._quantity = 0
                 self._average_entry_price = Decimal("0.0000")
+                self._entry_date = None
             else:
                 # Partial reduction: basis derived proportionally directly from total_cost_basis (I-7)
                 allocated_buy_charges = _quantize_paise(

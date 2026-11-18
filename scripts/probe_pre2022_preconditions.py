@@ -39,7 +39,9 @@ for _p in (str(REPO_ROOT / "src"),):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from signal_core.storage.calendar import load_anchored_nse_trading_calendar  # noqa: E402
 from signal_core.storage.gating import WARMUP_NOT_GATABLE, warmup_sessions_in  # noqa: E402
+from signal_core.storage.security_master import load_cash_universe_symbol_intervals  # noqa: E402
 CALENDAR_PATH = REPO_ROOT / "configs" / "trading_calendar_nse.json"
 CRITERIA_PATH = REPO_ROOT / "configs" / "go_no_go_criteria.yaml"
 MANIFEST_PATH = REPO_ROOT / "data" / "reference" / "manifest.jsonl"
@@ -200,27 +202,47 @@ def check_a1() -> List[Tuple[str, str]]:
 
 
 def check_a2() -> List[Tuple[str, str]]:
-    """§80.13 item 5: pre-2022 identity is derived, and exceptions are listed rather than skipped."""
+    """
+    §80.13 item 5 / §90.9 item 3: the warm-up window is covered by derived identity intervals.
+
+    The window opens on 2018-04-01, a Sunday that the authoritative calendar does not schedule, and the
+    derivation refuses to date an interval on a non-session (Note N-24). The acceptance is therefore
+    stated against the window's first *session* and against coverage of every session in the window,
+    which is strictly stronger than comparing the earliest row with a date the calendar cannot hold: a
+    table that named 2018-04-01 would fail the non-session check the derivation enforces.
+    """
     with INTERVALS_PATH.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
-    starts = sorted(
-        datetime.date.fromisoformat(row["effective_from"][:10])
-        for row in rows
-        if row.get("effective_from")
-    )
-    in_window = [row for row in rows if (row.get("effective_from") or "")[:10] <= WINDOW_END.isoformat()]
-    if not starts:
+    if not rows:
         return [("NO", "A2: the identity interval table is empty")]
-    first = starts[0]
-    if first > WINDOW_START:
+    active = load_cash_universe_symbol_intervals()
+    sessions = [
+        session
+        for session in load_anchored_nse_trading_calendar().sessions
+        if WINDOW_START <= session <= WINDOW_END
+    ]
+    first = min(row.effective_from for row in active)
+    uncovered = [
+        session
+        for session in sessions
+        if not any(
+            row.effective_from <= session and (row.effective_to is None or session < row.effective_to)
+            for row in active
+        )
+    ]
+    if not sessions:
+        return [("NO", "A2: the authoritative calendar names no session in the warm-up window")]
+    if first > sessions[0] or uncovered:
         return [(
             "NO",
-            f"A2: {len(rows)} interval row(s) begin {first.isoformat()}, after the binding window start "
-            f"{WINDOW_START.isoformat()}; {len(in_window)} row(s) reach {WINDOW_END.isoformat()}",
+            f"A2: {len(rows)} interval row(s) with {len(active)} active; earliest "
+            f"{first.isoformat()} vs the window's first session {sessions[0].isoformat()}; "
+            f"{len(uncovered)} of {len(sessions)} warm-up session(s) uncovered",
         )]
     return [(
         "PASS",
-        f"A2: {len(in_window)} interval row(s) cover the window from {first.isoformat()}",
+        f"A2: {len(active)} active interval row(s) of {len(rows)} committed, earliest "
+        f"{first.isoformat()} = the window's first session, covering all {len(sessions)} warm-up session(s)",
     )]
 
 

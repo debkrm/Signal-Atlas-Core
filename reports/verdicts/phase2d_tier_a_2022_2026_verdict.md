@@ -3,8 +3,8 @@
 - **Overall Decision:** `NO-GO`
 - **Evaluated At (UTC):** `2026-11-16T10:00:00+00:00`
 - **Evaluation Window:** `2022-01-03` to `2026-10-30`
-- **Criteria Version:** `1.1.11`
-- **Criteria Fingerprint:** `CRIT-FPR-V1-1c0131d6ab7302f2cfef41021c4c2e6a94061c3a2965915901c2520290751cc3`
+- **Criteria Version:** `1.1.12`
+- **Criteria Fingerprint:** `CRIT-FPR-V1-50784f1a07929fc11567e56321f7357b4f1466de57b6f5b06058e03b18b3ff0d`
 - **Calendar Fingerprint:** `CAL-FPR-V1-6acb5f45ce5686a503a53e7fc96c12a41391d16bde5abbe2f9c91073c47a9ac9`
 - **Summary Counts:** `PASS=2`, `FAIL=0`, `NOT RUN=25` (Total=27)
 

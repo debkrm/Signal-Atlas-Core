@@ -172,7 +172,7 @@ def test_n145_undocumented_transition_still_fails_closed(security_master):
 
 def test_n145_every_dataset_instrument_resolves(short_run):
     artifact, _markdown = short_run
-    assert artifact["criteria_version"] == "1.1.11"
+    assert artifact["criteria_version"] == "1.1.12"
     assert artifact["dataset_instrument_resolution_denominator"] == 211
     assert artifact["dataset_instrument_resolution_numerator"] == 211
     assert Decimal(str(artifact["dataset_instrument_resolution_pct"])) == Decimal("100")
@@ -293,7 +293,7 @@ def test_overfit05_gates_the_ex_top_1_margin():
 
 def test_criteria_1_1_7_adds_only_the_three_committed_bindings():
     crit = _criteria()
-    assert crit.version == "1.1.11"
+    assert crit.version == "1.1.12"
     assert crit.min_positive_is_fold_ratio == Decimal("0.75")
     assert crit.min_fold_liquidated_pf == Decimal("1.30")
     assert crit.min_liquidated_pf_ex_top_1 == Decimal("1.40")

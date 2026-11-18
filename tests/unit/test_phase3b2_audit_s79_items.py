@@ -232,9 +232,14 @@ def test_n158_every_documented_transition_meets_its_interval_boundary():
     intervals = load_cash_universe_symbol_intervals()
     actions = list(load_corporate_actions())
     pairs = adjacent_identity_pairs(intervals)
-    assert len(pairs) == 324
+    # Audit §90.7 Ruling 1: 324 is the measured count of post-2022 boundaries, not a frozen numeral.
+    # §90.9 item 3 extended the log over the 931 warm-up sessions and added 102 correctly documented
+    # boundaries, so the total is 426 while every one of the 324 post-2022 tuples survives.
+    post_2022 = [pair for pair in pairs if pair[3] >= datetime.date(2022, 1, 3)]
+    assert len(post_2022) == 324
+    assert len(pairs) == 426
 
-    assert validate_documented_transition_dates(intervals, actions) == 324
+    assert validate_documented_transition_dates(intervals, actions) == 426
 
     documented = {
         (row.old_isin, row.new_isin): row

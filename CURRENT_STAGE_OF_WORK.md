@@ -1771,3 +1771,85 @@ sealed. `probe_pre2022_preconditions.py` still exits 1 with `A1` 5/5 `PASS`, `A5
 passed / 0 skipped / 0 xfailed** in 46.82 s, 9/9 verifiers exit 0, green row recorded against tree
 `b90a9393…`. `reports/audit/**`, `AGENTS.md`, `.agents/skills/audit-round/SKILL.md` and
 `configs/trading_calendar_nse.json` are untouched, as are `data/trials/` and `data/raw/`.
+
+### Audit §90 work order (feat-s91): one generator, an O(n) interval resolver, the 17 red tests, and the 1.1.12 artifacts (implemented; gates measured; not audited)
+
+Round: the five items of the §90 work order, implemented over the working tree based on `e0ef0d7` (tag
+`audit-s90-2c0631e`). Nothing below is audited; the wording states what was measured and what was not
+(§11.3). No test was skipped or xfailed, no assertion tolerance was widened, and no threshold in
+`configs/go_no_go_criteria.yaml` moved (§12.4). The binding
+window stays **2022-01-03**, N = 9, N_eval = 5, the 2024 fold frozen and the holdout
+`2025-01-01..2026-11-11` sealed; `reports/audit/**`, `AGENTS.md`, `.agents/skills/audit-round/SKILL.md`
+and `configs/trading_calendar_nse.json` are untouched, and no `data/raw` payload was re-fetched.
+
+**Baseline re-measured.** `pytest -n auto --dist loadfile -q` on the untouched tree: **17 failed, 527
+passed in 442.12 s**. After the round: **544 passed, 0 failed, 0 skipped, 0 xfailed in 60.78 s** — same
+command, same 16 workers.
+
+**Item 1 — a direct call reproduces the whole corpus.** `generate_corporate_actions_corpus()` now ends by
+merging its own output through `merge_pre2022_corporate_actions(...)`, and `main()` calls the generator
+instead of re-merging it. A direct call emits **5,016 rows**, `sha256 6ff7d3ed…`, byte-identical to the
+committed `data/reference/corporate_actions.jsonl` and to the manifest's current row (1,955,499 bytes);
+the merge prints `15 payload(s), 4440 derived row(s), 4429 merged`. The module is imported both as
+`scripts.derive_2022_2024_corpora` and run as a script, so `scripts/` now joins `sys.path` beside the
+existing `src/` guard — the sibling `ingest_pre2022_corporate_actions` import resolved only in the second
+shape before.
+
+**The requested digest pin was measured, not moved.** The order asked for the corporate-action pin to move
+from `6ff7d3ed…` to `856d8e2d…`. `856d8e2d…` is the digest of the **587-row pre-merge** output;
+`6ff7d3ed…` is the 5,016-row committed corpus. `test_n151_generator_reproduces_the_committed_corpus`
+carries no literal digest — it compares generator output against the committed file — so no pin was
+edited here, and item 1 is what turns it green. Pinning `856d8e2d…` would assert that the corpus does not
+reproduce.
+
+**Item 2 — resolution is indexed, and the log is resolved in one pass.** `apply_interval_restatements`
+was O(ISINs × rows): a genexpr rescanned every active row once per ISIN (4.483 s of a 4.777 s
+`SecurityMaster.__init__` profile). It now groups the log once, keeps a live list per ISIN, and fails
+closed on a non-contained overlap exactly as before; `resolve_symbol` reads a newest-first list, and
+`resolve_isin_by_symbol` bisects an aligned `effective_from` index instead of scanning. Measured on the
+committed 19,283-row log (17,864 active rows): interval load **4.34 s → 0.17 s**,
+`build_production_security_master()` **> 4.8 s → 0.54 s**, and 931 warm-up sessions of
+`get_point_in_time_active_equities` **3.2 s → 0.40 s** (the per-series start index is built once per
+interval sequence and reused). The suite followed: 442.12 s → 60.78 s.
+
+**A partly-restated row keeps its uncovered remainder.** Supersession used to delete the earlier row
+whole. The production master seeds an open-ended core `EQ` row per name, and an appended `BE`
+restatement covering only part of it therefore erased the part it did *not* cover: `INE704P01025`
+(COCHINSHIP) resolved to nothing at 2024-01-15, which is what failed `test_storage` G2b5-3,
+`test_price_bands_h30` (`2 == 3`) and `test_phase3b2_audit_s68_items` (`224 == 225`). The resolver now
+clips: the covered slice is superseded and the remainders stay in force, so `INE704P01025` reads
+`EQ 2024-01-10..2024-09-25`, `BE 2024-09-25..2024-12-30`, `EQ 2024-12-30..` — the same shape the raw
+interval table states. All three tests pass **without a literal change**; no fixture count was edited.
+The same defect left `INE144J01027` with an open-ended row overlapping a closed one, which made
+`verify_cash_universe_coverage.py` abort at Gate COV-1 on the committed code; it now runs to COV-4.
+
+**Item 3 — the remaining red tests.** Eleven `criteria_version`/`version` literals moved `1.1.11` →
+`1.1.12` across `test_criteria`, `test_phase3b2_audit_s76_items` (×2), `test_phase3b2_audit_s77_items`
+(×2), `test_phase3b2_audit_s78_items`, `test_significance` and `test_walkforward` (×4). N-158's `324`
+became `426` under §90.7 Ruling 1, and the test now also asserts the **324** post-2022 tuples survive, so
+the old measurement is pinned inside the new one rather than dropped.
+
+**Item 4 — the 1.1.12 artifacts.** `reports/verdicts/phase2d_tier_a_2022_2026_verdict.{json,md}` were
+regenerated by `scripts/generate_phase2d_tier_a_report.py`. The whole diff is two lines per artifact:
+`criteria_version 1.1.11 → 1.1.12` and `criteria_fingerprint CRIT-FPR-V1-1c0131d6… → 50784f1a…`. All 27
+criterion rows keep their verdicts and measured values, `PASS=2 / FAIL=0 / NOT RUN=25` is unchanged, the
+calendar pin `CAL-FPR-V1-6acb5f45…` is unchanged, and `data/trials/` is untouched, so the eight post-2022
+trial outcomes are byte-identical. `verify_phase2d_verdicts.py`: ALL PHASE 2D VERDICT ENGINE GATES
+PASSED.
+
+**One verifier expectation had to follow the data, and it got stricter rather than looser.** Gate COV-3
+pinned `unresolved_isin_count == 924` from the pre-§90.9 interval table, whose post-2022 rows were
+open-ended `EQ` and therefore resolved 250 names that were in trade-to-trade on 2024-01-16. With the
+sourced series rows the honest count is **1,174**, attributed against the authoritative Bhavcopy of the
+same session: **930** scrips have no row at all (identity begins at first trade, §40.5), **220** traded in
+`BE`, **24** in another non-`EQ` series, and **zero** scrips the Bhavcopy reports as `EQ` fail to resolve.
+The exact-equality assertion is kept (no tolerance added) and `max_unresolved_threshold` is the same
+1,174, so the ingest guard and the gate agree on one measured number instead of the guard being 174 rows
+slacker than the assertion. `verify_cash_universe_coverage.py` exits 0 with COV-1..COV-4 PASS, COV-4's
+fold reaching VERIFIED.
+
+**Gate.** `verify_audit_append_only.py --force-full`: **ALL REPOSITORY FOUNDATION GATES PASSED** —
+W0.5-1 append-only, W0.5-1b volumes, W0.5-1c index, W0.5-2 **9/9 verifiers exit 0**, W0.5-3 **544 passed
+/ 0 skipped / 0 xfailed**, W0.5-4 tags, W0.5-5 **1000 current artifacts** matched. `verify_audit_findings.py`
+27/27 probes. Not audited: no §91 verdict exists yet, so nothing here is signed off, and the round's
+green row and tag are recorded after this commit, not by it.

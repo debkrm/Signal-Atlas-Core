@@ -5,7 +5,12 @@ Verifies Audit Findings H-50, H-51, H-52, H-53, H-44, and Notes N-24, N-25, N-26
   1. Reference artifact integrity, SHA-256 provenance, active manifest entry, and session-dated effectivity (§10.4, §10.7, H-50, N-25).
   2. Non-overlapping symbol intervals and seamless transitions (NESTLEIND, MAZDOCK, COCHINSHIP, GFSTEELS).
   3. Point-in-time symbol->ISIN resolution on traded exchange Bhavcopy scrips (H-52, H-53).
-  4. Sourced pipeline consumption on real 16-Jan-2024 sec_list.csv: exact accounting of 1,839 extracted (66.56%), 924 unresolved in-scope, 861 out-of-scope non-EQ (H-52, N-26).
+  4. Sourced pipeline consumption on real 16-Jan-2024 sec_list.csv: exact accounting of 1,589 extracted, 1,174 unresolved in-scope, 861 out-of-scope non-EQ (H-52, N-26).
+     The unresolved count is attributed against the authoritative Bhavcopy of the same session: 930
+     scrips have no row at all (identity begins at first trade per §40.5), 220 traded in `BE` and 24 in
+     another non-`EQ` series on the day. Zero scrips the Bhavcopy reports as `EQ` fail to resolve. The
+     pre-§90.9 table carried open-ended `EQ` rows for the post-2022 window, so it resolved 250 names
+     that were in trade-to-trade on 2024-01-16; the 924 figure predates those sourced series rows.
   5. Real walk-forward fold execution over authentic January 2024 Bhavcopy and NSE price band publication reaching VERIFIED (H-44).
   6. Zero bare assert statements; fail closed on missing evidence (N-24, H-53).
 """
@@ -737,11 +742,12 @@ def verify_gate_cov3_series_partitioned_accounting() -> bool:
     if summary.out_of_scope_series_count != 861:
         print(f"[FAIL] Expected out_of_scope_series_count == 861, got {summary.out_of_scope_series_count}")
         return False
-    if summary.unresolved_isin_count != 924:
-        print(f"[FAIL] Expected unresolved_isin_count == 924, got {summary.unresolved_isin_count} (Finding H-52)")
+    # Exact conservation, no tolerance: every in-scope row is either extracted or attributed above.
+    if summary.unresolved_isin_count != 1174:
+        print(f"[FAIL] Expected unresolved_isin_count == 1174, got {summary.unresolved_isin_count} (Finding H-52)")
         return False
-    if summary.extracted_records != 1839:
-        print(f"[FAIL] Expected extracted_records == 1839, got {summary.extracted_records}")
+    if summary.extracted_records != 1589:
+        print(f"[FAIL] Expected extracted_records == 1589, got {summary.extracted_records}")
         return False
     if summary.non_target_count != 0:
         print(f"[FAIL] Expected non_target_count == 0 (no target_set filter applied), got {summary.non_target_count} (Note N-26)")
@@ -752,7 +758,11 @@ def verify_gate_cov3_series_partitioned_accounting() -> bool:
 
     coverage_pct = (Decimal(str(summary.extracted_records)) / Decimal(str(summary.in_scope_series_count))) * Decimal("100")
     print(f"[INFO] Listed EQ Universe Coverage on 2024-01-16 (Informational): {summary.extracted_records} / {summary.in_scope_series_count} ({coverage_pct:.2f}%)")
-    print(f"[INFO] 924 scrips listed-but-untraded on or before 2024-01-16 (identity begins at first trade per §40.5; Finding H-54).")
+    print(
+        "[INFO] 1,174 unresolved EQ scrips on 2024-01-16: 930 untraded on or before the session (identity "
+        "begins at first trade per §40.5; Finding H-54), 220 trading in BE and 24 in another non-EQ series "
+        "per the authoritative Bhavcopy of the same session."
+    )
     print("[PASS] Gate COV-3: Series partitioning and dropped-row accounting verified with exact row conservation.\n")
     return True
 
@@ -807,7 +817,8 @@ def verify_gate_cov4_walkforward_verified_fold() -> bool:
             security_master=sm,
             silver=silver,
             calendar=cal,
-            max_unresolved_threshold=1000,
+            # Exact measured count, not slack: Gate COV-3 below asserts equality with the same value.
+            max_unresolved_threshold=1174,
         )
 
         sm_with_bands = sm.load_from_silver_price_bands(silver, [d16], calendar=cal)

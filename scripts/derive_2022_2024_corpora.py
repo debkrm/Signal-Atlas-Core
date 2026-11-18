@@ -30,6 +30,12 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT / "src"))
 
+# This module runs as `python scripts/derive_2022_2024_corpora.py` and is imported as
+# `scripts.derive_2022_2024_corpora`; the pre-2022 payload derivation is a sibling of this file.
+_SCRIPTS_ROOT = Path(__file__).resolve().parent
+if str(_SCRIPTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_ROOT))
+
 from signal_core.storage.security_master import (
     CorporateAction,
     CorporateActionType,
@@ -689,7 +695,11 @@ def generate_corporate_actions_corpus() -> list[CorporateAction]:
     # Audit §79.12 item 4 (N-158): the generator cannot correct a pair it skips as already documented,
     # so it asserts the date instead of trusting the hand-written row.
     validate_documented_transition_dates(load_cash_universe_symbol_intervals(), sorted_actions)
-    return sorted_actions
+    # Audit §90.9 item 2 / §14.4: the committed corpus carries the warm-up rows derived from the
+    # pre-2022 Bronze payloads, so this generator emits them too. Calling it directly must reproduce
+    # data/reference/corporate_actions.jsonl; merging only inside main() let a direct call silently
+    # write a 2022-2024 file over the 2018-2021 rows.
+    return merge_pre2022_corporate_actions(sorted_actions)
 
 
 CORPUS_RESTATEMENT_TIMESTAMP_UTC = "2026-11-17T12:00:00+00:00"
@@ -757,6 +767,35 @@ def restate_manifest(
     }))
 
     manifest_path.write_text("\n".join(written) + "\n", encoding="utf-8", newline="\n")
+
+
+def merge_pre2022_corporate_actions(corpus: List[CorporateAction]) -> List[CorporateAction]:
+    """
+    Adds the warm-up rows derived from the committed pre-2022 Bronze payloads (§90.9 item 2).
+
+    Without this, re-running the generator would write a 2022-2024 file over a corpus that now carries
+    2018-2021 dividends, silently deleting them. The payloads and their manifest attestations are
+    committed bytes, so the merge is reproducible offline (§12.5).
+    """
+    from ingest_pre2022_corporate_actions import derive as derive_pre2022
+
+    rows, counts = derive_pre2022()
+    known = {(ca.isin, ca.ex_date, ca.action_type) for ca in corpus}
+    merged = list(corpus)
+    added = 0
+    for row in rows:
+        action_type = CorporateActionType(row["action_type"])
+        key = (row["isin"], datetime.date.fromisoformat(row["ex_date"]), action_type)
+        if key in known:
+            continue
+        known.add(key)
+        merged.append(CorporateAction.from_dict(row))
+        added += 1
+    print(
+        f"Pre-2022 payload corpus: {counts['payloads']} payload(s), {len(rows)} derived row(s), "
+        f"{added} merged"
+    )
+    return sorted(merged, key=lambda ca: (ca.ex_date, ca.isin, ca.action_type.value))
 
 
 def main() -> None:

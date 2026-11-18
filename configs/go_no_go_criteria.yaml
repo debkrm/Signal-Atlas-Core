@@ -75,6 +75,24 @@ metadata:
   # is resealed because seven 2018-2021 A1 circular artifacts are registered (§86.6 items 1-3, 9). Every
   # gating window, count, tolerance, weight and criterion is otherwise byte-identical to 1.1.9; the
   # corrected date is pre-binding (warm-up only, §10.8), so no verdict computed on the binding window moves.
+  # 1.1.12 (2026-11-18): no existing numeric threshold and no criterion changed; ONE new binding is
+  # pre-registered here, before any run that could use it. Audit §90.7 Ruling 2 / §90.9 item 1 appends
+  # 7,989 series-restatement rows to cash_equity_symbol_intervals.csv (each supersedes a row it names
+  # and no row is edited or deleted), so the EQ-only entry gate (Gate G2C-3) and the point-in-time EQ
+  # universe stop answering `EQ` for 1,206 of 1,336 trade-to-trade ISIN-sessions — the measurement is
+  # `probe_n175`, which reads 0 of 1,336. §90.9 item 2 captures 15 Bronze payloads for
+  # 2018-04-01..2021-12-31 and the generator merges their 4,495 dividend rows, so `A4 dividends` prints
+  # PASS over the warm-up window. §90.9 item 3 extends the interval log back to 2018-04-02 (6,784
+  # appended rows, all 931 warm-up sessions covered) and measures 102 new identity boundaries, 324 ->
+  # 426, each dated at its successor ISIN's first session; 426 is the count `probe_n158` now asserts
+  # under §90.6 Ruling 1, with the 324 post-2022 tuples asserted to survive. §90.9 item 4 declares
+  # `max_hold_trading_sessions: 21` below: a NEW binding, pre-registered, enforcing AGENTS.md §13.2
+  # against a held position crossing an unadjusted ex-date. `expected_manifest_fingerprint` is resealed
+  # over the grown manifest. `min_binding_evaluation_start_date` stays 2022-01-03 and
+  # `expected_calendar_fingerprint` stays CAL-FPR-V1-6acb5f45…; every fold, trial count and existing
+  # threshold is unchanged. §89.5 Ruling 1's A5 residual is recorded here, not cleared: gating still
+  # begins 2022-01-03, so the warm-up sessions this version now describes remain WARMUP_NOT_GATABLE and
+  # every pre-2022 verdict stays NOT RUN (§10.8).
   # 1.1.11 (2026-11-18): no numeric threshold and no criterion changed. Audit §87.5 Ruling 1 authorises Bronze
   # capture of the 931 warm-up sessions 2018-04-01..2021-12-31, and that capture registers one current
   # manifest row per archive (931 rows, carrying source_url, retrieved_at, byte_count, sha256, session_type
@@ -83,7 +101,7 @@ metadata:
   # CAL-FPR-V1-6acb5f45..., `expected_sourced_window_calendar_fingerprint` stays, every count, tolerance,
   # weight, cost parameter and criterion is byte-identical to 1.1.10, and capture eligibility grants no
   # gating eligibility: no verdict, metric or trial may be computed over a WARMUP_NOT_GATABLE session.
-  version: "1.1.11"
+  version: "1.1.12"
   effective_date: "2026-11-18"
   market: "NSE_CASH_EQUITY"
   currency: "INR"
@@ -137,6 +155,13 @@ execution_and_liquidity_realism:
   prohibit_sell_at_lower_circuit: true
   # Execution latency: Earliest execution fill session relative to signal calculation session T
   min_execution_latency_sessions: 1
+  # Maximum holding period, in authoritative NSE calendar sessions counted from the entry session
+  # (Audit §90.9 item 4, AGENTS.md §13.2). A delivery position may not be carried past this many
+  # sessions, so no held position crosses an unadjusted corporate-action ex-date without the action
+  # being applied to it. `Position.require_within_hold_bound` refuses the hold; a hold that cannot
+  # exit inside the bound because the bid is locked at the lower circuit is a refusal, never a silent
+  # extension (§5.3). Declared before any run and used only on the training/validation windows.
+  max_hold_trading_sessions: 21
   # Audit §74.10 Ruling D — the unbanded-session fill policy in force, pre-registered before seq 8.
   # NSE publishes the band *code* in a single rolling sec_list.csv that is overwritten in place, and
   # the bhavcopy carries no band column, so no daily 2022-2023 band history exists to source: H-83 as
@@ -245,7 +270,7 @@ market_data_and_accounting_invariants:
   # re-pinned 2026-11-18 with the 931 warm-up Bhavcopy archive rows registered by the Audit §87.5 Ruling 1
   # capture, the only manifest changes in that commit (931 added lines, 0 removed).
   # 985 current rows (54 prior + 931 archives) and 23 superseded rows are verified by Gate W0.5-5 and Gate 2D-6.
-  expected_manifest_fingerprint: "MAN-FPR-V1-7131c2136b54ebd557c288170f00b2facec7d5e775231ecaa5bd4dedce0012ec"
+  expected_manifest_fingerprint: "MAN-FPR-V1-e95ddf9076671d6b3586f3ce079734f8493d73d6150e55b0868b0f9fbcb0565b"
 
   # Finding N-128 (Audit §72.3, §72.5 item 3): the trial-registry manifest witnesses
   # {evaluation_count, head_eval_hash} outside the (sidecar, anchor) pair. Pinning its SHA-256 here

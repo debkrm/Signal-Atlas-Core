@@ -11,6 +11,8 @@ survivorship-biased sets are strictly rejected.
 
 from __future__ import annotations
 
+from bisect import bisect_right
+from collections import OrderedDict
 import csv
 from dataclasses import dataclass
 import datetime
@@ -20,6 +22,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from signal_core.contracts.universe import UniverseSchedule, UniverseValidationError
 from signal_core.storage.calendar import TradingCalendar, load_anchored_nse_trading_calendar
+from signal_core.storage.security_master import apply_interval_restatements
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 DEFAULT_INTERVALS_PATH = REPO_ROOT / "data" / "reference" / "cash_equity_symbol_intervals.csv"
@@ -92,7 +95,38 @@ def load_cash_equity_symbol_intervals(
                     effective_to=eff_to,
                 )
             )
-    return intervals
+    # The artifact is an append-only interval log (§10.1, §90.7 Ruling 2): a restated row supersedes the
+    # row it corrects and the superseded row is retained as history, so the universe reads active rows.
+    return apply_interval_restatements(intervals)
+
+
+_START_INDEX_CACHE_LIMIT = 4
+_START_INDEX_CACHE: "OrderedDict[Tuple[int, int], Tuple[Sequence[CashEquityInterval], Mapping[str, Tuple[List[datetime.date], List[CashEquityInterval]]]]]" = OrderedDict()
+
+
+def _start_index(
+    intervals: Sequence[CashEquityInterval],
+) -> Mapping[str, Tuple[List[datetime.date], List[CashEquityInterval]]]:
+    """Returns, per series, the intervals ordered by `effective_from` plus their aligned start dates."""
+    key = (id(intervals), len(intervals))
+    cached = _START_INDEX_CACHE.get(key)
+    if cached is not None and cached[0] is intervals:
+        _START_INDEX_CACHE.move_to_end(key)
+        return cached[1]
+
+    grouped: Dict[str, List[CashEquityInterval]] = {}
+    for iv in intervals:
+        grouped.setdefault(iv.series, []).append(iv)
+    table = {
+        series: (starts, sorted(rows, key=lambda iv: iv.effective_from))
+        for series, rows in grouped.items()
+        for starts in [[iv.effective_from for iv in sorted(rows, key=lambda iv: iv.effective_from)]]
+    }
+
+    _START_INDEX_CACHE[key] = (intervals, table)
+    while len(_START_INDEX_CACHE) > _START_INDEX_CACHE_LIMIT:
+        _START_INDEX_CACHE.popitem(last=False)
+    return table
 
 
 def get_point_in_time_active_equities(
@@ -107,10 +141,15 @@ def get_point_in_time_active_equities(
     if type(as_of) is not datetime.date:
         raise UniverseValidationError(f"as_of must be genuine datetime.date, got {type(as_of)}")
 
-    active_isins: Set[str] = set()
-    for iv in intervals:
-        if iv.is_active(as_of, required_series=series):
-            active_isins.add(iv.isin)
+    # Sessions are evaluated in order, so the per-series start index is built once per interval
+    # sequence and reused: only rows starting on or before T can be active on T (§90.9 item 2).
+    starts, ordered = _start_index(intervals).get(series, ([], []))
+    limit = bisect_right(starts, as_of)
+    active_isins = {
+        iv.isin
+        for iv in ordered[:limit]
+        if iv.effective_to is None or as_of < iv.effective_to
+    }
 
     return tuple(sorted(active_isins))
 

@@ -136,6 +136,9 @@ class GoNoGoCriteria:
     prohibit_buy_at_upper_circuit: bool
     prohibit_sell_at_lower_circuit: bool
     min_execution_latency_sessions: int
+    # Audit §90.9 item 4: the maximum holding period in authoritative calendar sessions. Read from the
+    # committed criteria, never defaulted in a module (§10.8).
+    max_hold_trading_sessions: int
 
     # Statutory cost schedule
     statutory_costs: StatutoryCostCriteria
@@ -363,6 +366,7 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
         prohibit_buy_at_upper_circuit=bool(exec_liq["prohibit_buy_at_upper_circuit"]),
         prohibit_sell_at_lower_circuit=bool(exec_liq["prohibit_sell_at_lower_circuit"]),
         min_execution_latency_sessions=int(exec_liq["min_execution_latency_sessions"]),
+        max_hold_trading_sessions=int(exec_liq["max_hold_trading_sessions"]),
         statutory_costs=costs,
         unbanded_session_fill_policy=unbanded_policy,
         entry_rank_indicator=rank_indicator,

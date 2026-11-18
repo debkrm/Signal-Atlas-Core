@@ -864,6 +864,41 @@ def test_n1_replay_guard_o1_lookup_and_bounded_memory():
     with pytest.raises(LedgerValidationError, match="Duplicate entry rejected: fill"):
         portfolio_4k.process_fill(fills_4k[-1], enforce_risk_limits=False)
 
+    # Structural O(1) assertion (N-174, Audit §90.3). A timing ratio cannot see the regression this
+    # test names: a cheap per-fill scan over the instances the guard already holds measured 83.3 µs/fill
+    # at 1,000 fills and 187.5 at 4,000 -- inside both 250 µs ceilings and a 2.25 ratio -- and a
+    # comparison scan made the verdict a coin flip. So the claim is asserted directly instead: the
+    # replay path consults the guard exactly once per fill, and that count does not grow with how many
+    # instances the guard already holds. The two ceilings and the ratio above stay as coarser bounds.
+    from collections import OrderedDict
+
+    class CountingReplayGuard(OrderedDict):
+        lookup_count = 0
+
+        def __contains__(self, key):
+            CountingReplayGuard.lookup_count += 1
+            return super().__contains__(key)
+
+    for fill_count in (1_000, 4_000):
+        portfolio = Portfolio(initial_capital=Decimal("500000000.00"), initial_date=start_date)
+        portfolio._processed_fill_instances = CountingReplayGuard()
+        CountingReplayGuard.lookup_count = 0
+        for fill in [
+            _make_dummy_fill(
+                f"SCAN_{i}",
+                OrderSide.BUY,
+                10,
+                Decimal("100.00"),
+                start_date + datetime.timedelta(days=i),
+            )
+            for i in range(fill_count)
+        ]:
+            portfolio.process_fill(fill, enforce_risk_limits=False)
+        assert CountingReplayGuard.lookup_count == fill_count, (
+            f"{CountingReplayGuard.lookup_count} replay-guard membership lookup(s) for {fill_count} "
+            "fill(s): the replay path is not one dict lookup per fill, which is the O(1) claim (N-174)"
+        )
+
 
 def test_n2_sequence_counter_deterministic_without_holes_on_rejection():
     """
@@ -1057,3 +1092,39 @@ def test_n10_lazy_opening_deposit_anchor_not_mutated_on_rejection():
     assert portfolio.ledger._last_trade_date == d_construct
 
 
+
+
+def test_max_hold_bound_refuses_the_session_past_it():
+    """
+    Audit §90.9 item 4: the bound comes from criteria and a hold one session past it is refused.
+
+    Counted in authoritative calendar sessions from the entry session, with no module default (§10.8).
+    """
+    import pytest
+
+    from signal_core.contracts.criteria import load_go_no_go_criteria
+    from signal_core.portfolio.types import LedgerValidationError
+    from signal_core.storage.calendar import load_anchored_nse_trading_calendar
+
+    bound = load_go_no_go_criteria().max_hold_trading_sessions
+    assert bound == 21, f"criteria declares max_hold_trading_sessions={bound}, not the pre-registered 21"
+
+    calendar = load_anchored_nse_trading_calendar()
+    sessions = [s for s in calendar.sessions if s >= datetime.date(2024, 1, 1)]
+    entry, inside, past = sessions[0], sessions[bound - 1], sessions[bound]
+
+    position = Position("SCRIP_HOLD")
+    position.apply_fill(_make_dummy_fill("SCRIP_HOLD", OrderSide.BUY, 10, Decimal("100.00"), entry))
+    assert position.entry_date == entry
+    assert position.holding_sessions(entry, calendar) == 0
+    assert position.holding_sessions(inside, calendar) == bound - 1
+    position.require_within_hold_bound(inside, bound, calendar)
+
+    assert position.holding_sessions(past, calendar) == bound
+    with pytest.raises(LedgerValidationError, match="Hold bound refused"):
+        position.require_within_hold_bound(past, bound, calendar)
+
+    # A closed position carries no holding period at all.
+    position.apply_fill(_make_dummy_fill("SCRIP_HOLD", OrderSide.SELL, 10, Decimal("110.00"), past))
+    assert position.entry_date is None
+    assert position.holding_sessions(past, calendar) == 0

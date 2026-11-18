@@ -10,9 +10,10 @@ Implements security identity and point-in-time intervals per AGENTS.md Rule 10.4
 - Deterministic cryptographic fingerprinting (SEC-MSTR-V1).
 """
 
+from bisect import bisect_right
 from collections import defaultdict
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import datetime
 from decimal import Decimal
 from enum import Enum
@@ -133,6 +134,82 @@ class SymbolInterval:
         if self.effective_to is not None and as_of >= self.effective_to:
             return False
         return True
+
+
+def _interval_spans_overlap(a: "SymbolInterval", b: "SymbolInterval") -> bool:
+    """True when two half-open spans share at least one date."""
+    if a.effective_to is not None and b.effective_from >= a.effective_to:
+        return False
+    if b.effective_to is not None and a.effective_from >= b.effective_to:
+        return False
+    return True
+
+
+def _span_is_contained(outer: "SymbolInterval", inner: "SymbolInterval") -> bool:
+    """True when `inner`'s span lies wholly inside `outer`'s span (open ends included)."""
+    if inner.effective_from < outer.effective_from:
+        return False
+    if outer.effective_to is None:
+        return True
+    if inner.effective_to is None:
+        return False
+    return inner.effective_to <= outer.effective_to
+
+
+def apply_interval_restatements(intervals: Sequence["SymbolInterval"]) -> List["SymbolInterval"]:
+    """
+    Returns the active rows of an append-only interval log (AGENTS.md §10.1, Audit §90.7 Ruling 2).
+
+    A correction never edits or deletes the row it corrects: the restatement is appended carrying its
+    own `effective_from`/`effective_to`, and it supersedes an earlier row for the same ISIN when it
+    appears later in the file and its span is contained in that row's span. The superseded row stays in
+    the artifact as history and is dropped only from the resolution index.
+
+    Two rules fail closed, because between them they distinguish a restatement from an accidental
+    overlap: a later row may overlap an earlier one only as a *contained* appendant, and the surviving
+    rows for an ISIN may not overlap each other at all.
+    """
+    rows = list(intervals)
+    by_isin: Dict[str, List[Tuple[int, "SymbolInterval"]]] = {}
+    for index, row in enumerate(rows):
+        by_isin.setdefault(row.isin, []).append((index, row))
+
+    superseded: Set[int] = set()
+    clipped: List["SymbolInterval"] = []
+    for isin, entries in by_isin.items():
+        live: List[Tuple[int, "SymbolInterval"]] = []
+        for index, row in entries:
+            survivors: List[Tuple[int, "SymbolInterval"]] = []
+            for live_index, live_row in live:
+                if not _interval_spans_overlap(live_row, row):
+                    survivors.append((live_index, live_row))
+                    continue
+                if not _span_is_contained(live_row, row):
+                    raise SecurityMasterError(
+                        f"Overlapping or unclosed symbol intervals detected for ISIN {isin}: {live_row} "
+                        f"overlaps {row} without being an append that restates a part of it (§10.1)"
+                    )
+                if live_index >= 0:
+                    superseded.add(live_index)
+                # The append restates only the slice it covers. A row that is restated in part keeps the
+                # uncovered remainder in force, so a correction never silently erases a valid session.
+                if live_row.effective_from < row.effective_from:
+                    survivors.append((-1, replace(live_row, effective_to=row.effective_from)))
+                if row.effective_to is not None and (
+                    live_row.effective_to is None or row.effective_to < live_row.effective_to
+                ):
+                    survivors.append((-1, replace(live_row, effective_from=row.effective_to)))
+            live = survivors + [(index, row)]
+            live.sort(key=lambda pair: (pair[1].effective_from, pair[0]))
+            for (_i, cur), (_j, nxt) in zip(live, live[1:]):
+                if _interval_spans_overlap(cur, nxt):
+                    raise SecurityMasterError(
+                        f"Overlapping or unclosed symbol intervals detected for ISIN {isin}: {cur} "
+                        f"overlaps {nxt}; neither row restates the other (§10.1)"
+                    )
+        clipped.extend(row for index, row in live if index < 0)
+
+    return [row for index, row in enumerate(rows) if index not in superseded] + clipped
 
 
 @dataclass(frozen=True, slots=True)
@@ -488,24 +565,17 @@ class SecurityMaster:
         }
         self._price_band_intervals: Tuple[PriceBandInterval, ...] = tuple(price_band_intervals or ())
 
-        # Validate non-overlapping symbol intervals per ISIN
-        by_isin: Dict[str, List[SymbolInterval]] = {}
-        for s in self._symbol_intervals:
-            by_isin.setdefault(s.isin, []).append(s)
+        # Resolve the append-only interval log to its active rows (Audit §90.7 Ruling 2): a restatement
+        # is appended, never edited over the row it corrects, so superseded rows stay in the artifact.
+        active_intervals = apply_interval_restatements(self._symbol_intervals)
 
-        for isin, intervals in by_isin.items():
-            sorted_intervals = sorted(intervals, key=lambda x: x.effective_from)
-            for i in range(len(sorted_intervals) - 1):
-                cur = sorted_intervals[i]
-                nxt = sorted_intervals[i + 1]
-                if cur.effective_to is None or cur.effective_to > nxt.effective_from:
-                    raise SecurityMasterError(
-                        f"Overlapping or unclosed symbol intervals detected for ISIN {isin}: {cur} overlaps {nxt}"
-                    )
+        by_isin: Dict[str, List[SymbolInterval]] = {}
+        for s in active_intervals:
+            by_isin.setdefault(s.isin, []).append(s)
 
         # Validate non-overlapping symbol intervals per (symbol, series) (Audit §39 H-50)
         by_symbol: Dict[Tuple[str, str], List[SymbolInterval]] = {}
-        for s in self._symbol_intervals:
+        for s in active_intervals:
             by_symbol.setdefault((s.symbol, s.series), []).append(s)
 
         for (sym, srs), intervals in by_symbol.items():
@@ -537,12 +607,24 @@ class SecurityMaster:
         for b in self._price_bands:
             self._validate_discrete_price_band_against_intervals(b, bands_by_isin)
 
-        # Build index for fast lookup
-        self._intervals_by_isin = by_isin
+        # Build index for fast lookup. Rows are ordered by `effective_from` so a resolution as-of T can
+        # bisect instead of scanning every interval of every ISIN (§90.9 item 2).
+        self._intervals_by_isin: Dict[str, List[SymbolInterval]] = {
+            isin: sorted(rows, key=lambda s: s.effective_from, reverse=True)
+            for isin, rows in by_isin.items()
+        }
         self._band_intervals_by_isin = bands_by_isin
-        self._intervals_by_symbol: Dict[str, List[SymbolInterval]] = {}
-        for s in self._symbol_intervals:
-            self._intervals_by_symbol.setdefault(s.symbol, []).append(s)
+        by_symbol_rows: Dict[str, List[SymbolInterval]] = {}
+        for s in active_intervals:
+            by_symbol_rows.setdefault(s.symbol, []).append(s)
+        self._intervals_by_symbol: Dict[str, List[SymbolInterval]] = {
+            symbol: sorted(rows, key=lambda s: s.effective_from)
+            for symbol, rows in by_symbol_rows.items()
+        }
+        self._symbol_starts_by_symbol: Dict[str, List[datetime.date]] = {
+            symbol: [s.effective_from for s in rows]
+            for symbol, rows in self._intervals_by_symbol.items()
+        }
         self._delistings_by_isin: Dict[str, DelistingEvent] = {}
         for d in self._delisting_events:
             if d.isin in self._delistings_by_isin:
@@ -578,10 +660,13 @@ class SecurityMaster:
         _validate_identifier(isin, "isin")
         _validate_date(as_of, "as_of")
 
+        # Newest-first order: the first row that starts on or before T is the only one that can cover T,
+        # because the active rows of an ISIN do not overlap.
         intervals = self._intervals_by_isin.get(isin, [])
         for interval in intervals:
-            if interval.contains(as_of):
-                return interval
+            if interval.effective_from > as_of:
+                continue
+            return interval if interval.contains(as_of) else None
         return None
 
     def resolve_isin_by_symbol(
@@ -594,8 +679,9 @@ class SecurityMaster:
         _validate_identifier(symbol, "symbol")
         _validate_date(as_of, "as_of")
         candidates = self._intervals_by_symbol.get(symbol, [])
+        starts = self._symbol_starts_by_symbol.get(symbol, [])
         matches: List[str] = []
-        for interval in candidates:
+        for interval in candidates[: bisect_right(starts, as_of)]:
             if interval.contains(as_of):
                 if series is None or interval.series == series:
                     if self.is_active(interval.isin, as_of):
@@ -919,7 +1005,9 @@ def load_cash_universe_symbol_intervals(csv_path: Optional[Union[str, Path]] = N
                 raise SecurityMasterError(
                     f"Corrupt row {line_no} in cash universe artifact '{p.name}': {exc}"
                 ) from exc
-    return tuple(intervals)
+    # The artifact is an append-only interval log (§10.1, §90.7 Ruling 2): a restated row supersedes the
+    # row it corrects and the superseded row is retained as history, so callers see the active rows.
+    return tuple(apply_interval_restatements(intervals))
 
 
 def load_surveillance_intervals(path: Optional[Union[str, Path]] = None) -> Tuple[SurveillanceInterval, ...]:
