@@ -1638,3 +1638,73 @@ auditor verdict (§11.3).
   partition stays frozen; Holdout `2025-01-01..2026-11-11` remains sealed with no `HOLDOUT_UNLOCK`
   sentinel; `reports/audit/**`, `AGENTS.md`, `.agents/skills/audit-round/SKILL.md` and
   `configs/trading_calendar_nse.json` (`CAL-FPR-V1-6acb5f45…`) are untouched.
+
+### Audit §88 — the certificate reads the archive, the parser refuses the century, and the gate runs the suite in parallel
+
+Round: audit §88 (audit of `df97173`, tag `audit-s88-ec32ed9`). Items 1-2 of §88.8 are delivered in
+`eb05053`, together with the §12.3 gate work the round was asked for. Items 3 (A2), 4 (A4) and 5 (the
+A5 residual ruling) are untouched: `probe_pre2022_preconditions.py` still prints `[NO]` on both A2 and
+both A4 lines and exits 1, and no criteria value moved (still **1.1.11**, `MAN-FPR-V1-7131c213…`,
+`CAL-FPR-V1-6acb5f45…`, `min_binding_evaluation_start_date` **2022-01-03**). **Not audited** — the
+numbers below are measurements of this round (§9.3), and the ledger rows for N-171 and N-172 are still
+`OPEN`, because closing them is the auditor's append (§11.1).
+
+- **N-171 — the certificate now reads what the exchange wrote.** `probe_pre2022_bronze_coverage.py`
+  opens every attested archive and parses its own `TIMESTAMP` (or `TRADEDATE`) column, requiring the
+  distinct embedded dates to equal the `session_date` on the row. Measured before and after on the same
+  transposition (row dates for `2018-04-02` and `2018-04-03` swapped over the committed corpus, bytes
+  and digests untouched): at the parent implementation the probe module has no archive reader and
+  `main()` returns **0** — `COVERED — 931/931`; at `eb05053` it returns **1** with `session 2018-04-02
+  (FULL): data/raw/2018/cm03APR2018bhav.csv.zip carries its own session date(s) 2018-04-03, so the
+  row's session_date is not on these bytes`, and the untouched corpus still prints `COVERED — 931/931`.
+  Reading all 931 archives costs **5.3 s** for the whole probe. `probe_n171` is flipped to assert the
+  closure (refusal on the tampered manifest naming both dates, coverage on the committed one) and the
+  H-24 containment line is retained. `PASS N-171`.
+- **N-172 — the two-digit branch is bounded.** `parse_bhavcopy_date` refuses a `%d-%b-%y` value whose
+  parsed year falls outside **1990-2030**, naming the string, the date it guessed and the range:
+  `13-Jul-68` → `Implausible two-digit year in Bhavcopy: '13-Jul-68' parses to 2068-07-13, outside the
+  plausible 1990-2030 range`; `13-Jul-89` (1989) and `01-Jan-31` (2031) likewise. In range and
+  unchanged: `13-Jul-20` and `13-JUL-2020` → 2020-07-13, `13-Jul-99` → 1999-07-13, `31-Dec-30` →
+  2030-12-31, and `cm13JUL2020bhav.csv.zip` parses to **1,392 EQ** records (**1,774** across all
+  series) under `trade_date=2020-07-13`. H-24 still refuses the archive under a 2068 partition date, so
+  the corpus binding and the parser bound are both measured. `PASS N-172`.
+- **The gate was lying about its own failures on this console.** `check_test_suite_zero_skip_xfail`
+  decoded pytest's stdout as strict UTF-8 while a Windows console hands the child cp1252: a `§` in a
+  failing test's message raised `UnicodeDecodeError: 'utf-8' codec can't decode byte 0xa7 in position
+  727` inside the reader thread and the traceback was replaced by `[FAIL] pytest exited with code 1`.
+  The reader now decodes with `errors="replace"` and the gate reconfigures its own stdout to UTF-8,
+  because printing the replacement character to cp1252 raised `UnicodeEncodeError` in turn — the second
+  half was found by running the first fix against a genuinely failing test. Measured with a failing
+  test whose message contains `§`: the gate log now carries the assertion text and the replacement
+  character and no decode error; before, the byte was undecodable and the text was lost.
+- **The suite runs in parallel, with the same assertions.** `pytest_command()` uses `pytest -n auto
+  --dist loadfile -q` when `pytest-xdist` is importable and `pytest -q` otherwise; the gate prints
+  which it used. Measured: **543 passed** sequential in **149.78 s** (`6cb7a81`), **172.25 s**,
+  **180.27 s** (audited at `df97173`); **543 passed** under `-n auto --dist loadfile` in **41.83 s**,
+  **43.88 s**, **47.59 s** (clean) and **47.55 s / 48.84 s / 50.89 s** through the gate itself. No
+  assertion was relaxed; the suite count the green row records is **543** in both modes.
+- **The parallel run exposed a wall-clock benchmark, and the fix is the instrument, not the threshold.**
+  One of eight parallel runs failed while its log was unreadable (previous bullet). Reproduced
+  deliberately: with 24 CPU-bound processes competing, `test_n1_replay_guard_o1_lookup_and_bounded_memory`
+  measured **357.6 µs/fill wall clock against a 250 µs ceiling** on unchanged code, and passed under the
+  same load at **78-148 µs/fill** once the same two loops are timed with `time.process_time()`. The
+  ceilings (250 µs, ratio < 2.5) are untouched; the property they assert is per-fill overhead, which a
+  wall clock on a shared machine does not measure. After the change: 3 clean parallel runs and 2 runs
+  under heavy orphan-process load (209.66 s, 192.47 s), all `543 passed`.
+- **The 24 probes now run once per gate pass.** `verify_audit_findings.py` (W0.5-2) executes every
+  ledger probe; `test_findings_ledger_rows_carry_executable_probes` executed all of them a second time
+  inside the suite. It now asserts that every non-`ACCEPTED` ledger row is reported by
+  `probe_audit_findings.py --list`, keeping the mapping check and dropping the duplicate execution:
+  that test file went from **39.04 s** to **2.82 s**, measured at the parent and at `eb05053`.
+- **The gate is green on the committed tree.** `verify_audit_append_only.py` at `eb05053`: ALL
+  REPOSITORY FOUNDATION GATES PASSED, **543 passed / 0 skipped / 0 xfailed** in 47.55 s, **9/9**
+  verifiers exit 0, W0.5-5 at **985** current artifacts, green row **20** recorded against tree
+  `b5d9cb02…`.
+- **Invariants held.** No trial appended or scored: **N = 9, N_eval = 5**; the 2024 validation fold is
+  untouched; Holdout `2025-01-01..2026-11-11` stays sealed with no `HOLDOUT_UNLOCK`; criteria and
+  `configs/trading_calendar_nse.json` are byte-identical; `reports/audit/**`, `AGENTS.md` and
+  `.agents/skills/audit-round/SKILL.md` are untouched; no `data/raw` archive changed.
+- **One environment note.** `pytest-xdist 3.8.0` was installed into this machine's interpreter to
+  measure the parallel path; it is **not** added to `pyproject.toml`, so a fresh environment falls
+  back to the sequential run with the same assertions. Adding `pytest-xdist` to the `dev` extra is a
+  maintainer decision, not this round's.
