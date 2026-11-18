@@ -1460,6 +1460,10 @@ def probe_n171() -> None:
         rows = [json.loads(line) for line in tampered.read_text(encoding="utf-8").splitlines() if line.strip()]
         swapped = 0
         for row in rows:
+            # Only current rows are read by the certificate; superseded rows are history and carry no
+            # label to certify (Audit §92.7 Ruling 1 appended one superseded row per archive).
+            if row.get("is_current") is not True:
+                continue
             if row.get("session_date") == left_date.isoformat():
                 row["session_date"] = right_date.isoformat()
                 swapped += 1
@@ -1865,6 +1869,29 @@ def probe_n177() -> None:
     assert "require_hold_bounds(" in walkforward_source, (
         "the walk-forward session loop does not consult the hold bound; the production consumer is "
         "never reached by a run (N-177, §13.2)"
+    )
+
+    # Audit §92.10 item 4: a string in the script does not prove the seam is reachable, so the seam is
+    # driven by a committed test — and that test is executed here, not merely named (§14.4).
+    seam_test = REPO_ROOT / "tests" / "unit" / "test_phase3b2_audit_s93_items.py"
+    assert seam_test.is_file(), (
+        "the swing seam has no committed test; forced_exit_isins is exercised only by this probe "
+        "(§92.10 item 4, N-177)"
+    )
+    seam_source = seam_test.read_text(encoding="utf-8")
+    for token in ("forced_exit_isins=", "MAX_HOLD_BOUND_EXIT", "REJECTED_LOWER_CIRCUIT", "require_hold_bounds("):
+        assert token in seam_source, (
+            f"the committed seam test does not exercise `{token}`, so the hold-bound exit is not driven "
+            f"through the harness by the suite (§92.10 item 4, N-177)"
+        )
+    seam_run = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", str(seam_test)],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    assert seam_run.returncode == 0, (
+        f"the committed seam test fails at the current tree: {seam_run.stdout[-2000:]}{seam_run.stderr[-2000:]}"
     )
 
     import datetime

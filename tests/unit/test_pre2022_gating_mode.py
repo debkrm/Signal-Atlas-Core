@@ -121,4 +121,31 @@ def test_bronze_coverage_probe_attests_all_931_sessions(capsys: pytest.CaptureFi
     assert main() == 0
     output = capsys.readouterr().out
     assert "931/931" in output
-    assert WARMUP_NOT_GATABLE in output
+    # Audit §92.7 Ruling 1 / criteria 1.1.14: the label the binding start implies is printed as a
+    # computed split, so the certificate states what it verified instead of restating a constant.
+    assert "931 BINDING_EVALUATION, 0 WARMUP_NOT_GATABLE" in output, output[-600:]
+
+
+def test_bronze_coverage_probe_refuses_labels_that_disagree_with_the_criteria(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+):
+    """
+    Audit §92.7 Ruling 1: the label rule reads `min_binding_evaluation_start_date`, so a tree whose
+    criteria and labels disagree fails closed. At `1aff4c6` the certificate exited 0 on exactly this
+    contradiction and 1 on the relabel that resolved it (§92.6); both halves are measured here without
+    touching the corpus — the pin is the input, the certificate is the object under test.
+    """
+    import dataclasses
+
+    import scripts.probe_pre2022_bronze_coverage as probe
+    from signal_core.contracts.criteria import load_go_no_go_criteria
+
+    backwards = dataclasses.replace(
+        load_go_no_go_criteria(), min_binding_evaluation_start_date=datetime.date(2022, 1, 3)
+    )
+    monkeypatch.setattr(probe, "load_go_no_go_criteria", lambda: backwards)
+
+    assert probe.main() == 1
+    output = capsys.readouterr().out
+    assert "expected 'WARMUP_NOT_GATABLE'" in output, output[-600:]
+    assert "931 problem(s)" in output, output[-600:]

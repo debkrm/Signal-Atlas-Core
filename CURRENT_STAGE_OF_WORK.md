@@ -1920,3 +1920,101 @@ run. `reports/verdicts/phase2d_tier_a_2022_2026_verdict.{json,md}` were regenera
 (version, fingerprint, the 1.1.13 restatement), window still `2022-01-03..2026-10-30`,
 `PASS=2 / FAIL=0 / NOT RUN=25`, overall **NO-GO**. Protected paths untouched: `reports/audit/**`,
 `AGENTS.md`, `.agents/`, `configs/trading_calendar_nse.json`, `data/trials/`, `reports/verdicts/trial_00*`.
+
+### Audit §93 work order (feat-s93): the 931 labels move to 1.1.14, the hold-bound invariance run measures a binding bound, and the swing seam gets its test (implemented; gates measured; not audited)
+
+Implements items 1, 2 and 4 of the `reports/audit/volume2.md` §92 work order (`df8cac3`, tag
+`audit-s92-df8cac3`) at the tree this section is committed in. **Not audited** — no verdict judges
+this commit; every number below is measured here and nothing is claimed as closed, verified or signed
+off. Items 3 (seq 10), 5 (N-150) and 6 (the replay counter's `get`/`popitem`) were not in the request
+and were not done: **N = 9**, `N_eval = 5`.
+
+**Item 1 / §92.7 Ruling 1 — the labels, the certificate and the pin move together.** The certificate's
+label rule was re-expressed **first** and measured red on the parent tree: at criteria 1.1.13 with the
+rows as captured, `probe_pre2022_bronze_coverage.py` exits **1** with **931** problems, each reading
+`carries gating_mode 'WARMUP_NOT_GATABLE', expected 'BINDING_EVALUATION' for a session on/after the
+binding start 2018-04-01 (criteria 1.1.13)`. The rule now reads
+`load_go_no_go_criteria().min_binding_evaluation_start_date` through
+`expected_gating_mode(session_date, binding_start)`, so both halves of §92.6's contradiction are
+fail-closed: a tree whose criteria move and whose labels stay cannot pass, and the aligned tree does.
+
+The manifest moved by append-only supersession, measured against `git show HEAD:` rather than read:
+**1,026 → 1,957** rows; **931** prior rows flip `is_current: true → false` and `status: active →
+superseded` with every other byte identical (**0** deletions that are anything but that flip); **931**
+rows appended `is_current: true` / `status: active` with `gating_mode: BINDING_EVALUATION` and a
+`retrieval_reference` naming §92.7 Ruling 1 and criteria 1.1.14; **0** appended rows whose
+`byte_count`, `sha256`, `source_url`, `retrieved_at`, `session_date`, `session_type`, `description`,
+`provenance_status`, `source_coverage` or `timestamp_utc` differs from the row it supersedes; **931**
+distinct sessions `2018-04-02..2021-12-31`. No archive was re-read, re-hashed or re-fetched.
+`expected_manifest_fingerprint` is re-pinned **by measurement** to `MAN-FPR-V1-a421d3d2de37ada0…` over
+**1,865,503** bytes; Gate W0.5-5 attests **1,000 current / 957 superseded** rows, and
+`probe_pre2022_bronze_coverage.py` exits **0** printing
+`931 BINDING_EVALUATION, 0 WARMUP_NOT_GATABLE`.
+
+Criteria **1.1.14** changes no numeric threshold and no criterion: the pin is the only value, and
+`min_binding_evaluation_start_date` stays **2018-04-01**, `expected_calendar_fingerprint`
+`CAL-FPR-V1-6acb5f45…`, the sourced-window pin `CAL-FPR-V1-2d5ac7ac…` over **1,196** sessions with
+**1,201** baseline and **2,936** total, `max_hold_trading_sessions` **21**, the 2024 fold and the
+holdout `2025-01-01..2026-11-11`. The `pre_binding_calendar_provenance_note`'s "warm-up only / NOT
+RUN" clause is corrected because it now contradicts the criteria that carry it; N-52's substance — no
+per-session circular — is unchanged. Eleven live-version literals moved to `1.1.14` in six test files.
+The Phase 2D artifacts were regenerated: **3/3** lines per file (version, fingerprint, the 1.1.14
+restatement), window `2022-01-03..2026-10-30`, **PASS=2 / FAIL=0 / NOT RUN=25 / NO-GO**.
+`probe_pre2022_preconditions.py` is **READY, 9/9** (A1 5/5, A2 17,864 of 19,283 over 931 sessions,
+A4 4,357 ex-dates, A4 max hold `enforced at 1 production call site(s); refusals=1`, A5 0 of 4,903).
+One committed test pins the rule's other half:
+`test_bronze_coverage_probe_refuses_labels_that_disagree_with_the_criteria` exits **1** on
+`931 problem(s)` when the loaded pin is pushed forward to 2022-01-03.
+
+**Item 2 / §92.8 Ruling 2 — the invariance run measures a bound that binds, and a drift the bound does
+not explain.** `scripts/probe_hold_bound_invariance.py` re-runs seq 9's committed configuration
+(`TRIAL-PHASE3B2-RANKED-009`: sma_20/sma_50, k = 2.0, allocation 0.0800, trim None,
+`LOCKED_BAR_REFUSAL_ONLY`, `mom_63`, notionals 25000/5000) over `2022-01-03..2023-12-29` through the
+single engine, writing only into `TemporaryDirectory()`; the committed `data/trials/` registry and its
+three sidecars are hashed before and after and are byte-identical, so the registry of record is
+**N = 9 / N_eval = 5**. Two runs were needed because the counters alone cannot attribute drift:
+
+| Run | Session(s) | `hold_bound_forced_exits` | `hold_bound_refusals` | Records reproduced |
+|---|---|---|---|---|
+| **A** — committed criteria, bound 21 | 494, `2022-01-03..2023-12-29` | **175** | **203** | **0 of 5** |
+| **B** — same engine, bound raised out of reach (counterfactual, not a verdict) | 494, same window | 0 | 0 | **0 of 5** |
+
+Run A against the committed artifact: `closed_trades` **382** vs **193**, `end_equity`
+**1086020.54** vs **1283327.73**, `profit_factor` **1.106963** vs **0.991963**, `win_rate`
+**0.408377** vs **0.253886**, `max_drawdown` **0.326415** vs **0.207335**. Run B against the same
+artifact: **194** trades, **1164053.76**, **0.841456**, **0.262887**, **0.284222** — still not the
+committed five. So the bound is **not** inert on this window (the §92.8 expectation that it would be
+is contradicted), and a second, larger cause exists: the engine that produced seq 9's artifact no
+longer reproduces it even with the consumer disabled. The A-vs-B difference is the bound's own
+effect, and it is large: 194 → 382 closed trades, `end_equity` −₹78,033.22, `max_drawdown`
+0.2842 → 0.3264.
+
+**This is a negative result and is reported as one (§92.8: "a non-zero forced exit is a finding about
+comparability… never smoothed").** §92.8's condition is **not met**, and a seq-10 result is not
+comparable with the eight recorded trials until both causes are settled. The probe exits **1** while
+that is true; it is a `probe_*` instrument and is not in `VERIFICATION_SCRIPTS`, so the gate neither
+runs it nor is coloured by it. Not measured here: which engine change between criteria 1.1.5 and
+1.1.14 accounts for run B's drift. The interval-table restatement (§91.2) is the obvious candidate and
+is named as a hypothesis, not a finding.
+
+**Item 4 / §92.10 item 4 — the seam has a committed test.** `tests/unit/test_phase3b2_audit_s93_items.py`
+drives `Portfolio.require_hold_bounds` and `execute_swing_strategy_session(forced_exit_isins=…)`
+together, as the session loop does, at the bound and one session inside it: at the bound on a normal
+bar, **one** `FILLED` ticket with `exit_reason=MAX_HOLD_BOUND_EXIT` and the position closed; at the
+bound with the bar locked at the lower circuit, **one** `REJECTED_LOWER_CIRCUIT` ticket, the position
+still open at full quantity, and the engine's own accounting `len(forced − filled)` = **1**; one
+session inside the bound, **no** refusal and **no** ticket. The counters are derived, not typed.
+`probe_n177` now requires the file, requires it to name `forced_exit_isins=`, `MAX_HOLD_BOUND_EXIT`,
+`REJECTED_LOWER_CIRCUIT` and `require_hold_bounds(`, and **executes** it; renaming the file away makes
+probe N-177 exit 1 with `the swing seam has no committed test`. The three tests pass in 0.92 s.
+
+**Gate and scope.** `verify_audit_append_only.py --force-full`: **ALL REPOSITORY FOUNDATION GATES
+PASSED**, suite **548 passed, 0 skipped, 0 xfailed** (544 at §92 + 4), **9/9 verifiers exit 0**,
+W0.5-5 **1,000 current artifacts**. `verify_audit_findings.py`: **29/29 finding probes**. One earlier
+full run at this same tree printed `OVERALL VERDICT: ONE OR MORE GATES FAILED`; its gate section was
+not captured, and **three subsequent full runs (two gates and the suite alone under `-n auto`) were
+green at 548 passed**, so the failure is reported as unreproduced rather than explained — a flaky
+timing-sensitive check is a hypothesis, not a measurement. Protected paths untouched: `reports/audit/**`,
+`AGENTS.md`, `.agents/skills/audit-round/SKILL.md`, `configs/trading_calendar_nse.json`, `data/trials/`,
+`reports/verdicts/trial_00*`. Docs corrected where they now contradicted the artifact:
+`docs/bronze_storage_policy.md` and the `docs/pre2022_ingestion_preconditions.md` §87 capture record.

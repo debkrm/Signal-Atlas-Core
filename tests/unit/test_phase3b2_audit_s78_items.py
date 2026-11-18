@@ -390,7 +390,7 @@ def test_criteria_reseals_only_the_calendar_and_manifest_pins():
     from signal_core.storage.calendar import load_anchored_nse_trading_calendar
 
     crit = load_go_no_go_criteria()
-    assert crit.version == "1.1.13"
+    assert crit.version == "1.1.14"
     assert crit.expected_manifest_fingerprint == compute_manifest_fingerprint(
         REPO_ROOT / "data" / "reference" / "manifest.jsonl"
     )

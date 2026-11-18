@@ -134,6 +134,13 @@ def build_tier_a_results_bundle(
         # not a threshold, and they enter the criteria fingerprint, so the committed artifact is
         # restated rather than left describing a criteria version that no longer governs.
         "restatement_note": (
+            "Restatement 2026-11-18 (Audit §92.7 Ruling 1, criteria 1.1.14): supersedes the §91.8 "
+            "restatement recorded below. Criteria 1.1.14 changes no numeric threshold, no criterion and "
+            "no evaluation input. It supersedes the 931 warm-up Bhavcopy manifest rows by append so their "
+            "gating_mode reads BINDING_EVALUATION, the label the 1.1.13 binding start 2018-04-01 implies, "
+            "and re-expresses the Bronze coverage certificate's label rule against the criteria. The "
+            "archives' bytes, digests, calendar, sourced-window pins, every fold, trial count and "
+            "threshold are unchanged, and no evaluation row on this bundle is computed differently. "
             "Restatement 2026-11-18 (Audit §91.8 Ruling 1, criteria 1.1.13): supersedes the §87 "
             "restatement recorded below. Criteria 1.1.13 changes no numeric threshold and no criterion. "
             "It moves min_binding_evaluation_start_date from 2022-01-03 to 2018-04-01, so the 931 "

@@ -2,12 +2,18 @@
 """
 PRE-2022 BRONZE COVERAGE PROBE — Audit §87.5 Ruling 1, probe (1)
 
-Exits 0 only when the authorised warm-up window `2018-04-01..2021-12-31` is captured exactly:
+Exits 0 only when the authorised window `2018-04-01..2021-12-31` is captured exactly:
 **931** calendar sessions, each attested by exactly one *current* `data/reference/manifest.jsonl`
 row whose `byte_count` and `sha256` match the archive on disk, whose `session_type` matches the
-calendar, and which carries the explicit `WARMUP_NOT_GATABLE` label. Every manifest row must name a
+calendar, and whose `gating_mode` agrees with the committed criteria. Every manifest row must name a
 calendar session in the window, and every archive on disk must be attested, so the reconciliation is
 bidirectional rather than a lower bound.
+
+The label rule is derived, never typed (Audit §92.7 Ruling 1): a session on or after
+`load_go_no_go_criteria().min_binding_evaluation_start_date` must read `BINDING_EVALUATION`, and a
+session before it must read `WARMUP_NOT_GATABLE`. A tree that moves the binding start while its
+archive labels stay behind therefore fails this certificate, and a tree whose labels are aligned
+with the criteria passes it. One source, read twice.
 
 It fails closed by construction on all seven shapes the Ruling names:
 
@@ -17,7 +23,8 @@ It fails closed by construction on all seven shapes the Ruling names:
 - an archive whose own `TIMESTAMP` column names another session — `carries its own session date(s)`,
   so a correctly hashed but transposed pair of archives is refused rather than certified (N-171);
 - a muhurat or special bar stored as a full session — `session_type mismatch`;
-- an unlabelled capture — `gating_mode` must read `WARMUP_NOT_GATABLE`;
+- a label that disagrees with the criteria — `gating_mode` must read the value the binding start
+  implies for that session's date;
 - two current rows claiming the same session — `duplicate current row(s)`.
 
 Capture eligibility is not gating eligibility: this probe measures bytes and labels, and it neither
@@ -44,6 +51,8 @@ for _p in (str(REPO_ROOT / "src"), str(REPO_ROOT / "scripts")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from signal_core.contracts.criteria import load_go_no_go_criteria  # noqa: E402
+from signal_core.storage.gating import GatingWindowClassification  # noqa: E402
 from signal_core.storage.ingest import BhavcopyIngestError, parse_bhavcopy_date  # noqa: E402
 
 CALENDAR_PATH = REPO_ROOT / "configs" / "trading_calendar_nse.json"
@@ -55,6 +64,19 @@ WINDOW_END = datetime.date(2021, 12, 31)
 WINDOW_YEARS = (2018, 2019, 2020, 2021)
 EXPECTED_SESSIONS = 931
 WARMUP_LABEL = "WARMUP_NOT_GATABLE"
+BINDING_LABEL = GatingWindowClassification.BINDING_EVALUATION.value
+
+
+def expected_gating_mode(session_date: datetime.date, binding_start: datetime.date) -> str:
+    """
+    The label the committed criteria imply for one captured session (Audit §92.7 Ruling 1).
+
+    Capture eligibility and gating eligibility are the same fact once the binding start decides it: a
+    session before the start is warm-up and cannot be gated, a session at or after it is part of the
+    binding window. Expressing the rule here, rather than as a constant, is what makes a tree whose
+    criteria and labels disagree fail closed instead of passing on its own contradiction (§92.6).
+    """
+    return BINDING_LABEL if session_date >= binding_start else WARMUP_LABEL
 
 
 def calendar_sessions() -> Dict[datetime.date, str]:
@@ -129,6 +151,8 @@ def embedded_session_dates(path: Path) -> Set[datetime.date]:
 
 
 def main() -> int:
+    criteria = load_go_no_go_criteria()
+    binding_start = criteria.min_binding_evaluation_start_date
     sessions = calendar_sessions()
     by_date, undated = current_window_rows()
     on_disk = archives_on_disk()
@@ -148,6 +172,11 @@ def main() -> int:
     )
     print(f"[INFO] Current manifest rows naming a {WINDOW_YEARS[0]}-{WINDOW_YEARS[-1]} archive: {sum(len(v) for v in by_date.values())}")
     print(f"[INFO] Bhavcopy archives on disk in those directories: {len(on_disk)}")
+    print(
+        f"[INFO] Label rule read from criteria {criteria.version}: min_binding_evaluation_start_date "
+        f"{binding_start.isoformat()} — sessions on/after it must read {BINDING_LABEL!r}, sessions "
+        f"before it {WARMUP_LABEL!r}"
+    )
 
     if len(sessions) != EXPECTED_SESSIONS:
         problems.append(
@@ -155,6 +184,7 @@ def main() -> int:
         )
 
     verified = 0
+    label_counts: Dict[str, int] = {}
     attested_paths: set = set()
     for session_date, session_type in sessions.items():
         rows = by_date.get(session_date, [])
@@ -176,10 +206,14 @@ def main() -> int:
                 f"session {session_date.isoformat()} ({session_type}): {artifact} declares session_type "
                 f"{row.get('session_type')!r} instead of the calendar's {session_type!r}"
             )
-        if row.get("gating_mode") != WARMUP_LABEL:
+        expected_label = expected_gating_mode(session_date, binding_start)
+        label_counts[expected_label] = label_counts.get(expected_label, 0) + 1
+        if row.get("gating_mode") != expected_label:
             problems.append(
                 f"session {session_date.isoformat()} ({session_type}): {artifact} carries gating_mode "
-                f"{row.get('gating_mode')!r}, expected {WARMUP_LABEL!r}"
+                f"{row.get('gating_mode')!r}, expected {expected_label!r} for a session "
+                f"{'on/after' if session_date >= binding_start else 'before'} the binding start "
+                f"{binding_start.isoformat()} (criteria {criteria.version})"
             )
         for field in ("source_url", "retrieved_at"):
             if not isinstance(row.get(field), str) or not str(row.get(field)).strip():
@@ -261,8 +295,10 @@ def main() -> int:
         return 1
     print(
         f"OVERALL: COVERED — {verified}/{EXPECTED_SESSIONS} session(s) attested by one current manifest row each, "
-        f"bytes matching byte_count and sha256, each archive's own session date equal to its row, "
-        f"{WARMUP_LABEL} on every row"
+        f"bytes matching byte_count and sha256, each archive's own session date equal to its row, and "
+        f"gating_mode equal to the label criteria {criteria.version}'s binding start {binding_start.isoformat()} "
+        f"implies on every row: "
+        + ", ".join(f"{label_counts.get(label, 0)} {label}" for label in (BINDING_LABEL, WARMUP_LABEL))
     )
     print("=" * 96)
     return 0

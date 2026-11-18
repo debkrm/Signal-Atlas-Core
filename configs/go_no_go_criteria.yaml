@@ -113,7 +113,19 @@ metadata:
   # CRIT-OVERFIT-06 stays NOT RUN below two validation folds (N-150), and the hold-bound criterion
   # remains NOT RUN until the bound has a consumer. The 931 manifest rows still read WARMUP_NOT_GATABLE
   # as captured; relabelling them by append and re-pinning MAN-FPR is the remaining promotion mechanic.
-  version: "1.1.13"
+  # 1.1.14 (2026-11-18): no numeric threshold and no criterion changed. Audit §92.7 Ruling 1 aligns the
+  # capture label with the binding start 1.1.13 committed: the 931 `data/reference/manifest.jsonl` rows
+  # for 2018-04-01..2021-12-31 are superseded by append (each prior row flips to `is_current: false` /
+  # `status: superseded` and keeps its digest; each appended row keeps the identical `byte_count`,
+  # `sha256`, `source_url`, `retrieved_at` and `session_type`) with `gating_mode: BINDING_EVALUATION`,
+  # and `scripts/probe_pre2022_bronze_coverage.py` derives the expected label from
+  # `min_binding_evaluation_start_date` instead of hard-coding `WARMUP_NOT_GATABLE`, so a tree whose
+  # criteria and labels disagree fails closed. "expected_manifest_fingerprint" is re-pinned over the grown
+  # manifest by measurement. `min_binding_evaluation_start_date` stays 2018-04-01, "expected_calendar_fingerprint"
+  # stays CAL-FPR-V1-6acb5f45…, "expected_sourced_window_calendar_fingerprint" stays 2d5ac7ac…, and every
+  # count, tolerance, weight, fold, trial count and criterion is byte-identical to 1.1.13. A relabel
+  # asserts nothing new about prices: it states the maturity of an input A1, A2 and A4 already certified.
+  version: "1.1.14"
   effective_date: "2026-11-18"
   market: "NSE_CASH_EQUITY"
   currency: "INR"
@@ -278,11 +290,13 @@ market_data_and_accounting_invariants:
   zero_data_fabrication_required: true
 
   # Finding H-72: Authoritative reference manifest fingerprint pinned as criteria anchor (Audit §54.5, §54.10, §60.6 Item 4, §62.6 Item 4)
-  # MAN-FPR-V1 covers data/reference/manifest.jsonl content (714,265 bytes, SHA-256 7131c2136b54ebd557c288170f00b2facec7d5e775231ecaa5bd4dedce0012ec);
-  # re-pinned 2026-11-18 with the 931 warm-up Bhavcopy archive rows registered by the Audit §87.5 Ruling 1
-  # capture, the only manifest changes in that commit (931 added lines, 0 removed).
-  # 985 current rows (54 prior + 931 archives) and 23 superseded rows are verified by Gate W0.5-5 and Gate 2D-6.
-  expected_manifest_fingerprint: "MAN-FPR-V1-e95ddf9076671d6b3586f3ce079734f8493d73d6150e55b0868b0f9fbcb0565b"
+  # MAN-FPR-V1 covers data/reference/manifest.jsonl content (1,865,503 bytes, SHA-256
+  # a421d3d2de37ada0cf03c536782c64ffb305627ebef7baca15fdd8bfc59646b6); re-pinned 2026-11-18 under
+  # Audit §92.7 Ruling 1 / criteria 1.1.14, which superseded the 931 warm-up Bhavcopy rows by append so
+  # their `gating_mode` reads BINDING_EVALUATION (931 appended rows; the 931 prior rows flip to
+  # is_current: false and are retained as history). No archive byte, byte count or digest changed.
+  # 1,000 current rows and 957 superseded rows are verified by Gate W0.5-5 and Gate 2D-6.
+  expected_manifest_fingerprint: "MAN-FPR-V1-a421d3d2de37ada0cf03c536782c64ffb305627ebef7baca15fdd8bfc59646b6"
 
   # Finding N-128 (Audit §72.3, §72.5 item 3): the trial-registry manifest witnesses
   # {evaluation_count, head_eval_hash} outside the (sidecar, anchor) pair. Pinning its SHA-256 here
@@ -331,4 +345,8 @@ market_data_and_accounting_invariants:
   # classifications carry no document proof beyond the annual aggregate counts.
   # Per AGENTS.md §10.8, the binding evaluation window starts 2022-01-03; warm-up sessions are
   # used only for feature warm-up and are explicitly NOT RUN for gating purposes.
-  pre_binding_calendar_provenance_note: "N-52: 931 binding-range warm-up sessions (2018-04-01..2021-12-31) cite no per-session NSE circular document. Sessions in this range are warm-up only; metrics computed on them are NOT RUN for gating per AGENTS.md §10.8."
+  # Audit §92.7 Ruling 1 / criteria 1.1.14: the second sentence of this note was true while the binding
+  # start was 2022-01-03 and is not true of 1.1.13 onward — the window is binding-eligible on A1 (5/5
+  # sourced annual circulars), A2 (931/931 interval coverage) and A4 (4,357 traced ex-dates). What N-52
+  # still names stands: no per-session circular substantiates these dates individually.
+  pre_binding_calendar_provenance_note: "N-52: 931 sessions (2018-04-01..2021-12-31) cite no per-session NSE circular document; their classification rests on the annual 2018-2021 circulars recorded in calendar_provenance_bundle.json. Since criteria 1.1.13 these sessions are binding-eligible (Audit §91.8 Ruling 1), so a metric computed on them is NOT automatically NOT RUN; it is gated by whatever evidence that metric needs."

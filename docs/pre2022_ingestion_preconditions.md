@@ -150,6 +150,14 @@ statuses are computed per check rather than asserted in prose (§9.1).
 
 ## 8. The capture that happened, and the gate that did not open (Audit §87.5 Ruling 1)
 
+> **Superseded in part by Audit §92.7 Ruling 1 / criteria 1.1.14, not audited.** Everything below
+> describes the §87 capture as it stood under criteria 1.1.11, when the binding start was 2022-01-03 and
+> `WARMUP_NOT_GATABLE` was the correct label. Criteria 1.1.13 moved the binding start to 2018-04-01 and
+> 1.1.14 superseded the 931 rows by append with `gating_mode: BINDING_EVALUATION`; the archives' bytes,
+> digests, `source_url` and `retrieved_at` did not change, and the coverage probe now derives its label
+> rule from `min_binding_evaluation_start_date`. The A2/A4 statements below are superseded by Audit
+> §91.2 and §90.9 item 3 respectively; the capture mechanics they describe still hold.
+
 Captured, measured on the tree this section is committed in — **not audited**:
 
 - **931 archives, byte-exact, under `data/raw/<year>/`** — 2018 186, 2019 245, 2020 252, 2021 248;
