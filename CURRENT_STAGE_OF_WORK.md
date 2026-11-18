@@ -2018,3 +2018,75 @@ timing-sensitive check is a hypothesis, not a measurement. Protected paths untou
 `AGENTS.md`, `.agents/skills/audit-round/SKILL.md`, `configs/trading_calendar_nse.json`, `data/trials/`,
 `reports/verdicts/trial_00*`. Docs corrected where they now contradicted the artifact:
 `docs/bronze_storage_policy.md` and the `docs/pre2022_ingestion_preconditions.md` §87 capture record.
+
+**§94 — round log for `feat-s94`, acting on the §93.7 work order at `e5e9217` (tag `feat-s93-e5e9217`).
+NOT AUDITED: every statement below is the implementer's own measurement, and no status word here is
+granted by a verdict.**
+
+**§93.7 item 2 — the engine-loop passthrough is now asserted, and cut it fails.** `probe_n177` no longer
+matches a substring: `_session_loop_passthrough_problem` parses `scripts/run_phase3b2_walkforward.py`
+with `ast` and requires the call to `execute_swing_strategy_session` inside the session loop to pass a
+keyword `forced_exit_isins` whose expression is exactly `tuple(sorted(forced_exits))`. Measured:
+committed tree **PASS N-177, exit 0**; with that one line deleted, **exit 1** —
+`the walk-forward session loop does not hand the hold bound's exits to the harness (line 1258: no
+forced_exit_isins keyword), so a refused hold is never routed through the single execution path`;
+restored, **exit 0**. The probe also refuses its own check against that mutation, so a check that cannot
+fail is itself a failure (§14.4). Committed test:
+`tests/unit/test_phase3b2_audit_s94_items.py::test_session_loop_hands_the_hold_bound_exits_to_the_harness`
+asserts both directions.
+
+**§93.7 item 3 — a superseded manifest row survives its own flip, at certificate time.**
+`scripts/probe_pre2022_bronze_coverage.py` now reads every manifest row and, for each artifact that
+carries a `session_date`, requires exactly one current row and compares the superseded rows' `sha256`,
+`byte_count`, `source_url`, `retrieved_at`, `session_date` and `session_type` to it. Measured:
+**931 superseded session rows checked, 0 problems**, certificate **COVERED — 931/931, exit 0**; editing
+one superseded row's `sha256` makes it **exit 1** with
+`archive data/raw/2018/cm02APR2018bhav.csv.zip: superseded row disagrees with the current row on sha256
+(superseded '0000…', current '0ce5fd92…') — a supersession may move is_current/status and the label,
+never the archive's digest or provenance (§10.1, Audit §93.7 item 3)`; restored, **exit 0**. The check is
+deliberately scoped to session-dated rows: 23 superseded rows on derived artifacts
+(`cash_equity_symbol_intervals.csv`, `corporate_actions.jsonl`) differ in digest **because their content
+moved**, which is history, not a relabel; the three `circulars/NSE_CMTR_*_HOLIDAYS.json` artifacts carry
+no current row and no session, so this certificate asserts nothing about them. Two committed tests
+(`test_committed_superseded_session_rows_keep_their_archive_fields`,
+`test_edited_superseded_sha256_is_refused`) assert the invariant and the refusal.
+
+**§93.7 item 1 — candidate seq 10 is NOT RUN; the block is measured, not asserted.** No trial row,
+evaluation row, verdict artifact or criteria re-pin was written: `data/trials/` is **N = 9 / N_eval = 5**
+with manifest `3326b1b2…` equal to the criteria pin, and the criteria remain **1.1.14**. Two blockers,
+both computed by `scripts/run_seq10_candidate.py` and reported by `scripts/probe_seq10_candidate.py`
+(exit 1, `NOT CERTIFIED`):
+
+1. **No committed corpus covers `2018-04-01..2023-12-29` with split/bonus-adjusted prices.** The
+   candidates it inspects are `historical_dev_dataset_2022_2024.json` and `.json.gz`, both
+   `2022-01-03..2024-12-31`, `adjustment_version=v1.4`, `CA-FPR-6d7aae6d8…`. `data/silver/bhavcopy`
+   holds **0** partitions, so `GoldEngine` — whose `SPLIT_BONUS_ADJUSTED` branch back-adjusts by
+   cumulative ratios before each ex-date — has no input. The remaining builder,
+   `build_historical_dataset_from_raw_bhavcopy`, labels its series `UNADJUSTED_RAW` and is dead code
+   with two latent defects measured here: `compute_legacy_dataset_content_fingerprint()` has no
+   `symbols_by_instrument` parameter (TypeError), and `PriceConvention.UNADJUSTED_CLOSE` no longer exists
+   (AttributeError; `UNADJUSTED_RAW` does). All 1,421 `data/raw/2018..2023` archives parse clean
+   (**0 failures**); the 121 refused archives are all 2024 UDiFF files, outside the window.
+2. **An unadjusted series is not a legal input for this window.** Of 5,016 committed corporate actions,
+   **85 are SPLIT/BONUS/CONSOLIDATION with ratios and 74 take effect before 2022-01-03**, so a raw
+   2018-2023 series carries each one as a price jump that SMA/ATR read as a move (§5.4, §10.3). Running
+   either would publish a result the criteria's adjustment rule forbids, so the driver refuses before it
+   registers anything and the probe reports the state as `NOT CERTIFIED` rather than passing on an
+   absent run.
+
+A third prerequisite was measured and **left unimplemented on purpose**: the engine's in-sample fold is
+fixed at train `2022-01-03..2022-12-30`, test `2023-01-02..2023-12-29`, so a 2018-start run would state
+`in_sample_metrics['window'] = 2022-01-03 .. 2023-12-29` while traversing `2018-04-01..2023-12-31`. A
+first attempt at that plumbing was withdrawn after a two-session smoke run on the committed dev snapshot
+raised `PartitionSpecValidationError: test_start (2023-01-02) exceeds test_end (2022-02-10)` — the fold
+is not a window description that generalises, and shipping it ahead of the run would have been the
+additive path §14.4 warns about. The driver now asserts its baseline artifact's declared window equals
+the requested one **before** any registration.
+
+**Gate and scope.** `verify_audit_append_only.py --force-full`: **ALL REPOSITORY FOUNDATION GATES
+PASSED (100%)**, suite **552 passed in 56.53 s, 0 skipped, 0 xfailed** (548 at §93 plus the four new
+tests), **9/9 verifiers exit 0**, Gate W0.5-5 **1,000 current / 957 superseded** rows,
+`verify_audit_findings.py` **29/29**. Criteria 1.1.14 unchanged, every numeric threshold unchanged, the
+2024 validation fold frozen, holdout `2025-01-01..2026-11-11` sealed, and no path under
+`reports/audit/`, `AGENTS.md`, `.agents/skills/audit-round/SKILL.md`,
+`configs/trading_calendar_nse.json`, `data/trials/` or `reports/verdicts/trial_00*` was written.

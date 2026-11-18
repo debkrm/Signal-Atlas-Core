@@ -25,7 +25,10 @@ It fails closed by construction on all seven shapes the Ruling names:
 - a muhurat or special bar stored as a full session — `session_type mismatch`;
 - a label that disagrees with the criteria — `gating_mode` must read the value the binding start
   implies for that session's date;
-- two current rows claiming the same session — `duplicate current row(s)`.
+- two current rows claiming the same session — `duplicate current row(s)`;
+- a superseded row whose archive fields diverge from its current row — `superseded row … disagrees
+  with the current row on an archive field` (Audit §93.7 item 3), so a `sha256` edited into a
+  superseded row fails this certificate rather than being skipped as history.
 
 Capture eligibility is not gating eligibility: this probe measures bytes and labels, and it neither
 computes a metric nor reads the holdout.
@@ -58,6 +61,18 @@ from signal_core.storage.ingest import BhavcopyIngestError, parse_bhavcopy_date 
 CALENDAR_PATH = REPO_ROOT / "configs" / "trading_calendar_nse.json"
 MANIFEST_PATH = REPO_ROOT / "data" / "reference" / "manifest.jsonl"
 RAW_ROOT = REPO_ROOT / "data" / "raw"
+
+# The archive fields a supersession may never touch (Audit §93.7 item 3). Exactly these six were
+# measured unchanged across the 931 relabelled rows in §93.2; a seventh field is not added here
+# because `gating_mode`, `description` and `retrieval_reference` are what a relabel is allowed to move.
+SUPERSEDED_ARCHIVE_FIELDS = (
+    "sha256",
+    "byte_count",
+    "source_url",
+    "retrieved_at",
+    "session_date",
+    "session_type",
+)
 
 WINDOW_START = datetime.date(2018, 4, 1)
 WINDOW_END = datetime.date(2021, 12, 31)
@@ -119,6 +134,68 @@ def current_window_rows() -> Tuple[Dict[datetime.date, List[dict]], List[dict]]:
     return by_date, undated
 
 
+def manifest_rows() -> List[dict]:
+    """Every row in the committed manifest, current and superseded."""
+    rows: List[dict] = []
+    for line in MANIFEST_PATH.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            rows.append(json.loads(line))
+    return rows
+
+
+def superseded_archive_problems(rows: List[dict]) -> Tuple[List[str], int]:
+    """
+    A superseded session row must survive its own flip byte for byte (Audit §93.7 item 3).
+
+    §93.2 replaced the Ruling's "additions only" wording with the invariant it was protecting: no
+    archive field of a superseded row changes, and there is exactly one current row per archive. This
+    expresses that as a check over the whole committed manifest rather than over the 2018-2021 window,
+    because a superseded row is history whether or not today's certificate reads it.
+
+    Scoped to rows that declare a `session_date`: a derived artifact (`cash_equity_symbol_intervals.csv`,
+    `corporate_actions.jsonl`) is superseded *because* its content moved, so its digest is supposed to
+    differ. A captured exchange session is superseded only by a relabel, so any archive field moving is
+    a history edit. Artifacts with no current row at all (`circulars/NSE_CMTR_*_HOLIDAYS.json`) are left
+    to the gates that own them; they carry no session, so this certificate has no assertion to make.
+
+    Returns (problems, rows_checked).
+    """
+    by_artifact: Dict[str, List[dict]] = {}
+    for row in rows:
+        by_artifact.setdefault(str(row.get("artifact")), []).append(row)
+
+    problems: List[str] = []
+    checked = 0
+    for artifact, group in sorted(by_artifact.items()):
+        session_rows = [row for row in group if row.get("session_date")]
+        if not session_rows:
+            continue
+        current = [row for row in group if row.get("is_current") is True]
+        if len(current) != 1:
+            problems.append(
+                f"archive {artifact}: {len(current)} current row(s) after supersession, expected exactly 1 "
+                f"for an archive carrying a session_date"
+            )
+            continue
+        base = current[0]
+        for row in session_rows:
+            if row is base:
+                continue
+            checked += 1
+            differing = [field for field in SUPERSEDED_ARCHIVE_FIELDS if row.get(field) != base.get(field)]
+            if differing:
+                problems.append(
+                    f"archive {artifact}: superseded row disagrees with the current row on "
+                    + ", ".join(
+                        f"{field} (superseded {row.get(field)!r}, current {base.get(field)!r})"
+                        for field in differing
+                    )
+                    + " — a supersession may move is_current/status and the label, never the archive's "
+                    "digest or provenance (§10.1, Audit §93.7 item 3)"
+                )
+    return problems, checked
+
+
 def archives_on_disk() -> Dict[str, Path]:
     found: Dict[str, Path] = {}
     for year in WINDOW_YEARS:
@@ -157,6 +234,8 @@ def main() -> int:
     by_date, undated = current_window_rows()
     on_disk = archives_on_disk()
     problems: List[str] = []
+    supersession_problems, superseded_checked = superseded_archive_problems(manifest_rows())
+    problems.extend(supersession_problems)
 
     print("=" * 96)
     print("PRE-2022 BRONZE COVERAGE — Audit §87.5 Ruling 1, probe (1)")
@@ -172,6 +251,11 @@ def main() -> int:
     )
     print(f"[INFO] Current manifest rows naming a {WINDOW_YEARS[0]}-{WINDOW_YEARS[-1]} archive: {sum(len(v) for v in by_date.values())}")
     print(f"[INFO] Bhavcopy archives on disk in those directories: {len(on_disk)}")
+    print(
+        f"[INFO] Superseded session-dated manifest rows checked against their current row: "
+        f"{superseded_checked} ({len(supersession_problems)} problem(s)); archive fields "
+        f"{', '.join(SUPERSEDED_ARCHIVE_FIELDS)}"
+    )
     print(
         f"[INFO] Label rule read from criteria {criteria.version}: min_binding_evaluation_start_date "
         f"{binding_start.isoformat()} — sessions on/after it must read {BINDING_LABEL!r}, sessions "
@@ -299,6 +383,7 @@ def main() -> int:
         f"gating_mode equal to the label criteria {criteria.version}'s binding start {binding_start.isoformat()} "
         f"implies on every row: "
         + ", ".join(f"{label_counts.get(label, 0)} {label}" for label in (BINDING_LABEL, WARMUP_LABEL))
+        + f"; {superseded_checked} superseded session row(s) retain their archive digest and provenance"
     )
     print("=" * 96)
     return 0

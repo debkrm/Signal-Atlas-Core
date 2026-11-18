@@ -16,13 +16,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ast
 import csv
 import io
 import subprocess
 import sys
 from decimal import Decimal
 from pathlib import Path
-from typing import Callable, Dict
+from typing import Callable, Dict, Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 for _p in (str(REPO_ROOT / "src"), str(REPO_ROOT / "scripts")):
@@ -1841,6 +1842,49 @@ def probe_n176() -> None:
     )
 
 
+def _session_loop_passthrough_problem(source: str) -> Optional[str]:
+    """
+    The named seam between the engine loop and the harness (Audit §93.7 item 2).
+
+    §93.3 measured the §14.4 shape: a committed test bound the *harness* while the session loop's call
+    was asserted by no test, so deleting `forced_exit_isins=tuple(sorted(forced_exits))` from
+    `scripts/run_phase3b2_walkforward.py` left three tests passing and `probe_n177` at exit 0. A
+    substring is the wrong instrument for that claim — it is satisfied by a comment, a dead branch or
+    a call in a function nobody calls — so the call is parsed and its keyword argument is compared as
+    an expression.
+
+    Returns `None` when exactly the session loop's call passes `forced_exit_isins=tuple(sorted(
+    forced_exits))`; otherwise a sentence naming what was found, so a probe failure says which half of
+    the seam was cut.
+    """
+    calls = 0
+    found: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        if name != "execute_swing_strategy_session":
+            continue
+        calls += 1
+        keywords = {kw.arg: kw.value for kw in node.keywords if kw.arg}
+        if "forced_exit_isins" not in keywords:
+            found.append(f"line {node.lineno}: no forced_exit_isins keyword")
+            continue
+        rendered = ast.unparse(keywords["forced_exit_isins"])
+        if rendered != "tuple(sorted(forced_exits))":
+            found.append(f"line {node.lineno}: forced_exit_isins={rendered}")
+    if calls == 0:
+        return "no call to execute_swing_strategy_session was found in the walk-forward script"
+    if found:
+        return (
+            "the walk-forward session loop does not hand the hold bound's exits to the harness ("
+            + "; ".join(found)
+            + "), so a refused hold is never routed through the single execution path (§93.7 item 2)"
+        )
+    return None
+
+
 def probe_n177() -> None:
     """
     The hold bound must have a production consumer, and a hold past it must be refused (N-177).
@@ -1869,6 +1913,25 @@ def probe_n177() -> None:
     assert "require_hold_bounds(" in walkforward_source, (
         "the walk-forward session loop does not consult the hold bound; the production consumer is "
         "never reached by a run (N-177, §13.2)"
+    )
+    # Audit §93.7 item 2: §93.3 measured that this edge was asserted by nothing — removing the
+    # passthrough left the seam tests green and this probe at exit 0. The call is parsed, and the
+    # check is then run against the mutation the work order names, so a check that cannot fail is
+    # itself a failure here (§14.4).
+    problem = _session_loop_passthrough_problem(walkforward_source)
+    assert problem is None, problem
+    passthrough_line = "forced_exit_isins=tuple(sorted(forced_exits)),"
+    stripped_source = "\n".join(
+        line for line in walkforward_source.splitlines() if line.strip() != passthrough_line
+    )
+    assert stripped_source != walkforward_source, (
+        f"`{passthrough_line}` is not a line of its own in the walk-forward script, so the mutation "
+        f"this probe must refuse cannot be constructed (§93.7 item 2)"
+    )
+    mutation_problem = _session_loop_passthrough_problem(stripped_source)
+    assert mutation_problem is not None, (
+        "removing the forced_exit_isins passthrough from the session loop does not fail this probe, "
+        "so the engine-to-harness edge is asserted by nothing (§93.7 item 2, §14.4)"
     )
 
     # Audit §92.10 item 4: a string in the script does not prove the seam is reachable, so the seam is
