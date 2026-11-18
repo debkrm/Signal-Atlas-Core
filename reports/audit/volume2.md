@@ -1599,3 +1599,126 @@ Independent corroboration that 2019-10-29 traded, from contemporaneous press rat
 - If the grid correction lands without the 2019 artifacts in the same commit, the correction is a fabricated session regardless of who authorised it — this Ruling does not survive that.
 - If `expected_sourced_window_calendar_fingerprint`, 1201 or 1196 move when the 2019 date is added, the re-pin drifted into a window the correction cannot touch.
 - If a fresh clone at a later commit still reports 24 modified paths, N-170 stands and reuse remains unreachable outside this checkout.
+---
+
+## §87 — Audit of `e081886` (tag `feat-s86-3fb8f64`): the archives are bytes, the 2019 grid is sourced, A1 passes on all four years, and capture is authorised while gating is not
+
+**Date:** 18 November 2026
+**Commits under review:** `3fb8f64` (tag `feat-s86-3fb8f64`) — the code commit, 27 files, +889/−49; and `e081886` — its docs-only successor, 2 files, +72 (`CURRENT_STAGE_OF_WORK.md` 53 lines, the green row 19). Every measurement below is at `e081886`, whose tree contains `3fb8f64` unchanged.
+**Verdicts:** N-170 `CLOSED` · §86.5 Ruling 1 **complied with in full** · A1 **PASS 5/5** · **§87.5 Ruling 1** authorises the 931-session Bronze capture as `WARMUP_NOT_GATABLE` · nothing here makes a pre-2022 session gating-eligible
+
+### 87.1 Baseline re-measured at `e081886`
+
+| Measurement | Result |
+|---|---|
+| `scripts/verify_audit_append_only.py --force-full` | **exit 0** — `ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Verifiers discovered / executed | 9 / 9, every exit 0 (10 `scripts/verify_*.py` on disk; the gate discovers all but itself) |
+| pytest | **536 passed** in 160.47 s (161.58 s wall) |
+| W0.5-1 / 1b / 1c | append-only PASS (frozen volume 8,442 lines, 1–78); 2 volumes verified; index reproduces at **86** section rows |
+| W0.5-4 | PASS — **90** commit-bearing tags verified |
+| W0.5-5 | PASS — **54** current manifest rows match byte_count + sha256; **23** superseded rows skipped as history |
+| Findings ledger before this round | 35 rows / 22 ids after N-170's two rows (§87.2); N-169 `CLOSED` |
+| Criteria | **1.1.10**, `configs/go_no_go_criteria.yaml` sha256 `dedaf4310fa2da50…`, effective 2026-11-18 |
+| Scratch-defect probes | **22 / 22** exit 0 (`verify_audit_findings.py`) |
+| `probe_pre2022_preconditions.py` | **exit 1** — A1 5/5 `PASS`, A2 `NO`, A4 dividends `NO`, A4 max-hold `NO` (3 of 8 unmet) |
+| Trials / fold / holdout | N = 9 / N_eval = 5, unchanged (no trial file appears in the diffstat); 2024 fold frozen; no `HOLDOUT_UNLOCK` sentinel; `2025-01-01..2026-11-11` sealed |
+| `dirty_source_paths()` | `[]` |
+| Green cache | 17 rows; the newest names `3fb8f64` (`dc67d4b4…`), which is the tree `e081886` extends |
+
+### 87.2 N-170 — `CLOSED`
+
+| Measurement | Result |
+|---|---|
+| Tracked archives (`*.zip`, `*.gz`) | **1,221** (1,220 `.zip`, 1 `.json.gz`) |
+| Attribute, read back per path in one `git check-attr --stdin` call | `text: unset` on **1,221 / 1,221** — every rule that would convert them is overridden by the last-match `-text` block |
+| Worktree bytes vs stored object | `git hash-object` against the index oid: **0 mismatches of 1,221** |
+| Archives in `dirty_source_paths()` at `e081886` | **0** |
+| Fresh clone (`git clone --no-local . /tmp/s87c` at `e081886`) | `git status --porcelain` **empty (0 paths)**; `dirty_source_paths()` **`[]`**; `cm12JAN2024bhav.csv.zip` 100,331 B on disk = 100,331 B in the object, 273 CR-bearing lines intact |
+| Attack — `.gitattributes` reverted to the `a3be813` text, one archive deleted and re-checked out | probe **exit 1**: `FAIL N-170: 1221 tracked archive(s) still carry a text attribute, so a checkout rewrites their bytes: ['data/raw/2022/cm01APR2022bhav.csv.zip', …]`; the same file then hashes `db289cc9…` against index oid `66d91345…` while both report 100,331 bytes — the conversion is invisible to a size check and visible to a digest |
+| Attack — attributes restored, archive re-checked out | `PASS N-170`, exit 0 |
+
+The repair is an attribute decision, not a byte rewrite: `.gitattributes` gained 9 lines (comments plus `*.csv.zip`, `*.json.gz`, `*.zip`, `*.gz` marked `-text`) and **no archive blob changed**. The probe is scoped to archives on purpose — the whole-tree clean assertion belongs to the cache — and it fails closed on the attribute, on a digest mismatch, and on an archive in the dirty set. The one thing it cannot see is a conversion that leaves both the attribute and the digest intact, which is not a shape git can produce.
+
+**Ledger.** N-170 was measured at §86.3 and carried in that section without a row (§79.9: a probe asserting the defect then could not pass on this checkout). It is registered here as `OPEN` with §86.3 as its opening measurement and closed in this section, in that order, because the ledger will not accept a closure with no prior row.
+
+### 87.3 §86.5 Ruling 1 — every condition met, and the pins the Ruling forbade are untouched
+
+| Condition from §86.5 | Measured at `e081886` |
+|---|---|
+| `2019-10-29` restored as a regular session | `{"date": "2019-10-29", "session_type": "FULL", "open_time": "09:15:00", "close_time": "15:30:00", "description": "Regular Trading Session"}` — present in `session_records` **and** in `sessions` |
+| 2019 = 245, total = 2,936, window = 931 | `annual_session_counts` 2018 246 / **2019 245** / 2020 252 / 2021 248; `len(sessions)` **2,936**; `2018-04-01..2021-12-31` **931** (2018 186, 2019 245, 2020 252, 2021 248) |
+| New CAL-FPR, provenance no longer self-referential | `CAL-FPR-V1-6acb5f45…47a9ac9`; `provenance.sha256` `7622fbf4…` — **not** equal to the CAL-FPR hex, and equal to the sha256 of the 3,483-byte bundle (recomputed) |
+| Criteria 1.1.10, zero numeric threshold changes | version `1.1.9 → 1.1.10`, effective `2026-11-18`; a full walk of every numeric value in both YAML revisions finds **exactly one** changed number: `market_data_and_accounting_invariants.expected_total_calendar_sessions 2935 → 2936` |
+| Manifest pin resealed | `MAN-FPR-V1-23200ba8… → MAN-FPR-V1-d05b87e19ca57dc7…`; file 47,639 B, sha256 `d05b87e1…` (recomputed) |
+| `criteria.py` default, storage verifier, tests | `expected_total_calendar_sessions: int = 2936`; `verify_phase2b5_storage.py` exit 0 at 2,936; the three test constants moved with it (suite green) |
+| Phase 2D artifacts regenerated | JSON and Markdown each carry **4 × `CAL-FPR-V1-6acb5f45`** and **1 × `CAL-FPR-V1-2d5ac7ac`**; `criteria_version` 1.1.10; the diff touches no criterion row — only version, fingerprints, the restatement note and the CRIT-DATA-06 row; `overall_verdict` stays **NO-GO** over `2022-01-03..2026-10-30` |
+| `2d5ac7ac…`, 1201, 1196, 2022-01-03 untouched | all four byte-identical in both revisions of criteria; the sourced-window fingerprint also appears unchanged in the regenerated verdict evidence string |
+| Fail-closed attacks | (A) delete `2019-10-29` → `[NO] A1 2019: 1 circular date(s) absent from the calendar, e.g. 2019-10-29`, `verify_phase2b5_storage.py` exit 1; (B) append one space to the bundle → storage exit 1, `Calendar provenance sha256 mismatch … declared '7622fbf4…' != committed source bundle digest '7b4829cf…' (Audit §86.6 item 7)`; (C) relabel `2019-10-29` `MUHURAT` → storage exit 1, `declared 'CAL-FPR-V1-6acb5f45…' != computed session content digest 'CAL-FPR-V1-29687860…'` |
+
+The Ruling's central condition — that the correction arrive in the same commit as the artifacts that imply it — holds: `3fb8f64` adds the seven circulars, the bundle, the calendar correction, the criteria bump, the regenerated verdict and the probes together. Restoring the date without the evidence fails closed in two independent instruments (A and C), and touching the evidence without the calendar fails in a third (the `[NO] A1 2019` line).
+
+### 87.4 A1 at `PASS` on all five checks
+
+```
+[PASS] A1 2018: 246 session(s) reproduced by 1 sourced circular artifact(s), 18 declared holiday(s)
+[PASS] A1 2019: 245 session(s) reproduced by 3 sourced circular artifact(s), 21 declared holiday(s)
+[PASS] A1 2020: 252 session(s) reproduced by 2 sourced circular artifact(s), 19 declared holiday(s)
+[PASS] A1 2021: 248 session(s) reproduced by 1 sourced circular artifact(s), 18 declared holiday(s)
+[PASS] A1 provenance: the calendar names a source digest 7622fbf4633683df…
+```
+
+| Year | Artifacts | Arithmetic that reproduces the grid |
+|---|---|---|
+| 2018 | `NSE/CMTR/36475` (2017-12-12, Ref 71/2017, annual) | 261 weekdays − 15 weekday holidays = **246**; the 2018-11-07 muhurat is a Wednesday and is therefore already inside the weekday count, declared as a `special_sessions` entry rather than added |
+| 2019 | `NSE/CMTR/39612` (annual), `NSE/CMTR/40536` (2019-04-29 parliamentary election), `NSE/MSD/42319` (2019-10-21 Maharashtra assembly election) | 261 − 17 weekday holidays + 1 Sunday muhurat (2019-10-27) = **245** |
+| 2020 | `NSE/CMTR/42877` (annual), `NSE/CMTR/43290` (2020-01-22, "Live Trading Session on February 01, 2020") | 262 − 12 weekday holidays + 2 Saturday sessions (2020-02-01, 2020-11-14) = **252** |
+| 2021 | `NSE/CMTR/46623` (annual) | 261 − 13 weekday holidays = **248**; 2021-11-04 muhurat is a Thursday already counted |
+
+Every one of the seven artifact files and the bundle matches its **current** manifest row's `sha256` and `byte_count` (0 mismatches, recomputed from disk), and every `circular_id` appears in the calendar's `provenance.circular_references`. The 2020-02-01 session is attested by a **Capital Market** circular that declares it a `special_sessions` entry (`SPECIAL`, 09:15–15:30), which is the §86.6 item 6 requirement met with the right instrument rather than the commodity circular §86.4 warned about.
+
+**Two limits measured, not argued.** (i) `2019-10-29` enters the corpus as an `inferred_trading_sessions` entry — "the annual circular declares no holiday on this date" — not as a positive statement, and the probe's arithmetic is two-sided (`unexplained` and `unsourced` both fail, as attack A shows). Ruling 1 authorised exactly this form; it remains an attestation by absence, and it is the weakest of the 931 sessions' provenance. (ii) `[PASS] A1 provenance` *names* the source digest; it does not hash the bundle. Attack B therefore leaves that line at `PASS` while the bundle is one byte larger — but `load_nse_trading_calendar()` fails closed on the same edit with the digest mismatch above, so the corpus is verified at load even though the readiness line is a labelling check. I record the distinction rather than a finding: no artifact is accepted unverified, and the line's wording claims no more than it measures.
+
+**The probe still exits 1** — A2 (4,510 interval rows begin 2022-01-03; 0 reach 2021-12-31) and A4 (0 of 138 committed ex-dates fall in the window; no maximum-hold bound) are open. A1 `PASS` is necessary and not sufficient, as §86.6 item 10 said.
+
+### 87.5 Ruling 1 — the 931 sessions may be captured; they may not be gated
+
+*Evidence.* At `e081886`: A1 5/5 `PASS` (§87.4), with the calendar's grid reproduced year by year from committed circular artifacts whose digests match their manifest rows. A2 `NO` (4,510 rows begin 2022-01-03, 0 reach 2021-12-31). A4 `NO` (0 of 138 ex-dates in the window; no maximum-hold bound committed). `probe_pre2022_preconditions.py` exit 1, 3 of 8 unmet. No file in the repository carries a `WARMUP_NOT_GATABLE` label today.
+
+*It changes one definition.* Under §81.8 Ruling 1, a pre-2022 session becomes **capturable** when A1 holds. It now holds for all four years, so the window `2018-04-01..2021-12-31` — **931 sessions** (2018 186, 2019 245, 2020 252, 2021 248; 926 `FULL`, 4 `MUHURAT`, 1 `SPECIAL`) — may be ingested as **Bronze Bhavcopy**, byte-exact, one manifest row per archive, and every session so captured is labelled **`WARMUP_NOT_GATABLE`**. Capture eligibility is not gating eligibility: A2 and A4 are still unmet, so no metric, verdict, trial or denominator may be computed over these sessions, and the committed `min_binding_evaluation_start_date: 2022-01-03` stays exactly where it is.
+
+*What the capture must look like.* Bronze payloads byte-exact as retrieved, never edited; one append-only Silver partition per session only after validation (§10.1); each archive a current manifest row carrying `source_url`, `retrieval timestamp`, `byte_count` and `sha256` (§10.7); atomic promotion, no partially promoted partition (§10.7); no `UPDATE`/`DELETE` against history (§10.1); `session_type` carried per session so the four muhurat bars (2018-11-07 17:30–18:30, 2019-10-27 18:15–19:15, 2020-11-14, 2021-11-04) and the 2020-02-01 Budget Saturday (09:15–15:30) are distinguishable from full sessions at the point of storage rather than reconstructed later; rows keyed by ISIN with symbol and series as effective-dated attributes (§10.4); and nothing written into `2025-01-01..2026-11-11` (§8.1).
+
+*What it does not authorise.* It does not move the pin, the window, any threshold, N, N_eval, the 2024 fold or the holdout; it does not create a trial; it does not make any pre-2022 session `PASS`/`FAIL`-eligible; it does not license jump-adjusted or forward-filled series, which remain prohibited (§6.3); it does not stand in for A3 surveillance history (ASM effective 2018-03-26, GSM 2017-03-14) or for A2/A4. Capture is a data-acquisition decision, not a scoring decision.
+
+*Probes that must fail closed before the item closes.* (1) A coverage probe that exits non-zero unless the window's captured sessions number **exactly 931**, each attested by a current manifest row whose bytes hash to its `sha256` and whose size equals `byte_count` — the Gate W0.5-5 / Gate 2D-6 mechanism measured working on 54 current rows in §87.1, applied to the new corpus; a session with no archive, an archive with no session, and a digest mismatch each fail. (2) The gating-mode probe §81.8 named and that does not exist yet: it must exit non-zero if any verdict's evaluated session set contains a `WARMUP_NOT_GATABLE` session, and its absence is why this Ruling authorises capture and not a single metric. (3) A1 must still print `PASS` at the capture commit, and the calendar's `CAL-FPR-V1-6acb5f45…` must not move — capture adds archives, it does not re-date the grid.
+
+*Work item.* 1 below, serving Phase 3B-2 / §10.8; items 2 and 3 remain the gating blockers.
+
+*Falsifier.* A capture commit whose corpus cannot be reconciled to all 931 sessions fails this Ruling; a session captured at a date the calendar does not hold, a muhurat bar stored as a full session, a Bhavcopy archive whose bytes disagree with its manifest row, or any computed metric over a `WARMUP_NOT_GATABLE` session before A2 and A4 land would each show the Ruling was applied as a gating permission rather than a capture one.
+
+### 87.6 Phase verdicts and residuals
+
+| Phase / claim | Verdict at `e081886` | Residuals named |
+|---|---|---|
+| N-170 | **CLOSED** — 1,221/1,221 archives `-text`, 0 digest mismatches, fresh clone 0 dirty paths, probe fails under the old attribute and passes restored | — |
+| `§12.3` gate machinery | **GO** — green at 536, 9/9 verifiers, 90 tags, 54 manifest rows verified | N-169/N-170 both closed |
+| `§86.5` Ruling 1 | **COMPLIED WITH** — every ordered pin moved, every forbidden pin byte-identical, attacks A/B/C fail closed | 2019-10-29 provenance is attestation by absence (§87.4) |
+| `§10.8` A1 (2018–2021 grid) | **PASS 5/5** — 246 / 245 / 252 / 248 reproduced from 7 artifacts; bundle digest matches its bytes | A2 `NO`, A4 `NO`; probe exit 1 |
+| `§86.8` items 1–3 | **DELIVERED** (item 4, parallel pytest, was not run — `pytest-xdist` absent, suite serial) | — |
+| Pre-2022 gating | **NOT ELIGIBLE** — no `WARMUP_NOT_GATABLE` label exists yet and no gating-mode probe exists; capture authorised (§87.5), gating not | A2, A4, gating-mode probe |
+
+### 87.7 Work order
+
+1. **Capture the 931 sessions under §87.5** (serves Phase 3B-2 / `§10.8`). Probe: the coverage probe exits 0 at exactly 931 manifest-attested sessions with bytes matching every row; any missing/extra session or digest mismatch exits non-zero; A1 still `PASS` and `CAL-FPR-V1-6acb5f45…` unchanged at the same commit.
+2. **Build the gating-mode probe** (§81.8, unchanged from §86.8 item 4a): it must exit non-zero if an evaluated session set contains a `WARMUP_NOT_GATABLE` session. Probe: a deliberately mis-scoped evaluation is refused, and the refusal is printed by name.
+3. **A2 — identity intervals reaching 2018-04-01** (serves Phase 3B-2). Probe: the A2 line prints `PASS` with a first row at or before 2018-04-01 and 0 rows required before it; a window session with no interval fails.
+4. **A4 — dividends or a committed maximum-hold bound** (serves Phase 3B-2, §13.2). Probe: the A4 lines print `PASS`, and the max-hold bound is read from criteria, not from a module default.
+
+### 87.8 What would falsify this verdict
+
+- If a fresh clone of a later commit reports any modified path, or an archive on disk hashes to something other than its index oid, N-170 is not closed and §87.2 is wrong.
+- If `git check-attr text` returns anything but `unset` for one of the 1,221 archives, the attribute block is not last-match-wins and the repair is partial.
+- If the calendar's 2019 count is not 245 with `2019-10-29` present as `FULL`, or the total is not 2,936 with `expected_total_calendar_sessions` 2,936, Ruling 1 of §86.5 was not complied with.
+- If `expected_sourced_window_calendar_fingerprint`, 1201, 1196 or the 2022-01-03 start differs between `a3be813` and `3fb8f64`, the re-pin drifted into the binding window.
+- If any A1 year passes with a circular whose bytes disagree with its manifest row, or with an artifact not cited in `provenance.circular_references`, the A1 measurement does not mean what §87.4 says.
+- If a metric, verdict or trial is computed over a pre-2022 session while A2 or A4 is unmet, the capture authorisation was read as a gating authorisation and this Ruling's intent is violated regardless of what it says.
