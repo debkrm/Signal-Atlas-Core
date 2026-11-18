@@ -1625,6 +1625,84 @@ def probe_n173() -> None:
             )
 
 
+def probe_n174() -> None:
+    """
+    The replay guard's O(1) claim is still certified by a timing ratio that cannot see a linear scan (N-174).
+
+    Measured at `fb02eea` in a detached worktree: reintroducing the linear scan N-1 replaced — a per-fill
+    loop over every instance the guard already holds — leaves both ceilings satisfied for a cheap scan
+    (1,000 fills 83.3 us/fill, 4,000 fills 187.5 us/fill, ratio 2.25) and makes the verdict a coin flip
+    for a comparison scan (ratio 1.96-2.60; 3 failed / 2 passed in five runs). The arithmetic reason is
+    that `250 - 47` us/fill of room at 4,000 fills buys about 2,000 scanned entries at ~78 ns each.
+
+    So this probe asserts what the timing guard cannot: that the test carries a structural count of the
+    replay path's membership lookups. It fails closed at the parent commit because no such assertion is
+    there yet; closure replaces the negative checks below with the positive one, and the 250 us / 2.5
+    ceilings must stay unchanged in either direction.
+    """
+    source = (REPO_ROOT / "tests" / "unit" / "test_portfolio.py").read_text(encoding="utf-8")
+    for ceiling in ("per_fill_1k_us < 250.0", "per_fill_4k_us < 250.0", "scaling_ratio < 2.5"):
+        assert ceiling in source, f"the ceiling `{ceiling}` was removed or widened"
+    structural = ("lookup_count", "CountingMapping", "_lookup_calls")
+    present = [token for token in structural if token in source]
+    assert not present, (
+        f"the test already counts replay lookups ({present[0]}), so the timing-only guard N-174 describes "
+        "is closed and this probe should assert the count instead of its absence"
+    )
+
+
+def probe_n175() -> None:
+    """
+    The interval table's series attribute disagrees with the archives it derives from (N-175).
+
+    Measured at `fb02eea` on six fixed sessions (2022-01-03, 2022-06-30, 2022-12-30, 2023-06-30,
+    2023-12-29, 2024-06-28): 13,008 observations, 0 ISIN disagreements, 0 uncovered, and 1,356 series
+    disagreements (10.4%) — every one of them a symbol whose single open-ended `EQ` row describes
+    sessions the exchange ran in `BE`, `BZ` or `SM`. The consequence is what this probe measures: of
+    1,336 ISIN-sessions that traded only trade-to-trade, 1,206 resolve to `EQ` through
+    `SecurityMaster.resolve_symbol` — the exact value `walkforward.py:637` feeds to Gate G2C-3's
+    `is_eligible`, and 1,206 are returned by `get_point_in_time_active_equities(..., series="EQ")`.
+
+    The assertions below are the reproduction (§5.1, §13.1). Closure replaces the second with
+    `admitted == 0` while keeping the 1,336 denominator, so a correction that also drops scrips from
+    the archive comparison cannot pass by shrinking the sample.
+    """
+    import datetime
+
+    from signal_core.storage.ingest import parse_bhavcopy_archive
+    from signal_core.storage.security_master import SecurityMaster, load_cash_universe_symbol_intervals
+
+    sessions = (
+        ("data/raw/2022/cm03JAN2022bhav.csv.zip", datetime.date(2022, 1, 3)),
+        ("data/raw/2022/cm30JUN2022bhav.csv.zip", datetime.date(2022, 6, 30)),
+        ("data/raw/2022/cm30DEC2022bhav.csv.zip", datetime.date(2022, 12, 30)),
+        ("data/raw/2023/cm30JUN2023bhav.csv.zip", datetime.date(2023, 6, 30)),
+        ("data/raw/2023/cm29DEC2023bhav.csv.zip", datetime.date(2023, 12, 29)),
+        ("data/raw/2024/cm28JUN2024bhav.csv.zip", datetime.date(2024, 6, 28)),
+    )
+    master = SecurityMaster(symbol_intervals=load_cash_universe_symbol_intervals())
+    trade_to_trade = 0
+    admitted = 0
+    for relative, session in sessions:
+        _, records = parse_bhavcopy_archive(str(REPO_ROOT / relative), trade_date=session)
+        observed = {record.isin for record in records if record.series in ("BE", "BZ") and record.isin}
+        trade_to_trade += len(observed)
+        for isin in observed:
+            interval = master.resolve_symbol(isin, session)
+            if interval is not None and interval.series == "EQ":
+                admitted += 1
+
+    assert trade_to_trade == 1336, (
+        f"{trade_to_trade} trade-to-trade ISIN-session(s) in the six fixed archives, not the 1,336 "
+        "this finding was measured on — the sample moved, so the comparison is not the one registered"
+    )
+    assert admitted == 1206, (
+        f"{admitted} of {trade_to_trade} trade-to-trade ISIN-session(s) resolve to EQ through the "
+        "security master; the finding measured 1,206, so either the table changed (then this probe must "
+        "assert 0) or the join did"
+    )
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -1651,6 +1729,8 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-171": probe_n171,
     "N-172": probe_n172,
     "N-173": probe_n173,
+    "N-174": probe_n174,
+    "N-175": probe_n175,
 }
 
 

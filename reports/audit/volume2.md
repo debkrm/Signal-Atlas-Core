@@ -1973,3 +1973,171 @@ The coverage probe gained `embedded_session_dates`, which opens the archive, req
 - If a failing test can produce a gate pass under the tolerant decoder, or the ledger test can pass with an unregistered id, the two "same assertions" claims are wrong.
 - If `time.process_time()` on the gate host advances in finer steps than 15.625 ms, or the 1,000-fill loop measures two or more ticks at a 5 µs/fill workload, N-173 is host-specific in the other direction and should be re-registered with that measurement.
 - If a committed verdict's evaluated set is ever shown to reach before 2022-01-03 while declaring a 2022 window, Ruling 1's acceptance was wrong.
+## §90 — Audit of `fb02eea` (tag `feat-s90-fb02eea`): the pooled clock closes N-173, the timing guard still cannot see a linear scan, and the interval table seats 1,206 trade-to-trade ISIN-sessions in the EQ universe
+
+**Date:** 18 November 2026
+**Commit under review:** `6e11d91` (4 files, +200/−67: the replay benchmark pools its measurement over whole passes, `probe_n173` is flipped, the state note records §89 items 1–5), plus `fb02eea` (the implementer's `CURRENT_STAGE_OF_WORK.md` note; it carries the tag, and it changes no source path — the gate projects the same tree hash, `b90a9393…`, as `6e11d91`).
+**Verdicts:** **N-173 CLOSED** · **N-174** registered `OPEN` (LOW — the timing guard cannot see the regression it names) · **N-175** registered `OPEN` (HIGH — the interval table's `series` attribute contradicts the archives, and the EQ-only entry gate consumes it) · A2, A4 dividends and A4 max-hold **correctly held back** and all invariants **unchanged** · criteria stays **1.1.11** (no re-pin was needed and none was made) · the retrieval that blocked A4 dividends now has a **measured admissible path** · **Rulings 1 and 2** appended
+
+### 90.1 Baseline re-measured at `fb02eea`
+
+| Measurement | Result |
+|---|---|
+| `scripts/verify_audit_append_only.py --force-full` | **exit 0** — `ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Suite invocation the gate chose | `-m pytest -n auto --dist loadfile -q` |
+| Suite under the gate | **543 passed** in **52.67 s** (gate total 53.78 s), **0 skipped / 0 xfailed** |
+| Verifiers | 9/9 exit 0; W0.5-1c index reproduces (**89** sections); W0.5-2 executes **25/25** ledger probes; W0.5-5 **985** current / **23** superseded |
+| Tags | **96** total, all verified (W0.5-4 PASS), `feat-s90-fb02eea` → `fb02eea` |
+| Green cache | **22** rows; the tree this commit projects is already recorded at `6e11d91` (`suite_count` 543), so the gate printed `already recorded; not appending a duplicate row` — the `fb02eea` change is a document, not a source path |
+| Findings ledger before this round | **40** rows / **25** ids (last: N-173 `OPEN` §89) |
+| `probe_pre2022_bronze_coverage.py` | **exit 0** — `COVERED — 931/931` |
+| `probe_pre2022_preconditions.py` | **exit 1** — A1 **5/5 PASS** (246/245/252/248 + provenance digest), A5 **PASS** (8 artifacts, 0 of 4,903), A2 **NO** (4,510 rows begin 2022-01-03, 0 reach 2021-12-31), A4 dividends **NO** (0 of 138 ex-dates), A4 max hold **NO** |
+| `probe_n171` / `probe_n172` / `probe_n173` | PASS / PASS / PASS (all three assert their closures) |
+| Criteria / pins | **1.1.11**, `MAN-FPR-V1-7131c213…`, `CAL-FPR-V1-6acb5f45…`, `2d5ac7ac…`, binding **2022-01-03** |
+| Trials / fold / holdout | **N = 9**, `N_eval = 5`, registry manifest `3326b1b2…`; 2024 validation fold `2024-01-01..2024-12-31` frozen; holdout `2025-01-01..2026-11-11` sealed (`configs/partition_spec.yaml`, token hash all-zero) |
+| Files the range touches | **4** — `tests/unit/test_portfolio.py`, `scripts/probe_audit_findings.py`, `CURRENT_STAGE_OF_WORK.md`, `data/reference/source_tree_green.json`; none under `configs/`, `data/trials/`, `data/raw/`, `reports/verdicts/` |
+
+### 90.2 N-173 — CLOSED, on the measurement the finding asked for
+
+The benchmark no longer times one pass per size. `measure(fill_count)` builds a fresh portfolio per pass, times only the fill loop, and accumulates whole passes until the pooled CPU time exceeds `MIN_MEASURABLE_CPU_S` (0.25 s) or `MAX_PASSES` (20), then divides by the work it actually timed. Attacked in a detached worktree at `fb02eea` (`/tmp/s90w`, `PYTHONPATH` pointed at its `src` so the injected code is the code under test):
+
+| Attack | Result |
+|---|---|
+| Restore the parent instrument (`37ebf90` test file), pooled constants absent | `probe_n173` **exit 1** — `FAIL N-173: the benchmark no longer sizes its measurement, so N-173's quantized single pass is back` |
+| Unmodified instrument, 5 samples | 1k **44.3–50.0 µs/fill** over **5–6 passes** (0.25–0.28 s pooled); 4k **50.8–74.2 µs/fill**; ratio **1.15–1.50**; test passes in 1.32–1.56 s |
+| Disable the pooling loop but keep both constants (`while passes < 1 and passes < MAX_PASSES and …`) | `probe_n173` **PASS** (it is a shape check) · the test **fails closed** — `the 1,000-fill figure pools only 0.047 s of CPU over 1 pass(es), which a clock ticking at 15.625 ms cannot resolve`, `assert (0.046875 >= 0.25 or 1 == 20)` |
+| Add a uniform **+400 µs/fill** cost (still O(1)) | test **fails** — `Per fill 1k time too high: 250.00 µs` |
+| Ceilings | the two `250.0` assertions and `< 2.5` are byte-identical to `37ebf90` (context lines in the diff, no touch), and `probe_n173` asserts all three strings |
+
+Resolution, computed from the constants rather than assumed: the pooled 1,000-fill figure is quantised to `tick / (passes × 1,000)` = **2.6 µs** at 6 passes on a 47 µs base (**5.5 %**); at the pathological 5 µs/fill workload the `MAX_PASSES` escape gives 20 passes = 0.1 s = 6 ticks → **4.69 µs** per fill, 6.2 % low, inside the probe's 25 % bound. The floor `max(per_fill_1k_us, 1.0)` is therefore no longer load-bearing: it can only fire when the pooled figure is genuinely near zero, which now requires a workload three orders of magnitude cheaper than anything this engine does.
+
+**Named residual.** `probe_n173` certifies the instrument's *shape* (constants, clock, ceilings) and the arithmetic of the pooling at three resolutions (host tick 15,625 µs, 15.625 ms, 1 µs); it does not execute the benchmark. The behavioural guard is the test's own `pooled_1k_cpu_s >= MIN_MEASURABLE_CPU_S` assertion, which was measured above to fail closed when the pooling is disabled — so the closure does not rest on the probe alone.
+
+### 90.3 The guard still cannot see the regression it names — N-174 registered (LOW)
+
+N-173's subject was the *measurement*; the guards it feeds were not re-attacked, so I re-introduced the defect the guard exists for. In the worktree, `Portfolio.process_fill` gained a linear scan over `self._processed_fill_instances` before any other work — the shape N-1 replaced with a dict membership test:
+
+| Injected replay path | 1k µs/fill | 4k µs/fill | ratio | test verdict |
+|---|---|---|---|---|
+| Cheap scan, `_scan += 1.0` per entry (≈78 ns/entry) | 83.3 | 187.5 | **2.25** | **passes** |
+| Comparison scan, `if _e == fill.order.instrument_id` per entry | 88.5–109.4 | 203.1–230.5 | **1.96–2.60** | **fails 3 of 5 runs, passes 2 of 5** |
+| Uniform +400 µs/fill (O(1), for contrast) | 250.00 | 230.5 | 0.98 | fails the 250 µs ceiling |
+
+The reason is arithmetic, not flakiness: the ceilings leave `250 − base` ≈ **200 µs of room per fill at 4,000 fills**, and a Python-level scan at ~78 ns/entry costs ~156 µs there, so an O(n) replay guard lands *inside* both ceilings. The ratio guard is not useless — it catches a genuinely quadratic cost — but it cannot certify the claim the test's docstring makes ("O(1) dict lookup"), and its verdict on a realistic reintroduction is a coin flip. This is test-only and performance-only (no correctness or accounting impact), so it is `LOW`; the remedy is a structural assertion (count the replay-path membership lookups and require one per fill) rather than a threshold move, which §12.4 forbids and which would only chase the host.
+
+### 90.4 The interval table's `series` attribute — N-175 registered (HIGH)
+
+This is where the round's item 2 stops being bookkeeping. Held-back A2 leaves `data/reference/cash_equity_symbol_intervals.csv` untouched, and the review asked whether "the 4,510 post-2022 rows" can be preserved. They cannot be preserved as they stand: the table's `series` attribute is contradicted by the archives it is derived from.
+
+Measured with the repository's own `parse_bhavcopy_archive` (so the unified 2024+ header format is not my parser's problem) on six fixed post-2022 sessions — 2022-01-03, 2022-06-30, 2022-12-30, 2023-06-30, 2023-12-29, 2024-06-28 — joined as-of date T against the committed table:
+
+| Measure | Result |
+|---|---|
+| Observations compared | **13,008** |
+| ISIN disagreements | **0** — identity is right; `min_traded_eq_resolution_pct` 100 % holds |
+| Observations with no covering interval | **0** |
+| **`series` disagreements** | **1,356 / 13,008 = 10.4 %** — the observed series is absent from every interval covering T |
+| Breakdown (2 sessions, 4,451 obs) | BE **341 / 346**, BZ **13 / 40**, SM **47 / 333** observations resolve to an `EQ` row |
+| Distinct symbols affected (2 sessions) | **350** |
+
+The failure has one shape: a single open-ended `EQ` row per symbol from 2022-01-03, so every later BE/BZ/SM session for that symbol is still described as EQ. The implementer's §89 report measured the same thing on the full corpus (186,996 of 1,646,985 = 11.4 %); my 10.4 % on six sessions is consistent and was taken independently.
+
+Two consumers make this a gating defect rather than a documentation defect:
+
+| Consumer | Measurement |
+|---|---|
+| `get_point_in_time_active_equities(T, intervals, series="EQ")` | of **1,336** ISIN-sessions that traded **only** BE/BZ on those six sessions, **1,206 (90.3 %)** are returned in the *EQ* universe for that same session |
+| `SecurityMaster.resolve_symbol(isin, T).series` — the value `walkforward.py:637` feeds to Gate G2C-3's `is_eligible` | resolves to **`EQ`** for the same **1,206 of 1,336** |
+
+So the §13.1 invariant "entry is permitted in `EQ` only" is enforced against a field that says `EQ` for nine out of ten sessions in which the scrip was in trade-to-trade. Gate G2C-3 (`Ineligible series MUST NEVER fill`) is not wrong — it is being asked the wrong question, with an answer that is stale by construction because the table records no series transition at all. This is a §5.1 (EQ vs BE settlement), §6.1/§10.5 (time-varying facts as half-open intervals joined as-of T) and §13.1 defect; it is `HIGH`, and it is why Ruling 2 below splits "unchanged" into evidence and attribute.
+
+### 90.5 The three held-back items held the invariants — confirmed
+
+| Item | Status in `6e11d91` | Measurement |
+|---|---|---|
+| A2 identity intervals to 2018-04-01 | **NOT DELIVERED** | table unchanged: **4,510** rows, earliest **2022-01-03**, **0** rows reach 2021-12-31; probe A2 `NO` |
+| A4 dividends | **NOT DELIVERED** | **0 of 138** committed ex-dates fall in 2018-04-01..2021-12-31 (earliest 2022-03-29); no Bronze payload written |
+| A4 max hold | **NOT DELIVERED** | no `max_hold_trading_sessions` and no `entry_date` on `Position`; probe `NO` |
+| Criteria re-pin to 1.1.12 | **NOT MADE (correct)** | version **1.1.11**; `expected_manifest_fingerprint` `MAN-FPR-V1-7131c213…`; `expected_calendar_fingerprint` `CAL-FPR-V1-6acb5f45…`; `expected_sourced_window_calendar_fingerprint` `2d5ac7ac…`; `min_binding_evaluation_start_date` **2022-01-03**; trials **N = 9 / N_eval = 5**; registry manifest `3326b1b2…`; 2024 fold frozen; holdout sealed; A1/A5 **PASS**, A2/A4 **NO** |
+
+Not re-pinning was the correct call, and the reason is a measurement rather than an opinion: no artifact was added, so the manifest the pin describes did not move, and a 1.1.12 that resealed an identical fingerprint would have been a version bump that certified nothing. The claim "criteria 1.1.12 preserved the invariants" is therefore best read as the weaker, true statement: **no criteria change was needed and none was made**, and the pins still describe the committed corpus.
+
+**The blocked retrieval now has an admissible path — measured, not argued.** The implementer reported `HTTP 403` from a Python client while an interactive `curl` returned 200. Reproduced from this host on 18 November 2026, against `https://www.nseindia.com/api/corporates-corporateActions?index=equities&from_date=01-04-2018&to_date=30-06-2018`:
+
+| Probe | Result |
+|---|---|
+| `curl` without `-L` | **301**, 0 bytes (the endpoint answers on `www.nseindia.in`) |
+| `curl -L` | **200**, **50,415 bytes** of JSON, effective URL `https://www.nseindia.in/api/…` |
+| Landing page `https://www.nseindia.com/` first, cookie jar | landing **403**; the API still **301** without `-L` — the seed request is not what gates the payload |
+| Two consecutive `curl -L` fetches | **byte-identical**, `sha256 3e6d41c1f0dbc78e…` — the payload is stable enough to attest |
+| Schema | `symbol`, `series`, `isin`, `exDate`, `subject`, `comp`, `faceVal`, `recDate`, `bcStartDate`… — 161 records for 2018 Q2, of which **101** carry a dividend subject and **10** an ISIN/face-value change |
+
+So the endpoint is not refusing the window, and it is not refusing non-interactive clients: it is refusing a request that does not follow the 301 to the `.in` host. That is a fact the work order can use, and it also means the corpus that unblocks A4 dividends is the same corpus A2 needs for its pre-2022 transitions.
+
+**A2's backward extension has a measured prerequisite.** Extending intervals to 2018-04-02 requires identity boundaries inside the warm-up window that the committed corporate-action corpus does not document:
+
+| Measure | Result |
+|---|---|
+| 2018-04-02 archive, symbols also present on 2022-01-03 | 1,523 (symbol, series) combinations |
+| …whose ISIN **differs** from the 2022-01-03 row | **72** (e.g. `ALKYLAMINE` `INE150B01021 → INE150B01039`, `AMRUTANJAN` `INE098F01023 → INE098F01031`) |
+| Already documented as `ISIN_TRANSITION` in `corporate_actions.jsonl` | **0** |
+| Pre-2022-dated rows in that corpus | **2 of 485** (the corpus's 324 transitions are all ≥ 2022) |
+| 2021-12-31 archive vs the 2022-01-03 rows | **0** ISIN differences among matched combinations — the seam at the binding start is clean, the transitions lie inside the warm-up window |
+
+An extension built today would therefore either date 72+ transitions at the seam (false by measurement) or refuse to build. That, and not a stylistic preference, is why the A4-dividends retrieval is ordered ahead of A2 below.
+
+### 90.6 Phase verdicts
+
+| Phase | Verdict at `fb02eea` | Named residuals |
+|---|---|---|
+| §12.4 test invariant (N-173) | **CLOSED** — pooled measurement, ceilings untouched, resolution 5.5 % | probe is a shape check; the budget assertion is the behavioural guard |
+| §12.4 test invariant (N-174) | **OPEN** — an O(n) replay scan passes 2 of 5 runs, and the cheap variant always | detection is timing-based, not structural |
+| §5.1 / §13.1 entry eligibility (N-175) | **OPEN** — the EQ-only gate reads a series attribute that is EQ for 1,206 / 1,336 trade-to-trade ISIN-sessions | the table records no series transition at all |
+| `§10.8` A1 / A5 | **PASS / PASS** | — |
+| `§10.8` A2 / A4 | **NO / NO** — unchanged; the window stays warm-up, every pre-2022 verdict stays `NOT RUN` | A2 needs pre-2022 transitions; A4 needs the dividend corpus and a hold bound |
+| Criteria and pins | **unchanged at 1.1.11** — no re-pin was required | — |
+| Gate / cache | **GO** — 543 passed, 9/9 verifiers, reuse of `b90a9393…` at `6e11d91` is the accepted §81.4 cost | — |
+
+### 90.7 Ruling 1 — `probe_n158`'s 324 is a measured count of documented transitions, never a frozen numeral
+
+*Evidence:* at `fb02eea`, `adjacent_identity_pairs(load_cash_universe_symbol_intervals())` returns **324** over **4,510** rows, and `validate_documented_transition_dates` returns 324 — every pair dated at its `ISIN_TRANSITION` ex-date, with `TATASTEEL` at 2022-07-29. The corpus that dates them holds **485** rows, of which **2** are pre-2022. The implementer's §89 round measured that a series-aware key yields **426** pairs and reverted rather than edit the constant.
+
+*Ruling:* the invariant `probe_n158` enforces is **per pair**: every adjacent identity boundary is dated at a documented transition, and a drifted row is refused. The numeral **324** is the count of such boundaries in the corpus as committed, not an independent invariant. A change that *adds* correctly documented boundaries (a backward extension, a series-aware key) must report the new exact count and re-pin it as a measurement; a change that *loses* or *mis-dates* any of the 324 is a regression regardless of the numeral. Hand-editing 324 to 426 in the probe is forbidden; appending a section that measures 426 and cites why is the permitted route.
+
+*It does not change:* the datedness requirement, the refusal of a drifted transition, the 4,510 post-2022 rows' pair tuples (all 324 must survive unchanged), or any threshold.
+
+*Work item:* §90.9 item 3, serving Phase 3B-2. *Probe:* `probe_n158` continues to assert `len(pairs) == 324` and per-pair dating until the re-measure lands; after it, the probe asserts the freshly measured count and the same per-pair dating, and any interim tree where a pair is lost fails it.
+
+*Falsified by:* any tree where the 324 tuples are not a subset of the pairs the probe validates, or where a pair is dated away from its documented ex-date.
+
+### 90.8 Ruling 2 — "unchanged" protects the evidence, not an attribute its own archive contradicts
+
+*Evidence:* §90.4 — 10.4 % of 13,008 observations disagree on `series`; 90.3 % of trade-to-trade ISIN-sessions resolve to `EQ` in the security master and in the EQ universe.
+
+*Ruling:* an instruction to preserve the post-2022 rows protects **(a)** every ISIN boundary and its date, **(b)** every `(isin, symbol)` chain the 324 pairs are read from, and **(c)** the row count as evidence of what was committed. It does **not** protect a `series` value that the session's own archive contradicts. Such a row is corrected by an **append**: a new interval with its `effective_from`/`effective_to` and the session archive(s) that establish it, leaving the superseded row in place as history (§10.1). No interval is edited or deleted, and no correction is derived from the present constituent list or from a symbol's later `EQ` state (§6.1, §10.5).
+
+*It does not change:* append-only storage, the ISIN-keyed identity rule, the pair tuples of Ruling 1, or any criteria threshold — a series row is a fact, not a threshold.
+
+*Work item:* §90.9 item 1, serving Phase 3B-2 and §13.1. *Probe:* `probe_n175` currently asserts the disagreement (1,336 trade-to-trade ISIN-sessions, 1,206 resolving to `EQ`); at closure it must assert **0 of 1,336**, and `probe_n158` must still validate every one of its pairs at the new count.
+
+*Falsified by:* a corrected table where any of the six sampled sessions still returns a BE/BZ-only ISIN in the EQ universe, or one where a superseded row was deleted instead of appended.
+
+### 90.9 Work order for feat-s91
+
+Ordered by what it unblocks. Each item names the probe that must fail closed before the item is closed.
+
+1. **N-175 — correct the `series` attribute by append** (serves Phase 3B-2 and `§13.1`; `HIGH`). Derive a `(isin, symbol, series)` interval chain from the committed archives' own `SERIES` column, date every transition at the first session the new series appears, append rows rather than editing the 4,510, and re-derive the EQ universe from it. Do not touch the pair tuples of Ruling 1. **Probe:** `probe_n175` must read **0 of 1,336** (it reads 1,206 today) and `probe_n158` must still date every pair at its documented transition. **Residual to report:** the pair count moves off 324, with the new exact count and the rows that create it.
+2. **A4 dividends and the pre-2022 corporate-action corpus** (serves Phase 3B-2, §13.2). Capture `2018-04-01..2021-12-31` quarter by quarter through the measured recipe — `curl -L` to the `www.nseindia.in` host, one byte-exact Bronze payload per quarter, one manifest row per payload carrying `source_url`, the redirect's effective URL, `retrieved_at`, `byte_count` and `sha256` (§10.7). Cached bytes committed, because CI has no network (§12.5). Parse dividends (`exDate`, `subject`, `isin`) and `ISIN_TRANSITION`/face-value rows from the same payloads. **Probe:** the `A4 dividends` line must print `PASS` with a non-zero count of warm-up ex-dates and no fabricated date; a payload whose digest does not match its manifest row must fail closed.
+3. **A2 — identity intervals back to 2018-04-02** (serves Phase 3B-2). Extend backward over the 931 warm-up sessions, leave all 4,510 post-2022 rows byte-identical, and date each of the 72+ warm-up boundaries from item 2's corpus — never at the 2022-01-03 seam. A boundary that is a delisted-and-reused symbol is pruned, not stitched (§10.4). **Probe:** the A2 line prints `PASS` covering all 931 window sessions, `probe_n158` validates every pair at its documented date under the Ruling 1 count, and a run that dates a transition at the seam exits 1.
+4. **A4 max hold — a bound with an enforcement point** (serves Phase 3B-2, §13.2). Authorised: add `entry_date` to `Position`, carry it through the single ledger, and enforce `max_hold_trading_sessions` read from `configs/go_no_go_criteria.yaml`, counted in authoritative calendar sessions (§6.3). A hold that cannot exit inside the bound because of a lower-circuit freeze is a `NOT RUN`/refusal, not a silent extension (§5.3). The bound is declared before any run, uses only the training/validation windows, and **no existing post-2022 trial outcome may move** — the 8 verdict artifacts must be byte-identical afterwards. **Probe:** the `A4 max hold` line prints `PASS`, and a synthetic position held one session past the bound must be refused.
+5. **N-174 — make the O(1) claim structural** (serves §12.4; `LOW`). Assert the replay path's membership lookups directly (one per fill, independent of how many instances the guard holds) instead of inferring O(1) from a ratio, keeping the 250 µs ceilings and the 2.5 ratio as coarser performance bounds. **Probe:** `probe_n174` must assert the structural check exists and the ceilings are unchanged; the acceptance attack is the linear scan of §90.3 failing **5 of 5** runs.
+
+### 90.10 What would falsify this verdict
+
+- If `time.process_time()` on this host resolves a 1,000-fill loop that costs under 7.8 µs/fill into anything other than 0.0, or if the pooled figure's resolution exceeds 10 % at the measured 44–50 µs base, N-173 is not closed.
+- If `probe_n173` passes with the pooling loop degenerated to one pass (measured: it does), the probe's role must be described as shape-only, and the closure then rests entirely on the test's budget assertion — which measured as failing closed.
+- If a reintroduced O(n) replay scan makes the benchmark fail deterministically on any host, N-174 is wrong as stated and should be re-measured rather than re-scoped.
+- If any of the six sampled sessions returns 0 series disagreements after this round without a table change, my N-175 measurement was an artifact of the join; if a corrected table still returns a BE/BZ ISIN in the EQ universe, the correction is incomplete.
+- If the interval table's rows are edited in place rather than superseded by append, Ruling 2 was misapplied and §10.1 was violated.
+- If a warm-up transition is dated at 2022-01-03 for want of a source, A2 is fabricated and Ruling 1 does not apply to it.
+- If any existing post-2022 trial outcome, verdict artifact, criteria fingerprint, fold or holdout seal moves in feat-s91, the invariant table in §90.5 was describing the wrong tree.
