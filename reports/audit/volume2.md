@@ -2141,3 +2141,175 @@ Ordered by what it unblocks. Each item names the probe that must fail closed bef
 - If the interval table's rows are edited in place rather than superseded by append, Ruling 2 was misapplied and §10.1 was violated.
 - If a warm-up transition is dated at 2022-01-03 for want of a source, A2 is fabricated and Ruling 1 does not apply to it.
 - If any existing post-2022 trial outcome, verdict artifact, criteria fingerprint, fold or holdout seal moves in feat-s91, the invariant table in §90.5 was describing the wrong tree.
+## §91 — Audit of `abf198f` (tag `feat-s91-35e2050`): the interval log is corrected by append and N-175 closes, the new replay counter cannot see the scan it was added for, and the warm-up window becomes gating-eligible
+
+**Date:** 18 November 2026
+**Commit under review:** `35e2050` (42 files, +28,810/−92: two new derivation scripts, the interval log and its restatement evidence, 15 Bronze corporate-action payloads, the append-only resolver and its bisect index, `max_hold_trading_sessions`, and the regenerated 1.1.12 artifacts), plus `abf198f` (the green-cache row, +19 lines, no source path — the gate projects the same tree hash `457d2691…` at both).
+**Verdicts:** **N-175 CLOSED** · **N-174 PARTIAL** — the structural counter the fix added passes with the regression installed, so no CLOSED row was written and the finding stays `OPEN` · **N-176** registered `OPEN` (MEDIUM — Gate COV-3's attribution is typed prose and three of its four numbers are wrong) · **N-177** registered `OPEN` (MEDIUM — the hold bound is declared, modelled and unit-tested, and no production path calls it) · A4 dividends **PASS**, A2 **PASS**, A4 max-hold **declared, unenforced**, A1/A5 **PASS** · criteria **1.1.12**, 27 criterion rows and 5 trial evaluations unchanged · **Ruling 1**: `2018-04-01..2021-12-31` (931 sessions) becomes gating-eligible, candidate seq 10 is authorised to register `2018-04-01..2023-12-31` in-sample, the 2024 fold stays frozen and `2025-01-01..2026-11-11` stays sealed
+
+### 91.1 Baseline re-measured at `abf198f`
+
+| Measurement | Result |
+|---|---|
+| `scripts/verify_audit_append_only.py --force-full` | **exit 0** — `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Suite invocation the gate chose | `-m pytest -n auto --dist loadfile -q` |
+| Suite under the gate | **544 passed** in **53.38 s**, **0 skipped / 0 xfailed** (543 at `fb02eea`; the difference is `test_max_hold_bound_refuses_the_session_past_it`) |
+| Verifiers | **9/9 exit 0** — `verify_audit_findings` 85.53 s, `verify_cash_universe_coverage` 38.09 s, `verify_historical_snapshot` 5.46 s, `verify_phase2a_containment_and_trials` 1.26 s, `verify_phase2b5_storage` 2.60 s, `verify_phase2b_significance` 0.91 s, `verify_phase2c_walkforward` 2.69 s, `verify_phase2d_verdicts` 3.92 s, `verify_wave1_thin_slice` 4.65 s |
+| W0.5-1c / W0.5-4 / W0.5-5 | index reproduces at **90** section rows; **98** tags verified, `feat-s91-35e2050` → `35e2050`; **1,000** current manifest artifacts match byte count and sha256, **26** superseded rows skipped as history |
+| Green cache | tree `457d2691…` is already recorded at `abf198f`, so the forced run printed `already recorded; not appending a duplicate row`; `git status` clean before and after |
+| Findings ledger before this round | **43** rows / **27** ids; **3** open — N-150 (MEDIUM), N-174 (LOW), N-175 (HIGH) |
+| Criteria / pins | **1.1.12**, `MAN-FPR-V1-e95ddf90…`, `CAL-FPR-V1-6acb5f45…`, sourced-window `2d5ac7ac…`, `min_binding_evaluation_start_date` **2022-01-03**, `max_hold_trading_sessions` **21** |
+| Trials / fold / holdout | **N = 9**, `N_eval = 5`, registry manifest `3326b1b2…`; 2024 fold `2024-01-01..2024-12-31` frozen; holdout `2025-01-01..2026-11-11` sealed, token hash all-zero, no `HOLDOUT_UNLOCK` sentinel |
+| `probe_pre2022_bronze_coverage.py` | **exit 0** — `COVERED — 931/931`, each archive's own session date equal to its row, `WARMUP_NOT_GATABLE` on every row |
+| `probe_pre2022_preconditions.py` | **exit 0** — A1 **5/5 PASS** (246/245/252/248 + digest `7622fbf4…`), A2 **PASS** (17,864 active of 19,283 committed, earliest 2018-04-02 = the window's first session, all **931** sessions covered), A4 dividends **PASS** (**4,357** ex-dates, 2018-04-03..2021-12-30), A4 max hold **PASS** (`=21 is committed`), A5 **PASS** (8 verdict artifacts = every `*.json` under `reports/verdicts/`, 0 of 4,903 evaluated sessions precede 2022-01-03) |
+| Ledger probes | N-171, N-172, N-173, N-174, N-175, N-176, N-177 all PASS; the 24 other executed probes pass inside `verify_audit_findings` |
+| Files the range touches | 42; **no** path under `data/trials/`, `configs/partition_spec.yaml`, `data/raw/2025/`, `data/raw/2026/`; `reports/verdicts/` changes **2** files by **2** lines each |
+
+### 91.2 N-175 — CLOSED, on the measurement §90.8 said would falsify the non-closure
+
+§90.8's closure test was explicit: **0 of 1,336** trade-to-trade ISIN-sessions may resolve to `EQ`, and the corrected table must be an append, never an edit. I re-measured it with my own join, on the six fixed sessions, using the repository's `parse_bhavcopy_archive` and `SecurityMaster.resolve_symbol` — and, separately, against a brute-force oracle over the active rows:
+
+| Measure | `fb02eea` (parent) | `abf198f` |
+|---|---|---|
+| Trade-to-trade ISIN-sessions in the six archives | 1,336 | **1,336** (sample unchanged) |
+| …resolving to `EQ` through `resolve_symbol` | **1,206** | **0** |
+| …returned by `get_point_in_time_active_equities(…, series="EQ")` | **1,206** | **0** |
+| …whose resolved series is one the archive actually shows | 130 | **1,336** |
+| …unresolved (`None`) | 0 | **0** |
+| EQ ISIN-sessions / resolving `EQ` / in the EQ universe | 10,849 / 10,849 / 10,849 | **10,849 / 10,849 / 10,849** |
+
+The last two rows are the ones that decide the finding rather than the probe. `probe_n175` asserts only `admitted == 0` and `universe_admitted == 0`, so a "correction" that resolved those 1,336 scrips to nothing at all would satisfy it; I measured the stronger properties instead, and the table answers correctly, not merely non-`EQ`: every one of the 1,336 resolves to a series its own session archive shows, and the 10,849 `EQ` ISIN-sessions are untouched by the correction. The over-correction risk (a restatement that eats an `EQ` span) is the one the commit message says it fixed, and §91.3 attacks it directly.
+
+**Append, not edit (§10.1, §90.8 Ruling 2).** `git diff --numstat fb02eea..35e2050` reports `14773 0` for `cash_equity_symbol_intervals.csv`: 14,773 added lines and **no** removed line, and the first **4,511** lines (header + the 4,510 committed rows) hash to `b7a08976994a35fb…`, byte-identical to the parent file. The evidence file `cash_equity_symbol_interval_restatements.jsonl` is new: **7,989** rows over **1,380** ISINs / **1,419** `(isin, symbol)` chains, each naming the row it supersedes and the first and last archive (with sha256) that establish it. No superseded row was deleted.
+
+**Ruling 1 of §90.7 is satisfied by measurement, not by editing the numeral.** `adjacent_identity_pairs` now returns **426** = **324** post-2022 `+` **102** warm-up, every one dated at a documented `ISIN_TRANSITION`; the parent's **324** tuples were extracted at `fb02eea`, compared as a set against the new pairs, and **324 of 324** survive. `probe_n158` asserts both the 324 subset and the 426 total rather than the old flat numeral.
+
+**Residual named, not implied.** `probe_n175` is a two-sided sample check and, as written, admits a vacuous pass; the closure therefore rests on the measurements above rather than on the probe (the same relationship §90.2 recorded for N-173). Second residual: the restatement derivation reads the holdout-era archives — **2,710** of the 7,989 rows are dated 2025-01-01..2026-10-30, and the parent table already carried **1,180** rows dated `>= 2025-01-01`, so this is an increase in volume of an existing practice, not a new access. The rows carry series and identity only — no price, no return, no verdict — the seal, the token hash and the 2024 fold are untouched, and no metric can read a 2025 or 2026 session through a point-in-time join over an earlier date. It is recorded here because a reader of §88's "no path under `data/raw/2025` or `2026`" rows would otherwise be surprised by the span.
+
+### 91.3 The resolver's remainder clipping — attacked directly, because it is the repair most likely to be additive
+
+The commit's own claim is that a partly-restated row keeps the span the append did not cover, and that the old behaviour deleted `EQ` spans (`INE704P01025`, `INE144J01027`). A repair of that shape is exactly the additive fix §14.4 warns about — a new guarded path beside the unguarded one — so I drove `apply_interval_restatements` and `SecurityMaster.resolve_symbol` with synthesised logs at `abf198f`:
+
+| Attack on the append-only log | Result |
+|---|---|
+| `EQ 2022-01-03..` then `BE 2022-01-03..2022-01-10` | active rows `BE 01-03..01-10`, `EQ 01-10..` — the uncovered remainder survives; `resolve_symbol` returns `BE` on 01-04 and `EQ` from 01-10 |
+| `EQ …01-03..01-20`, `SM …01-20..01-25` inside a longer span | three contiguous runs, no gap, no duplicate; `EQ` at 01-25 and 01-26 |
+| Two contained appends cutting a middle window | five rows, the `EQ` remainder present on **both** sides of the cut (`…01-03..02-01`, `…03-01..05-01`, `…06-01..`) |
+| Full-span restatement | the superseded row is dropped from the active set and the append answers alone |
+| Append that is **not** contained (`EQ 2022-03-01..` and `BE 2022-01-03..2022-06-01`) | `SecurityMasterError` — `Overlaps … without being an append that restates a part of it (§10.1)` |
+
+The real corpus exercises the same path: `INE144J01027` (`20MICRONS`) is `EQ 2022-01-03..2023-06-23`, `BE 2023-06-23..2023-11-28`, `EQ 2023-11-28..2024-10-09`… A whole-row supersede would have erased the pre-2023-06-23 `EQ` identity; with clipping, `resolve_symbol` returns `EQ` on 2022-06-01 and 2023-06-01 and 2024-01-16. This is why the finding closes on 1,336 correct rather than 1,336 merely non-`EQ`.
+
+**The bisect index is answer-preserving.** §90.9 item 2 replaced an `O(ISINs × rows)` scan with `bisect_right` over per-series start dates. I compared it against a brute-force oracle over the active rows: `resolve_symbol` for every one of **4,583** ISINs on **353** dates spaced a week apart from 2018-04-02 to 2024-12-31 (**≈1.6 M** lookups) — **0** mismatches on the returned row's series or span, and `get_point_in_time_active_equities` on **71** of those dates — **0** set differences. The speed-up is therefore not bought with a changed answer. The universe loader's cache is keyed on `(id(intervals), len(intervals))` with an identity check and holds a strong reference to the sequence, so a recycled `id` cannot return another table's index.
+
+### 91.4 N-174 — PARTIAL: the counter the fix added passes with the regression installed
+
+§90.9 item 5 set its own acceptance: "the acceptance attack is the linear scan of §90.3 failing **5 of 5** runs". The fix adds a `CountingReplayGuard(OrderedDict)` whose `__contains__` increments a counter, and asserts `lookup_count == fill_count` at 1,000 and 4,000 fills. The two `250.0 µs` ceilings and `< 2.5` are unchanged — no assertion line touching them is added or removed between `37ebf90` and this commit (§90.2 measured them byte-identical) — and `probe_n174` PASSes. So I installed the regression.
+
+In a detached worktree at `35e2050`, `Portfolio.process_fill` gained the per-fill scan over every instance the guard holds, before the membership test:
+
+```python
+        fill_addr = id(fill)
+        for _seen in self._processed_fill_instances:
+            if _seen == fill_addr:
+                break
+        if fill_addr in self._processed_fill_instances:
+```
+
+| Run | Verdict |
+|---|---|
+| 1 | **failed** (timing) |
+| 2 | passed |
+| 3 | passed |
+| 4 | passed |
+| 5 | passed |
+
+**1 of 5.** Not 5 of 5. And the reason is structural, not flaky: iterating an `OrderedDict` never calls `__contains__`. Measured under the same injection, the new assertion's counter reads exactly **1,000 for 1,000 fills** — the structural check passes while a scan of every held instance runs on every fill. The count certifies "the replay path performs one `in` test per fill", which the regression does not change; it does not certify `O(1)`.
+
+That is the additive fix in miniature: a guarded measurement was added beside the timing guard, and the property that actually regresses is invisible to both. The finding is **PARTIAL**, the section's work order item 3 asks for a counter over *every* access to the guard (iteration, `keys`, `values`, `get`, `__contains__`) rather than one dunder, and **I did not write the CLOSED row the round asked for** — the acceptance test it was conditioned on measured 1 of 5, and §9.1 does not let a probe that passes for the wrong reason stand in for a verdict. The ledger's N-174 row remains `OPEN`; no append was made.
+
+### 91.5 Gate COV-3 under §12.4 — the counts conserve, the attribution does not describe the archive (N-176)
+
+The gate's hard assertions are exact equalities, and I reproduced all five from `sec_list_20240116.csv` and the session's own Bhavcopy, independently of the gate: **3,624** total rows, **2,763** in-scope `EQ`, **861** out-of-scope non-`EQ`, **1,174** unresolved, **1,589** extracted. At the parent the same instrument reads **924** unresolved / **1,839** extracted, so the 250 scrips moved from "extracted" to "unresolved" because they were in trade-to-trade on that session, exactly as the commit message says.
+
+| Attribution of the 1,174 unresolved, measured here | Count |
+|---|---|
+| No row at all in the 2024-01-16 Bhavcopy (identity begins at first trade, §40.5) | **933** |
+| Traded in `BE` on the session | **221** |
+| Traded in `BE`/`BZ` on the session | **3** |
+| Traded in `SM` (another non-`EQ` series) | **17** |
+| **Reported as `EQ` by the Bhavcopy and unresolved — the invariant that matters** | **0** |
+| Sum | **1,174** ✓ |
+
+The gate prints `"[INFO] 1,174 unresolved EQ scrips … 930 untraded …, 220 trading in BE and 24 in another non-EQ series"`. Those three numbers are **literals inside a `print`**, and three of the four disagree with the archive: 933, not 930; 224 trade-to-trade, not 220; 17 other non-`EQ`, not 24. The totals conserve, so nothing about the counts is misstated — but §9.1 ("verdicts are computed, never typed") is about exactly this, and the one claim in the paragraph that would matter as evidence — **0** Bhavcopy-`EQ` scrips fail to resolve — is asserted in no code at all. It is true; I measured it; the gate does not know it. **N-176 registered (MEDIUM)**; `probe_n176` recomputes the split and asserts both the typed literals and their disagreement with the Bhavcopy, so it fails closed the day the gate starts printing what it computed.
+
+**Is `924 → 1,174` a weakened gate (§12.4)?** No, and the ceiling is live rather than slack: `max_unresolved_threshold` is pinned at **1,174** in COV-4 and the parser refuses at **1,173** (`Unresolved in-scope (('EQ',)) ISINs (1174) exceeded allowable threshold 1173`) and accepts at 1,174 and 1,175. The operative gate is the exact equality in COV-3, which is tighter than either ceiling, and the 250 that raised the ceiling are scrips that the table no longer misdescribes as `EQ`. Raising a ceiling to the measured truth while tightening an equality beside it is not the §12.4 failure mode; the failure mode would have been widening the equality.
+
+### 91.6 A4 dividends, A2 backward extension, the 1.1.12 artifacts, and A4 max-hold
+
+| Item | Measured at `abf198f` | Verdict |
+|---|---|---|
+| **A4 dividends — capture** | **15** payloads under `data/raw/corporate_actions/`, one per quarter 2018-04-01..2021-12-31, **8,500** records; every payload attested by `byte_count` **and** `sha256` against its current manifest row; `source_url` on `www.nseindia.com`, `effective_url` on `www.nseindia.in`, `redirect_count` **1**, `retrieved_at` 2026-11-18; provenance `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` — correctly **not** promoted to VERIFIED (§6.5) | **PASS** |
+| **A4 dividends — corpus reproducibility** | `data/reference/corporate_actions.jsonl` is **5,016** rows, `sha256 6ff7d3edb577a64d…`. A direct call to `generate_corporate_actions_corpus()` returns 5,016 rows from 4,440 derived / 4,429 merged warm-up rows, and `scripts/derive_2022_2024_corpora.py` rewrote the file to that exact digest. All **485** pre-existing rows survive byte-identically as lines (the file is sorted by ex-date, so they are not a prefix), **0** duplicates, **0** deletions | **PASS** |
+| **A4 dividends — no fabricated date** | **4,357** `DIVIDEND` rows in 2018-04-01..2021-12-31 (4,495 overall, so the 138 post-2022 rows are untouched by the extension); **4,357 of 4,357** trace to an `(isin, exDate)` pair in one of the 15 payloads; **0** untraceable | **PASS** |
+| **A4 dividends — fail-closed** | Mutating **one byte** of `NSE_CA_equities_2018-04-01_2018-06-30.json` makes `check_reference_manifest_integrity()` return False and name both digests (`…1967cd68… on disk but the manifest attests 465fdec5…`) | **PASS** |
+| **A2 backward extension** | **931** calendar sessions in the window, **931** covered; **17,864** active rows of **19,283** committed; earliest active row **2018-04-02** = the window's first session; **426** identity pairs, **426** dated at a documented transition, **324** post-2022 tuples preserved | **PASS** |
+| **A4 max hold — declaration** | `max_hold_trading_sessions: 21` committed; `Position.entry_date`, `holding_sessions` (authoritative-calendar count, refusing an unscheduled date) and `require_within_hold_bound` exist; the unit test drives 0 / 20 / 21 and the refusal message; the ledger's entry date is set only on the flat→long transition and cleared on close | **declared** |
+| **A4 max hold — enforcement** | **No production caller.** A repository-wide search finds `require_within_hold_bound(` only in `position.py` (its definition) and `tests/unit/test_portfolio.py`. The A4 probe line asserts only `max_hold_trading_sessions=21 is committed`, so a simulated position can be carried past the bound with nothing refusing it | **N-177 registered (MEDIUM)** |
+| **Criteria 1.1.12** | version **1.1.12**, `MAN-FPR-V1-e95ddf90…` (resealed over the grown manifest), calendar and sourced-window fingerprints unchanged, every numeric threshold byte-identical except the one new binding `max_hold_trading_sessions: 21`; `min_binding_evaluation_start_date` still **2022-01-03** | **unchanged invariants** |
+| **Phase 2D artifacts** | **27** evaluations, `PASS=2 FAIL=0 NOT_RUN=25`, overall `NO-GO`, window `2022-01-03..2026-10-30`; the two regenerated files changed **4 lines total** — `criteria_version` and `criteria_fingerprint` — and no evaluation row moved. `data/trials/` has **no** diff: 9 registry rows, `evaluation_count 5`, pin `3326b1b2…`; `reports/verdicts/trial_004..009` untouched | **PASS** |
+
+Two residuals, named rather than implied.
+
+1. **The artifact now names a criteria version that post-dates its own timestamp.** `phase2d_tier_a_2022_2026_verdict.json` keeps `timestamp_utc 2026-11-16T10:00:00+00:00` and now carries `criteria_version 1.1.12` / `CRIT-FPR-V1-50784f1a…`, while 1.1.12 is effective **2026-11-18**. The reseal is *forced* — `verify_phase2d_verdicts` compares the artifact's fingerprint to the loaded criteria, so leaving 1.1.11 would have failed the gate — and it is honest in the sense that matters (no threshold moved, so no evaluation row moved, and the timestamp still names when the numbers were computed). But a reader cannot tell from the artifact that the 25 `NOT RUN` rows were produced under 1.1.11. The 1.1.12 note in `configs/go_no_go_criteria.yaml` records that, which is why this is a residual and not a finding.
+2. **The corpus generator is not idempotent on the manifest.** `main()` demotes the current `corporate_actions.jsonl` row and appends a new one whose digest is identical, so a second run leaves **1,027** manifest lines instead of 1,026, a duplicate superseded row pointing at the same bytes, and `MAN-FPR` moved off the pin (`12a45c57…` against `e95ddf90…`). That is the append-only restatement working as designed (§10.1) rather than an edit, but it means *any* regeneration is accompanied by a re-pin, which the next round must expect rather than discover.
+
+### 91.7 Phase verdicts
+
+| Phase | Verdict at `abf198f` | Named residuals |
+|---|---|---|
+| `§5.1` / `§13.1` entry eligibility (N-175) | **CLOSED** — 0 of 1,336 trade-to-trade ISIN-sessions resolve to `EQ`, 1,336 of 1,336 resolve to a series their own archive shows, 10,849 `EQ` ISIN-sessions unaffected | `probe_n175` admits a vacuous pass; closure rests on §91.2's independent join |
+| `§6.1` / `§10.5` interval log | **append-only and answer-preserving** — 14,773 added lines, 0 removed, 4,511-line prefix byte-identical, bisect index equal to a brute-force oracle on ≈1.6 M lookups | restatement evidence spans into the sealed holdout era (series/identity only) |
+| `§12.4` test invariant (N-174) | **PARTIAL** — the structural count reads 1,000/1,000 with a per-fill scan installed; the regression fails the benchmark **1 of 5** runs | detection is still timing-based; the counter watches one dunder |
+| `§12.4` gate invariant (Gate COV-3, N-176) | **counts PASS, attribution OPEN** — 3,624/2,763/861/1,174/1,589 reproduced exactly; ceiling live at 1,174; the printed 930/220/24 are typed and the measured split is 933/224/17 | the `0 EQ unresolved` claim is measured, not asserted |
+| `§10.8` A1 / `§10.8` A5 | **PASS / PASS** — 4 sourced circular years, 8 artifacts, 0 of 4,903 pre-binding sessions | — |
+| `§10.8` A2 / A4 dividends | **PASS / PASS** — 931/931 sessions, 426 dated pairs, 4,357 traced ex-dates | pair count moved 324 → 426 by measurement under §90.7 Ruling 1 |
+| `§13.2` A4 max hold | **declared, modelled, unit-tested, unenforced** | N-177; the bound has no consumer in the single engine |
+| Criteria and pins | **1.1.12** — new binding pre-registered, manifest resealed, no threshold moved, 27 rows and 5 evaluations unchanged | Phase 2D artifacts carry a version newer than their timestamp |
+| Gate / cache | **GO** — 544 passed, 9/9 verifiers, tree `457d2691…` reused at `abf198f` with no duplicate row | — |
+
+### 91.8 Ruling 1 — the 931 warm-up sessions are gating-eligible on a sourced calendar and a corrected identity log, and on nothing else
+
+*Evidence (all measured at `abf198f`, §91.1 and §91.6):* A1 **5/5 PASS** — 246/245/252/248 sessions per year reproduced from 7 sourced circular artifacts (1 + 3 + 2 + 1) with provenance digest `7622fbf4…`; A2 **PASS** — 17,864 active rows of 19,283 committed, earliest **2018-04-02** = the window's first session, **931 of 931** sessions covered, **426** identity pairs each dated at its successor ISIN's first session, the **324** post-2022 tuples preserved intact; A4 dividends **PASS** — **4,357** ex-dates in the window, every one traceable to one of 15 byte-attested Bronze payloads; A5 **PASS** — 8 verdict artifacts (every `*.json` under `reports/verdicts/`), **0 of 4,903** evaluated sessions precede the binding start; `configs/partition_spec.yaml` already names `in_sample_start: 2018-04-01`, so the binding start is the one value that lagged the committed partition. The surveillance frameworks the §10.8 window is defined against existed for the whole window — GSM effective 2017-03-14, ASM effective 2018-03-26 — so no session in `2018-04-01..2021-12-31` predates them.
+
+*Ruling:* the 931 sessions `2018-04-01..2021-12-31` move from `WARMUP_NOT_GATABLE` to **gating-eligible**. Concretely, in one round: `min_binding_evaluation_start_date` becomes **2018-04-01** in criteria **1.1.13**; `signal_core/storage/gating.py:BINDING_EVALUATION_START_DATE` becomes 2018-04-01 — the module constant and the criteria value are two sources for one fact and must move together or the guard and the criteria disagree; the **931** manifest rows now reading `gating_mode: WARMUP_NOT_GATABLE` are superseded by an **append**, never edited, with `MAN-FPR` re-pinned over the grown manifest; `probe_pre2022_bronze_coverage.py`'s hard requirement that those rows read `WARMUP_NOT_GATABLE` becomes a requirement that the label agrees with the criteria' binding start, so a tree whose criteria move while its archive labels stay cannot pass; and A5's rule is re-read against the new start. Candidate **seq 10** is authorised to register `2018-04-01..2023-12-31` as its in-sample window with the **2024** fold as its validation window, pre-registered in the trial registry **before** any run (§8.2), taking `N` from 9 to 10 without touching the five recorded evaluations.
+
+*What it does not do.* It moves no numeric threshold, fold boundary, trial count, cost parameter or criterion (§9.2, §12.4); it does not unlock, preview, re-scope or summarise `2025-01-01..2026-11-11`, which stays sealed behind the all-zero token hash with no sentinel, and the restatement rows dated inside that era carry series and identity only (§91.2); it does not make 2024 a *second* validation fold — the fold count stays one, so **CRIT-OVERFIT-06 stays `NOT RUN`** under the still-open N-150 and no report may describe seq 10's overfitting tests as passing; it does not manufacture surveillance state — `surveillance_intervals.jsonl` holds **3** rows dated 2024-01-15..2024-03-01 over **3** ISINs, so **CRIT-B6 is `NOT RUN`** over the extended window exactly as it is over `2022-01-03..2024-12-31`, and the promotion grants the warm-up sessions the same input standing the old window has, no more; it does not repeal **N-177** — until the hold bound has a consumer a seq-10 run may hold past 21 sessions, so the hold-bound criterion is `NOT RUN` as well; and it authorises **no verdict**: a GO or NO-GO remains whatever the gate computes over the extended window, and on the committed artifacts that computation is `NO-GO`.
+
+*The condition this round was asked to meet, measured rather than asserted.* The instrument was requested "with A1 + A2 + A4 + A5 at PASS and 0 open ledger findings". Measured: A1/A2/A5 and A4 dividends are PASS, A4 max-hold is **declared but unenforced**, and the ledger holds **4** open findings after this round — N-150 (MEDIUM, CRIT-OVERFIT-06's fold count), N-174 (LOW, the timing guard), and the two this round registered, N-176 and N-177. None of the four is a defect in the window's *inputs*: N-150 is a verdict-form rule, N-174 a test instrument, N-176 a gate's printed prose, N-177 a policy bound with no consumer. I am recording that deviation rather than resolving it by dropping the finding, because the alternative — closing N-174 on a probe that passes with the regression installed — is the failure mode this section exists to report.
+
+*Work item:* §91.9 items 1–5, serving Phase 3B-2 and §10.8. *Probe:* `probe_pre2022_preconditions.py` must print A5 `PASS` against `min_binding_evaluation_start_date = 2018-04-01`, A2/A4 unchanged, and a session dated 2018-03-29 must still be refused by `assert_no_warmup_sessions_in_evaluation`; the manifest relabel must leave every Bronze digest intact (W0.5-5) and re-pin `MAN-FPR` by measurement.
+
+*Falsified by:* any window session without a calendar row from a sourced circular; any identity pair dated at the 2022-01-03 seam or not dated at its successor's first session; any dividend row in the window not traceable to a Bronze payload; a criteria value moved while `gating.py`'s constant stays at 2022-01-03 (or the reverse); a fold, trial count, cost parameter, criteria threshold or holdout seal that moves with the promotion; or any seq-10 verdict computed over a 2025 or 2026 session.
+
+### 91.9 Work order for feat-s92
+
+Ordered by what it unblocks. Each item names the probe that must fail closed before it closes, and the phase it serves in `CURRENT_STAGE_OF_WORK.md`.
+
+1. **N-177 — give the hold bound a consumer** (serves `§13.2` / Phase 3B-2; MEDIUM). Call `Position.require_within_hold_bound` from the single engine's session loop with the criteria value, so a hold that reaches the bound is refused at the exit-evaluation point, and a hold that cannot exit inside it because the bid is locked at the lower circuit records a refusal rather than an extension (§5.3). **Probe:** `probe_n177` flips to asserting a production call site exists; the acceptance attack is a synthetic position held one session past the bound, refused **without** a direct `Position` call, and the A4 line must print a refusal count that is non-zero when one occurs.
+2. **N-176 — compute Gate COV-3's attribution, and assert the invariant** (serves `§12.4` / `§9.1`; MEDIUM). Derive the untraded / trade-to-trade / other-non-`EQ` split from the same session's Bhavcopy at run time (930 → the measured 933, 220 → 224, 24 → 17), delete the literals, and assert `0` scrips the Bhavcopy reports as `EQ` fail to resolve — the sentence that actually matters. **Probe:** `probe_n176` flips to asserting the printed split equals one recomputed from the archive and that the literals are absent; a run whose printed split disagrees with the Bhavcopy exits non-zero.
+3. **N-174 — count every access to the guard, not one dunder** (serves `§12.4`; LOW). The `CountingReplayGuard` counts `__contains__` only, and iterating an `OrderedDict` calls nothing, so the scan that regressed the engine is invisible (§91.4). Count `__iter__`, `keys`, `values`, `get`, `popitem` and `__contains__`, and require the total to stay at one per fill regardless of how many instances are held. **Probe:** `probe_n174` asserts the widened counter; the acceptance attack is §90.3's scan failing **5 of 5** runs, measured on this host.
+4. **Promotion mechanics — move both sources in one commit** (serves `§10.8` / Phase 3B-2). Criteria **1.1.13** with `min_binding_evaluation_start_date: 2018-04-01`, `gating.py:BINDING_EVALUATION_START_DATE` to the same date with its `classify_gating_window` / `resolve_gating_verdict` docstrings, the 931 `gating_mode` rows superseded by append, `probe_pre2022_bronze_coverage.py`'s label rule re-expressed against the criteria, A5 re-read, and `MAN-FPR` re-pinned by measurement — expecting a **duplicate superseded row** if `derive_2022_2024_corpora.main()` is re-run (§91.6 residual 2). **Probe:** `probe_pre2022_preconditions.py` prints A5 `PASS` at the new start and A2/A4 unchanged; `assert_no_warmup_sessions_in_evaluation` refuses a 2018-03-29 session; W0.5-5 still attests all 931 Bronze archives; a tree with the criteria moved and the labels left `WARMUP_NOT_GATABLE` fails the coverage certificate.
+5. **Register candidate seq 10 before it is run** (serves `§8.2` / Phase 3B-2). One registry row: hypothesis stated, `partition` in-sample `2018-04-01..2023-12-31`, fold spec naming **2024** as validation, `criteria_version 1.1.13`, registry manifest re-pinned; `N` 9 → 10 with `evaluation_count` still 5 until a run exists. **Probe:** the registry's `N` and its manifest pin agree with the criteria; a run whose evaluated sessions include any date in `2025-01-01..2026-11-11` fails closed, and no path under `data/raw/2025` or `2026` appears in the trial's provenance.
+6. **N-150 — CRIT-OVERFIT-06 needs either a second fold or an explicit admission** (carried, not new; MEDIUM). The extended window does not create a second validation fold, so the criterion is `NOT RUN` for seq 10; either register a second fold **before** seq 10 runs, or record the criterion's `NOT RUN` in the seq-10 report as its final state. **Probe:** the verdict bundle names the fold count it used, and a verdict claiming CRIT-OVERFIT-06 `PASS` on fewer than two folds fails closed.
+
+### 91.10 What would falsify this verdict
+
+- If any of the six sampled sessions returns a trade-to-trade ISIN whose resolved series is not one its archive shows — or returns `None` — the closure of §91.2 rests on the wrong property and N-175 is not closed.
+- If the first 4,511 lines of the interval log are not byte-identical to `fb02eea`, or any of the 324 parent identity tuples is absent from the 426, §90.8 Ruling 2 was misapplied and N-175's correction is an edit.
+- If the `bisect` index disagrees with the brute-force oracle on any (ISIN, date) pair once more of the log is appended, §90.9 item 2 traded an answer for a speed-up.
+- If a widened counter (item 3) still cannot see §90.3's scan, N-174 is wrong as stated and should be re-measured rather than re-scoped.
+- If the 1,174 unresolved include a single scrip the 2024-01-16 Bhavcopy reports as `EQ`, then Gate COV-2's 100 % resolution invariant is false on this session and the COV-3 attribution is hiding a real regression rather than mislabeling a correct one.
+- If the printed 933/224/17 split is reproducible from a different session's archive or from the price-band report rather than the Bhavcopy, my classification is the artifact and N-176 should be withdrawn.
+- If any session in `2018-04-01..2021-12-31` lacks an authoritative calendar row, or an identity boundary in the window is dated at the 2022-01-03 seam, Ruling 1 rests on a fabricated input and the window stays warm-up.
+- If promoting the start moves any fold, `N`, `N_eval`, cost parameter, criteria threshold or the holdout token hash, the promotion was a scope change disguised as an eligibility change.

@@ -1733,6 +1733,106 @@ def probe_n175() -> None:
     )
 
 
+def probe_n176() -> None:
+    """
+    Gate COV-3's unresolved attribution is typed prose, and three of its four numbers are wrong (N-176).
+
+    Measured at `abf198f` (§91.5) from `data/reference/sec_list_20240116.csv` and the same session's
+    `cm16JAN2024bhav.csv.zip`, independently of the gate: of the **1,174** in-scope EQ scrips that do
+    not resolve to an ISIN, **933** have no row at all in the Bhavcopy, **224** traded in `BE`/`BZ` and
+    **17** in `SM`; the gate prints `930` / `220` / `24` as literals in a `print`, so its attribution
+    is not a computation and does not describe the archive it claims to. The load-bearing part of the
+    claim — **0** scrips the Bhavcopy reports as `EQ` fail to resolve — is true by this measurement and
+    is asserted nowhere in code (§9.1).
+
+    The probe fails closed when the literals are gone, which is what closure requires: the gate must
+    print the split it computed, and a probe must assert the printed split against the Bhavcopy.
+    """
+    import csv
+    import datetime
+
+    gate_source = (REPO_ROOT / "scripts" / "verify_cash_universe_coverage.py").read_text(encoding="utf-8")
+    typed = ("930 untraded", "220 trading in BE", "24 in another non-EQ series")
+    present = [token for token in typed if token in gate_source]
+    assert present, (
+        "Gate COV-3 no longer prints typed attribution literals; close N-176 by asserting the printed "
+        "split equals one recomputed from the session's Bhavcopy"
+    )
+
+    from signal_core.storage.ingest import parse_bhavcopy_archive
+    from signal_core.storage.security_master import (
+        SecurityMaster,
+        load_cash_universe_symbol_intervals,
+    )
+
+    session = datetime.date(2024, 1, 16)
+    master = SecurityMaster(symbol_intervals=load_cash_universe_symbol_intervals())
+    unresolved: List[str] = []
+    with (REPO_ROOT / "data" / "reference" / "sec_list_20240116.csv").open(
+        encoding="utf-8-sig", newline=""
+    ) as handle:
+        for row in csv.DictReader(handle):
+            if (row.get("Series") or "EQ").strip().upper() != "EQ":
+                continue
+            symbol = (row.get("Symbol") or "").strip().upper()
+            resolved = master.resolve_isin_by_symbol(symbol, session, series="EQ") if symbol else None
+            if not resolved or len(resolved) != 12:
+                unresolved.append(symbol)
+
+    _, records = parse_bhavcopy_archive(
+        str(REPO_ROOT / "data" / "raw" / "2024" / "cm16JAN2024bhav.csv.zip"), trade_date=session
+    )
+    series_by_symbol: Dict[str, set] = {}
+    for record in records:
+        series_by_symbol.setdefault(record.symbol, set()).add(record.series)
+
+    untraded = sum(1 for symbol in unresolved if symbol not in series_by_symbol)
+    eq_rows = sum(1 for symbol in unresolved if "EQ" in series_by_symbol.get(symbol, set()))
+    trade_to_trade = sum(
+        1
+        for symbol in unresolved
+        if series_by_symbol.get(symbol) and series_by_symbol[symbol] <= {"BE", "BZ"}
+    )
+    other_non_eq = len(unresolved) - untraded - eq_rows - trade_to_trade
+
+    assert eq_rows == 0, (
+        f"{eq_rows} scrip(s) the Bhavcopy reports as EQ on 2024-01-16 do not resolve to an ISIN; "
+        "that is Gate COV-2's invariant, not an attribution footnote"
+    )
+    assert (untraded, trade_to_trade, other_non_eq) != (930, 220, 24), (
+        "the gate's typed attribution now agrees with the archive, which it did not at `abf198f` "
+        f"({untraded} untraded, {trade_to_trade} trade-to-trade, {other_non_eq} other non-EQ): re-measure "
+        "§91.5 before closing N-176"
+    )
+
+
+def probe_n177() -> None:
+    """
+    The hold bound is declared and modelled, and no production path calls it (N-177).
+
+    Measured at `abf198f` (§91.6): `max_hold_trading_sessions: 21` is committed, `Position.entry_date`,
+    `Position.holding_sessions` and `Position.require_within_hold_bound` exist and the unit test drives
+    them, and a repository-wide search finds **no** caller of `require_within_hold_bound` outside
+    `position.py` and the test — so a simulated position can be carried past the bound in silence, and
+    the A4 line ``max_hold_trading_sessions=21 is committed`` is the whole of the gate's evidence. The
+    probe fails closed when a production consumer appears, which is what closure requires.
+    """
+    source_root = REPO_ROOT / "src" / "signal_core"
+    callers = [
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in source_root.rglob("*.py")
+        if path.name != "position.py"
+        and "require_within_hold_bound(" in path.read_text(encoding="utf-8")
+    ]
+    position_source = (source_root / "portfolio" / "position.py").read_text(encoding="utf-8")
+    for token in ("def entry_date", "def holding_sessions", "def require_within_hold_bound"):
+        assert token in position_source, f"the hold-bound model `{token}` was removed"
+    assert not callers, (
+        f"the hold bound now has a production consumer ({callers}); close N-177 by asserting that the "
+        "simulator refuses a hold one session past the bound without a direct Position call"
+    )
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -1761,6 +1861,8 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-173": probe_n173,
     "N-174": probe_n174,
     "N-175": probe_n175,
+    "N-176": probe_n176,
+    "N-177": probe_n177,
 }
 
 
