@@ -1857,9 +1857,19 @@ def _session_loop_passthrough_problem(source: str) -> Optional[str]:
     forced_exits))`; otherwise a sentence naming what was found, so a probe failure says which half of
     the seam was cut.
     """
+    tree = ast.parse(source)
+    # Audit §94.6 item 5 (N-178): the keyword's expression is necessary and not sufficient. A call
+    # wrapped in `if forced_exits is None:` still carries the exact expression and never executes, so
+    # the ancestors are read too: the call must sit in the session loop, under no branch or handler
+    # that the data does not control.
+    parents: dict = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[id(child)] = parent
+
     calls = 0
     found: list[str] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
@@ -1874,6 +1884,28 @@ def _session_loop_passthrough_problem(source: str) -> Optional[str]:
         rendered = ast.unparse(keywords["forced_exit_isins"])
         if rendered != "tuple(sorted(forced_exits))":
             found.append(f"line {node.lineno}: forced_exit_isins={rendered}")
+            continue
+        guards = []
+        enclosing_function = None
+        cursor = parents.get(id(node))
+        while cursor is not None:
+            if isinstance(cursor, (ast.If, ast.While, ast.Try)):
+                guards.append(cursor)
+            if isinstance(cursor, (ast.FunctionDef, ast.AsyncFunctionDef)) and enclosing_function is None:
+                enclosing_function = cursor.name
+            cursor = parents.get(id(cursor))
+        if guards:
+            innermost = guards[0]
+            found.append(
+                f"line {node.lineno}: the harness call sits under {type(innermost).__name__} control "
+                f"flow, so the session loop does not reach it"
+            )
+            continue
+        if enclosing_function != "run_phase3b2_walkforward":
+            found.append(
+                f"line {node.lineno}: the harness call sits in {enclosing_function!r}, not in the "
+                f"walk-forward session loop"
+            )
     if calls == 0:
         return "no call to execute_swing_strategy_session was found in the walk-forward script"
     if found:
@@ -2104,9 +2136,13 @@ def probe_n178() -> None:
     )
     guarded = _dead_guarded_harness_call(source)
     assert guarded != source
-    assert _session_loop_passthrough_problem(guarded) is None, (
-        "a guarded-but-present harness call is now refused, so N-178 is fixed: flip this probe to "
-        "assert the refusal and close the finding"
+    problem = _session_loop_passthrough_problem(guarded)
+    assert problem is not None, (
+        "a guarded-but-present harness call is accepted, so reachability is still unasserted (N-178)"
+    )
+    assert "control flow" in problem, (
+        f"the dead-guarded call is refused for another reason, so the reachability check is not what "
+        f"caught it: {problem}"
     )
 
 
@@ -2125,27 +2161,30 @@ def probe_n179() -> None:
     """
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
-    from scripts.probe_pre2022_bronze_coverage import manifest_rows, superseded_archive_problems
+    from scripts.probe_pre2022_bronze_coverage import manifest_rows, superseded_row_problems
 
     rows = manifest_rows()
-    problems, checked = superseded_archive_problems(rows)
+    problems, checked = superseded_row_problems(rows)
     assert problems == [], problems[:3]
-    assert checked >= 931, (
-        f"the certificate checks {checked} superseded session row(s), fewer than the 931 Audit §94.3 measured"
+    assert checked == 931, (
+        f"the certificate checks {checked} superseded session row(s), not the 931 Audit §94.3 measured"
     )
     index = next(
         position
         for position, row in enumerate(rows)
         if row.get("session_date") and row.get("is_current") is not True
     )
+    artifact = str(rows[index]["artifact"])
     trimmed = rows[:index] + rows[index + 1 :]
-    problems_after, checked_after = superseded_archive_problems(trimmed)
+    problems_after, checked_after = superseded_row_problems(trimmed)
     assert checked_after == checked - 1, (
         f"deleting one superseded row changed the checked count by {checked - checked_after}, not 1"
     )
-    assert problems_after == [], (
-        "a deleted superseded manifest row is now refused, so N-179 is fixed: flip this probe to "
-        "assert the refusal and close the finding"
+    assert problems_after, (
+        "a deleted superseded manifest row is still invisible, so the count is not pinned (N-179)"
+    )
+    assert any(artifact in problem for problem in problems_after), (
+        f"the refusal does not name the artifact whose superseded row was deleted: {problems_after[:2]}"
     )
 
 
@@ -2163,28 +2202,29 @@ def probe_n180() -> None:
     This probe asserts the defect as measured, so deriving the fold from the requested window flips it
     to exit 1 and closes N-180.
     """
-    import json
-
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
     from scripts import probe_seq10_candidate as certificate
+    from scripts import run_seq10_candidate as runner
 
     source = (REPO_ROOT / "scripts" / "run_seq10_candidate.py").read_text(encoding="utf-8")
-    assert 'fold_spec_fingerprint=template["fold_spec_fingerprint"]' in source, (
-        "the registration path no longer copies the previous row's fold specification, so N-180 may be "
-        "fixed: flip this probe to assert the expanded fold it now computes"
+    assert 'fold_spec_fingerprint=template["fold_spec_fingerprint"]' not in source, (
+        "the registration path still copies the previous row's fold specification, so a row registered "
+        "through it is refused by its own certificate after N has moved (N-180)"
     )
-    rows = [
-        json.loads(line)
-        for line in (REPO_ROOT / "data" / "trials" / "trial_registry.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-        if line.strip()
-    ]
-    expanded = certificate._expected_fold_fingerprint()
-    assert expanded != rows[-1]["fold_spec_fingerprint"], (
-        "the certificate's expanded fold and the last registry row now agree, so a row registered from "
-        "the template would no longer be refused (N-180): re-measure before closing"
+    assert "seq10_fold_fingerprint(" in source, (
+        "the registration path no longer states the fold specification it writes, so the row's fold is "
+        "whatever the previous row carried (N-180)"
+    )
+    registered = runner.seq10_fold_fingerprint()
+    expected = certificate._expected_fold_fingerprint()
+    assert registered == expected, (
+        f"the registration path writes {registered!r} while the certificate demands {expected!r}; the two "
+        f"derivations of one window disagree (N-180)"
+    )
+    assert expected.startswith("FOLD-SPEC-V1-36a39987"), (
+        f"the fold the expanded window implies is {expected!r}, not the value Audit §94.4 measured for "
+        f"train 2018-04-01..2022-12-30 / test 2023-01-02..2023-12-31 (N-180)"
     )
 
 

@@ -147,16 +147,8 @@ def registry_row_problem(row: dict, criteria) -> Optional[str]:
 
 
 def _expected_fold_fingerprint() -> str:
-    fold_is = walkforward.WalkForwardFold(
-        fold_index=0,
-        train_start=WINDOW_START,
-        train_end=datetime.date(2022, 12, 30),
-        test_start=datetime.date(2023, 1, 2),
-        test_end=WINDOW_END,
-        embargo_sessions=0,
-        partition_role=walkforward.PartitionRole.IN_SAMPLE,
-    )
-    return walkforward.compute_fold_spec_fingerprint((fold_is,))
+    """The fold the authorised window implies, derived by the same function the engine runs (N-180)."""
+    return walkforward.in_sample_fold_fingerprint(WINDOW_START, WINDOW_END)
 
 
 def _registry_rows() -> list[dict]:
@@ -219,8 +211,13 @@ def main() -> int:
 
     if not registered:
         corpus_path, corpus_problem = candidate_runner.locate_corporate_action_adjusted_corpus()
-        not_registered_reason = corpus_problem or "the registry holds no seq 10 row"
+        cost_problem = candidate_runner.statutory_cost_schedule_problem(criteria)
+        not_registered_reason = (
+            "; ".join(problem for problem in (corpus_problem, cost_problem) if problem)
+            or "the registry holds no seq 10 row"
+        )
         print(f"[INFO] Corpus check: {'available at ' + str(corpus_path) if corpus_path else 'ABSENT'}")
+        print(f"[INFO] Statutory cost check: {'prices every session in the window' if not cost_problem else cost_problem}")
         print(f"[INFO] Blocker: {not_registered_reason}")
 
     if registered:

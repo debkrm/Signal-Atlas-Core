@@ -642,17 +642,19 @@ def build_historical_dataset_from_raw_bhavcopy(
 
     universe_schedule = UniverseSchedule({d: tuple(sorted(set(members))) for d, members in universe_by_date.items()})
     univ_fp = compute_universe_schedule_fingerprint(universe_schedule)
+    # Audit §94.6 item 4: `symbols_by_instrument` is not a parameter of this fingerprint function, so
+    # passing it raised a latent TypeError on a path nothing executed. The fallback is a live route to a
+    # dataset (clean checkout, no snapshot), so it is repaired rather than left raising (§14.4).
     content_fp = compute_legacy_dataset_content_fingerprint(
         trading_dates=sorted_dates,
         prices_by_instrument=prices_by_isin,
-        symbols_by_instrument=symbols_by_isin,
     )
 
     total_inst_records = sum(len(bars) for bars in prices_by_isin.values())
     snapshot = DatasetSnapshot(
         dataset_id="EXP-RAW-BHAVCOPY-2022-2024",
         schema_version="v1.0",
-        price_convention=PriceConvention.UNADJUSTED_CLOSE,
+        price_convention=PriceConvention.UNADJUSTED_RAW,
         start_date=sorted_dates[0],
         end_date=sorted_dates[-1],
         session_count=len(sorted_dates),
@@ -714,6 +716,66 @@ def resolve_or_build_historical_dataset(
 
     print("[INFO] Historical snapshot JSON absent; building HistoricalDataset directly from committed 2022..2024 raw Bhavcopy archives...")
     return build_historical_dataset_from_raw_bhavcopy()
+
+
+DEFAULT_EVAL_START = datetime.date(2022, 1, 3)
+
+
+def derive_in_sample_fold(
+    calendar: Any,
+    eval_start: datetime.date,
+    eval_end: datetime.date,
+) -> WalkForwardFold:
+    """
+    The in-sample fold a requested window implies (Audit §94.6 item 2, N-180).
+
+    Train is every authoritative session from the window's first session to the last one before the
+    evaluation year; test is the evaluation year up to the requested end. Deriving it is what lets the
+    expanded 2018-2023 window carry its own fold specification instead of the 2022-2023 one that used
+    to be typed beside the loop, and it reproduces the committed 2022-01-03..2023-12-29 fold exactly:
+    same train end (the last session before the first session of the evaluation year), same test start,
+    same test end. A window shorter than one session fails closed rather than inventing a fold.
+    """
+    year_start = datetime.date(eval_end.year, 1, 1)
+    test_sessions = calendar.sessions_in_range(year_start, eval_end)
+    if not test_sessions:
+        raise ValueError(
+            f"the requested window {eval_start}..{eval_end} holds no session in its evaluation year, "
+            f"so the in-sample test fold cannot be derived (Audit §94.6 item 2)"
+        )
+    test_start = test_sessions[0]
+    train_sessions = calendar.sessions_in_range(eval_start, test_start - datetime.timedelta(days=1))
+    if not train_sessions:
+        raise ValueError(
+            f"the requested window {eval_start}..{eval_end} holds no session before its evaluation "
+            f"year ({test_start}), so there is no in-sample train fold (Audit §94.6 item 2)"
+        )
+    return WalkForwardFold(
+        fold_index=0,
+        train_start=eval_start,
+        train_end=train_sessions[-1],
+        test_start=test_start,
+        test_end=eval_end,
+        embargo_sessions=0,
+        partition_role=PartitionRole.IN_SAMPLE,
+    )
+
+
+def in_sample_fold_for_dates(
+    eval_start: datetime.date, eval_end: datetime.date
+) -> WalkForwardFold:
+    """`derive_in_sample_fold` over the committed anchored calendar (one source, read twice)."""
+    return derive_in_sample_fold(load_anchored_nse_trading_calendar(), eval_start, eval_end)
+
+
+def in_sample_fold_fingerprint(eval_start: datetime.date, eval_end: datetime.date) -> str:
+    """
+    Fold-spec fingerprint the requested window implies.
+
+    `scripts/run_seq10_candidate.py` registers this value and `scripts/probe_seq10_candidate.py`
+    recomputes it, so neither can describe a fold the other did not (N-180).
+    """
+    return compute_fold_spec_fingerprint((in_sample_fold_for_dates(eval_start, eval_end),))
 
 
 def run_phase3b2_walkforward(
@@ -1020,16 +1082,22 @@ def run_phase3b2_walkforward(
         and (unexplained_gap_refusals > 0 or continuous_instruments_passed > 0)
     )
 
-    # 7. Configure Walk-Forward Folds (2022-2023 In-Sample, 2024 Validation)
-    fold_is = WalkForwardFold(
-        fold_index=0,
-        train_start=datetime.date(2022, 1, 3),
-        train_end=datetime.date(2022, 12, 30),
-        test_start=datetime.date(2023, 1, 2),
-        test_end=datetime.date(2023, 12, 29),
-        embargo_sessions=0,
-        partition_role=PartitionRole.IN_SAMPLE,
-    )
+    # 7. Configure Walk-Forward Folds (Audit §94.6 item 2)
+    # The in-sample fold is derived from the requested window instead of being typed beside the loop, so
+    # an expanded window carries the fold it implies (§94.4 N-180). The 2024 validation fold is frozen:
+    # it is never derived from a request and never evaluated by an in-sample-only run.
+    if in_sample_only:
+        fold_is = derive_in_sample_fold(cal, eval_start, eval_end)
+    else:
+        fold_is = WalkForwardFold(
+            fold_index=0,
+            train_start=datetime.date(2022, 1, 3),
+            train_end=datetime.date(2022, 12, 30),
+            test_start=datetime.date(2023, 1, 2),
+            test_end=datetime.date(2023, 12, 29),
+            embargo_sessions=0,
+            partition_role=PartitionRole.IN_SAMPLE,
+        )
     fold_val = WalkForwardFold(
         fold_index=1,
         train_start=datetime.date(2022, 1, 3),
@@ -2612,11 +2680,16 @@ def main() -> int:
     parser.add_argument("--rationale", type=str, default=None, help="TrialRegistry rationale naming the parameter change")
     args = parser.parse_args()
 
-    window_label = (
-        "2022-01-03 .. 2023-12-29 (In-Sample only; 2024 Validation FROZEN)"
-        if args.in_sample_only
-        else "2022-01-03 .. 2024-12-31 (In-Sample: 2022-2023, Validation: 2024)"
-    )
+    # Audit §94.6 item 2: the printed in-sample window is the fold the same derivation returns, so the
+    # banner cannot name a window the fold specification does not describe.
+    if args.in_sample_only:
+        _printed_fold = in_sample_fold_for_dates(DEFAULT_EVAL_START, datetime.date(2023, 12, 29))
+        window_label = (
+            f"{_printed_fold.train_start} .. {_printed_fold.test_end} "
+            f"(In-Sample only; 2024 Validation FROZEN)"
+        )
+    else:
+        window_label = "2022-01-03 .. 2024-12-31 (In-Sample: 2022-2023, Validation: 2024)"
     print("=" * 80)
     print("SIGNAL ATLAS CORE — PHASE 3B-2b WALK-FORWARD STRATEGY RUNNER")
     print(f"Evaluation Window: {window_label}")

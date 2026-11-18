@@ -125,7 +125,31 @@ metadata:
   # stays CAL-FPR-V1-6acb5f45…, "expected_sourced_window_calendar_fingerprint" stays 2d5ac7ac…, and every
   # count, tolerance, weight, fold, trial count and criterion is byte-identical to 1.1.13. A relabel
   # asserts nothing new about prices: it states the maturity of an input A1, A2 and A4 already certified.
-  version: "1.1.14"
+  # 1.1.15 (2026-11-18): no numeric threshold and no criterion changed. Audit §94.6 items 1-3 are
+  # executed in this version, and the two pins it moves are moved by measurement:
+  #   item 1 — `data/reference/historical_dataset_2018_2023.json.gz` is registered as a current manifest
+  #           row, so `expected_manifest_fingerprint` is resealed over the grown manifest. The corpus is
+  #           the derived-layer SPLIT_BONUS_ADJUSTED panel for 2018-04-01..2023-12-29 (1,061 ISINs,
+  #           1,425 sessions), built from the committed Bronze archives by exact split/bonus ratios
+  #           applied strictly before each ex-date; dividends stay cash inflows and no series is
+  #           stitched across an ISIN transition.
+  #   item 2 — the walk-forward in-sample fold is derived from the requested window instead of typed
+  #           beside the loop (`FOLD-SPEC-V1-36a39987…` for 2018-04-01..2023-12-31, N-180). No fold is
+  #           re-defined for any existing window: the 2022-01-03..2023-12-29 fold and the frozen 2024
+  #           validation fold are byte-identical.
+  #   item 3 — NOT RUN, and nothing is appended: the committed schedule's earliest exchange-fee row
+  #           is 2021-01-01, so `get_exchange_fee_for_date` raises for the window's first session
+  #           (2018-04-02) and the run refuses before registering (`scripts/run_seq10_candidate.py`,
+  #           measured). No sourced pre-2021 turnover rate exists in the repository, and §7.2 forbids a
+  #           flat or invented rate, so the expanded window is NOT RUN rather than mispriced. The
+  #           registry therefore stays at N = 9 / `evaluation_count` = 5 and
+  #           `expected_trial_registry_manifest_sha256` is unchanged.
+  # `min_binding_evaluation_start_date` stays 2018-04-01, `expected_calendar_fingerprint` stays
+  # CAL-FPR-V1-6acb5f45…, `expected_sourced_window_calendar_fingerprint` stays 2d5ac7ac…, the 1,201 and
+  # 1,196 calendar pins stay, and every count, tolerance, weight, cost parameter and criterion is
+  # byte-identical to 1.1.14. The new corpus changes no verdict already computed: it is an input to
+  # seq 10, which is a new trial row and not a restatement of any earlier one.
+  version: "1.1.15"
   effective_date: "2026-11-18"
   market: "NSE_CASH_EQUITY"
   currency: "INR"
@@ -290,13 +314,15 @@ market_data_and_accounting_invariants:
   zero_data_fabrication_required: true
 
   # Finding H-72: Authoritative reference manifest fingerprint pinned as criteria anchor (Audit §54.5, §54.10, §60.6 Item 4, §62.6 Item 4)
-  # MAN-FPR-V1 covers data/reference/manifest.jsonl content (1,865,503 bytes, SHA-256
-  # a421d3d2de37ada0cf03c536782c64ffb305627ebef7baca15fdd8bfc59646b6); re-pinned 2026-11-18 under
-  # Audit §92.7 Ruling 1 / criteria 1.1.14, which superseded the 931 warm-up Bhavcopy rows by append so
-  # their `gating_mode` reads BINDING_EVALUATION (931 appended rows; the 931 prior rows flip to
-  # is_current: false and are retained as history). No archive byte, byte count or digest changed.
-  # 1,000 current rows and 957 superseded rows are verified by Gate W0.5-5 and Gate 2D-6.
-  expected_manifest_fingerprint: "MAN-FPR-V1-a421d3d2de37ada0cf03c536782c64ffb305627ebef7baca15fdd8bfc59646b6"
+  # MAN-FPR-V1 covers data/reference/manifest.jsonl content (1,867,504 bytes, SHA-256
+  # 4b813090cab7f9be555833039029b1882dc60b05485fb83c0e9dcaba76609c1d); re-pinned 2026-11-18 under
+  # Audit §94.6 item 1 / criteria 1.1.15, which registers the derived-layer SPLIT_BONUS_ADJUSTED corpus
+  # `data/reference/historical_dataset_2018_2023.json.gz` as one current row (1,959 manifest rows =
+  # 1,001 current + 958 superseded; the build's first row was superseded by its restated rebuild, so
+  # the artifact has one current row and one history row, and 931 of the superseded rows are the
+  # session-dated warm-up relabelling of §92.7, unchanged). No archive byte, byte count or digest
+  # changed. Gate W0.5-5 and Gate 2D-6 verify the current and superseded rows.
+  expected_manifest_fingerprint: "MAN-FPR-V1-4b813090cab7f9be555833039029b1882dc60b05485fb83c0e9dcaba76609c1d"
 
   # Finding N-128 (Audit §72.3, §72.5 item 3): the trial-registry manifest witnesses
   # {evaluation_count, head_eval_hash} outside the (sidecar, anchor) pair. Pinning its SHA-256 here

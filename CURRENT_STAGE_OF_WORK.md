@@ -2090,3 +2090,108 @@ tests), **9/9 verifiers exit 0**, Gate W0.5-5 **1,000 current / 957 superseded**
 2024 validation fold frozen, holdout `2025-01-01..2026-11-11` sealed, and no path under
 `reports/audit/`, `AGENTS.md`, `.agents/skills/audit-round/SKILL.md`,
 `configs/trading_calendar_nse.json`, `data/trials/` or `reports/verdicts/trial_00*` was written.
+
+### Audit §94 work order (feat-s95): the 2018–2023 corpus, the derived fold, the three probes and the repaired fallback (implemented; gates measured on the committed tree; not audited)
+
+This section implements **§94.6 items 1–6** at parent `43ab44c` (tag `audit-s94-ab4a6a8`). It is written
+by the implementing agent and **is not audited**: no row here is a verdict, and the status words
+`closed`, `verified` and `signed off` do not appear for any item. N-178, N-179 and N-180 stay `OPEN`
+in `reports/audit/findings.jsonl` — the ledger is the auditor's, so these rows state what the probes now
+assert and leave the closure to the next audit round (§11.1, §11.3).
+
+**§94.6 item 1 — the derived `SPLIT_BONUS_ADJUSTED` 2018–2023 corpus is built (Route B).**
+`scripts/derive_2018_2023_corpus.py` reads one Bronze archive per calendar session
+`2018-04-01..2023-12-31` (**1,425** sessions; every session attested, no surplus archive, off-calendar
+date count **0**), applies each `SPLIT` / `BONUS` / `CONSOLIDATION` row of the committed
+`corporate_actions.jsonl` as an exact ratio strictly before its ex-date, and writes
+`data/reference/historical_dataset_2018_2023.json.gz`: **1,082** ISINs, **1,541,850** bars, declared
+`start_date 2018-04-01` (first session `2018-04-02`, a Sunday start), `end_date 2023-12-29`,
+`adjustment_version v1.0-split-bonus-backadjust-2018-2023`, `corporate_actions_fingerprint
+6ff7d3edb577a64d…` equal to the sha256 of the committed table, content fingerprint
+`DATA-CTNT-V2-1862c1f2…`, **45,565,892** bytes, sha256 `5926e1c2…`. **8** price-side actions across **7**
+instruments were applied; `DIVIDEND` rows are untouched (cash inflows, never price changes) and no
+series is stitched across an `ISIN_TRANSITION` — the corpus is keyed by ISIN, so each identity keeps its
+own sequence. The snapshot is registered as one current `data/reference/manifest.jsonl` row (1,959 rows
+= **1,001 current** + 958 superseded; the first build's row was superseded by its restated rebuild,
+never edited) and `expected_manifest_fingerprint` is re-pinned by measurement to
+**`MAN-FPR-V1-4b813090…`** (1,867,504 bytes).
+
+Two limits are named rather than hidden. Universe size: the panel is the **1,082** ISINs whose own bar
+sequence covers every session from the window's first to its last (2,735 observed; 1,463 excluded for a
+short span, 190 for an internal gap), which is the only shape the engine's continuity invariant can
+evaluate without fabricating a session (§6.3). Of the 1,463, the names whose observations **stop** before
+2023-12-29 have no verified delisting evidence in the corpus, so they are excluded rather than carried
+with an unverified trailing gap — an observability limit, stated in the snapshot's
+`universe_selection`, that the next round may attack. Adjustment: the committed table's 74 pre-2022
+`SPLIT`/`BONUS` rows are price adjustments, and the two in-window `CONSOLIDATION` rows are applied for
+the same reason (a reverse split is a share-ratio price event); `RIGHT`/`MERGER`/`DELISTING` rows are
+not price adjustments and are left to the engine's position accounting.
+
+**§94.6 item 2 — the in-sample fold is derived from the requested window.** `derive_in_sample_fold`
+(`scripts/run_phase3b2_walkforward.py`) replaces the hardcoded 2022–2023 fold on the in-sample path and
+the printed literal at the banner: train is the window's first session to the last session before the
+evaluation year, test is the evaluation year to the requested end, embargo 0, `IN_SAMPLE`. Measured:
+`2018-04-01..2023-12-31` ⇒ `FOLD-SPEC-V1-36a39987…` (the value §94.4 computed), and the committed
+`2022-01-03..2023-12-29` window still reproduces **`FOLD-SPEC-V1-4b44a1f2…`**, the fold seq 1–9 were
+registered under, so no existing fold moved. The 2024 validation fold is unedited and is never derived
+from a request. `run_seq10_candidate._register` now writes the derived fingerprint (and the run's own
+dataset fingerprint) instead of copying seq 9's, and `probe_seq10_candidate._expected_fold_fingerprint`
+delegates to the same function, so the two derivations cannot disagree. `probe_n180` is flipped and
+asserts that agreement; a committed test asserts the same pair plus the legacy reproduction.
+
+**§94.6 item 3 — candidate seq 10 is NOT RUN, and the refusal is a measurement.** The corpus and fold
+preconditions now pass (`run_seq10_candidate.py` prints `Corpus: …historical_dataset_2018_2023.json.gz`
+and `Dataset: 1425 session(s), 1082 instrument(s), 1541850 bar(s)`). A **third** precondition then failed
+during the baseline run, and it is not a defect in the corpus: the committed statutory cost schedule's
+earliest `effective_dated_exchange_fees` row starts **2021-01-01**, so
+`StatutoryCostCriteria.get_exchange_fee_for_date(2018-04-02)` raises
+`CriteriaValidationError: No governing NSE exchange fee schedule found for trade date 2018-06-12` (the
+first fill). No sourced pre-2021 NSE turnover rate exists in this repository — `data/raw/circulars`
+holds calendar and surveillance circulars only — and §7.2 forbids a flat or invented rate, so pricing
+2018 would be an unsourced numeric input (§6.5, §9.1). The runner therefore refuses **before** it
+registers anything and names the schedule it lacks; `probe_seq10_candidate.py` reports the same blocker
+next to the corpus state and exits 1 at `NOT CERTIFIED`. Measured state: `data/trials/` **N = 9** /
+`evaluation_count = 5`, manifest `3326b1b2…` unchanged, no verdict artifact under
+`reports/verdicts/trial_010/`, no path under `data/raw/2025` or `data/raw/2026` in any row, and
+`scripts/probe_seq10_candidate.py`'s sealed-era arm still refuses `2025-01-02..2025-03-31` through
+`HoldoutSealedError`. Item 3 remains the one part of the work order that is **NOT RUN**.
+
+**§94.6 item 4 — the raw-Bhavcopy fallback is repaired, not retired.** `:648` no longer passes
+`symbols_by_instrument=` to `compute_legacy_dataset_content_fingerprint` (the parameter does not exist)
+and `:655` names `PriceConvention.UNADJUSTED_RAW` (the symbol that exists). A committed test builds the
+fallback over two committed 2023 archives and asserts it returns a dataset whose
+`price_convention is UNADJUSTED_RAW` and whose content fingerprint is `DATA-CTNT-V2-…`, so the dead path
+is now a live one that states its convention.
+
+**§94.6 item 5 — N-178: the seam's reachability is asserted, not only its shape.**
+`_session_loop_passthrough_problem` now also reads the call's ancestors: an `If`/`While`/`Try` between
+the call and its function, or an enclosing function other than `run_phase3b2_walkforward`, is refused
+with "the harness call sits under … control flow". `probe_n178` is flipped and requires the §94.2
+dead-guard mutation (`if forced_exits is None:`) to be refused for that reason; a committed test asserts
+the same mutation. `probe_n177` still passes on the committed tree, so the passthrough's own check was
+not weakened to get there.
+
+**§94.6 item 6 — N-179: the superseded-row count is pinned.** `superseded_row_problems` adds two
+assertions beside the field comparison: the superseded session-dated count must equal the **931** §94.3
+measured, and every current window archive must still keep at least one superseded sibling, so a
+deletion is refused *and* the missing artifact is named. The certificate prints `931 of 931 pinned` and
+still reports `COVERED — 931/931`. `probe_n179` is flipped and requires the deletion of one superseded
+row to be refused with the artifact named; a committed test asserts it.
+
+**Criteria and scope.** Criteria **1.1.15** moves no numeric threshold and no criterion: it reseals
+`expected_manifest_fingerprint` (item 1) and records that item 3 is **NOT RUN** with the pin
+`expected_trial_registry_manifest_sha256` **unchanged**. `min_binding_evaluation_start_date` stays
+`2018-04-01`, `expected_calendar_fingerprint` stays `CAL-FPR-V1-6acb5f45…`,
+`expected_sourced_window_calendar_fingerprint` stays `2d5ac7ac…` (1,201 / 1,196), the 2024 validation
+fold is frozen, and holdout `2025-01-01..2026-11-11` stays sealed. No file under `reports/audit/`, `AGENTS.md`, `.agents/skills/audit-round/SKILL.md`, `configs/trading_calendar_nse.json` or `configs/partition_spec.yaml` was written;
+`data/trials/` is byte-identical to the parent commit.
+
+**Measurements taken (not a verdict).** `tests/unit/test_phase3b2_audit_s95_items.py`: **5 passed**.
+`probe_audit_findings.py N-177 / N-178 / N-179 / N-180`: **PASS 4/4**.
+`probe_pre2022_bronze_coverage.py`: **exit 0**, `931/931`, `931 of 931 pinned`. `run_seq10_candidate.py`:
+**exit 1**, `NOT REGISTERED` naming the 2021-01-01 schedule floor and the 2018-04-02 session.
+`probe_seq10_candidate.py`: **exit 1**, `NOT CERTIFIED`, `N = 9 / N_eval = 5`. Before this commit
+`verify_audit_findings.py` reported **28/29** probes matching, the exception being `probe_n170`, which
+refused the new corpus because it was not yet tracked (`1 archive(s) differ from their blobs`) — the
+probe working as designed; it is measured again on the committed tree in the green-cache row that
+follows.

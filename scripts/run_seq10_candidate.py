@@ -23,22 +23,21 @@ This script performs, in one process and one dataset:
    bound-disabled delta, and the baseline's own path and sha256, so no reader can substitute a `1.1.5`
    artifact for it.
 
-**Precondition, measured and enforced (Audit §93.7 item 1, §5.4).** The window needs a corpus whose
-prices are split/bonus back-adjusted: 74 split/bonus ex-dates fall before 2022-01-03 alone, and an
-unadjusted series carries each of them as a price jump that SMA/ATR read as a move. The committed dev
-snapshot covers 2022-01-03..2024-12-31 only, Silver holds no partitions at all, and the raw-Bhavcopy
-fallback labels its series `UNADJUSTED_RAW` (it also has two latent defects: `symbols_by_instrument` is
-not a `compute_legacy_dataset_content_fingerprint` parameter, and `PriceConvention.UNADJUSTED_CLOSE` no
-longer exists). So this script refuses, by name and before it registers anything, unless a
-corporate-action-adjusted corpus covering the window is committed. That refusal is the measurement
-§9.3 asks for; registering a trial against prices the criteria call unadjusted would be worse than
-reporting the block.
+**Precondition, measured and enforced (Audit §93.7 item 1, §94.6 item 1, §5.4).** The window needs a
+corpus whose prices are split/bonus back-adjusted: 74 split/bonus ex-dates fall before 2022-01-03
+alone, and an unadjusted series carries each of them as a price jump that SMA/ATR read as a move. The
+committed dev snapshot covers 2022-01-03..2024-12-31, so it is refused by coverage. The corpus this
+runner accepts is `data/reference/historical_dataset_2018_2023.json.gz`
+(`scripts/derive_2018_2023_corpus.py`, Audit §94.6 item 1 Route B): 1,061 ISINs over 1,425 sessions,
+`adjustment_version` stated, `corporate_actions_fingerprint` equal to the committed table's digest. The
+check is still live rather than assumed — a corpus that covers 2022+ only, omits `adjustment_version`
+or names another digest is refused by name, before anything is registered.
 
-A second precondition is asserted by measurement rather than by a flag: the engine's fold specification is
-fixed at a 2022-2023 in-sample fold, so its artifact states `in_sample_metrics['window']` as
-`2022-01-03 .. 2023-12-29` whatever window it was told to traverse. The baseline run therefore happens
-**before any registration**, and its artifact's declared window must equal the requested one; a run that
-describes a window it did not evaluate is refused instead of registered (§9.1).
+A second precondition is asserted by measurement rather than by a flag: since Audit §94.6 item 2 the
+in-sample fold is derived from the requested window (`run_phase3b2_walkforward.derive_in_sample_fold`),
+so the artifact states `in_sample_metrics['window']` as `2018-04-01 .. 2023-12-31`. The baseline run
+still happens **before any registration**, and its artifact's declared window must equal the requested
+one; a run that describes a window it did not evaluate is refused instead of registered (§9.1).
 
 Nothing on 2025-01-01..2026-11-11 is read, evaluated or written: the window ends 2023-12-31.
 
@@ -56,6 +55,7 @@ import shutil
 import sys
 import tempfile
 import time
+from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -96,7 +96,7 @@ RATIONALE = (
     "enforced hold bound (§93.4), so they are history and not this row's comparator; the comparator is a "
     "current-tree run of this configuration over this window, recorded in "
     "reports/verdicts/trial_010/seq10_baseline_comparison.json. The window opens at the criteria' binding "
-    "start 2018-04-01 (criteria 1.1.13, §91.8) after the 931 warm-up captures were relabelled BINDING_EVALUATION "
+    "start 2018-04-01 (criteria 1.1.15, §91.8) after the 931 warm-up captures were relabelled BINDING_EVALUATION "
     "(§92.7 Ruling 1). In-sample only: the 2024 validation fold is frozen and the holdout is not read."
 )
 
@@ -159,6 +159,36 @@ def locate_corporate_action_adjusted_corpus() -> tuple:
     )
 
 
+def statutory_cost_schedule_problem(criteria) -> Optional[str]:
+    """
+    Every session in the window must be priced by a committed exchange-fee schedule (§7.2).
+
+    The committed schedule's earliest effective row starts 2021-01-01, so the 2018–2020 sessions have no
+    governing NSE circular and `StatutoryCostCriteria.get_exchange_fee_for_date` raises before the first
+    fill. That is a precondition of the window, not a property of a trade: an unpriced year is NOT RUN,
+    and a rate inserted for it would be an unsourced numeric input (§6.5, §9.1). Measured here so the
+    refusal names the missing schedule instead of surfacing as a traceback 40 minutes into a run.
+    """
+    from signal_core.contracts.criteria import CriteriaValidationError
+
+    first_session = walkforward.load_anchored_nse_trading_calendar().sessions_in_range(
+        WINDOW_START, WINDOW_END
+    )[0]
+    try:
+        criteria.statutory_costs.get_exchange_fee_for_date(first_session)
+    except CriteriaValidationError as exc:
+        earliest = min(
+            fee.from_date for fee in criteria.statutory_costs.effective_dated_exchange_fees
+        )
+        return (
+            f"the committed statutory cost schedule's earliest exchange-fee row starts {earliest}, so the "
+            f"window's first session {first_session} has no governing NSE circular ({exc}). No sourced "
+            f"pre-{earliest} turnover rate exists in this repository, so the window cannot be priced and "
+            f"AGENTS.md §7.2 prohibits a flat or invented rate (§6.5, §9.1)"
+        )
+    return None
+
+
 def _copy_registry(workspace: Path) -> Path:
     workspace.mkdir(parents=True, exist_ok=True)
     target = workspace / REGISTRY_PATH.name
@@ -203,8 +233,13 @@ def _run(dataset, workspace: Path, trial_id: str, hypothesis: str, rationale: st
     return result, registry_path, time.monotonic() - started
 
 
-def _register(registry_copy: Path, criteria) -> str:
-    """Pre-register seq 10 with the parameters the engine actually receives (§8.2)."""
+def seq10_fold_fingerprint() -> str:
+    """The fold specification this candidate's window implies, derived by the engine (N-180)."""
+    return walkforward.in_sample_fold_fingerprint(WINDOW_START, WINDOW_END)
+
+
+def _register(registry_copy: Path, criteria, dataset_fingerprint: str) -> str:
+    """Pre-register seq 10 with the parameters the engine actually receives (§8.2, N-180)."""
     rows = [
         json.loads(line)
         for line in registry_copy.read_text(encoding="utf-8").splitlines()
@@ -220,8 +255,10 @@ def _register(registry_copy: Path, criteria) -> str:
         rationale=RATIONALE,
         partition=template["partition"],
         canonical_params=template["canonical_params"],
-        fold_spec_fingerprint=template["fold_spec_fingerprint"],
-        dataset_fingerprint=template["dataset_fingerprint"],
+        # Audit §94.6 item 2 / §94.4 N-180: the fold is the one this window implies, not seq 9's. A row
+        # that copied the template's value was refused by its own certificate after N had moved to 10.
+        fold_spec_fingerprint=seq10_fold_fingerprint(),
+        dataset_fingerprint=dataset_fingerprint,
         criteria_version=criteria.version,
         timestamp_utc=datetime.datetime.now(datetime.timezone.utc).isoformat(),
         sharpe_ratio=None,
@@ -257,6 +294,17 @@ def main() -> int:
         print("=" * 96)
         return 1
     print(f"[INFO] Corpus: {corpus_path.relative_to(REPO_ROOT).as_posix()}")
+
+    cost_problem = statutory_cost_schedule_problem(criteria)
+    if cost_problem:
+        print("=" * 96)
+        print(f"OVERALL: NOT REGISTERED — {cost_problem}")
+        print(
+            "         No row was appended and no verdict was computed: a trial whose first year cannot "
+            "be priced would publish a result the statutory schedule does not support (§9.3)."
+        )
+        print("=" * 96)
+        return 1
 
     started = time.monotonic()
     dataset = walkforward.resolve_or_build_historical_dataset(snapshot_path=corpus_path)
@@ -330,7 +378,7 @@ def main() -> int:
         # and the run is its re-render — the evaluation ledger is not touched (§93.4 containment).
         evaluation_count_before = walkforward.TrialRegistry(REGISTRY_PATH).evaluated_trial_count
         total_before = walkforward.TrialRegistry(REGISTRY_PATH).total_trial_count
-        record_hash = _register(copy_a, criteria)
+        record_hash = _register(copy_a, criteria, dataset.snapshot.content_fingerprint)
         registry_after_register = walkforward.TrialRegistry(REGISTRY_PATH)
         print(
             f"[INFO] Registered {TRIAL_ID}: N {total_before} -> {registry_after_register.total_trial_count}, "

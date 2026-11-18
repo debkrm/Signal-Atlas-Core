@@ -78,6 +78,11 @@ WINDOW_START = datetime.date(2018, 4, 1)
 WINDOW_END = datetime.date(2021, 12, 31)
 WINDOW_YEARS = (2018, 2019, 2020, 2021)
 EXPECTED_SESSIONS = 931
+# Audit §94.6 item 6 (N-179): §94.3 measured that deleting a superseded row left this certificate at
+# exit 0, because the check compared a row's fields only when the row was still present. The count is
+# now pinned to the value that round measured, and every current window archive must still keep a
+# superseded sibling, so a deletion is a named failure rather than a smaller check.
+EXPECTED_SUPERSEDED_SESSION_ROWS = 931
 WARMUP_LABEL = "WARMUP_NOT_GATABLE"
 BINDING_LABEL = GatingWindowClassification.BINDING_EVALUATION.value
 
@@ -196,6 +201,46 @@ def superseded_archive_problems(rows: List[dict]) -> Tuple[List[str], int]:
     return problems, checked
 
 
+def superseded_row_problems(rows: List[dict]) -> Tuple[List[str], int]:
+    """
+    The superseded-row certificate: field agreement *and* the count it was measured on (N-179).
+
+    `superseded_archive_problems` answers "does a superseded row still attest its archive". This adds
+    the two questions a deletion raises: is the number of superseded session-dated rows still the 931
+    Audit §94.3 measured, and does every current archive in the window still keep at least one
+    superseded sibling — so the missing artifact is named, not merely counted. Returns (problems, rows
+    checked).
+    """
+    problems, checked = superseded_archive_problems(rows)
+    problems = list(problems)
+    if checked != EXPECTED_SUPERSEDED_SESSION_ROWS:
+        problems.append(
+            f"the manifest holds {checked} superseded session-dated row(s), not the "
+            f"{EXPECTED_SUPERSEDED_SESSION_ROWS} Audit §94.3 measured; a superseded row that has been "
+            f"deleted is history edited out, not a smaller check (§10.1, Audit §94.6 item 6)"
+        )
+    by_artifact: Dict[str, List[dict]] = {}
+    for row in rows:
+        by_artifact.setdefault(str(row.get("artifact")), []).append(row)
+    for artifact, group in sorted(by_artifact.items()):
+        current = [row for row in group if row.get("is_current") is True and row.get("session_date")]
+        if not current:
+            continue
+        in_window = any(
+            WINDOW_START.isoformat() <= str(row.get("session_date"))[:10] <= WINDOW_END.isoformat()
+            for row in current
+        )
+        if not in_window:
+            continue
+        superseded = [row for row in group if row.get("is_current") is not True and row.get("session_date")]
+        if not superseded:
+            problems.append(
+                f"archive {artifact}: no superseded row survives for a current window archive; the record "
+                f"that it was relabelled has been deleted (§10.1, Audit §94.6 item 6)"
+            )
+    return problems, checked
+
+
 def archives_on_disk() -> Dict[str, Path]:
     found: Dict[str, Path] = {}
     for year in WINDOW_YEARS:
@@ -234,7 +279,7 @@ def main() -> int:
     by_date, undated = current_window_rows()
     on_disk = archives_on_disk()
     problems: List[str] = []
-    supersession_problems, superseded_checked = superseded_archive_problems(manifest_rows())
+    supersession_problems, superseded_checked = superseded_row_problems(manifest_rows())
     problems.extend(supersession_problems)
 
     print("=" * 96)
@@ -253,8 +298,8 @@ def main() -> int:
     print(f"[INFO] Bhavcopy archives on disk in those directories: {len(on_disk)}")
     print(
         f"[INFO] Superseded session-dated manifest rows checked against their current row: "
-        f"{superseded_checked} ({len(supersession_problems)} problem(s)); archive fields "
-        f"{', '.join(SUPERSEDED_ARCHIVE_FIELDS)}"
+        f"{superseded_checked} of {EXPECTED_SUPERSEDED_SESSION_ROWS} pinned "
+        f"({len(supersession_problems)} problem(s)); archive fields {', '.join(SUPERSEDED_ARCHIVE_FIELDS)}"
     )
     print(
         f"[INFO] Label rule read from criteria {criteria.version}: min_binding_evaluation_start_date "
