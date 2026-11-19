@@ -1,8 +1,8 @@
 {
-  "total_trials": 10,
-  "head_hash": "1c884ea2c89b810248efd0c503a8ba0dd8563fabca5765e95e19c00b85b66f1d",
-  "last_trial_id": "TRIAL-PHASE3B2-EXPANDED-010",
-  "timestamp_utc": "2026-11-19T07:26:04.049609+00:00",
-  "evaluation_count": 5,
-  "head_eval_hash": "ec66b016b203776f46f988bdc52e5c0ece188e2371ec720bf4587454fde68167"
+  "total_trials": 11,
+  "head_hash": "e76c249f04084594a8f38dcb5280f1c003082e4d58ae2174a58758fe701bbc11",
+  "last_trial_id": "TRIAL-PHASE3B2-LIQUIDITY-ATR-011",
+  "timestamp_utc": "2026-11-19T16:59:32.466127+00:00",
+  "evaluation_count": 6,
+  "head_eval_hash": "b1d90636fcf53375f664663c67ff109bb83e49e900e036183dedf258167ad1a6"
 }

@@ -70,9 +70,13 @@ WINDOW_END = datetime.date(2023, 12, 31)
 WINDOW_FIRST_SESSION = datetime.date(2018, 4, 2)
 WINDOW_LAST_SESSION = datetime.date(2023, 12, 29)
 SEALED_START = datetime.date(2025, 1, 1)
-REGISTERED_N = 10
+# The literal below is the registry state this certificate certifies, and it is bumped in the same commit
+# that registers a trial: a row appended without moving it fails the gate, which is the property the
+# hardcoded value exists for (§8.2). seq 11 (TRIAL-PHASE3B2-LIQUIDITY-ATR-011) is the 11th row and its
+# outcome is the 6th evaluation; seq 10's own row, artifacts and counters are unchanged by it.
+REGISTERED_N = 11
 UNREGISTERED_N = 9
-EXPECTED_EVALUATION_COUNT = 5
+EXPECTED_EVALUATION_COUNT = 6
 SUPERSEDED_CRITERIA_VERSIONS = ("1.1.5",)
 
 
@@ -258,6 +262,21 @@ def demerger_restatement_problem(artifact, restatement) -> Optional[str]:
             return (
                 f"the restatement's replay records {key} {replay.get(key)}, but the artifact publishes "
                 f"{artifact.get(key)}; the measurement is not this artifact's run"
+            )
+    # Audit §98.10 item 2: the measurement must be the run's own, so it is compared with the replay
+    # block this function already trusts instead of being type-checked beside it. §98.5 measured a
+    # restatement claiming `7/9` beside its own `0/0` replay passing this gate; only probe N-194 caught
+    # it. A replay that omits the pair is refused too: an absent comparison is not an agreement.
+    for key in ("demerger_forced_exits", "demerger_forced_refusals"):
+        if not isinstance(replay.get(key), int) or isinstance(replay.get(key), bool):
+            return (
+                f"the restatement's replay carries no integer `{key}`, so its measurement "
+                f"{measurement[key]} cannot be compared with the run that produced it"
+            )
+        if replay[key] != measurement[key]:
+            return (
+                f"the restatement measures {key} {measurement[key]}, but its own replay returns "
+                f"{replay[key]}; the measurement is not this replay's (§98.10 item 2)"
             )
     return None
 

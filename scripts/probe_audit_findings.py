@@ -2854,6 +2854,7 @@ def probe_n191() -> None:
     """
     import datetime
     import gzip
+    import hashlib
     import inspect
     import json
     from decimal import Decimal
@@ -2950,6 +2951,132 @@ def probe_n191() -> None:
             row["isin"] == isin and row["session"] == day
             for row in reconciliation["ratio_shaped_detail"]
         ), f"{isin} {day} is still published as a one-session ratio-shaped move"
+
+    # --- §98.10 item 1: the gap must partition the feature layer, not only the reconciliation -------
+    from signal_core.contracts.exchange_series import PriceSeriesContinuityValidator
+    from signal_core.features.engine import (
+        SubsegmentIndicatorEngine,
+        feature_gap_boundaries,
+        trailing_continuous_bars,
+    )
+    from signal_core.research.pit_universe import median_turnover_as_of
+
+    partition_path = REPO_ROOT / "reports" / "analysis" / "s99" / "feature_gap_partition.json"
+    assert partition_path.is_file(), (
+        "no committed feature-gap partition: the 16,194 gap pairs still reach every rolling feature "
+        "unannounced, so an EMA/ATR window still spans INE784B01035's hole (§6.3, §98.10 item 1)"
+    )
+    partition = json.loads(partition_path.read_text(encoding="utf-8"))
+    calendar_dates = [datetime.date.fromisoformat(value) for value in dates]
+    session_index = {session: position for position, session in enumerate(calendar_dates)}
+
+    class _Dated:
+        __slots__ = ("trade_date",)
+
+        def __init__(self, trade_date) -> None:
+            self.trade_date = trade_date
+
+    digest = hashlib.sha256()
+    recomputed_instruments = 0
+    recomputed_missing = 0
+    for isin in sorted(header["prices_by_instrument"]):
+        light = [
+            _Dated(datetime.date.fromisoformat(row["trade_date"]))
+            for row in header["prices_by_instrument"][isin]
+        ]
+        boundaries = feature_gap_boundaries(calendar_dates, light)
+        if not boundaries:
+            continue
+        recomputed_instruments += 1
+        recomputed_missing += len(boundaries)
+        for boundary in boundaries:
+            digest.update(f"{isin}\x00{boundary.trade_date.isoformat()}\n".encode("utf-8"))
+    assert partition["partition_fingerprint"] == "GAP-PTN-V1-" + digest.hexdigest(), (
+        "the committed partition is not the one the committed corpus derives; a rolling feature reading it "
+        "would warm up at boundaries the calendar does not have"
+    )
+    assert partition["instruments_with_gaps"] == recomputed_instruments, (
+        f"the partition publishes {partition['instruments_with_gaps']} instrument(s) with a hole, "
+        f"recomputed {recomputed_instruments}"
+    )
+    assert partition["unexplained_missing_sessions"] == recomputed_missing, (
+        f"the partition publishes {partition['unexplained_missing_sessions']} missing session(s), "
+        f"recomputed {recomputed_missing}"
+    )
+    assert recomputed_missing != partition["unexplained_missing_sessions"] + 1, (
+        "a mutated boundary count is indistinguishable from the committed one"
+    )
+    assert partition["feature_values"]["values_across_gap"] == 0, (
+        f"{partition['feature_values']['values_across_gap']} feature value(s) are computed across a gap"
+    )
+
+    lookbacks = {
+        "sma_20": 20, "sma_50": 50, "ema_20": 20, "ema_50": 50, "ema_200": 200,
+        "atr_14": 14, "rsi_14": 15, "rolling_high_20": 20, "rolling_low_20": 20,
+        "rolling_high_50": 50, "rolling_low_50": 50, "mom_63": 64,
+    }
+    for isin in ("INE251H01024", "INE784B01035"):
+        bars = [
+            PriceBar(
+                instrument_id=isin,
+                trade_date=datetime.date.fromisoformat(row["trade_date"]),
+                open=Decimal(row["open"]), high=Decimal(row["high"]),
+                low=Decimal(row["low"]), close=Decimal(row["close"]),
+                volume=int(row["volume"]), traded_value=Decimal(row["traded_value"]),
+            )
+            for row in header["prices_by_instrument"][isin]
+        ]
+        boundaries = feature_gap_boundaries(calendar_dates, bars)
+        assert boundaries, f"{isin} carries no gap boundary, so this witness cannot test the partition"
+        holes = {session_index[b.trade_date] for b in boundaries}
+        segments = PriceSeriesContinuityValidator.partition_into_continuous_subsegments(
+            expected_calendar_sessions=calendar_dates, actual_price_bars=bars
+        )
+        breaks = sum(1 for boundary in boundaries if boundary.sessions_since_previous_record == 1)
+        assert len(segments) == breaks + 1, (
+            f"{isin} has {breaks} contiguous hole(s) but {len(segments)} segment(s); the partition does "
+            f"not break where the calendar does"
+        )
+        features = SubsegmentIndicatorEngine.compute_standard_features_for_instrument(
+            expected_calendar_sessions=calendar_dates, actual_price_bars=bars
+        )
+        by_date = {feature.trade_date: feature for feature in features}
+        for segment in segments[1:]:
+            first = by_date[segment[0].trade_date]
+            for attribute in ("sma_20", "ema_20", "atr_14", "mom_63"):
+                assert getattr(first, attribute) is None, (
+                    f"{isin}: {attribute} is computed at {first.trade_date}, the first bar after a gap, so "
+                    f"its window spans the {len(boundaries)} boundary(ies) (§6.3, §98.10 item 1)"
+                )
+        for feature in features:
+            end = session_index[feature.trade_date]
+            for attribute, lookback in lookbacks.items():
+                if getattr(feature, attribute) is None:
+                    continue
+                start = end - lookback + 1
+                assert not any(position in holes for position in range(start, end + 1)), (
+                    f"{isin}: {attribute} at {feature.trade_date} rides a window that contains an "
+                    f"UNEXPLAINED_MISSING_RECORD boundary (§6.3)"
+                )
+        bars_by_date = {bar.trade_date: bar for bar in bars}
+        crossed = [
+            session for session in calendar_dates
+            if trailing_continuous_bars(calendar_dates, bars_by_date, session, 20, session_index) is not None
+            and any(session_index[session] - k in holes for k in range(1, 21))
+        ]
+        assert not crossed, f"a 20-session window still spans a {isin} hole: {crossed[:3]}"
+        first_hole = min(holes)
+        as_of = next(
+            session for session in calendar_dates
+            if session_index[session] > first_hole and session in bars_by_date
+        )
+        assert trailing_continuous_bars(calendar_dates, bars_by_date, as_of, 20, session_index) is None, (
+            f"a 20-session window ending {as_of} still reads across {isin}'s gap"
+        )
+        assert median_turnover_as_of(
+            as_of, calendar_sessions=calendar_dates, bars_by_date=bars_by_date, lookback_sessions=20,
+            session_index=session_index,
+        ) is None, f"a T-1 median turnover is computed across {isin}'s gap"
 
 
 def probe_n192() -> None:
@@ -3108,6 +3235,26 @@ def probe_n193() -> None:
         "not attested as pin-only"
     )
 
+    # §98.10 item 4: a scored trial now binds its criteria hash on the evaluation row itself.
+    from signal_core.research.trials import TrialRegistry
+
+    registry = TrialRegistry(certificate.REGISTRY_PATH)
+    evaluations = [
+        evaluation
+        for evaluation in (registry.get_evaluation(row.trial_id) for row in registry.get_trials())
+        if evaluation is not None
+    ]
+    bound = [row.criteria_fingerprint for row in evaluations if row.criteria_fingerprint]
+    assert bound, (
+        "no evaluation row carries a criteria_fingerprint: `1.1.16` still labels several criteria sets "
+        "and the outcome rows do not say which one judged them (§98.10 item 4)"
+    )
+    assert set(bound) <= {live}, f"an evaluation row cites a criteria set the live criteria do not compute: {bound}"
+    seq11 = registry.get_evaluation("TRIAL-PHASE3B2-LIQUIDITY-ATR-011")
+    assert seq11 is not None and seq11.criteria_fingerprint == live, (
+        "the seq-11 outcome row does not name the criteria it was scored under"
+    )
+
 
 def probe_n194() -> None:
     """
@@ -3172,6 +3319,19 @@ def probe_n194() -> None:
         {**artifact, "demerger_forced_refusals": 65}, restatement
     )
     assert stale is not None, "a restatement is accepted for a pair the artifact no longer publishes"
+    # §98.10 item 2: the gate must compare the measurement with its own replay, not only type-check it.
+    contradictory = {**restatement, "measurement": {"demerger_forced_exits": 7, "demerger_forced_refusals": 9}}
+    contradiction = certificate.demerger_restatement_problem(artifact, contradictory)
+    assert contradiction is not None and "replay" in contradiction, (
+        f"a measurement of 7/9 beside its own 0/0 replay is accepted: {contradiction}"
+    )
+    replay_without_pair = {
+        **restatement,
+        "replay": {k: v for k, v in replay.items() if not k.startswith("demerger_")},
+    }
+    assert certificate.demerger_restatement_problem(artifact, replay_without_pair) is not None, (
+        "a replay that omits the demerger pair is accepted, so the measurement is never compared"
+    )
 
 
 PROBES: Dict[str, Callable[[], None]] = {

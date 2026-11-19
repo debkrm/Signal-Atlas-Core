@@ -2485,6 +2485,88 @@ on this tree, and N-191…N-194 each exit **1** in a detached worktree at `bf5de
 note is not a verdict artifact: G2A-6.7 read it as a post-sidecar verdict with no ledger row, and the pre-2022
 pin test read it as a verdict). One red on the pre-commit tree is recorded because it is real:
 `verify_audit_findings.py` exits 1 on `N-170` alone, because the rebuilt corpus is not yet the byte git stores;
-`N-170` is green only once this commit's corpus bytes are in the object store, which this commit does.
+`N-170` is green only once this commit's corpus bytes are in the object store, which this commit does.`verify_audit_append_only.py --force-full` is run on this commit's tree and the row that follows records its verdict.
+
+## §99 — work order §98.10 items 1-4 executed for N-191…N-194, and strategy candidate seq 11 registered and scored (Not audited)
+
+**Item 1 — N-191 residual, features never compute across an unverified gap.** `feature_gap_boundaries` and
+`trailing_continuous_bars` partition an instrument's sessions at every `UNEXPLAINED_MISSING_RECORD` and
+return only the bars since the last hole; `median_turnover_as_of` in `pit_universe.py` now takes its 20-session
+T-1 median inside one subsegment. The partition is a committed measurement, not a claim:
+`reports/analysis/s99/feature_gap_partition.json` (`2.0 MiB`, fingerprint
+`GAP-PTN-V1-3fe08af638a6ee72…`) covers **539** instruments, **58,941** missing sessions, **16,733**
+subsegments and **74** material holes, and of **28,457,131** feature values **0** is computed across a gap.
+`probe_n191` was extended to recompute the artifact's fingerprint, re-warm its witnesses and refuse a
+20-session window that spans a hole: exit **0** in ~18 s on this tree, and exit **1** before the artifact existed.
+The attack that must fail closed was run: removing the subsegment break in `exchange_series.py` makes it exit
+**1** with `INE251H01024 has 27 contiguous hole(s) but 1 segment(s)`.
+
+**Item 2 — N-194 residual, the demerger pair must be compared, not assumed.**
+`demerger_restatement_problem` now reads the restatement's `measurement` demerger keys and the re-rendered
+`replay` keys and refuses an absent pair or a disagreement; the pre-fix function returned `None` for a
+measurement of `7/9` beside a replay of `0/0`. `probe_n194` carries both mutants and exits **1** on each.
+
+**Item 3 — N-193, the certificate runs in the gate.** `scripts/verify_seq10_certificate.py` calls
+`probe_seq10_candidate.main()` and is listed in `GREEN_CACHE_RUNTIME_VERIFIERS`, so the gate now discovers
+**10** verifiers and certifies the three seq-10 certificates at
+`CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470`; it exits **0 —
+CERTIFIED**. `TrialEvaluation.criteria_fingerprint` is an optional evaluations field, included in the hashed
+payload only when bound, and seq 11's evaluation row cites that fingerprint.
+
+**The pin this forced, and the one deviation from the order's own wording.** Registering seq 11 appended a
+registry row, so `expected_trial_registry_manifest_sha256` is re-sealed to **`b8ff325c…`**
+(`N-139` keeps it out of `compute_criteria_fingerprint`, which is why the live hash above is unchanged and the
+three seq-10 certificates still reconcile pin-only). `criteria_version` is **held at `1.1.16`** for §97.7's
+reason. The order named `configs/go_no_go_criteria.yaml` as the place for seq 11's controls; they were put in a
+new **`configs/trial_011_candidate.yaml`** instead, because adding any field or threshold to `GoNoGoCriteria`
+moves `compute_criteria_fingerprint` past a pin-only difference, and §98.6 Ruling 1 can only attest a pin-only
+difference to the three stored certificates — a field added there would have made the certificate, and the new
+gate verifier, refuse permanently. Controls, hypothesis, success criteria and falsifier are all in that file;
+nothing was thresholded after the run.
+
+**Item 4 — seq 11, T-1 ADTV ≥ ₹25 Cr and 0.75%-1.0% ATR risk, registered before the run.**
+`N = 10 → 11`, `N_eval = 5 → 6`, walk-forward `2018-04-02..2023-12-29`, artifacts in
+`reports/verdicts/trial_011/`. Measured:
+
+| Metric | seq 10 | seq 11 |
+|---|---|---|
+| Closed round trips | 781 | **1,101** |
+| Final equity (₹, 1,000,000 start) | 1,072,507.24 | **1,789,528.81** |
+| Profit factor | 1.1178… | **1.215059254…** |
+| Liquidated profit factor | 1.1773… | **1.281989670…** |
+| Max portfolio drawdown | 0.7264709014681672 | **0.5193109028986467** |
+
+The drawdown claim is met: **−0.2071599985695204731369764373 absolute, 28.5159% relative**, the pre-registered
+falsifier for that claim did not trigger, and the floor removed **1,974,755** ISIN-sessions from the entry
+universe. It is *not* a passing candidate. The pre-registered success criteria score
+`{drawdown_reduced: true, liquidated_pf_≥_1.50: false, closed_trades_≥_100: true}`, the criterion table is
+**15 PASS / 6 FAIL / 7 NOT RUN**, and **CRIT-STAT-02 is FAIL** because the liquidated profit factor 1.282 is
+below the committed 1.50. Seq 11 is therefore rejected on its own stated terms even though it improves on
+seq 10 on both drawdown and profit factor; the row stays in the registry as a scored trial, and the Sharpe
+reported for it is a rejected candidate's, not a strategy result.
+
+**Disclosed, not gated.** The per-trade liquidity check of the entry sessions names **1,101** trades and
+**2** unresolved keys — `INE947Q01028@2020-09-09` and `INE484C01030@2021-06-18` — both ISIN transitions where the
+ledger's ISIN has no continuous window on the fill date and the bars sit under the neighbouring identity. That
+is a property of the check's key, not evidence the floor was bypassed (the enforcement evidence is the
+per-session exclusion counter), so the comparison publishes the row with its cause instead of shaping a verdict
+with it. A later round should carry the signal date on the trade ledger and resolve identity there.
+
+**Gate repair this round forced, and what it changes.** Two checks were pulled red by the append itself, and
+neither was repaired by relaxing it:
+
+- `G2A-6.7` exemption (§95.10 item 7): a registered re-render declares the ledger count it ran under, and the
+  check compared that number with *today's* total, so seq 11's sixth evaluation retroactively un-attested seq 10.
+  It now compares against the evaluations that precede the artifact's own row (`prior_evaluations`); an erased
+  ledger computes 0 there and still fails, and a doctored artifact still fails.
+- The comparison artifact names its own trial, so `H-122`/`N-128` requires it to carry the ledger's score:
+  `seq11_vs_seq10_comparison.json` now publishes `annualized_sharpe 0.5599216299726306768891701591` verbatim.
+
+**Gate state at this commit.** `pytest --collect-only`: **577** collected; parallel invocation **576 passed** in
+63.33 s (replay-guard benchmark deselected) + isolated **1 passed** in 2.41 s = **577 of 577**, 0 skipped,
+0 xfailed. `tests/unit/test_phase3b2_audit_s99_items.py` **6 passed** (gap partition, gap-bounded median,
+measurement-vs-replay mutants, optional fingerprint). `probe_seq10_candidate.py`: **exit 0 — CERTIFIED**.
+`verify_phase2a_containment_and_trials.py` and `verify_phase2d_verdicts.py` exit **0**.
 `verify_audit_append_only.py --force-full` is run on this commit's tree and the row that follows records its
-verdict.
+verdict. `N-191`…`N-194` stay `OPEN` pending the next audit; the 2024 validation fold is untouched
+(`validation_folds_count = 0`) and the holdout `2025-01-01..2026-11-11` unread.

@@ -499,7 +499,14 @@ market_data_and_accounting_invariants:
   # data/trials/trial_registry.jsonl.manifest with LF line endings (323 bytes after the §75.10
   # append of seq 9, TRIAL-PHASE3B2-RANKED-009, which takes the registry to N = 9, N_eval = 5;
   # 324 bytes after the §74.10 append of seq 8).
-  expected_trial_registry_manifest_sha256: "0246c276d52d3a9bd1d81a2cce9c2145b138a49e5232a2a4731a8d2e7e47a4f1"
+  # Re-sealed 2026-11-19 under the §98.10 carried work: seq 11 (TRIAL-PHASE3B2-LIQUIDITY-ATR-011)
+  # is the 11th row and its outcome is the 6th evaluation, so the manifest witnesses total_trials 11
+  # and evaluation_count 6. Only this pin moved — no numeric threshold, fold, calendar pin or gating
+  # start — and this field is excluded from `compute_criteria_fingerprint` (N-139), so the live hash
+  # the seq-10 certificates reconcile against is unchanged. The seq-11 controls are pre-registered in
+  # `configs/trial_011_candidate.yaml`, not here: adding a threshold to this document would move the
+  # fingerprint beyond the pin-only difference §98.6 Ruling 1 can attest.
+  expected_trial_registry_manifest_sha256: "b8ff325c46eafda5f4e468ed8988461e609a81054bc57a160a1528cfb48d731d"
 
   # Authoritative Calendar and Session Reconciliation Invariants (AGENTS.md §6.3, §9.2, Findings H-56, H-61, H-62, H-64)
   # H-64: Calendar identity anchor — computed from session_records (dates, session_types, open/close times) at load time

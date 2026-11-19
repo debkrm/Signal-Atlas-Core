@@ -116,9 +116,19 @@ def verify_evaluation_artifact_agreement(
                 # evaluated count. A erased ledger reports 0 there and still fails, and an artifact
                 # doctored to claim a score without that count fails with it.
                 declared_count = data.get("evaluated_trial_count", data.get("evaluation_count"))
+                # The ledger state the artifact declares is the count *at its own registration*, so the
+                # comparison is against the evaluations that precede this row, not against today's
+                # total: a later trial's append (seq 11's sixth evaluation) must not retroactively
+                # un-attest an earlier artifact that declared the ledger it actually ran under. An
+                # erased ledger computes 0 here and still fails.
+                prior_evaluations = sum(
+                    1
+                    for earlier in registry.get_trials()
+                    if earlier.seq < row.seq and registry.get_evaluation(earlier.trial_id) is not None
+                )
                 if (
                     getattr(row, "partition", None) == "IN_SAMPLE"
-                    and declared_count == registry.evaluated_trial_count
+                    and declared_count == prior_evaluations
                 ):
                     continue
                 raise TrialEvaluationError(
@@ -375,6 +385,11 @@ class TrialEvaluation:
     prev_eval_hash: str
     eval_hash: str
     max_drawdown: Optional[Decimal] = None
+    # Audit §98.10 item 4 / §97.7 Ruling: the criteria hash the outcome was computed under, recorded on
+    # the row rather than inferred from `criteria_version`, which now labels several criteria sets. Rows
+    # appended before this field existed are history and are never rewritten (§10.1); a writer that has
+    # the criteria in hand (the walk-forward runner) always supplies it.
+    criteria_fingerprint: Optional[str] = None
 
     def __post_init__(self) -> None:
         if isinstance(self.trial_id, bool) or not isinstance(self.trial_id, str) or not self.trial_id.strip():
@@ -398,9 +413,19 @@ class TrialEvaluation:
             or not self.returns_digest.strip()
         ):
             raise TrialEvaluationError(f"returns_digest must be a non-empty string, got {self.returns_digest!r}")
+        if self.criteria_fingerprint is not None:
+            if (
+                isinstance(self.criteria_fingerprint, bool)
+                or not isinstance(self.criteria_fingerprint, str)
+                or not self.criteria_fingerprint.startswith("CRIT-FPR-V1-")
+                or len(self.criteria_fingerprint) == len("CRIT-FPR-V1-")
+            ):
+                raise TrialEvaluationError(
+                    f"criteria_fingerprint must be a CRIT-FPR-V1- digest, got {self.criteria_fingerprint!r}"
+                )
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "trial_id": self.trial_id,
             "record_hash": self.record_hash,
             "sharpe_ratio": str(self.sharpe_ratio),
@@ -409,8 +434,13 @@ class TrialEvaluation:
             "observation_count": self.observation_count,
             "evaluated_at_utc": self.evaluated_at_utc,
             "prev_eval_hash": self.prev_eval_hash,
-            "eval_hash": self.eval_hash,
         }
+        # Emitted only when it is bound, so a row written before the field existed hashes exactly as it
+        # did then (the eval_hash is recomputed over whatever keys the line carries).
+        if self.criteria_fingerprint is not None:
+            payload["criteria_fingerprint"] = self.criteria_fingerprint
+        payload["eval_hash"] = self.eval_hash
+        return payload
 
 
 class TrialRegistry:
@@ -765,6 +795,7 @@ class TrialRegistry:
                     evaluated_at_utc=str(data["evaluated_at_utc"]),
                     prev_eval_hash=str(data["prev_eval_hash"]),
                     eval_hash=str(stored_hash),
+                    criteria_fingerprint=data.get("criteria_fingerprint"),
                 )
             except (KeyError, TypeError, ValueError, InvalidOperation) as err:
                 raise RegistryTamperedError(
@@ -1090,6 +1121,7 @@ class TrialRegistry:
         observation_count: int,
         evaluated_at_utc: str,
         max_drawdown: Optional[Decimal] = None,
+        criteria_fingerprint: Optional[str] = None,
     ) -> TrialEvaluation:
         """
         Appends a computed outcome for an already-registered trial (Finding H-119).
@@ -1153,6 +1185,11 @@ class TrialRegistry:
             "evaluated_at_utc": evaluated_at_utc,
             "prev_eval_hash": prev_hash,
         }
+        # Audit §98.10 item 4: the executed criteria hash is part of the hashed payload, so a reader can
+        # recompute the row's `eval_hash` and find the criteria set it was scored under. Omitted for rows
+        # that carry no fingerprint, so the five pre-existing rows hash exactly as before (§10.1).
+        if criteria_fingerprint is not None:
+            payload["criteria_fingerprint"] = criteria_fingerprint
         eval_hash = _compute_record_hash(payload)
         record = TrialEvaluation(
             trial_id=trial_id,
@@ -1164,6 +1201,7 @@ class TrialRegistry:
             evaluated_at_utc=evaluated_at_utc,
             prev_eval_hash=prev_hash,
             eval_hash=eval_hash,
+            criteria_fingerprint=criteria_fingerprint,
         )
 
         self._evaluation_path.parent.mkdir(parents=True, exist_ok=True)

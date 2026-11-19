@@ -314,7 +314,8 @@ def test_source_tree_hash_ignores_audit_prose_and_docs():
 def test_green_cache_reuses_only_an_identical_fresh_source_tree():
     now = datetime.datetime(2026, 11, 17, 12, 0, tzinfo=datetime.timezone.utc)
     verifier_scripts = discovered_verification_scripts()
-    assert len(verifier_scripts) == 9
+    # Audit §98.10 item 3 adds `verify_seq10_certificate.py`, so the discovered sweep is 10, not 9.
+    assert len(verifier_scripts) == 10
 
     # Audit §79.8 (N-155): a record is reusable only when it witnesses a complete green run — every
     # discovered verifier at exit 0, a suite count above the pinned floor, and a real commit.

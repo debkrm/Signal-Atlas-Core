@@ -18,9 +18,10 @@ from dataclasses import dataclass
 import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from signal_core.contracts.universe import UniverseSchedule, UniverseValidationError
+from signal_core.features.engine import trailing_continuous_bars
 from signal_core.storage.calendar import TradingCalendar, load_anchored_nse_trading_calendar
 from signal_core.storage.security_master import apply_interval_restatements
 
@@ -343,4 +344,45 @@ def build_point_in_time_universe_schedule(
         schedule_map[s] = tuple(sorted(candidate_isins))
 
     return UniverseSchedule(schedule_map, exclusion_reasons=exclusion_reasons)
+
+
+def median_turnover_as_of(
+    as_of: datetime.date,
+    *,
+    calendar_sessions: Sequence[datetime.date],
+    bars_by_date: Mapping[datetime.date, Any],
+    lookback_sessions: int = 20,
+    session_index: Optional[Mapping[datetime.date, int]] = None,
+) -> Optional[Decimal]:
+    """
+    Median traded value (INR) over the `lookback_sessions` sessions strictly before `as_of`.
+
+    Audit §98.10 item 1 / §6.3: the window is a contiguous run of authoritative calendar sessions, so a
+    multi-month hole cannot be read as a quiet 20 sessions. A window that crosses an
+    `UNEXPLAINED_MISSING_RECORD` boundary is refused (None) rather than averaged over the bars that
+    happen to survive, which is why the caller treats None as "no T-1 liquidity evidence" and not as
+    zero turnover. `None` is also returned when the history is shorter than the window.
+    """
+    window = trailing_continuous_bars(
+        expected_calendar_sessions=calendar_sessions,
+        bars_by_date=bars_by_date,
+        as_of=as_of,
+        lookback=lookback_sessions,
+        session_index=session_index,
+    )
+    if window is None:
+        return None
+    turnovers: List[Decimal] = []
+    for bar in window:
+        traded = getattr(bar, "traded_value", None)
+        if traded is None:
+            traded = Decimal(getattr(bar, "volume")) * getattr(bar, "close")
+        turnovers.append(traded)
+    ordered = sorted(turnovers)
+    mid = len(ordered) // 2
+    return (
+        ordered[mid]
+        if len(ordered) % 2 == 1
+        else (ordered[mid - 1] + ordered[mid]) / Decimal("2")
+    )
 

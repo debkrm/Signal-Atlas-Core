@@ -1,0 +1,81 @@
+# CANDIDATE seq 11 — PRE-REGISTRATION (Audit §98.10 item 5 carried work; AGENTS.md §8.2, §13.6)
+#
+# Committed BEFORE the run it describes. The registry row `TRIAL-PHASE3B2-LIQUIDITY-ATR-011` cites this
+# file's sha256, so a reader can check that the hypothesis executed is the one pre-registered here.
+#
+# Why the controls live in this file and not in `configs/go_no_go_criteria.yaml`: every field of
+# `GoNoGoCriteria` is inside `compute_criteria_fingerprint` (contracts/criteria.py). Adding a threshold
+# there moves the live hash beyond a pin-only difference, and §98.6 Ruling 1 accepts a certificate that
+# cites another hash only when substituting the executed pin into the **live** criteria reproduces it.
+# A criterion change therefore makes the three seq-10 certificates unattestable, which — now that
+# §98.10 item 3 puts the certificate on the gate — would refuse every commit. So the judgment thresholds
+# stay byte-identical and this candidate changes the *strategy*, not the criteria it is judged by
+# (§9.2: thresholds are never adjusted for a trial). Only the trials-manifest pin is re-sealed, by
+# measurement, and that field is excluded from the fingerprint (N-139).
+#
+# The two controls are derived from seq 10's own decomposition
+# (`reports/analysis/s98/seq10_drawdown_decomposition.json`), not from a hunch:
+#   ADTV >= 25 Cr : 271 closed trades, gross +₹212,474.75, net +₹176,025.68, 111 wins
+#   5-25 Cr       : 314 closed trades, gross  -₹53,893.90, net  -₹93,852.09, 116 wins
+#   1-5 Cr        : 152 closed trades, gross  -₹86,920.35, net -₹104,927.79,  55 wins
+#   < 1 Cr        :  44 closed trades, gross  +₹81,703.60, net  +₹78,092.62,  19 wins
+# The two middle tiers lose ₹198,779.88 net on 466 round trips and carry the 2020-03 collapse; the
+# top tier is the only large profitable one. Dropping the 5-25 Cr and 1-5 Cr tiers is the control,
+# and the < 1 Cr tier goes with them because the floor is one bound, not a band.
+metadata:
+  trial_id: "TRIAL-PHASE3B2-LIQUIDITY-ATR-011"
+  seq: 11
+  pre_registered: true
+  section: "§98.10 (carried work) / §13.2 holding-period realism"
+  window_start: "2018-04-01"
+  window_end: "2023-12-31"
+  first_session: "2018-04-02"
+  last_session: "2023-12-29"
+  partition: "IN_SAMPLE"
+  criteria_version: "1.1.16"
+  criteria_fingerprint: "CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470"
+  baseline_artifact: "reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json"
+  baseline_max_drawdown: "0.7264709014681672238018483779"
+  frozen_validation_fold: "2024"
+  holdout: "2025-01-01..2026-11-11"
+
+controls:
+  # T-1 liquidity entry floor: median traded value over the 20 authoritative sessions immediately
+  # before the entry session, computed through the §6.3 gap partition (`median_turnover_as_of`). A name
+  # whose window crosses an UNEXPLAINED_MISSING_RECORD boundary has no T-1 evidence and is not an entry.
+  min_median_adtv_crore: "25.0"
+  adtv_lookback_sessions: 20
+  # ATR-volatility position sizing: risk this fraction of equity to the 2.0xATR(14) protective stop,
+  # capped at the 8% allocation weight (the same cap seq 10 carried, so the cap is not the variable).
+  risk_per_trade_pct: "0.0075"
+  atr_stop_multiple: "2.0"
+  max_position_weight: "0.0800"
+  # Unchanged from seq 10: they are not the hypothesis.
+  fast_indicator: "sma_20"
+  slow_indicator: "sma_50"
+  entry_rank_indicator: "mom_63"
+  max_hold_trading_sessions: 21
+  unbanded_session_fill_policy: "LOCKED_BAR_REFUSAL_ONLY"
+  min_entry_notional: "25000"
+  min_fill_notional: "5000"
+
+hypothesis: >-
+  With entries restricted to names whose T-1 median 20-session traded value is at least ₹25 crore, and
+  with position risk cut from 1.00% to 0.75% of equity against the same 2.0xATR(14) stop, the
+  SMA(20/50)+mom_63 delivery-swing book over 2018-04-02..2023-12-29 earns a smaller maximum portfolio
+  drawdown than seq 10's 0.7264709014681672238018483779 without turning the top liquidity tier's net
+  expectancy negative.
+
+success_criteria:
+  # Computed in the comparison artifact; a run that fails the first row exits non-zero.
+  max_drawdown_strictly_below_seq10: true
+  liquidated_pf_at_least_criteria_min_profit_factor: true
+  closed_round_trips_at_least: 100
+
+falsifier: >-
+  A maximum portfolio drawdown at or above seq 10's 0.7264709014681672238018483779, or a liquidated
+  profit factor below the criteria' 1.50, would falsify the claim that the liquidity floor and the
+  smaller risk budget are what carried seq 10's loss, and the next hypothesis moves to the exit policy
+  rather than to another entry filter.
+
+not_audited: true

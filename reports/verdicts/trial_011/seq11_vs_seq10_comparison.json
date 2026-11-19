@@ -1,0 +1,100 @@
+{
+  "artifact_format": "signal-atlas-seq11-vs-seq10-comparison-v1",
+  "section": "\u00a798.10 carried work / \u00a713.2",
+  "not_audited": true,
+  "trial_id": "TRIAL-PHASE3B2-LIQUIDITY-ATR-011",
+  "annualized_sharpe": "0.5599216299726306768891701591",
+  "window": "2018-04-01..2023-12-31",
+  "first_session": "2018-04-02",
+  "last_session": "2023-12-29",
+  "sessions": 1425,
+  "pre_registration": {
+    "path": "configs/trial_011_candidate.yaml",
+    "sha256": "199786951cb1c53693732cd52e5a923acfe23cddf0983283706f3a3d6b21d84e",
+    "controls": {
+      "min_median_adtv_crore": "25.0",
+      "adtv_lookback_sessions": 20,
+      "risk_per_trade_pct": "0.0075",
+      "atr_stop_multiple": "2.0",
+      "max_position_weight": "0.0800",
+      "fast_indicator": "sma_20",
+      "slow_indicator": "sma_50",
+      "entry_rank_indicator": "mom_63",
+      "max_hold_trading_sessions": 21,
+      "unbanded_session_fill_policy": "LOCKED_BAR_REFUSAL_ONLY",
+      "min_entry_notional": "25000",
+      "min_fill_notional": "5000"
+    }
+  },
+  "criteria_version": "1.1.16",
+  "criteria_fingerprint": "CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470",
+  "dataset_fingerprint": "",
+  "baseline": {
+    "path": "reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json",
+    "sha256": "75571da3ebff56531addc6afdecdac6f05cf5a0799327a3ac85a97177ae067ae",
+    "trial_id": "TRIAL-PHASE3B2-EXPANDED-010",
+    "criteria_fingerprint": "CRIT-FPR-V1-9ee0a88c260d27fbe3ab13bb7c8c4c992e7d185986f28f5f803cf5db6db8634e",
+    "metrics": {
+      "closed_trades": 781,
+      "end_equity": "1072507.24",
+      "profit_factor": "1.058319814406791810331206697",
+      "win_rate": "0.3854033290653008962868117798",
+      "max_drawdown": "0.7264709014681672238018483779"
+    },
+    "liquidated_profit_factor": "1.062288461598504234259941013"
+  },
+  "candidate": {
+    "path": "reports/verdicts/trial_011/phase3b2_swing_baseline_2022_2024_verdict.json",
+    "sha256": "4681cfba850b3bff673be0851ea2a68f93ef37bf07724c93976e278d9703c230",
+    "metrics": {
+      "closed_trades": 1101,
+      "end_equity": "1789528.81",
+      "profit_factor": "1.215059254115567619027472003",
+      "win_rate": "0.3769300635785649409627611262",
+      "max_drawdown": "0.5193109028986467506648719406"
+    },
+    "liquidated_profit_factor": "1.281989670001573246299919807",
+    "hold_bound_forced_exits": 495,
+    "hold_bound_refusals": 4427,
+    "demerger_forced_exits": 1,
+    "demerger_forced_refusals": 0,
+    "risk_per_trade_pct": "0.0075",
+    "min_median_adtv_crore": "25.0",
+    "adtv_excluded_isin_sessions": 1974755
+  },
+  "registry": {
+    "total_trial_count": 11,
+    "evaluated_trial_count": 6,
+    "record_hash": "e76c249f04084594a8f38dcb5280f1c003082e4d58ae2174a58758fe701bbc11",
+    "eval_hash": "b1d90636fcf53375f664663c67ff109bb83e49e900e036183dedf258167ad1a6",
+    "criteria_fingerprint": "CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470"
+  },
+  "max_drawdown_reduction_absolute": "0.2071599985695204731369764373",
+  "max_drawdown_reduction_relative_pct": "28.5159",
+  "drawdown_reduced": true,
+  "success_criteria": {
+    "max_drawdown_strictly_below_seq10": true,
+    "liquidated_pf_at_least_criteria_min_profit_factor": false,
+    "closed_round_trips_at_least_100": true
+  },
+  "trade_liquidity": {
+    "floor_crore": "25.0",
+    "lookback_sessions": 20,
+    "checked_trades": 1101,
+    "violation_count": 2,
+    "violations": [
+      "INE947Q01028@2020-09-09: no continuous 20-session T-1 window",
+      "INE484C01030@2021-06-18: no continuous 20-session T-1 window"
+    ],
+    "all_entries_liquid": false,
+    "check_basis": "the ledger ISIN's corpus bars on the session before each entry date; an ISIN transition between signal and fill makes that key unresolved, which is why this row is disclosed and does not decide the run's exit status",
+    "adtv_excluded_isin_sessions": 1974755
+  },
+  "criteria_status": {
+    "CRIT-STAT-02": "FAIL",
+    "CRIT-STAT-04": "FAIL",
+    "CRIT-OVERFIT-04": "FAIL"
+  },
+  "sealed_sessions_evaluated": 0,
+  "frozen_validation_fold_evaluated": false
+}

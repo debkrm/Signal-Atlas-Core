@@ -52,7 +52,11 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from signal_core.contracts.criteria import GoNoGoCriteria, load_go_no_go_criteria
+from signal_core.contracts.criteria import (
+    GoNoGoCriteria,
+    compute_criteria_fingerprint,
+    load_go_no_go_criteria,
+)
 from signal_core.contracts.dataset import PriceConvention
 from signal_core.contracts.exchange_series import (
     APPROVED_EQ_ONLY_POLICY,
@@ -69,7 +73,11 @@ from signal_core.execution.order_runner import (
     DailyTPlus1OrderRunner,
 )
 from signal_core.execution.simulator import ExecutionFillSimulator
-from signal_core.features.engine import IndicatorValidationError, SubsegmentIndicatorEngine
+from signal_core.features.engine import (
+    IndicatorValidationError,
+    SubsegmentIndicatorEngine,
+    trailing_continuous_bars,
+)
 from signal_core.loaders.historical_snapshot import (
     HistoricalDataset,
     load_historical_snapshot,
@@ -91,6 +99,7 @@ from signal_core.research.containment import (
     compute_fold_spec_fingerprint,
     load_canonical_partition_spec,
 )
+from signal_core.research.pit_universe import median_turnover_as_of
 from signal_core.research.significance import (
     InvalidSampleError,
     SignificanceError,
@@ -186,6 +195,7 @@ def build_authoritative_runner(
     criteria: GoNoGoCriteria,
     atr_stop_multiple: Decimal,
     band_policy: Optional[PriceBandPolicy] = None,
+    risk_per_trade_pct: Decimal = Decimal("0.01"),
 ) -> DailyTPlus1OrderRunner:
     """
     Single construction point for the authoritative order runner (Audit §72 H-124).
@@ -200,7 +210,7 @@ def build_authoritative_runner(
         simulator=simulator,
         calendar=calendar,
         criteria=criteria,
-        risk_per_trade_pct=Decimal("0.01"),
+        risk_per_trade_pct=risk_per_trade_pct,
         atr_stop_multiple=atr_stop_multiple,
         eligibility_policy=APPROVED_EQ_ONLY_POLICY,
         band_policy=band_policy,
@@ -830,6 +840,9 @@ def run_phase3b2_walkforward(
     max_position_weight_trim_threshold: Optional[Decimal] = None,
     band_policy: Optional[str] = None,
     entry_rank_indicator: Optional[str] = None,
+    risk_per_trade_pct: Decimal = Decimal("0.01"),
+    min_median_adtv_crore: Optional[Decimal] = None,
+    adtv_lookback_sessions: int = 20,
 ) -> Phase3B2WalkForwardRunResult:
     """
     Executes the Phase 3B-2b walk-forward backtest and returns Phase3B2WalkForwardRunResult.
@@ -1080,6 +1093,38 @@ def run_phase3b2_walkforward(
                 eligible_isins.append(isin)
         daily_universe_schedule[d] = tuple(sorted(eligible_isins))
 
+    # Audit §98.10 item 1 / §6.3: a T-1 liquidity floor is a rolling feature, so it reads a window of
+    # *consecutive* authoritative sessions. `median_turnover_as_of` returns None when the window crosses
+    # an UNEXPLAINED_MISSING_RECORD boundary or the history is shorter than the window, and None is
+    # "no liquidity evidence" — a refusal to enter, never a zero-turnover name that slips under the
+    # floor. The policy is opt-in (`min_median_adtv_crore=None` is every prior trial's behaviour).
+    adtv_floor_inr = (
+        min_median_adtv_crore * Decimal("10000000")
+        if min_median_adtv_crore is not None
+        else None
+    )
+    adtv_excluded_isin_sessions = 0
+    if adtv_floor_inr is not None:
+        session_index = {session: position for position, session in enumerate(sessions_to_run)}
+        bars_by_date_by_isin = {
+            isin: {bar.trade_date: bar for bar in bars} for isin, bars in bars_by_isin.items()
+        }
+        for d in sessions_to_run:
+            kept: List[str] = []
+            for isin in daily_universe_schedule[d]:
+                median = median_turnover_as_of(
+                    d,
+                    calendar_sessions=sessions_to_run,
+                    bars_by_date=bars_by_date_by_isin[isin],
+                    lookback_sessions=adtv_lookback_sessions,
+                    session_index=session_index,
+                )
+                if median is not None and median >= adtv_floor_inr:
+                    kept.append(isin)
+                else:
+                    adtv_excluded_isin_sessions += 1
+            daily_universe_schedule[d] = tuple(kept)
+
     pit_universe = UniverseSchedule(daily_universe_schedule)
 
     # 6. Precompute Technical Features across Subsegments (Finding F-12, H-104, N-105, Zero Cross-Gap Leakage)
@@ -1153,6 +1198,7 @@ def run_phase3b2_walkforward(
         criteria=criteria,
         atr_stop_multiple=atr_stop_multiple,
         band_policy=committed_band_policy,
+        risk_per_trade_pct=risk_per_trade_pct,
     )
     strategy = DeliverySwingTrendStrategy(
         strategy_id=strategy_id,
@@ -1592,6 +1638,13 @@ def run_phase3b2_walkforward(
     trial_params["entry_rank_indicator"] = committed_rank_indicator
     trial_params["min_entry_notional"] = str(criteria.min_entry_notional)
     trial_params["min_fill_notional"] = str(criteria.min_fill_notional)
+    # Audit §98.10 item 3: a run's risk budget and its T-1 liquidity floor decide which trades exist,
+    # so a row that names them must be the row the engine was handed (same rule as `atr_stop_multiple`).
+    trial_params["risk_per_trade_pct"] = str(risk_per_trade_pct)
+    trial_params["min_median_adtv_crore"] = (
+        str(min_median_adtv_crore) if min_median_adtv_crore is not None else "None"
+    )
+    trial_params["adtv_lookback_sessions"] = str(adtv_lookback_sessions)
 
     if record_trial:
         trial_record = registry.append_trial(
@@ -1820,6 +1873,8 @@ def run_phase3b2_walkforward(
             observation_count=observation_count,
             evaluated_at_utc=ts_utc,
             max_drawdown=max_drawdown,
+            # Audit §98.10 item 4: the outcome row names the criteria set it was scored under.
+            criteria_fingerprint=compute_criteria_fingerprint(criteria),
         )
 
     try:
@@ -1955,11 +2010,22 @@ def run_phase3b2_walkforward(
         )
     max_entry_pos_weight = max(entry_weights, default=Decimal("0.0"))
 
+    # Audit §98.10 item 1: the prior measure took `hist_bars[-20:]` over *adjacent surviving bars*, so a
+    # name with a 792-session hole reported a 20-session ADTV built from bars years apart, and fell back
+    # to the fill session's own turnover when it had fewer than 20. Both read a window the calendar does
+    # not support. The window is now the 20 consecutive sessions before the fill, and an entry with no
+    # such window is not measured rather than measured off a gap.
     entry_adtvs_cr: List[Decimal] = []
+    adtv_session_index = {session: position for position, session in enumerate(sessions_to_run)}
     for f in buy_fills:
         isin = f.order.instrument_id
-        hist_bars = [b for b in bars_by_isin.get(isin, []) if b.trade_date < f.fill_date]
-        trailing_bars = hist_bars[-20:] if len(hist_bars) >= 20 else hist_bars
+        trailing_bars = trailing_continuous_bars(
+            expected_calendar_sessions=sessions_to_run,
+            bars_by_date={b.trade_date: b for b in bars_by_isin.get(isin, [])},
+            as_of=f.fill_date,
+            lookback=20,
+            session_index=adtv_session_index,
+        )
         if trailing_bars:
             turnovers = [
                 b.traded_value if b.traded_value is not None else (Decimal(b.volume) * b.close)
@@ -1967,9 +2033,6 @@ def run_phase3b2_walkforward(
             ]
             adtv_cr = (sum(turnovers) / Decimal(len(turnovers))) / Decimal("10000000")
             entry_adtvs_cr.append(adtv_cr)
-        elif f.executed_price is not None and (isin, f.fill_date) in bars_by_isin_date:
-            single_turnover_cr = (Decimal(bars_by_isin_date[(isin, f.fill_date)].volume) * f.executed_price) / Decimal("10000000")
-            entry_adtvs_cr.append(single_turnover_cr)
 
     min_daily_turnover_cr = min(entry_adtvs_cr, default=Decimal("0.0"))
 
@@ -2294,6 +2357,12 @@ def run_phase3b2_walkforward(
         "closed_trade_count": len(closed_trade_ledger),
         "closed_trade_exit_reasons": ledger_exit_reasons,
         "atr_stop_multiple": str(runner.atr_stop_multiple),
+        "risk_per_trade_pct": str(risk_per_trade_pct),
+        "min_median_adtv_crore": (
+            str(min_median_adtv_crore) if min_median_adtv_crore is not None else None
+        ),
+        "adtv_lookback_sessions": adtv_lookback_sessions,
+        "adtv_excluded_isin_sessions": adtv_excluded_isin_sessions,
         "protective_stop_exits": total_protective_stop_exits,
         "hold_bound_forced_exits": total_hold_bound_forced_exits,
         "hold_bound_refusals": total_hold_bound_refusals,
@@ -2435,6 +2504,12 @@ def run_phase3b2_walkforward(
         report_dict["total_statutory_costs_all_fills"] = str(total_statutory_costs)
         report_dict["closed_trade_exit_reasons"] = ledger_exit_reasons
         report_dict["atr_stop_multiple"] = str(runner.atr_stop_multiple)
+        report_dict["risk_per_trade_pct"] = str(risk_per_trade_pct)
+        report_dict["min_median_adtv_crore"] = (
+            str(min_median_adtv_crore) if min_median_adtv_crore is not None else None
+        )
+        report_dict["adtv_lookback_sessions"] = adtv_lookback_sessions
+        report_dict["adtv_excluded_isin_sessions"] = adtv_excluded_isin_sessions
         report_dict["protective_stop_exits"] = total_protective_stop_exits
         report_dict["hold_bound_forced_exits"] = total_hold_bound_forced_exits
         report_dict["hold_bound_refusals"] = total_hold_bound_refusals

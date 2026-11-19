@@ -87,6 +87,10 @@ GREEN_CACHE_MIN_SUITE_COUNT = 500
 GREEN_CACHE_RUNTIME_VERIFIERS = (
     "scripts/verify_audit_findings.py",
     "scripts/verify_phase2d_verdicts.py",
+    # Audit §98.10 item 3: the seq-10 certificate reads the trial registry and the trial_010
+    # artifacts, both outside the source-tree hash, so a cached run that skipped it could pass on a
+    # registry whose criteria restatement was never appended.
+    "scripts/verify_seq10_certificate.py",
 )
 
 VERIFICATION_SCRIPTS = [

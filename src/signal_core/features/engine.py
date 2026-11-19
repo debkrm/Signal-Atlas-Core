@@ -40,6 +40,92 @@ PriceRecordItem = Union[PriceBar, ExchangeSessionObservation]
 
 
 @dataclass(frozen=True, slots=True)
+class FeatureGapBoundary:
+    """
+    An authoritative calendar session between an instrument's first and last record with no bar.
+
+    Audit §98.10 item 1 / AGENTS.md §6.3: this is the partition boundary every rolling feature must
+    respect. A lookback window may never include one, so a subsegment re-warms instead of reading
+    across a hole the exchange calendar says held a session.
+    """
+    trade_date: datetime.date
+    gap_type: PriceSeriesGapType
+    sessions_since_previous_record: int
+
+
+def feature_gap_boundaries(
+    expected_calendar_sessions: Sequence[datetime.date],
+    actual_price_bars: Sequence[PriceRecordItem],
+) -> List[FeatureGapBoundary]:
+    """
+    The `UNEXPLAINED_MISSING_RECORD` boundaries between an instrument's first and last bar (§6.3).
+
+    Every calendar session strictly between two surviving records that carries no bar is a boundary,
+    because no verified suspension or circular explains it. Sessions before the first record and after
+    the last are listing boundaries, not in-series holes, and are excluded: a lookback can only run off
+    the *start* of a history, never through a hole inside it.
+    """
+    if not actual_price_bars:
+        return []
+    present = {bar.trade_date for bar in actual_price_bars}
+    first = min(present)
+    last = max(present)
+    boundaries: List[FeatureGapBoundary] = []
+    previous_index: Optional[int] = None
+    for index, session in enumerate(expected_calendar_sessions):
+        if session < first or session > last:
+            continue
+        if session in present:
+            previous_index = index
+            continue
+        boundaries.append(
+            FeatureGapBoundary(
+                trade_date=session,
+                gap_type=PriceSeriesGapType.UNEXPLAINED_MISSING_RECORD,
+                sessions_since_previous_record=(
+                    index - previous_index if previous_index is not None else 0
+                ),
+            )
+        )
+    return boundaries
+
+
+def trailing_continuous_bars(
+    expected_calendar_sessions: Sequence[datetime.date],
+    bars_by_date: Mapping[datetime.date, PriceRecordItem],
+    as_of: datetime.date,
+    lookback: int,
+    session_index: Optional[Mapping[datetime.date, int]] = None,
+) -> Optional[List[PriceRecordItem]]:
+    """
+    The `lookback` authoritative sessions immediately before `as_of`, or None across a gap (§6.3).
+
+    A rolling aggregate (T-1 median turnover, a trailing ADTV) may only be computed over a window of
+    consecutive exchange sessions in which the instrument traded. One missing record inside the window
+    is an `UNEXPLAINED_MISSING_RECORD` boundary, and the aggregate is refused rather than computed over
+    a window that silently spans it. Returns None instead of a shorter window, so a caller cannot read
+    a 20-session median off 4 surviving bars.
+    """
+    if isinstance(lookback, bool) or not isinstance(lookback, int) or lookback <= 0:
+        raise IndicatorValidationError(f"lookback must be a strictly positive integer, got {lookback!r}.")
+    index_of = session_index if session_index is not None else {
+        session: position for position, session in enumerate(expected_calendar_sessions)
+    }
+    if as_of not in index_of:
+        return None
+    index = index_of[as_of]
+    if index < lookback:
+        return None
+    window = [
+        bars_by_date.get(session)
+        for session in expected_calendar_sessions[index - lookback : index]
+    ]
+    if any(bar is None for bar in window):
+        return None
+    return window
+
+
+@dataclass(frozen=True, slots=True)
 class InstrumentTechnicalFeatures:
     """
     Immutable container of computed technical indicators for a single market session.
