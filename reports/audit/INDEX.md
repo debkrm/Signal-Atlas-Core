@@ -6,7 +6,7 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | Volume | Path | Sections | Lines | Frozen | SHA-256 |
 |---|---|---|---|---|---|
 | `signal_atlas_phase1c_audit_deepseek_review_.md` | `reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md` | 1-78 | 8442 | yes | `f4ca03d58466bebb…` |
-| `volume2.md` | `reports/audit/volume2.md` | 79+ | 3333 | no | `9fa05e2129e531f8…` |
+| `volume2.md` | `reports/audit/volume2.md` | 79+ | 3517 | no | `a4e51c4e808480d4…` |
 
 | Section | Title | Volume | Lines | Finding ids |
 |---|---|---|---|---|
@@ -107,4 +107,5 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | §95 | Audit of `77fb043` (tag `feat-s95-77fb043`): the corpus reproduces bit-for-bit and then charges its own fake returns, the three checks close with one hole apiece, and the panel built to carry seq 10 is a survivor set | `volume2.md` | 2745–2971 | N-150, N-152, N-177, N-178, N-179, N-180, N-181, N-185 |
 | §96 | Audit of `ac16232` (tag `feat-s96-12c6dae`): the statutory schedule prices every session and one of its eleven sources does not resolve to the bytes git stores, the point-in-time universe closes, and the builder's own fatal class is published instead of failing | `volume2.md` | 2972–3181 | N-150, N-152, N-170, N-174, N-178, N-181, N-182, N-183, N-184, N-185, N-186, N-187, N-188, N-189, N-190 |
 | §97 | Audit of `612e82a` (tag `feat-s97-612e82a`): the captured statutory payload survives a clone, the builder refuses the class it documents as fatal, a demerger refusal counts a held exit, and the gate is green three times running | `volume2.md` | 3182–3333 | N-150, N-152, N-160, N-163, N-186, N-187, N-188, N-189, N-190, N-191, N-192, N-193, N-194 |
+| §98 | Audit of `1b16d43` (tag `feat-s98-1b16d43`): the reconciliation stops reading a calendar gap as a return and an AGM stops exonerating a 2× move, while the feature layer still has no gap partition and one gate trusts a number it never compares | `volume2.md` | 3334–3517 | N-150, N-152, N-160, N-163, N-191, N-192, N-193, N-194 |
 

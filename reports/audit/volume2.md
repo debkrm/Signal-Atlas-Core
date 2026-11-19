@@ -3331,3 +3331,187 @@ Carried unchanged, still not done: §96.10 items 5 (superseded rows in `get_corp
 - **N-190**: a fourth heavy run on this unchanged tree that exits 1, or a ceiling that differs from `250.0` / `2.5` in the test source.
 - **The Ruling**: any criterion value, threshold, fold boundary, calendar pin, cost-schedule row or gating start that differs between the configuration that produced `9ee0a88c…` and the one that produces `b2876d98…`. If one exists, `1.1.16` labels a research decision and must be bumped; the diff measured here is the pin and a comment, and a bump is wrong only for the reason given in §97.7.3.
 - **N-191 / N-192 / N-193 / N-194**: their probes as written. Each asserts the defect's current shape, so a fix that leaves the assertion green is no fix.
+## §98 — Audit of `1b16d43` (tag `feat-s98-1b16d43`): the reconciliation stops reading a calendar gap as a return and an AGM stops exonerating a 2× move, while the feature layer still has no gap partition and one gate trusts a number it never compares
+
+**Date:** 19 November 2026
+**Commit under review:** `f8a7e97` (12 files, +1,343/−160: `configs/go_no_go_criteria.yaml`, the rebuilt 75,390,706-byte corpus with the manifest row that supersedes its predecessor, `data/reference/manifest.jsonl`, the two `reports/analysis/s98/` restatements, `reports/analysis/s98/seq10_drawdown_decomposition.json`, `scripts/derive_2018_2023_corpus.py`, `scripts/diagnose_seq10_drawdown.py`, `scripts/probe_audit_findings.py`, `scripts/probe_seq10_candidate.py`, `tests/unit/test_phase3b2_audit_s98_items.py`, `CURRENT_STAGE_OF_WORK.md`), `960792f` (the regenerated Phase 2D Tier-A pair, one line each) and `1b16d43` (the green-cache row, +19 lines). None of the three touches a path under `reports/verdicts/trial_010/`, `reports/analysis/s94/`, `reports/audit/`, `data/trials/`, `data/raw/2025` or `data/raw/2026` — measured from `git show --name-status`.
+**Verdicts:** **§97.10 item 1 CLOSED** (N-191) · **item 2 CLOSED** (N-192) · **item 3 CLOSED** (N-193) · **item 4 CLOSED** (N-194) · **Ruling 1: the pin may be re-sealed under a held `1.1.16`, and the attestation is now mechanical** (§98.6).
+
+### 98.1 Baseline re-measured at `1b16d43`
+
+| Measurement | Result |
+|---|---|
+| `scripts/verify_audit_append_only.py --force-full` | **exit 0** — `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Gate W0.5-1 / -1b / -1c | 0 deleted lines in working tree, index or commits; frozen volume **8,442** lines at its pin; active volume an **unchanged prefix** (3,333 committed / 3,333 now); index reproduces over **97** section rows |
+| Gate W0.5-2 (verifiers) | **9/9 exit 0**: `verify_audit_findings.py` 210.96 s, `verify_cash_universe_coverage.py` 43.81 s, `verify_historical_snapshot.py` 7.02 s, `verify_phase2a_containment_and_trials.py` 1.34 s, `verify_phase2b5_storage.py` 3.07 s, `verify_phase2b_significance.py` 0.96 s, `verify_phase2c_walkforward.py` 3.20 s, `verify_phase2d_verdicts.py` 4.49 s, `verify_wave1_thin_slice.py` 4.77 s |
+| Gate W0.5-3 (suite) | **570 passed** in the parallel invocation (63.08 s) + **1 passed** isolated (2.28 s) = **571 of 571 collected** (67.53 s), **0 skipped, 0 xfailed** — was 565 at §97; the 6 new tests are this commit's |
+| Gate W0.5-4 / W0.5-5 | **112** commit-bearing tags verified (`feat-s98-1b16d43` among them; 110 at §97); **1,009** current artifacts match byte count and sha256, **962** superseded rows skipped |
+| Criteria / pins | **1.1.16**; live `CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470`; pin `MAN-FPR-V1-be45b7e791d5d3cd683ee119ae4beeae8cba3aab7728ac194d6b19521a691045` **recomputed** by `compute_manifest_fingerprint` over **1,877,557** bytes / **1,971** rows (1,009 current + 962 superseded) — equals the pin |
+| Ledger at `1b16d43` | **74** rows / **46** ids — latest-per-id **40 CLOSED**, **5 OPEN** (`N-150`, `N-191`…`N-194`), **1 ACCEPTED** (`N-152`); `verify_audit_findings.py` exit 0 |
+| Corpus | `derive_2018_2023_corpus.py --check` **exit 0 — `OVERALL: CURRENT`** over 1,425 archives. **1,425** sessions, **2,735** instruments, **2,578,060** bars, `content_fingerprint DATA-CTNT-V2-cb4832c0b43952c4a03d58ee65ff5b15`; reconciliation **1** applied / **0** archive / **74** no-ratio / **699** ratio-shaped / **0** ex-date mismatch = **774** moves, **16,194** cross-gap pairs, **58** cross-gap extremes |
+| Probes | **N-191…N-194 exit 0** (`PASS <id>`); `--list` ends at **N-194** |
+| Trials / fold / holdout | **10** registry rows; `probe_seq10_candidate.py` **exit 0 — `CERTIFIED`**: `N = 10` (expected 10), `N_eval = 5`, one seq-10 row, registry manifest pin `0246c276d52d3a9b…` on both sides, `FOLD-SPEC-V1-36a39987dca…` reproduces the row, artifact 422/7,309, baseline `f5fe3af5a1e2de83…`, sealed-era fold `2025-01-02..2025-03-31` **refused**; `configs/partition_spec.yaml` validation **2024-01-01..2024-12-31**, holdout **2025-01-01..2026-11-11**, `holdout_token_hash` 64 zeros (no token minted) |
+| Green cache | tree `456c9e7258ba3b26…`, row `gate_sha 960792f`; this round's `--force-full` re-derived the same tree hash and **appended nothing** (`already recorded; not appending a duplicate row`) — post-commit outcome 3, and the cache path is inside the gate's own excluded set, so `1b16d43` and its parent project to one hash by construction |
+| Detached worktree at `1b16d43` | created **outside** the repository, so N-160/N-163's dirty-set probes never see the auditor's scratch tree — §97.1's own error, not repeated; every attack below was run there |
+
+The gate did not move for a second round: same worker split, same ceilings, 571 collected. The suite takes 78.36 s in the committed cache row and 67.53 s here, against an isolated benchmark of 2.28 s.
+
+### 98.2 §97.10 item 1 — CLOSED (N-191): a pair of adjacent surviving bars is a return only if the sessions are adjacent too
+
+`classify_extreme_moves` now takes `trading_dates`, builds `calendar_previous = {trading_dates[i]: trading_dates[i-1]}`, and a pair whose two `trade_date`s are not consecutive increments `cross_gap_pairs`, is appended to `cross_gap_moves` when it clears ±35%, and `continue`s **before** every class. Recomputed this round from the committed corpus rather than from its header:
+
+| Measurement | at `437e0c4` (§97.3) | at `1b16d43`, recomputed here |
+|---|---|---|
+| adjacent pairs | 2,575,325 | **2,575,325** |
+| pairs straddling a calendar gap | 16,194 (unpublished) | **16,194**, published as `cross_gap_pairs` |
+| extremes between consecutive sessions | 832 | **774** = 1 applied + 0 archive + 699 ratio-shaped + 74 no-ratio |
+| extremes computed across a gap | **58** inside the 832 | **58** published in `cross_gap_detail`, **0** in any class |
+| class sum | 832 | **774**; publish-only identity: 773 = 699+74 = (735+72) − 58 + 24 |
+
+The published `cross_gap_detail` set is identical to the one recomputed here pair by pair, and it contains both instruments §97.3 named: `INE251H01024` 2022-08-12 (+1.2800 after 2021-08-02) and `INE784B01035` 2023-09-26 (+56.0000 after 2020-07-20). Of the 58, **53** had been published as ratio-shaped moves and **5** as no-ratio matches — measured by intersecting the 58 against the **previous** corpus blob's 735-row ratio class — which is what makes the identity close: 735 − 53 + 17 = 699, 72 − 5 + 7 = 74, and all 58 leave the classes.
+
+Two reversions, both in a detached worktree:
+
+| Reversion | Probe result |
+|---|---|
+| delete the `calendar_previous` branch outright | `FAIL N-191: 0` (the synthetic `cross_gap_pairs == 1` assertion fires; the message is a bare number — §98.8.3) |
+| keep the counter and the publication, drop the `continue` (the additive fix) | `FAIL N-191: a cross-gap pair still enters a one-session return class` |
+
+**CLOSED.** The residual is not rhetorical: the 16,194 gap-straddling pairs are still in `prices_by_instrument`, and no `UNEXPLAINED_MISSING_RECORD` partition or feature-window boundary exists in the corpus builder. §6.3 asks for both; this commit delivers the reconciliation half, so an EMA or ATR window still spans `INE784B01035`'s 792-session hole in the same file that now refuses to call it a move. Carried as §98.10 item 1.
+
+### 98.3 §97.10 item 2 — CLOSED (N-192): only a record that could carry a share ratio may explain a ratio-shaped move
+
+Exoneration is `any(kind in PRICE_SIDE_KINDS …)`; everything else falls through, and the published row now names what was there instead:
+
+| Measurement | §97.3 | here |
+|---|---|---|
+| `explained_by_archive_record` | 24 | **0** |
+| `ratio_shaped_unattested` / `no_ratio_match` | 735 / 72 | **699 / 74** |
+| ratio-shaped moves naming a non-price-side record | not published | **18** — 13 `DEMERGER`, 2 `RIGHTS`, 1 `DIVIDEND`, 1 `DEMERGER,DIVIDEND`, 1 `OTHER` |
+| `INE803A01027` 2019-09-16 +0.5000 | filed as explained by `OTHER` | **published** as ratio-shaped with `record: OTHER`, and measured **absent** from the pre-fix ratio class |
+
+The 18 do not equal the 24, and the difference is not slack: 17 are moves the fix newly published, and 1 — `INE080A01014` 2020-03-16 — was already ratio-shaped because the old branch only exonerated `kind != "DIVIDEND"`, so a pure dividend record never disposed of a move. Measured by intersecting the 18 against the previous blob's ratio class: 18 − 1 = 17 newly published. The witness §97.3 wrote the finding around is now on the right side of the line — a 2× move beside an Annual General Meeting is published with the AGM named, not filed as explained by it.
+
+| Reversion | Probe result |
+|---|---|
+| restore the `non_dividend` branch | `FAIL N-192: the exact-date exoneration branch still admits a record that carries no share ratio` |
+| keep the price-side test and re-add `if any(kind not in PRICE_SIDE_KINDS …)` after it | `FAIL N-192: an AGM at the exact date still exonerates the move without a diagnostic` |
+
+**CLOSED.** The behavioural half of the probe is what catches the additive form; the source-text assertions alone would not have.
+
+### 98.4 §97.10 item 3 — CLOSED (N-193): the certificate's stored hash is compared with the live one, and the pin-only claim is recomputed
+
+| Measurement | Result |
+|---|---|
+| live criteria | `CRIT-FPR-V1-535e47f5…` under `criteria_version 1.1.16` |
+| pin | `MAN-FPR-V1-be45b7e7…`, recomputed from the committed manifest (§98.1) |
+| pin-only attestation | substituting `f5b1f1f1…` into the **live** criteria reproduces `CRIT-FPR-V1-9ee0a88c260d27…` exactly; the §97 intermediate pin `e79d7915…` reproduces `b2876d98…` — both recomputed here, not read |
+| certificates | three stored hashes, all `9ee0a88c…`, all reconciled: `reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json`, `reports/verdicts/trial_010/seq10_baseline_comparison.json`, `reports/analysis/s94/seq10_baseline_2018_2023_verdict.json` |
+| `probe_seq10_candidate.py` | **exit 0 — `CERTIFIED`**, printing `Certificate … reconciles with CRIT-FPR-V1-535e47f5a4a9…` three times |
+
+`certificate_problem` refuses by name, not by assertion alone. Measured inputs against a stale certificate:
+
+| Attack | Result |
+|---|---|
+| no restatement at all | refused, quoting `9ee0a88c…` and `535e47f5…` in one message |
+| forged `executed_criteria_fingerprint` | refused: the restatement records `CRIT-FPR-V1-forged`, the certificate cites `9ee0a88c…` |
+| forged `executed_manifest_fingerprint` | refused: substituting `MAN-FPR-V1-forged` yields `6b156260…`, not the cited hash — *"the difference … is not pin-only"* |
+| forged `live_criteria_fingerprint` | refused: *"the restatement is stale by name"* |
+| artifact dropped from `certificates` | refused: names no executed fingerprint for it |
+| **a criterion moved, not the pin** (six numeric fields, each doubled in memory) | refused for every one: `sessions_per_year`, `min_total_trades`, `max_drawdown_duration_sessions`, `min_execution_latency_sessions`, `max_hold_trading_sessions`, `expected_baseline_calendar_sessions` — each moves the live hash and makes the restatement stale |
+
+The last row is what decides the finding. §97.7's Ruling was sound only if a restatement could not launder a criteria change, and the recomputation makes that impossible: an attestation is accepted exactly when substituting one pin string into the live criteria reproduces the cited hash. probe N-193 asserts the same chain and exits 0. **CLOSED.**
+
+Two residuals are the gate's shape, not the finding's. First, **no `verify_*.py` runs `probe_seq10_candidate.py`** — the nine discovered verifiers do not include it — so the certificate gate fails closed when a round runs it, not when a commit lands; §97.10 item 3 permitted either `verify_phase2d_verdicts.py` or `probe_seq10_candidate.py`, and this is the probe route. Second, the registry row still carries no `criteria_fingerprint`, so `1.1.16` now labels **three** criteria sets (`9ee0a88c…`, `b2876d98…`, `535e47f5…`). Carried as §98.10 items 3-4.
+
+### 98.5 §97.10 item 4 — CLOSED (N-194): the demerger pair is restated by a replay this round re-ran, not by a file it read
+
+The two artifacts are unedited (last commit `12c6dae`) and still publish `0` / `66`; the append is `reports/analysis/s98/seq10_demerger_restatement.json`. This round re-rendered seq 10's own configuration read-only, over the committed corpus, into a temporary registry copy, hashing the four registry files and the three certificates before and after:
+
+| Quantity | committed artifact / restatement | this round's independent replay |
+|---|---|---|
+| sessions | 1,425 | **1,425**, 2018-04-02..2023-12-29 |
+| `hold_bound_forced_exits` / `hold_bound_refusals` | 422 / 7,309 | **422 / 7,309** |
+| `demerger_forced_exits` / `demerger_forced_refusals` | 0 / 66 published, **0 / 0 restated** | **0 / 0** |
+| `max_drawdown` | `0.7264709014681672238018483779` | **`0.7264709014681672238018483779`**, digit for digit |
+| closed trades / final equity | 781 / `1072507.24` | **781 / `1072507.24`** |
+| criteria | `535e47f5…` under `1.1.16` | **same** |
+| files mutated | — | **none** — registry (4 files) and trial_010 pair + s94 baseline unchanged, sha256 before = after |
+| wall time | — | 504.1 s |
+
+"No position crossed a demerger ex-date in this configuration" is therefore a measurement, and the 66 are events on ISINs the book did not hold — the event-versus-holding confusion §96.5 named. The gate's refusals were measured too:
+
+| Attack | `demerger_restatement_problem` |
+|---|---|
+| no restatement | refused, naming `(0, 66)` |
+| restated pair `0/65` against a `0/66` artifact | refused, quoting both |
+| `measurement: {}` or a non-integer | refused, naming the missing key |
+| replay `hold_bound_refusals` forged to 1,234 | refused: *"the measurement is not this artifact's run"* |
+| replay `hold_bound_forced_exits` forged to 1 | refused, same reason |
+| artifact pair moved to `0/65` | refused |
+| **measurement `7/9` beside its own `0/0` replay** | **accepted** — and that is the residual |
+| `restates` list emptied | accepted (the list is prose; the pair and the counters are the gate) |
+
+The seventh row is a real asymmetry, named rather than papered over: the certificate type-checks `measurement` but never compares it with the `replay` block it *does* compare against the artifact, so a restatement whose measurement contradicts its own replay passes `probe_seq10_candidate.py`; only probe N-194 catches it, because the probe asserts `replay.demerger_* == measurement.demerger_*`. It does not reopen N-194 — the ordered artifact exists, names the pair, and carries a measurement this round reproduced — but it is the additive-fix shape §14.4 warns about, one function away. Carried as §98.10 item 2. **CLOSED**, with that residual.
+
+### 98.6 Ruling 1 — the pin is re-sealed under a held `1.1.16`, and a pin-only attestation is now mechanical
+
+**Evidence.** At `1b16d43` the criteria pin is `MAN-FPR-V1-be45b7e7…` and the live fingerprint `CRIT-FPR-V1-535e47f5…`, while three certificates cite `9ee0a88c…` under the same `criteria_version 1.1.16`. `configs/go_no_go_criteria.yaml` moved one pin line and a comment since §97; no criterion, threshold, fold boundary, calendar pin, cost-schedule row or gating start moved (measured: six numeric criteria fields each move the hash, so a moved one could not be attested by a pin substitution — §98.4). The pin had to move because `data/reference/manifest.jsonl` gained a row and superseded another when the corpus header was rebuilt, and §10.1 makes that an append.
+
+**Ruling.** §97.7 is **continued, not superseded**: `criteria_version` stays `1.1.16`, and a certificate may cite a fingerprint other than the live one **only** when an appended restatement names that artifact, the executed fingerprint and the executed pin, and substituting that pin into the live criteria reproduces the cited fingerprint. **It changes one definition** — what "certified under `1.1.16`" means for a stored hash: a claimed criteria set, checked by recomputation, instead of a version label. **It changes nothing numeric**: no threshold, fold, window, cost row, trial count or gating start, and no version bump. **Its probe** is `python scripts/probe_audit_findings.py N-193` plus `python scripts/probe_seq10_candidate.py`, both exit 0 here and both refusing the forgeries in §98.4. **Its work** is §98.10 items 3-4. **Its falsifier**: a configuration differing from the one that produced `9ee0a88c…` in anything other than `expected_manifest_fingerprint` that still reconciles through the restatement — measured impossible for the six numeric fields above, and a threshold, fold, calendar or cost change lives in one of them; or a fourth re-seal that moves the pin without appending a restatement naming the new live hash, which would refuse **every** certificate rather than pass one.
+
+The cost is stated plainly because it is real: one label now denotes three criteria sets, and the only thing distinguishing them is a hash nobody is required to cite outside the three certificates. That is §98.10 item 4's job, not a reason to bump a version an append-only registry row names.
+
+### 98.7 The rebuild is a header change, measured against the previous blob
+
+| Top-level key | equal to `609084fa…` (the superseded blob) |
+|---|---|
+| `prices_by_instrument` | **yes** — every bar, equal as parsed |
+| `trading_dates` / `universe_by_date` / `symbols_by_instrument` | **yes** |
+| `session_count` / `instrument_count` / `total_instrument_records` | 1,425 / 2,735 / 2,578,060 — **same** |
+| `content_fingerprint` / `corporate_actions_fingerprint` | `DATA-CTNT-V2-cb4832c0…` / same |
+| `reconciliation` | **differs** — the only one: 1/24/735/72/0 → 1/0/699/74/0 with the gap fields added |
+
+So "prices unchanged" is not the implementer's assurance; it is the diff of the two committed blobs. The corpus file's own manifest row matches the file on disk (75,390,706 B / `ea0b65a3…`), and the re-seal is exactly the pin consequence of that one header change. The recomputation also settles two things the fix could have broken silently: no bar carries a close ≤ 0 or a zero volume (so the `previous.close <= 0` skip never runs ahead of the gap counter), and the 58 published gap rows are a **set** equal to the recomputed one, not merely a matching count.
+
+### 98.8 Findings ledger after this section
+
+| | before §98 | after §98 |
+|---|---|---|
+| rows / ids | 74 / 46 | **78 / 46** |
+| latest per id | 40 CLOSED, 5 OPEN, 1 ACCEPTED | **44 CLOSED**, **1 OPEN**, **1 ACCEPTED** |
+| OPEN ids | `N-150`, `N-191`…`N-194` | **`N-150`** |
+
+N-191…N-194 gain `CLOSED` rows with `closed_in_section: 98` and the measurement that decided each; `verify_audit_findings.py` exits 0 over **46** findings with every probe matched. Three observations are recorded without being promoted to findings, because none of them is a contract the work order set:
+
+1. **The 16,194 gap pairs outlive their own finding.** N-191 closes on the reconciliation and the feature layer is untouched; that is a residual in the closure row, not a line of prose here.
+2. **`demerger_restatement_problem` trusts a measurement it could compare.** §98.5, measured.
+3. **One refusal is a bare number.** Deleting the `calendar_previous` branch yields `FAIL N-191: 0` because that assertion carries no message; the probe refuses, the diagnostic is not self-describing. Cosmetic, and left as found (§3: a change should trace to the request, and this one would not).
+
+### 98.9 Phase verdicts
+
+| Phase (`CURRENT_STAGE_OF_WORK.md` §98 row) | Verdict | Residual |
+|---|---|---|
+| Point-in-time corpus builder / calendar adjacency (item 1) | **CLOSED** — 774 moves, 58 gap records, recomputed set equality, two reversions refused | **the 16,194 pairs and 58 gaps remain in prices with no `UNEXPLAINED_MISSING_RECORD` partition**; feature lookbacks still span them (§6.3, §98.10 item 1) |
+| Corporate-action attestation / price-side exoneration (item 2) | **CLOSED** — archive exoneration 0, 18 named rows, witness published with `OTHER`, additive reversion refused | the 18 stay unattested; a demerger or rights repricing is indistinguishable from a mis-dated ratio by this diagnostic alone |
+| Certificate / criteria reconciliation (item 3) | **CLOSED** — live `535e47f5…`, pin `be45b7e7…` recomputed, three certificates reconciled, five forgeries and six moved criteria refused | the certificate is a standing probe, not a verifier the gate runs; the registry row carries no fingerprint field |
+| Seq-10 demerger restatement (item 4) | **CLOSED** — artifacts unedited, `0/0` restated, independently replayed at 422/7,309 and `0.7264709…` with no file mutated | the gate type-checks the measurement instead of comparing it with its own replay block; nothing re-runs the engine per commit |
+| Criteria / seq 10 / fold / holdout | **held and sealed** — `N=10`, `N_eval=5`, `CERTIFIED`, fold spec reproduces, sealed-era window refused, validation fold 2024 untouched, holdout `2025-01-01..2026-11-11` unread | `1.1.16` labels three criteria sets (§98.6) |
+| Phase 2D artifacts | **regenerated and consistent** — `960792f` carries `CRIT-FPR-V1-535e47f5a4a9…` in `.json` and `.md`, `verify_phase2d_verdicts.py` exit 0 | none observed |
+
+### 98.10 Work order (feat-s99), ordered by what it unblocks
+
+1. **The gap must partition the feature layer, not only the reconciliation.** §6.3 requires a missing-session sequence to be an `UNEXPLAINED_MISSING_RECORD` boundary and feature engines to refuse lookbacks across it. Measured on this tree: 16,194 adjacent pairs straddle a calendar gap and 58 clear ±35%, and no derived-layer consumer is told. Required: a committed partition (or per-instrument segment boundary) that every rolling feature reads, plus the count of feature values currently computed across a gap. The probe that must fail closed is a new one asserting that no EMA/ATR window spans a gap pair for `INE251H01024` or `INE784B01035`, and it must exit 1 before this item is closed. Phase: `CURRENT_STAGE_OF_WORK.md` §98 item 1 (point-in-time corpus) / §6.3.
+2. **`demerger_restatement_problem` must compare the measurement with the replay it already trusts.** `measurement: 7/9` beside `replay: 0/0` passes the certificate (§98.5). Required: the two demerger keys agree between `measurement` and `replay`, refused by name otherwise, with `probe_audit_findings.py N-194` extended to fail closed on that pair — today only the probe's own assertion catches it. Phase: §98 item 4 / §13.2.
+3. **The certificate must be in the gate.** Measured: 9 discovered verifiers, none of them `probe_seq10_candidate.py`, so a criteria re-seal that forgot its restatement leaves `verify_audit_append_only.py` green and refuses only when a round remembers to run the certificate. Required: either a `verify_seq10_certificate.py` on the gate's discovery path, or the certificate invoked from an existing verifier, with its exit status required zero. Phase: §9.1 / §11.3.
+4. **Record the executed criteria fingerprint on the registry, not a third meaning for `1.1.16`.** The row is append-only, so this is a new sidecar field or annotation row naming row, version and executed hash — the shape §97.7's Ruling was conditional on. Phase: §9.1 / §97.7 Ruling.
+5. Carried unchanged: §96.10 items 5 (superseded rows in `get_corporate_actions()`), 6 (the certificate reading the `NON_REPRODUCIBLE_AT` annotation) and 7 (the carried residuals, `N-150` included). N-191…N-194 leave this list.
+
+### 98.11 What would falsify this verdict
+
+- **N-191**: a class sum exceeding the number of extremes computed between consecutive sessions on any later corpus (`in_classes > consecutive_extremes`), or a `cross_gap_detail` differing from a pair-by-pair recomputation, or a gap pair published in `ratio_shaped_detail` — the exact shape the additive attack produced.
+- **N-192**: `explained_by_archive_record > 0`, a ratio-shaped row naming a `SPLIT`/`BONUS`/`CONSOLIDATION` record at its own date, or the `INE803A01027` witness filed under anything but a named non-price-side record.
+- **N-193**: a certificate passing `certificate_problem` while the criteria differ from the pin-substituted set in any field other than `expected_manifest_fingerprint`; or a restatement's `live_criteria_fingerprint` accepted when the committed criteria compute another value (measured refused); or a fourth re-seal with no appended restatement that still reports `CERTIFIED`.
+- **N-194**: a replay that does not return 422/7,309 and 0/0 with `max_drawdown 0.7264709…` on this corpus, or any registry or artifact digest that moves across a re-render. Today's pass is a 504-second read-only run, not an inference from the file.
+- **Ruling 1**: any criterion, threshold, fold boundary, calendar pin, cost row or gating start differing between the configuration that produced `9ee0a88c…` and the one producing `535e47f5…`. If one exists, `1.1.16` labels a research decision and the Ruling is wrong, not merely stale — and the substitution test would have to accept it, which §98.4 measured it does not.
+- **§98.10 item 1**: a feature value on `INE784B01035` computed across its 792-session hole. That is where the open part of N-191 now lives.
