@@ -1,0 +1,13 @@
+{
+  "circular_ref": "NSE_STT_RATES",
+  "filename": "NSE_SEBI_TURNOVER_FEES_STT_OTHER_LEVIES.html",
+  "source_url": "https://www.nseindia.com/static/invest/first-time-investor-sebi-turnover-fees-stt-other-levies",
+  "retrieved_at": "2026-11-19T04:59:37+00:00",
+  "http_status": 200,
+  "byte_count": 330003,
+  "sha256": "5df41b049103c75784324c846f62cf55cd1157c0dcbc2e7748220e6564f2e277",
+  "subject": "SEBI Turnover Fees, STT and Other levies \u2014 STT rate table",
+  "issued_by": "NSE",
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "note": "Byte-exact payload as retrieved; never edited. Digest is over the raw file bytes."
+}

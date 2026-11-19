@@ -291,6 +291,14 @@ class Position:
         if action.action_type == CorporateActionType.RIGHTS:
             return None
 
+        # Audit §95.10 item 5 / §13.2: a demerger delivers shares in a resulting entity, and the
+        # committed archive attests the event but not the consideration ratio. The ledger therefore
+        # neither invents a ratio nor settles at book value: quantity and cost basis are unchanged, and
+        # the position is exited before the event by the harness' DEMERGER_FORCED_EXIT constraint. A
+        # position that could not exit (a frozen bid, a missing bar) keeps its basis and is named.
+        if action.action_type == CorporateActionType.DEMERGER:
+            return None
+
         # Finding H-86, H-89, H-96, H-98, H-99, H-113:
         # Exact rational integer restatement for SPLIT, BONUS, CONSOLIDATION, ISIN_TRANSITION, MERGER
         # and DELISTING carrying new_isin consideration.

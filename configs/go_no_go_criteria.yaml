@@ -129,7 +129,7 @@ metadata:
   # executed in this version, and the two pins it moves are moved by measurement:
   #   item 1 — `data/reference/historical_dataset_2018_2023.json.gz` is registered as a current manifest
   #           row, so `expected_manifest_fingerprint` is resealed over the grown manifest. The corpus is
-  #           the derived-layer SPLIT_BONUS_ADJUSTED panel for 2018-04-01..2023-12-29 (1,061 ISINs,
+  #           the derived-layer SPLIT_BONUS_ADJUSTED panel for 2018-04-01..2023-12-29 (1,082 ISINs on a
   #           1,425 sessions), built from the committed Bronze archives by exact split/bonus ratios
   #           applied strictly before each ex-date; dividends stay cash inflows and no series is
   #           stitched across an ISIN transition.
@@ -149,8 +149,32 @@ metadata:
   # 1,196 calendar pins stay, and every count, tolerance, weight, cost parameter and criterion is
   # byte-identical to 1.1.14. The new corpus changes no verdict already computed: it is an input to
   # seq 10, which is a new trial row and not a restatement of any earlier one.
-  version: "1.1.15"
-  effective_date: "2026-11-18"
+  # 1.1.16 (2026-11-19): no numeric threshold and no criterion changed; no fold, calendar pin or
+  # gating start moved. Audit §95.10 items 1-5 are executed and the two pins move by measurement:
+  #   items 1-2 — the statutory schedule gains committed circular bytes (`data/raw/circulars/<ref>/`,
+  #           one manifest per payload with source_url, retrieved_at, byte_count, sha256) and every
+  #           `effective_dated_exchange_fees` row now carries `circular_sha256`. A pre-2021 row
+  #           (from 2018-04-01, ₹325/cr, IPFT ₹0.01/cr) makes 2018-04-02 priced. STT, stamp duty and
+  #           the SEBI turnover charge became half-open interval tables: the SEBI fee is halved for
+  #           2020-06-01..2021-03-31 and stamp duty moves from the state schedules to the uniform
+  #           Indian Stamp Act rates on 2020-07-01. `expected_manifest_fingerprint` is re-pinned over
+  #           the manifest grown by the corpus rebuild and eight corporate-action payloads.
+  #   item 2 — `universe_by_date[D]` is now the ISINs that traded on D (POINT_IN_TIME_TRADED): 2,735
+  #           ISINs over the window, 1,646 on the first session, and no full-span condition. The 564
+  #           day-one names §95.5.5 measured as deleted retroactively are back on the dates they traded.
+  #   item 3 — the adjustment table is archive-attested: 355 rows appended with `source_digest`, 75
+  #           digests backfilled onto rows already attested, 10 unattested/contradicted rows superseded
+  #           by restatement (INFY's 2018-09-12 bonus and IDEA's 2023-09-15 consolidation among them).
+  #   items 4-5 — `DEMERGER` exists as a type and as an exit constraint; probes N-181..N-185 are
+  #           registered; `TRIAL-PHASE3B2-RANKED-009` is annotated NON_REPRODUCIBLE_AT 77fb043 without
+  #           altering any historical metric. seq 10 is registered at N = 10 with evaluation_count 5,
+  #           so `expected_trial_registry_manifest_sha256` is re-sealed over the appended registry.
+  # `min_binding_evaluation_start_date` stays 2018-04-01, `expected_calendar_fingerprint` stays
+  # CAL-FPR-V1-6acb5f45…, `expected_sourced_window_calendar_fingerprint` stays 2d5ac7ac…, the 1,201 and
+  # 1,196 calendar pins stay, the 2024 validation fold stays frozen, the holdout stays sealed, and every
+  # count, tolerance, weight, fold, trial count and numeric threshold is byte-identical to 1.1.15.
+  version: "1.1.16"
+  effective_date: "2026-11-19"
   market: "NSE_CASH_EQUITY"
   currency: "INR"
 
@@ -239,12 +263,16 @@ execution_and_liquidity_realism:
   min_fill_notional: "5000"
 
 statutory_indian_cost_schedule:
-  # Statutory tax rates (Finance Act / Indian Stamp Act)
-  stt_delivery_rate: "0.0010"              # 0.1% on delivery (both buy and sell)
-  stt_intraday_sell_rate: "0.00025"        # 0.025% on intraday equity sell
-  sebi_turnover_charge_rate: "0.000001"    # ₹10 per crore (0.0001%)
-  stamp_duty_delivery_buy_rate: "0.00015"  # 0.015% on delivery buy
-  stamp_duty_intraday_buy_rate: "0.00003"  # 0.003% on intraday buy
+  # Audit §95.10 items 1-2 (criteria 1.1.16): the re-ratable levies are half-open interval tables, not
+  # scalars, and each row carries the sha256 of the committed source that states it. A scalar cannot
+  # represent a levy that moved inside the 2018-04-01..2023-12-29 window, and three of them did:
+  #   SEBI broker turnover fee — halved for 2020-06-01..2021-03-31 (SEBI/LAD-NRO/GN/2020/011);
+  #   stamp duty — state schedules until 2020-06-30, uniform Indian Stamp Act rates from 2020-07-01;
+  #   exchange turnover charge — five NSE/FA circulars, now each with committed bytes.
+  # The source payloads live under data/raw/circulars/<source_ref>/ with their own manifest.json
+  # (source_url, retrieved_at, byte_count, sha256). `scripts/ingest_statutory_sources.py --check`
+  # reproduces them, and `scripts/run_seq10_candidate.statutory_cost_schedule_problem` refuses a row
+  # whose digest resolves to no committed byte.
   gst_rate: "0.18"                         # 18% applied to taxable financial services
   brokerage_per_order_inr: "20.00"         # Default flat brokerage per executed order
   # GST taxable services base explicitly includes IPFT alongside brokerage, exchange, and SEBI charges
@@ -256,40 +284,164 @@ statutory_indian_cost_schedule:
 
   # Effective-dated historical fee schedule for NSE cash equity segment
   effective_dated_exchange_fees:
+    # The pre-2021 rate has no circular of its own in NSE's index: no cash-market transaction-charge
+    # revision was published between 2008 and 2020 (queried 2016-2020, 83 FA circulars, none amending
+    # the cash schedule). NSE/FA/46730 states it as the "Existing Transaction Charges" column that its
+    # own ₹3.45/lakh revision replaced from 2021-01-01, and NSE/FA/45147 and NSE/FA/46225 each say the
+    # securities outside their 2020 concessions "continue to be charged as per the existing transaction
+    # charges structure". Those three committed circulars are the evidence for this row.
+    - circular_ref: "NSE/FA/46730"
+      from_date: "2018-04-01"
+      to_date: "2020-12-31"
+      exchange_turnover_rate: "0.0000325"  # Slab 1 rate (₹325 per crore), the "Existing" column
+      ipft_rate: "0.000000001"             # ₹0.01 per crore
+      circular_sha256: "a9ff85ab4deec82e02bb1e3fc213a2bbc02a72e9edb7b36cdf1568aeb792febf"
+      supporting_refs: ["NSE/FA/45147", "NSE/FA/46225"]
+      description: >-
+        Pre-2021 cash-market turnover charge, ₹3.25/lakh (₹325/cr) slab 1 with ₹0.01/cr IPFT. The rate
+        is attested by NSE/FA/46730 (2020-12-18, effective 2021-01-01) as the charge it replaced, and by
+        NSE/FA/45147 (2020-07-27) and NSE/FA/46225 (2020-10-30), which continue the same structure for
+        securities outside their temporary concessions. The 2020 concessions themselves (2.75/1.75 per
+        lakh for EQ non-index, non-GSM stocks, 2020-08-01 onward) are NOT modelled — see
+        configs/statutory_rate_decisions.yaml; slab 1 is the disclosed conservative overstatement.
+
     - circular_ref: "NSE/FA/46730"
       from_date: "2021-01-01"
       to_date: "2023-03-31"
       exchange_turnover_rate: "0.0000345"  # Slab 1 rate (₹345 per crore)
       ipft_rate: "0.000000001"             # ₹0.01 per crore
-      description: "Pre-April 2023 turnover slabs + baseline IPFT"
+      circular_sha256: "a9ff85ab4deec82e02bb1e3fc213a2bbc02a72e9edb7b36cdf1568aeb792febf"
+      description: "Pre-April 2023 turnover slabs + baseline IPFT (NSE/FA/46730, effective 2021-01-01)"
 
     - circular_ref: "NSE/FA/56129"
       from_date: "2023-04-01"
       to_date: "2024-03-31"
       exchange_turnover_rate: "0.0000325"  # 6% rollback rate (₹325 per crore)
       ipft_rate: "0.000001"                # ₹10 per crore (NSE/FA/56129)
-      description: "6% rollback turnover rate + revised ₹10/cr IPFT"
+      circular_sha256: "ec260386adbcf3a0c3326d7d8b3b45b15ba693c55081fdc78fb05b83a5ee93e0"
+      description: >-
+        6% rollback turnover rate + revised ₹10/cr IPFT. The circular states the IPFT recalibration in
+        terms — "from existing Rs.0.01 per crore of the traded value to Rs.10 per crore" — which settles
+        the 1,000x step Audit §95.8 could not resolve from the YAML alone: both adjacent rows were right.
 
     - circular_ref: "NSE/FA/61137"
       from_date: "2024-04-01"
       to_date: "2024-09-30"
       exchange_turnover_rate: "0.0000322"  # ~1% reduction rate (₹322 per crore)
       ipft_rate: "0.000001"                # ₹10 per crore
-      description: "Revised turnover rate + ₹10/cr IPFT"
+      circular_sha256: "e01c5b6c76d29d559bc7f559758c99cb289ec44a88e3f89d5e46b8c2c360e0ac"
+      description: "Revised turnover rate + ₹10/cr IPFT (NSE/FA/61137, effective 2024-04-01)"
 
-    - circular_ref: "NSE/FA/64323"
+    - circular_ref: "NSE/FA/64232"
       from_date: "2024-10-01"
       to_date: "2026-02-28"
       exchange_turnover_rate: "0.0000297"  # SEBI uniform rate (₹297 per crore, SEBI/HO/MRD/TPD-1/P/CIR/2024/92)
       ipft_rate: "0.000001"                # ₹10 per crore
-      description: "SEBI True-to-Label uniform flat rate (no slabs) + ₹10/cr IPFT"
+      circular_sha256: "85b816208f33bdd1c6c0d827b1ba996aba1fe08fe883a6d31c6a2c0ad55304a4"
+      description: >-
+        SEBI True-to-Label uniform flat rate (no slabs) + ₹10/cr IPFT. The row previously cited
+        NSE/FA/64323, which resolves to no committed byte (404 at the archive); the circular that states
+        Rs 2.97/lakh each side from 2024-10-01 is NSE/FA/64232 (2024-09-27, Circular Ref. 5/2024).
 
     - circular_ref: "NSE/FA/73061"
       from_date: "2026-03-01"
       to_date: null                        # Open-ended current schedule
       exchange_turnover_rate: "0.000030699" # ₹306.99 per crore
       ipft_rate: "0.000000001"             # ₹0.01 per crore
-      description: "Revised exchange rate (₹306.99/cr) + ₹0.01/cr IPFT"
+      circular_sha256: "6085601a26177ed61e37e5347960b936d71464ab625d6a0d9fe72b2ec838ac09"
+      description: "Revised exchange rate (₹306.99/cr) + ₹0.01/cr IPFT (NSE/FA/73061, effective 2026-03-01)"
+
+  # Effective-dated rates for the levies that moved inside the evaluation window (§10.5, §95.10 item 2).
+  # Half-open [from_date, to_date); a null to_date is open-ended. A session with no covering row is
+  # refused by `StatutoryCostCriteria.get_rate`, never charged zero.
+  statutory_rate_intervals:
+    - component: "STT_DELIVERY"
+      from_date: "2018-04-01"
+      to_date: null
+      rate: "0.0010"
+      source_ref: "NSE_STT_RATES"
+      source_sha256: "5df41b049103c75784324c846f62cf55cd1157c0dcbc2e7748220e6564f2e277"
+      description: >-
+        0.100% on delivery purchase and on delivery sale. The captured NSE rate table prints the same
+        0.100% for "RATES UPTO MARCH 31, 2026" and "RATES W.E.F. APRIL 1, 2026", so no delivery STT
+        re-rating falls inside 2018-04-01..2023-12-29.
+
+    - component: "STT_INTRADAY_SELL"
+      from_date: "2018-04-01"
+      to_date: null
+      rate: "0.00025"
+      source_ref: "NSE_STT_RATES"
+      source_sha256: "5df41b049103c75784324c846f62cf55cd1157c0dcbc2e7748220e6564f2e277"
+      description: >-
+        0.025% on sale settled otherwise than by delivery; unchanged across the same two columns of the
+        captured table. Intraday purchase carries no STT, which is a property of the tax, not a rate.
+
+    - component: "SEBI_TURNOVER"
+      from_date: "2018-04-01"
+      to_date: "2020-06-01"
+      rate: "0.000001"
+      source_ref: "NSE_STT_RATES"
+      source_sha256: "5df41b049103c75784324c846f62cf55cd1157c0dcbc2e7748220e6564f2e277"
+      description: "₹10 per crore (0.0001%) on all non-debt securities transactions."
+
+    - component: "SEBI_TURNOVER"
+      from_date: "2020-06-01"
+      to_date: "2021-04-01"
+      rate: "0.0000005"
+      source_ref: "SEBI_PAYMENT_OF_FEES_2020_011"
+      source_sha256: "c4a4b69f9d5b561bc02daac740c33a15abc97b31a39ab1b7501321ede7a1da33"
+      description: >-
+        ₹5 per crore: the SEBI (Payment of Fees) (Amendment) Regulations, 2020 insert Schedule V Part B
+        clause 3(1A), which reads "for the period June 01, 2020 to March 31, 2021, pay only 50% of fees
+        as calculated therein".
+
+    - component: "SEBI_TURNOVER"
+      from_date: "2021-04-01"
+      to_date: null
+      rate: "0.000001"
+      source_ref: "NSE_STT_RATES"
+      source_sha256: "5df41b049103c75784324c846f62cf55cd1157c0dcbc2e7748220e6564f2e277"
+      description: "₹10 per crore again once the 50% COVID reduction lapsed on 2021-03-31."
+
+    - component: "STAMP_DUTY_DELIVERY_BUY"
+      from_date: "2018-04-01"
+      to_date: "2020-07-01"
+      rate: "0.0001"
+      source_ref: "MAHARASHTRA_STAMP_DUTY_2019"
+      source_sha256: "5422452339ae6f21c39eb109af8692824828e22a276996ca455942442660c3c1"
+      description: >-
+        0.01% per side under the erstwhile Maharashtra state schedule for delivery-based listed share
+        transfers. State-scheduled, not pan-India: this row is the Maharashtra proxy for the exchange's
+        own venue and is labelled CONTENT_IDENTIFIED_ONLY for that reason; the taxation model charges
+        the buyer leg only, so the seller leg the state schedule also charged is not modelled.
+
+    - component: "STAMP_DUTY_DELIVERY_BUY"
+      from_date: "2020-07-01"
+      to_date: null
+      rate: "0.00015"
+      source_ref: "SEBI_STAMP_DUTY_FAQ"
+      source_sha256: "b464fa86b1a398f229c38da2948848ba155d732f97f770f8f0c654be020ef41a"
+      description: >-
+        0.015% on the buyer, uniform across states: the Indian Stamp Act, 1899 amendments brought by the
+        Finance Act, 2019 "shall come into force w.e.f 1st July, 2020" (SEBI FAQ, Q4), with "Transfer of
+        security other than debenture on delivery basis 0.015%".
+
+    - component: "STAMP_DUTY_INTRADAY_BUY"
+      from_date: "2018-04-01"
+      to_date: "2020-07-01"
+      rate: "0.00002"
+      source_ref: "MAHARASHTRA_STAMP_DUTY_2019"
+      source_sha256: "5422452339ae6f21c39eb109af8692824828e22a276996ca455942442660c3c1"
+      description: "0.002% per side under the erstwhile Maharashtra schedule for intraday share transfers."
+
+    - component: "STAMP_DUTY_INTRADAY_BUY"
+      from_date: "2020-07-01"
+      to_date: null
+      rate: "0.00003"
+      source_ref: "SEBI_STAMP_DUTY_FAQ"
+      source_sha256: "b464fa86b1a398f229c38da2948848ba155d732f97f770f8f0c654be020ef41a"
+      description: >-
+        0.003% on the buyer: "Transfer of security other than debenture on non-delivery basis 0.003%".
 
 market_data_and_accounting_invariants:
   # Strict Decimal representation: Binary floating point prohibited in accounting
@@ -322,7 +474,10 @@ market_data_and_accounting_invariants:
   # the artifact has one current row and one history row, and 931 of the superseded rows are the
   # session-dated warm-up relabelling of §92.7, unchanged). No archive byte, byte count or digest
   # changed. Gate W0.5-5 and Gate 2D-6 verify the current and superseded rows.
-  expected_manifest_fingerprint: "MAN-FPR-V1-4b813090cab7f9be555833039029b1882dc60b05485fb83c0e9dcaba76609c1d"
+  # Re-pinned 2026-11-19 under Audit §95.10 items 1-3 / criteria 1.1.16: five statutory circular
+  # payloads, five statutory/levy sources, eight 2022-2023 corporate-action payloads and the rebuilt
+  # point-in-time corpus are current rows. Superseded rows are history and are never edited (§10.1).
+  expected_manifest_fingerprint: "MAN-FPR-V1-f5b1f1f12e62564a92b6a76719013d445f58d7b3b3e4d99e3441b5637b05af3a"
 
   # Finding N-128 (Audit §72.3, §72.5 item 3): the trial-registry manifest witnesses
   # {evaluation_count, head_eval_hash} outside the (sidecar, anchor) pair. Pinning its SHA-256 here
@@ -331,7 +486,7 @@ market_data_and_accounting_invariants:
   # data/trials/trial_registry.jsonl.manifest with LF line endings (323 bytes after the §75.10
   # append of seq 9, TRIAL-PHASE3B2-RANKED-009, which takes the registry to N = 9, N_eval = 5;
   # 324 bytes after the §74.10 append of seq 8).
-  expected_trial_registry_manifest_sha256: "3326b1b221b2e02616915a9d1f56a4026affa82506803abcc783e2261bf37306"
+  expected_trial_registry_manifest_sha256: "0246c276d52d3a9bd1d81a2cce9c2145b138a49e5232a2a4731a8d2e7e47a4f1"
 
   # Authoritative Calendar and Session Reconciliation Invariants (AGENTS.md §6.3, §9.2, Findings H-56, H-61, H-62, H-64)
   # H-64: Calendar identity anchor — computed from session_records (dates, session_types, open/close times) at load time

@@ -1,0 +1,13 @@
+{
+  "circular_ref": "SEBI_STAMP_DUTY_FAQ",
+  "filename": "SEBI_Indian_Stamp_Act_1899_FAQs.pdf",
+  "source_url": "https://www.sebi.gov.in/sebi_data/faqfiles/dec-2021/1639980911330.pdf",
+  "retrieved_at": "2026-11-19T04:59:36+00:00",
+  "http_status": 200,
+  "byte_count": 468859,
+  "sha256": "b464fa86b1a398f229c38da2948848ba155d732f97f770f8f0c654be020ef41a",
+  "subject": "FAQs on Indian Stamp Act, 1899 amendments \u2014 stamp duty rates w.e.f. 1 July 2020",
+  "issued_by": "SEBI",
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "note": "Byte-exact payload as retrieved; never edited. Digest is over the raw file bytes."
+}

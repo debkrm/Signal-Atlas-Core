@@ -357,6 +357,7 @@ def execute_swing_strategy_session(
     security_master: Optional[Any] = None,
     price_convention: Optional[PriceConvention] = None,
     forced_exit_isins: Optional[Sequence[str]] = None,
+    forced_exit_reasons: Optional[Mapping[str, str]] = None,
 ) -> SwingSessionExecutionSummary:
     """
     Authoritative execution harness that routes DeliverySwingTrendStrategy signals through
@@ -411,10 +412,14 @@ def execute_swing_strategy_session(
     if forced:
         raw_intents = tuple(intent for intent in raw_intents if intent.instrument_id not in forced)
         forced_intents: List[OrderIntent] = []
+        reasons = forced_exit_reasons or {}
         for isin in sorted(forced):
             held = runner.portfolio.get_position(isin)
             if held is None or held.is_closed or held.quantity <= 0:
                 continue
+            # Audit §95.10 item 5: the reason travels with the order, so a demerger exit is never
+            # counted as a hold-bound exit and a verdict can attribute each closed trade.
+            reason = str(reasons.get(isin, "MAX_HOLD_BOUND_EXIT"))
             forced_intents.append(
                 OrderIntent(
                     instrument_id=isin,
@@ -422,8 +427,8 @@ def execute_swing_strategy_session(
                     target_date=next_session,
                     side=OrderSide.SELL,
                     quantity=held.quantity,
-                    intent_id=f"SWING_HOLD_BOUND_EXIT_{isin}_{as_of.isoformat()}",
-                    metadata={"exit_reason": "MAX_HOLD_BOUND_EXIT"},
+                    intent_id=f"SWING_{reason}_{isin}_{as_of.isoformat()}",
+                    metadata={"exit_reason": reason},
                 )
             )
         raw_intents = tuple(forced_intents) + tuple(raw_intents)

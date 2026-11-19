@@ -173,6 +173,10 @@ class Phase3B2WalkForwardRunResult:
     # exits a frozen bid refused there (§5.3).
     hold_bound_forced_exits: int = 0
     hold_bound_refusals: int = 0
+    # Audit §95.10 item 5 / §13.2: held positions a demerger ex-date forced out of, and the exits a
+    # frozen bid or missing bar refused (an unbounded exit delay, §5.3).
+    demerger_forced_exits: int = 0
+    demerger_forced_refusals: int = 0
 
 
 def build_authoritative_runner(
@@ -1163,6 +1167,9 @@ def run_phase3b2_walkforward(
     # Audit §91.9 item 1: exits forced by the hold bound and refusals where the bid was locked.
     total_hold_bound_forced_exits = 0
     total_hold_bound_refusals = 0
+    # Audit §95.10 item 5: exits forced by a demerger ex-date on the following session.
+    total_demerger_forced_exits = 0
+    total_demerger_forced_refusals = 0
 
     num_sessions = len(sessions_to_run)
     for i in range(num_sessions - 1):
@@ -1299,11 +1306,36 @@ def run_phase3b2_walkforward(
         # Audit §91.9 item 1 / §13.2: the declared hold bound is consulted where the hold is evaluated.
         # A position that would be carried into `next_session` at or past the bound is refused here and
         # exits through the same harness; a locked bid defers the exit, never the bound (§5.3).
-        forced_exits = set(
-            portfolio.require_hold_bounds(
+        forced_reasons: Dict[str, str] = {
+            isin: "MAX_HOLD_BOUND_EXIT"
+            for isin in portfolio.require_hold_bounds(
                 next_session, criteria.max_hold_trading_sessions, cal
             )
-        )
+        }
+
+        # Audit §95.10 item 5 / §13.2: a demerger ex-date is an exit constraint, not an entry filter.
+        # The ex-date is announced in advance, so the position is refused on the last CUM session's
+        # open — the session after `next_session` is the ex-date — instead of being carried across an
+        # event whose consideration this table does not price and booking its raw drop as the return.
+        demerger_exits: set = set()
+        if i + 2 < num_sessions:
+            following_session = sessions_to_run[i + 2]
+            demerger_exits = {
+                ca.isin
+                for ca in sec_master.corporate_actions()
+                if ca.action_type is CorporateActionType.DEMERGER
+                and not ca.superseded
+                and ca.ex_date == following_session
+            }
+        for isin in demerger_exits:
+            forced_reasons.setdefault(isin, "DEMERGER_FORCED_EXIT")
+        forced_exits = set(forced_reasons)
+        # Audit §95.10 item 5: the two reasons are counted apart. `forced_exits` is the union the harness
+        # acts on; a refusal is attributed to the reason that produced it, so a demerger exit the session
+        # could not fill is never booked as a hold-bound refusal.
+        hold_bound_exits = {
+            isin for isin, reason in forced_reasons.items() if reason == "MAX_HOLD_BOUND_EXIT"
+        }
 
         # Execute session through authoritative harness
         summary = execute_swing_strategy_session(
@@ -1321,6 +1353,7 @@ def run_phase3b2_walkforward(
             security_master=sec_master,
             price_convention=price_convention,
             forced_exit_isins=tuple(sorted(forced_exits)),
+            forced_exit_reasons=forced_reasons,
         )
         session_summaries.append(summary)
 
@@ -1410,7 +1443,16 @@ def run_phase3b2_walkforward(
             and ticket.fill_result.filled_quantity > 0
         }
         total_hold_bound_forced_exits += len(forced_filled)
-        total_hold_bound_refusals += len(forced_exits - forced_filled)
+        total_hold_bound_refusals += len(hold_bound_exits - forced_filled)
+        demerger_filled = {
+            ticket.candidate.instrument_id
+            for ticket in summary.tickets
+            if (ticket.candidate.metadata or {}).get("exit_reason") == "DEMERGER_FORCED_EXIT"
+            and ticket.fill_result is not None
+            and ticket.fill_result.filled_quantity > 0
+        }
+        total_demerger_forced_exits += len(demerger_filled)
+        total_demerger_forced_refusals += len(demerger_exits - demerger_filled)
 
         # Mark-to-Market Session Valuation across active holdings
         mtm_prices: Dict[str, Decimal] = {}
@@ -2225,6 +2267,8 @@ def run_phase3b2_walkforward(
         "protective_stop_exits": total_protective_stop_exits,
         "hold_bound_forced_exits": total_hold_bound_forced_exits,
         "hold_bound_refusals": total_hold_bound_refusals,
+        "demerger_forced_exits": total_demerger_forced_exits,
+        "demerger_forced_refusals": total_demerger_forced_refusals,
         "protective_stop_deferrals": total_protective_stop_deferrals,
         "protective_stop_circuit_deferrals": total_protective_stop_circuit_deferrals,
         "protective_stop_untriggered": total_protective_stop_untriggered,
@@ -2364,6 +2408,8 @@ def run_phase3b2_walkforward(
         report_dict["protective_stop_exits"] = total_protective_stop_exits
         report_dict["hold_bound_forced_exits"] = total_hold_bound_forced_exits
         report_dict["hold_bound_refusals"] = total_hold_bound_refusals
+        report_dict["demerger_forced_exits"] = total_demerger_forced_exits
+        report_dict["demerger_forced_refusals"] = total_demerger_forced_refusals
         report_dict["protective_stop_deferrals"] = total_protective_stop_deferrals
         report_dict["protective_stop_circuit_deferrals"] = total_protective_stop_circuit_deferrals
         report_dict["unprotected_corporate_action_positions"] = total_unprotected_ca_positions
@@ -2594,6 +2640,8 @@ def run_phase3b2_walkforward(
         open_positions_unrealized_pnl=open_positions_unrealized,
         hold_bound_forced_exits=total_hold_bound_forced_exits,
         hold_bound_refusals=total_hold_bound_refusals,
+        demerger_forced_exits=total_demerger_forced_exits,
+        demerger_forced_refusals=total_demerger_forced_refusals,
     )
 
 

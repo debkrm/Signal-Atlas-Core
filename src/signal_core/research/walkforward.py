@@ -994,11 +994,6 @@ class WalkForwardEngine:
         if hasattr(active_cost, "criteria"):
             c = active_cost.criteria
             cost_parameters = {
-                "stt_delivery_rate": str(c.stt_delivery_rate),
-                "stt_intraday_sell_rate": str(c.stt_intraday_sell_rate),
-                "sebi_turnover_charge_rate": str(c.sebi_turnover_charge_rate),
-                "stamp_duty_delivery_buy_rate": str(c.stamp_duty_delivery_buy_rate),
-                "stamp_duty_intraday_buy_rate": str(c.stamp_duty_intraday_buy_rate),
                 "gst_rate": str(c.gst_rate),
                 "brokerage_per_order_inr": str(c.brokerage_per_order_inr),
                 "gst_taxable_base_components": sorted(c.gst_taxable_base_components),
@@ -1009,9 +1004,23 @@ class WalkForwardEngine:
                         "to_date": f.to_date.isoformat() if f.to_date is not None else None,
                         "exchange_turnover_rate": str(f.exchange_turnover_rate),
                         "ipft_rate": str(f.ipft_rate),
+                        "circular_sha256": f.circular_sha256,
                         "description": f.description,
                     }
                     for f in c.effective_dated_exchange_fees
+                ],
+                # Every re-ratable levy is stated with its span and the digest of the source that
+                # states it, so the artifact names the rate a session was actually charged (§9.1).
+                "statutory_rate_intervals": [
+                    {
+                        "component": i.component,
+                        "from_date": i.from_date.isoformat(),
+                        "to_date": i.to_date.isoformat() if i.to_date is not None else None,
+                        "rate": str(i.rate),
+                        "source_ref": i.source_ref,
+                        "source_sha256": i.source_sha256,
+                    }
+                    for i in c.statutory_rate_intervals
                 ],
             }
         else:

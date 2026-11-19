@@ -1,0 +1,13 @@
+{
+  "circular_ref": "SEBI_PAYMENT_OF_FEES_2020_011",
+  "filename": "SEBI_LAD-NRO_GN_2020_011.pdf",
+  "source_url": "https://www.sebi.gov.in/sebi_data/attachdocs/may-2020/1589196249922.pdf",
+  "retrieved_at": "2026-11-19T04:59:36+00:00",
+  "http_status": 200,
+  "byte_count": 512427,
+  "sha256": "c4a4b69f9d5b561bc02daac740c33a15abc97b31a39ab1b7501321ede7a1da33",
+  "subject": "SEBI (Payment of Fees) (Amendment) Regulations, 2020 \u2014 50% broker turnover fee, 2020-06-01..2021-03-31",
+  "issued_by": "SEBI / Gazette of India",
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "note": "Byte-exact payload as retrieved; never edited. Digest is over the raw file bytes."
+}

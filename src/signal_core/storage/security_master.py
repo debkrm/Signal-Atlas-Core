@@ -99,6 +99,10 @@ class CorporateActionType(str, Enum):
     ISIN_TRANSITION = "ISIN_TRANSITION"
     CONSOLIDATION = "CONSOLIDATION"
     DIVIDEND = "DIVIDEND"
+    # Audit §95.7 Ruling 2 / §95.10 item 5 / §13.2: a demerger delivers shares in a resulting entity.
+    # The archive attests the event but never the consideration ratio, so the type exists to constrain
+    # a held position (exit before the event) rather than to invent a share restatement.
+    DEMERGER = "DEMERGER"
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,6 +287,14 @@ class CorporateAction:
     symbol: Optional[str] = None
     provenance: Optional[str] = None
     delisting_price: Optional[Decimal] = None
+    # Audit §95.7 Ruling 2 / §95.10 item 4: an adjustment row is admissible only where the committed
+    # archive attests it, so a row carries the digest and artifact of the payload it came from.
+    source_digest: Optional[str] = None
+    source_artifact: Optional[str] = None
+    # A corrected or unattested row is superseded by an appended restatement rather than edited away
+    # (§10.1): the loader still returns it, and every consumer that applies a price ratio filters it.
+    superseded: bool = False
+    restatement_ref: Optional[str] = None
 
     def __post_init__(self) -> None:
         _validate_identifier(self.isin, "isin")
@@ -371,6 +383,20 @@ class CorporateAction:
             _validate_identifier(self.symbol, "symbol")
         if self.provenance is not None:
             _validate_identifier(self.provenance, "provenance")
+        if self.source_digest is not None:
+            digest = str(self.source_digest).strip().lower()
+            if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+                raise SecurityMasterError(
+                    f"source_digest must be the 64-hex sha256 of a committed archive payload, got "
+                    f"{self.source_digest!r} for {self.isin} {self.ex_date} (Audit §95.7 Ruling 2)"
+                )
+        if not isinstance(self.superseded, bool):
+            raise SecurityMasterError(f"superseded must be boolean, got {self.superseded!r}")
+        if self.action_type == CorporateActionType.DEMERGER and self.new_isin is not None:
+            raise SecurityMasterError(
+                "DEMERGER carries no new_isin: the consideration is a different security, and a held "
+                "position is exited rather than re-keyed onto an ISIN this table does not price (§13.2)"
+            )
 
     @property
     def adjustment_factor(self) -> Decimal:
@@ -404,6 +430,14 @@ class CorporateAction:
             d["provenance"] = self.provenance
         if self.delisting_price is not None:
             d["delisting_price"] = str(self.delisting_price)
+        if self.source_digest is not None:
+            d["source_digest"] = self.source_digest
+        if self.source_artifact is not None:
+            d["source_artifact"] = self.source_artifact
+        if self.superseded:
+            d["superseded"] = True
+        if self.restatement_ref is not None:
+            d["restatement_ref"] = self.restatement_ref
         return d
 
     @classmethod
@@ -427,6 +461,10 @@ class CorporateAction:
             symbol=str(data["symbol"]) if data.get("symbol") else None,
             provenance=str(data["provenance"]) if data.get("provenance") else None,
             delisting_price=delist_amt,
+            source_digest=str(data["source_digest"]) if data.get("source_digest") else None,
+            source_artifact=str(data["source_artifact"]) if data.get("source_artifact") else None,
+            superseded=bool(data.get("superseded", False)),
+            restatement_ref=str(data["restatement_ref"]) if data.get("restatement_ref") else None,
         )
 
 
@@ -781,6 +819,10 @@ class SecurityMaster:
         """Returns True if the security is registered in the SecurityMaster store (Finding CA-1)."""
         _validate_identifier(isin, "isin")
         return isin in self._intervals_by_isin or any(ca.isin == isin for ca in self._corporate_actions)
+
+    def corporate_actions(self) -> Tuple[CorporateAction, ...]:
+        """Every committed corporate-action row this master was built with (read-only)."""
+        return self._corporate_actions
 
     def get_corporate_actions(
         self,

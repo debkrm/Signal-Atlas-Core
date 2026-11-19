@@ -194,21 +194,23 @@ class TransactionCostModel:
         # 2. Securities Transaction Tax (STT)
         # Delivery: 0.1% on BUY and 0.1% on SELL
         # Intraday: 0% on BUY and 0.025% on SELL
+        # The rate is resolved for the session, not read as a scalar: a re-rating inside the window
+        # must be able to move it (§7.2, §95.10 item 2).
         if product == OrderProduct.DELIVERY:
-            stt = gross_amount * self._criteria.stt_delivery_rate
+            stt = gross_amount * self._criteria.get_rate("STT_DELIVERY", trade_date)
         else:
             if side == OrderSide.BUY:
                 stt = Decimal("0")
             else:
-                stt = gross_amount * self._criteria.stt_intraday_sell_rate
+                stt = gross_amount * self._criteria.get_rate("STT_INTRADAY_SELL", trade_date)
 
         # 3. Exchange Turnover Charges & IPFT (Date-Aware NSE Circular Resolution)
         fee_info: EffectiveDatedExchangeFee = self._criteria.get_exchange_fee_for_date(trade_date)
         exchange_turnover_fee = gross_amount * fee_info.exchange_turnover_rate
         ipft = gross_amount * fee_info.ipft_rate
 
-        # 4. SEBI Turnover Charges (₹10 per crore = 0.0001%)
-        sebi_turnover_fee = gross_amount * self._criteria.sebi_turnover_charge_rate
+        # 4. SEBI Turnover Charges (₹10 per crore = 0.0001%; halved 2020-06-01..2021-03-31)
+        sebi_turnover_fee = gross_amount * self._criteria.get_rate("SEBI_TURNOVER", trade_date)
 
         # 5. Indian Stamp Duty (Levied on BUY legs only per Indian Stamp Act)
         # Delivery Buy: 0.015%
@@ -216,9 +218,9 @@ class TransactionCostModel:
         # Sell: ₹0
         if side == OrderSide.BUY:
             if product == OrderProduct.DELIVERY:
-                stamp_duty = gross_amount * self._criteria.stamp_duty_delivery_buy_rate
+                stamp_duty = gross_amount * self._criteria.get_rate("STAMP_DUTY_DELIVERY_BUY", trade_date)
             else:
-                stamp_duty = gross_amount * self._criteria.stamp_duty_intraday_buy_rate
+                stamp_duty = gross_amount * self._criteria.get_rate("STAMP_DUTY_INTRADAY_BUY", trade_date)
         else:
             stamp_duty = Decimal("0")
 

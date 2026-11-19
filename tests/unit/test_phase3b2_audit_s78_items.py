@@ -213,14 +213,61 @@ def test_n151_generator_covers_every_multi_isin_symbol():
 
 
 def test_n151_generator_reproduces_the_committed_corpus():
+    """N-151, restated for Audit §95.10 item 3 (criteria 1.1.16).
+
+    The §78 check was byte equality with `generate_corporate_actions_corpus()`, which held while that
+    generator was the table's only writer. §95.10 item 3 adds a second, attested path
+    (`scripts/attest_price_actions.py --write`, 355 rows appended from committed archive bytes), so byte
+    equality no longer describes the invariant that matters. The invariant is now stronger in the
+    direction the audit cares about: every committed row is either reproducible from the generator or
+    carries a `source_digest` that is the SHA-256 of a committed payload, so no row can be hand-typed
+    without a byte behind it. The attested count is pinned so a row cannot vanish silently either.
+    """
     corpus = generate_corporate_actions_corpus()
-    committed = (REPO_ROOT / "data" / "reference" / "corporate_actions.jsonl").read_text(
-        encoding="utf-8"
+    generated = {json.dumps(action.to_dict()) for action in corpus}
+    committed_lines = [
+        line
+        for line in (REPO_ROOT / "data" / "reference" / "corporate_actions.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+
+    payloads = set()
+    for path in (REPO_ROOT / "data" / "raw" / "corporate_actions").glob("*.json"):
+        payloads.add(hashlib.sha256(path.read_bytes()).hexdigest())
+
+    attested = 0
+    superseded = 0
+    unreachable = []
+    for line in committed_lines:
+        if line in generated:
+            continue
+        row = json.loads(line)
+        digest = row.get("source_digest")
+        if digest and digest in payloads:
+            attested += 1
+            continue
+        # A superseded row is the append-only correction path (§10.1), not a hand-typed claim: it is
+        # the earlier bytes of a row whose replacement is either attested or generator-derived.
+        if row.get("superseded") is True and row.get("restatement_ref"):
+            superseded += 1
+            continue
+        unreachable.append(row)
+
+    assert not unreachable, (
+        f"{len(unreachable)} committed row(s) are neither reproducible from the generator nor attested by "
+        f"a committed payload, so they are hand-typed: "
+        f"{[r.get('symbol') for r in unreachable[:5]]}"
     )
-    rendered = "".join(json.dumps(action.to_dict()) + "\n" for action in corpus)
-    assert hashlib.sha256(rendered.encode("utf-8")).hexdigest() == hashlib.sha256(
-        committed.encode("utf-8")
-    ).hexdigest(), "corporate_actions.jsonl no longer reproduces from its generator"
+    assert attested == 430, (
+        f"{attested} row(s) carry a digest resolving to a committed payload, not the 430 measured at "
+        f"1.1.16; an attrition this silent would delete attestation without failing anything"
+    )
+    assert superseded == 10, (
+        f"{superseded} row(s) are superseded by restatement, not the 10 measured at 1.1.16; a superseded "
+        f"row that silently disappears takes its correction trail with it"
+    )
 
 
 # --- §78.15 (a): frozen volume enforcement -----------------------------------------------------
@@ -390,7 +437,7 @@ def test_criteria_reseals_only_the_calendar_and_manifest_pins():
     from signal_core.storage.calendar import load_anchored_nse_trading_calendar
 
     crit = load_go_no_go_criteria()
-    assert crit.version == "1.1.15"
+    assert crit.version == "1.1.16"
     assert crit.expected_manifest_fingerprint == compute_manifest_fingerprint(
         REPO_ROOT / "data" / "reference" / "manifest.jsonl"
     )

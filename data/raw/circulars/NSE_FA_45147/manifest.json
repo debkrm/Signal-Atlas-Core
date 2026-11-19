@@ -1,0 +1,13 @@
+{
+  "circular_ref": "NSE_FA_45147",
+  "filename": "FA45147.pdf",
+  "source_url": "https://nsearchives.nseindia.com/content/circulars/FA45147.pdf",
+  "retrieved_at": "2026-11-19T04:59:33+00:00",
+  "http_status": 200,
+  "byte_count": 160097,
+  "sha256": "a0a763c01cbbd8df4e3d4e6da870cb928a38fa07abe88d4cbd5bac7c02ba8864",
+  "subject": "Revision in transaction charges structure for equity market segment",
+  "issued_by": "NSE / Finance & Accounts",
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "note": "Byte-exact payload as retrieved; never edited. Digest is over the raw file bytes."
+}

@@ -53,13 +53,24 @@ def _to_decimal(val: Any, field_name: str) -> Decimal:
 
 @dataclass(frozen=True, slots=True)
 class EffectiveDatedExchangeFee:
-    """Represents an effective-dated historical NSE exchange and IPFT fee schedule."""
+    """Represents an effective-dated historical NSE exchange and IPFT fee schedule.
+
+    `circular_sha256` is mandatory: a row asserts rates that no committed byte supports otherwise, and
+    Audit §95.8 measured every one of the five rows citing a circular reference with no payload in the
+    repository. `scripts/ingest_statutory_sources.py` captures the bytes under
+    `data/raw/circulars/<ref>/` and the digest is over the raw file.
+    """
     circular_ref: str
     from_date: datetime.date
     to_date: Optional[datetime.date]
     exchange_turnover_rate: Decimal
     ipft_rate: Decimal
+    circular_sha256: str
     description: str
+    # Circulars that name the same rate from the other side (e.g. the "existing" column of the
+    # circular that replaced it, or a scheme that says the structure continues unchanged). They are
+    # attested evidence, not the governing row, so they are not what `circular_ref` resolves to.
+    supporting_refs: Tuple[str, ...] = ()
 
     def is_applicable(self, query_date: datetime.date) -> bool:
         if query_date < self.from_date:
@@ -69,18 +80,48 @@ class EffectiveDatedExchangeFee:
         return True
 
 
+STATUTORY_RATE_COMPONENTS: Tuple[str, ...] = (
+    "STT_DELIVERY",
+    "STT_INTRADAY_SELL",
+    "SEBI_TURNOVER",
+    "STAMP_DUTY_DELIVERY_BUY",
+    "STAMP_DUTY_INTRADAY_BUY",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class StatutoryRateInterval:
+    """One half-open `[from_date, to_date)` rate row of a re-ratable statutory levy (§10.5, §95.10 item 2).
+
+    A scalar cannot represent a levy that was re-rated inside the evaluation window — and three of them
+    were: the SEBI broker turnover fee was halved for 2020-06-01..2021-03-31 and stamp duty moved from
+    the state schedules to the uniform Indian Stamp Act rates on 2020-07-01. Each row therefore carries
+    its own `[from, to)` span and the digest of the committed source that states it.
+    """
+    component: str
+    from_date: datetime.date
+    to_date: Optional[datetime.date]
+    rate: Decimal
+    source_ref: str
+    source_sha256: str
+    description: str = ""
+
+    def is_applicable(self, query_date: datetime.date) -> bool:
+        if query_date < self.from_date:
+            return False
+        if self.to_date is not None and query_date >= self.to_date:
+            return False
+        return True
+
+
 @dataclass(frozen=True, slots=True)
 class StatutoryCostCriteria:
     """Full statutory Indian transaction cost and tax schedule."""
-    stt_delivery_rate: Decimal
-    stt_intraday_sell_rate: Decimal
-    sebi_turnover_charge_rate: Decimal
-    stamp_duty_delivery_buy_rate: Decimal
-    stamp_duty_intraday_buy_rate: Decimal
     gst_rate: Decimal
     brokerage_per_order_inr: Decimal
     gst_taxable_base_components: Tuple[str, ...]
     effective_dated_exchange_fees: Tuple[EffectiveDatedExchangeFee, ...]
+    statutory_rate_intervals: Tuple[StatutoryRateInterval, ...]
 
     def get_exchange_fee_for_date(self, trade_date: datetime.date) -> EffectiveDatedExchangeFee:
         """Resolves the governing circular and rates for a specific trading session."""
@@ -89,6 +130,18 @@ class StatutoryCostCriteria:
                 return fee_period
         raise CriteriaValidationError(
             f"No governing NSE exchange fee schedule found for trade date {trade_date}."
+        )
+
+    def get_rate(self, component: str, trade_date: datetime.date) -> Decimal:
+        """Resolves one levy's rate for a session, failing closed when no interval covers it."""
+        if component not in STATUTORY_RATE_COMPONENTS:
+            raise CriteriaValidationError(f"Unknown statutory rate component: {component!r}")
+        for interval in self.statutory_rate_intervals:
+            if interval.component == component and interval.is_applicable(trade_date):
+                return interval.rate
+        raise CriteriaValidationError(
+            f"No {component} rate interval covers trade date {trade_date}; an unpriced levy is NOT RUN "
+            f"rather than zero (§7.2, §9.3)"
         )
 
 
@@ -218,6 +271,15 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
     exec_liq = data.get("execution_and_liquidity_realism", {})
     costs_raw = data.get("statutory_indian_cost_schedule", {})
 
+    def _digest_field(raw: Any, field_name: str) -> str:
+        value = str(raw or "").strip().lower()
+        if len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value):
+            raise CriteriaValidationError(
+                f"'{field_name}' must be the 64-hex sha256 of a committed source payload, got {raw!r}; "
+                f"a rate that resolves to no committed byte is an unsourced numeric input (§6.5, §10.7)"
+            )
+        return value
+
     # Parse effective-dated fee periods
     raw_periods = costs_raw.get("effective_dated_exchange_fees", [])
     fee_periods: List[EffectiveDatedExchangeFee] = []
@@ -229,20 +291,65 @@ def load_go_no_go_criteria(path: Optional[Union[str, Path]] = None) -> GoNoGoCri
                 to_date=datetime.date.fromisoformat(str(p["to_date"])) if p.get("to_date") else None,
                 exchange_turnover_rate=_to_decimal(p["exchange_turnover_rate"], "exchange_turnover_rate"),
                 ipft_rate=_to_decimal(p["ipft_rate"], "ipft_rate"),
+                circular_sha256=_digest_field(p.get("circular_sha256"), "circular_sha256"),
                 description=str(p.get("description", "")),
+                supporting_refs=tuple(str(ref) for ref in p.get("supporting_refs") or ()),
             )
         )
+    if not fee_periods:
+        raise CriteriaValidationError("effective_dated_exchange_fees is empty; no session is priced")
+    for earlier, later in zip(fee_periods, fee_periods[1:]):
+        if earlier.to_date is None or earlier.to_date >= later.from_date:
+            raise CriteriaValidationError(
+                f"exchange fee rows {earlier.circular_ref!r} ({earlier.from_date}..{earlier.to_date}) and "
+                f"{later.circular_ref!r} (from {later.from_date}) overlap or are not ordered"
+            )
+
+    # Parse the interval tables of the re-ratable statutory levies
+    raw_intervals = costs_raw.get("statutory_rate_intervals", [])
+    intervals: List[StatutoryRateInterval] = []
+    for p in raw_intervals:
+        component = str(p["component"])
+        if component not in STATUTORY_RATE_COMPONENTS:
+            raise CriteriaValidationError(f"Unknown statutory rate component: {component!r}")
+        interval = StatutoryRateInterval(
+            component=component,
+            from_date=datetime.date.fromisoformat(str(p["from_date"])),
+            to_date=datetime.date.fromisoformat(str(p["to_date"])) if p.get("to_date") else None,
+            rate=_to_decimal(p["rate"], f"{component}.rate"),
+            source_ref=str(p["source_ref"]),
+            source_sha256=_digest_field(p.get("source_sha256"), f"{component}.source_sha256"),
+            description=str(p.get("description", "")),
+        )
+        if interval.rate < Decimal("0"):
+            raise CriteriaValidationError(f"{component} rate cannot be negative: {interval.rate}")
+        if interval.to_date is not None and interval.to_date <= interval.from_date:
+            raise CriteriaValidationError(
+                f"{component} interval {interval.from_date}..{interval.to_date} is not a half-open span"
+            )
+        intervals.append(interval)
+    for component in STATUTORY_RATE_COMPONENTS:
+        rows = sorted((i for i in intervals if i.component == component), key=lambda i: i.from_date)
+        if not rows:
+            raise CriteriaValidationError(
+                f"statutory_rate_intervals carries no row for {component}; a levy with no interval "
+                f"cannot be costed on any session (§7.2)"
+            )
+        for earlier, later in zip(rows, rows[1:]):
+            if earlier.to_date is None or earlier.to_date > later.from_date:
+                raise CriteriaValidationError(
+                    f"{component} intervals from {earlier.from_date} and {later.from_date} overlap, "
+                    f"so one session would have two governing rates"
+                )
 
     costs = StatutoryCostCriteria(
-        stt_delivery_rate=_to_decimal(costs_raw["stt_delivery_rate"], "stt_delivery_rate"),
-        stt_intraday_sell_rate=_to_decimal(costs_raw["stt_intraday_sell_rate"], "stt_intraday_sell_rate"),
-        sebi_turnover_charge_rate=_to_decimal(costs_raw["sebi_turnover_charge_rate"], "sebi_turnover_charge_rate"),
-        stamp_duty_delivery_buy_rate=_to_decimal(costs_raw["stamp_duty_delivery_buy_rate"], "stamp_duty_delivery_buy_rate"),
-        stamp_duty_intraday_buy_rate=_to_decimal(costs_raw["stamp_duty_intraday_buy_rate"], "stamp_duty_intraday_buy_rate"),
         gst_rate=_to_decimal(costs_raw["gst_rate"], "gst_rate"),
         brokerage_per_order_inr=_to_decimal(costs_raw["brokerage_per_order_inr"], "brokerage_per_order_inr"),
         gst_taxable_base_components=tuple(costs_raw.get("gst_taxable_base_components", [])),
         effective_dated_exchange_fees=tuple(fee_periods),
+        statutory_rate_intervals=tuple(
+            sorted(intervals, key=lambda i: (i.component, i.from_date))
+        ),
     )
 
     # Validate anti-overfitting methodology constants

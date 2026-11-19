@@ -2228,6 +2228,242 @@ def probe_n180() -> None:
     )
 
 
+_CORPUS_CACHE: Dict[str, object] = {}
+
+
+def _corpus() -> dict:
+    """The committed derived corpus, materialised once per probe process."""
+    import gzip
+    import json
+
+    if "corpus" not in _CORPUS_CACHE:
+        with gzip.open(
+            REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz",
+            "rt",
+            encoding="utf-8",
+        ) as handle:
+            _CORPUS_CACHE["corpus"] = json.load(handle)
+    return _CORPUS_CACHE["corpus"]  # type: ignore[return-value]
+
+
+def _applied_actions():
+    """Committed corporate-action rows a build may apply: not superseded, with an archive digest."""
+    from signal_core.storage.security_master import load_corporate_actions
+
+    return [row for row in load_corporate_actions() if not row.superseded and row.source_digest]
+
+
+def probe_n181() -> None:
+    """
+    The universe is point-in-time, not a survivor panel (N-181, §95.6 Ruling 1, §6.1).
+
+    Measured at 77fb043 (§95.5.5): `universe_by_date` was the identical 1,082-name list on all 1,425
+    dates, 564 of the 1,646 names trading on the window's first session were deleted from every date,
+    and 1,653 ISINs were excluded in total. A backtest over that panel cannot lose a name that died.
+    """
+    corpus = _corpus()
+    by_date = corpus["universe_by_date"]
+    dates = sorted(by_date)
+    rule = str(corpus.get("universe_selection") or "")
+    assert "POINT_IN_TIME_TRADED" in rule, (
+        f"the corpus does not state a point-in-time rule, so its membership is an outcome rather than a "
+        f"rule: {rule[:160]!r}"
+    )
+    assert "every session from" not in rule, (
+        "the universe is still described by the full-span filter §95.5.5 measured as survivorship"
+    )
+    first_members = set(by_date[dates[0]])
+    last_members = set(by_date[dates[-1]])
+    assert first_members != last_members, (
+        f"universe_by_date is the identical {len(first_members)}-name list on the first and last session, "
+        f"which is the survivor panel Ruling 1 makes inadmissible"
+    )
+    members = set().union(*(set(v) for v in by_date.values()))
+    assert len(members) > len(first_members), (
+        f"the union of all dates ({len(members)}) is not larger than one date's membership "
+        f"({len(first_members)}), so membership never changes"
+    )
+    # A name whose observations stop inside the window is absent after its last session and present before.
+    prices = corpus["prices_by_instrument"]
+    stopped = [
+        isin for isin, bars in prices.items()
+        if bars and bars[-1]["trade_date"] < dates[-1] and len(bars) > 20
+    ]
+    assert stopped, "no instrument stops trading inside the window, so the rule's other half is untested"
+    sample = stopped[0]
+    last_bar = prices[sample][-1]["trade_date"]
+    assert sample in set(by_date[last_bar]), f"{sample} is absent on its own last trading session {last_bar}"
+    after = [d for d in dates if d > last_bar]
+    assert after and sample not in set(by_date[after[0]]), (
+        f"{sample} stopped trading on {last_bar} but is still a universe member on {after[0]}"
+    )
+
+
+def probe_n182() -> None:
+    """
+    The 94 archive-attested price actions are applied, not merely known (N-182, §95.5.3, Ruling 2).
+
+    Measured at 77fb043: 95 attested actions were absent from the table (94 `BONUS`, 1
+    `CONSOLIDATION`), 44 of them on a panel ISIN, and the corpus charged 34 of those bonus drops as
+    returns. Each example below therefore has to be applied *and* absent from the corpus's returns.
+    """
+    from decimal import Decimal
+
+    applied = _applied_actions()
+    corpus = _corpus()
+    prices = corpus["prices_by_instrument"]
+    examples = (
+        ("SRF", "2021-10-13"), ("KKCL", "2021-12-16"), ("AARTIDRUGS", "2020-09-30"),
+        ("MAHLIFE", "2021-09-14"), ("UNOMINDA", "2018-07-11"), ("INFIBEAM", "2021-03-18"),
+        ("MMFL", "2018-07-18"), ("BIOCON", "2019-06-12"), ("GICRE", "2018-07-12"),
+        ("GAIL", "2019-07-09"), ("GLAXO", "2018-09-11"), ("EPL", "2018-06-20"),
+        ("NIACL", "2018-06-27"), ("WHEELS", "2018-08-08"),
+    )
+    by_symbol_date = {
+        (row.symbol, row.ex_date.isoformat(), row.action_type.value): row
+        for row in applied
+    }
+    missing = []
+    # Symbols are reused and reassigned (§10.4), so a name the archive carried as INFIBEAM is the same
+    # ISIN the table now carries as CCAVENUE.
+    isin_by_symbol = {"INFIBEAM": "INE483S01020"}
+    for symbol, day in examples:
+        key = (symbol, day, "BONUS")
+        if key in by_symbol_date:
+            continue
+        isin = isin_by_symbol.get(symbol)
+        if isin and any(
+            row.isin == isin and row.ex_date.isoformat() == day and row.action_type.value == "BONUS"
+            for row in applied
+        ):
+            continue
+        missing.append(f"{symbol} {day}")
+    assert not missing, (
+        f"{len(missing)} of the {len(examples)} bonus actions Audit §95.5.3 measured as missing is still "
+        f"not applied with an archive digest: {missing}"
+    )
+    # The applied ratio has to actually reach the series: a 1:1 bonus halves the price, so the corpus's
+    # return on the ex-date is ~0 rather than the ~-50% the unadjusted series carried.
+    charged = []
+    for symbol, day in examples:
+        row = by_symbol_date.get((symbol, day, "BONUS")) or next(
+            r for r in applied
+            if r.isin == isin_by_symbol.get(symbol) and r.ex_date.isoformat() == day
+        )
+        bars = prices.get(row.isin) or []
+        index = next((i for i, bar in enumerate(bars) if bar["trade_date"] == day), None)
+        if index is None or index == 0:
+            continue
+        previous = Decimal(bars[index - 1]["close"])
+        current = Decimal(bars[index]["close"])
+        move = (current - previous) / previous
+        if abs(move) > Decimal("0.25"):
+            charged.append(f"{symbol} {day} r={move.quantize(Decimal('0.0001'))}")
+    assert not charged, (
+        f"{len(charged)} attested bonus(es) are in the table but not in the series, so the drop is still "
+        f"charged as a return: {charged}"
+    )
+
+
+def probe_n183() -> None:
+    """
+    The INFY bonus is dated where the archive dates it (N-183, §95.5.4).
+
+    Measured at 77fb043: the committed archive attests `exDate 04-Sep-2018`, `Bonus 1:1`, the table said
+    2018-09-12, so the corpus left the real halving unadjusted (−0.4860) and fabricated +1.0234 eight
+    sessions later — the only observation above +1.0 on the panel.
+    """
+    from decimal import Decimal
+
+    from signal_core.storage.security_master import load_corporate_actions
+
+    rows = load_corporate_actions()
+    infy = [r for r in rows if r.isin == "INE009A01021" and r.action_type.value == "BONUS"]
+    wrong = [r for r in infy if r.ex_date.isoformat() == "2018-09-12" and not r.superseded]
+    assert not wrong, "the 2018-09-12 INFY bonus row is still live, so the corpus dates the action wrongly"
+    right = [r for r in infy if r.ex_date.isoformat() == "2018-09-04" and not r.superseded and r.source_digest]
+    assert right, "no attested, applied INFY bonus row exists at the archive's 2018-09-04 ex-date"
+
+    bars = _corpus()["prices_by_instrument"].get("INE009A01021") or []
+    by_date = {bar["trade_date"]: Decimal(bar["close"]) for bar in bars}
+    dates = sorted(by_date)
+    for day in ("2018-09-04", "2018-09-12"):
+        index = dates.index(day)
+        previous = by_date[dates[index - 1]]
+        move = (by_date[day] - previous) / previous
+        assert abs(move) < Decimal("0.10"), (
+            f"INFY returns {move.quantize(Decimal('0.0001'))} on {day}; an adjusted series shows neither "
+            f"the −0.4860 unadjusted halving nor the +1.0234 fabricated move §95.5.4 measured"
+        )
+
+
+def probe_n184() -> None:
+    """
+    The IDEA consolidation is resolved, not applied (N-184, §95.5.4, Ruling 2).
+
+    Measured at 77fb043: no archive record of any price-side action for `INE669E01016` on or near
+    2023-09-15 and no fall in the raw series, yet the corpus multiplied every earlier bar by 10 and
+    printed −0.8927 for the last three months of the window.
+    """
+    from decimal import Decimal
+
+    from signal_core.storage.security_master import load_corporate_actions
+
+    live = [
+        row for row in load_corporate_actions()
+        if row.isin == "INE669E01016"
+        and row.action_type.value == "CONSOLIDATION"
+        and row.ex_date.isoformat() == "2023-09-15"
+        and not row.superseded
+    ]
+    assert not live, "the unattested IDEA 2023-09-15 consolidation is still live"
+    bars = _corpus()["prices_by_instrument"].get("INE669E01016") or []
+    by_date = {bar["trade_date"]: Decimal(bar["close"]) for bar in bars}
+    dates = sorted(by_date)
+    index = dates.index("2023-09-15")
+    previous = by_date[dates[index - 1]]
+    move = (by_date["2023-09-15"] - previous) / previous
+    assert abs(move) < Decimal("0.20"), (
+        f"IDEA returns {move.quantize(Decimal('0.0001'))} on 2023-09-15, which is the fabricated "
+        f"−0.8927 consolidation move §95.5.4 measured"
+    )
+
+
+def probe_n185() -> None:
+    """
+    A demerger is a typed consideration event and a held-position exit constraint (N-185, §95.10 item 5).
+
+    Measured at 77fb043: the archive attests 32 demerger events, 28 on panel ISINs, and the table had no
+    `DEMERGER` type at all, so a position held across one booked a −65%..−95% raw drop and credited the
+    consideration nowhere.
+    """
+    from signal_core.storage.security_master import CorporateActionType, load_corporate_actions
+
+    assert "DEMERGER" in {member.value for member in CorporateActionType}, (
+        "no DEMERGER type exists, so no consideration event can be booked or constrained"
+    )
+    attested = [
+        row for row in load_corporate_actions()
+        if row.action_type is CorporateActionType.DEMERGER and row.source_digest and not row.superseded
+    ]
+    assert len(attested) >= 28, (
+        f"{len(attested)} attested demerger row(s) are applied, fewer than the 28 §95.5.6 measured on the "
+        f"panel"
+    )
+    loop = (REPO_ROOT / "scripts" / "run_phase3b2_walkforward.py").read_text(encoding="utf-8")
+    assert "DEMERGER_FORCED_EXIT" in loop, (
+        "the session loop does not force a position out of a demerger ex-date, so a held position still "
+        "realises the raw drop"
+    )
+    assert "forced_exit_reasons=forced_reasons" in loop, (
+        "the loop does not pass the exit reason, so a demerger exit would be counted as a hold-bound exit"
+    )
+    harness = (REPO_ROOT / "src" / "signal_core" / "strategy" / "swing.py").read_text(encoding="utf-8")
+    assert 'reasons.get(isin, "MAX_HOLD_BOUND_EXIT")' in harness, (
+        "the harness ignores forced_exit_reasons, so a demerger exit carries no attributable reason"
+    )
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -2261,6 +2497,11 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-178": probe_n178,
     "N-179": probe_n179,
     "N-180": probe_n180,
+    "N-181": probe_n181,
+    "N-182": probe_n182,
+    "N-183": probe_n183,
+    "N-184": probe_n184,
+    "N-185": probe_n185,
 }
 
 

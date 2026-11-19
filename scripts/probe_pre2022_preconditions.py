@@ -436,6 +436,14 @@ def check_gating_mode(verdict_paths: Optional[Iterable[Path]] = None) -> List[Tu
         start_raw = verdict.get("evaluation_start_date")
         end_raw = verdict.get("evaluation_end_date")
         if not start_raw or not end_raw:
+            # A comparison artifact states its window as one `start..end` string. It evaluates the same
+            # sessions and is bound by the same boundary, so the parser reads either shape rather than
+            # exempting the file for its spelling.
+            declared = str(verdict.get("window") or "")
+            if ".." in declared:
+                start_raw, _, tail = declared.partition("..")
+                end_raw = tail
+        if not start_raw or not end_raw:
             undated.append(name)
             continue
         start = datetime.date.fromisoformat(str(start_raw)[:10])

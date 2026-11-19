@@ -521,7 +521,10 @@ def test_ca1_corpus_provenance_and_counts():
     assert len(actions) >= 100
 
     types_found = {a.action_type for a in actions}
-    assert len(types_found) == 8
+    # 9 since Audit §95.10 item 5 typed DEMERGER: the archive attests 32 consideration events and no
+    # type could represent them, so a held position booked the raw drop and credited it nowhere.
+    assert len(types_found) == 9
+    assert CorporateActionType.DEMERGER in types_found
     assert CorporateActionType.SPLIT in types_found
     assert CorporateActionType.BONUS in types_found
     assert CorporateActionType.CONSOLIDATION in types_found

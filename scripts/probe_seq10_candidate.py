@@ -53,6 +53,10 @@ COMPARISON_ARTIFACT = REPO_ROOT / "reports" / "verdicts" / "trial_010" / "seq10_
 
 WINDOW_START = datetime.date(2018, 4, 1)
 WINDOW_END = datetime.date(2023, 12, 31)
+# The authorised window is a date range, not a session list: 2018-04-01 and 2023-12-31 are both
+# Sundays, so the first and last sessions the engine can evaluate are these two. Asserting `start ==
+# WINDOW_START` would have refused every correct run of the expanded window.
+WINDOW_FIRST_SESSION = datetime.date(2018, 4, 2)
 WINDOW_LAST_SESSION = datetime.date(2023, 12, 29)
 SEALED_START = datetime.date(2025, 1, 1)
 REGISTERED_N = 10
@@ -117,7 +121,7 @@ def artifact_window_problem(artifact, binding_start: datetime.date) -> Optional[
             f"the evaluated set ends {end}, inside the sealed holdout era [{SEALED_START}..2026-11-11]; "
             f"a run whose evaluated set touches it must fail closed (§8.1)"
         )
-    if start != WINDOW_START or end < WINDOW_LAST_SESSION or end > WINDOW_END:
+    if start != WINDOW_FIRST_SESSION or end < WINDOW_LAST_SESSION or end > WINDOW_END:
         return (
             f"the evaluated set is {start}..{end}, not the authorised window "
             f"{WINDOW_START}..{WINDOW_END} (§93.5 Ruling 3)"

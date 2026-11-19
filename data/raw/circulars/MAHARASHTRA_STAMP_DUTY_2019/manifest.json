@@ -1,0 +1,13 @@
+{
+  "circular_ref": "MAHARASHTRA_STAMP_DUTY_2019",
+  "filename": "KPMG_flash_news_stamp_duty_amendments.pdf",
+  "source_url": "https://www.in.kpmg.com/TaxFlashNews-INT/Flash-News-Stamp-Duty-amendments.pdf",
+  "retrieved_at": "2026-11-19T04:59:38+00:00",
+  "http_status": 200,
+  "byte_count": 199064,
+  "sha256": "5422452339ae6f21c39eb109af8692824828e22a276996ca455942442660c3c1",
+  "subject": "Erstwhile Maharashtra state stamp duty rates for listed share transfers, set against the amended Indian Stamp Act schedule",
+  "issued_by": "KPMG India (tax flash note, 2019-12-12)",
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "note": "Byte-exact payload as retrieved; never edited. Digest is over the raw file bytes."
+}

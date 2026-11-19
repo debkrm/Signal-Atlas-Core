@@ -21,7 +21,7 @@ def test_load_committed_go_no_go_criteria():
     criteria = load_go_no_go_criteria()
 
     assert isinstance(criteria, GoNoGoCriteria)
-    assert criteria.version == "1.1.15"
+    assert criteria.version == "1.1.16"
     assert criteria.market == "NSE_CASH_EQUITY"
     assert criteria.currency == "INR"
 
@@ -48,29 +48,45 @@ def test_load_committed_go_no_go_criteria():
     assert criteria.min_traded_eq_resolution_pct == Decimal("100.0")
     assert criteria.expected_sourced_window_calendar_fingerprint == "CAL-FPR-V1-2d5ac7ac32455327cd636d64a4e15a1f689f25eb42a815e151ea31c3cf61cda1"
 
-    # Statutory taxes
+    # Statutory taxes: the re-ratable levies are interval tables resolved by session, not scalars
+    # (Audit §95.10 item 2), so each assertion names the date whose row it reads.
     costs = criteria.statutory_costs
-    assert costs.stt_delivery_rate == Decimal("0.0010")
-    assert costs.stt_intraday_sell_rate == Decimal("0.00025")
-    assert costs.sebi_turnover_charge_rate == Decimal("0.000001")
-    assert costs.stamp_duty_delivery_buy_rate == Decimal("0.00015")
-    assert costs.stamp_duty_intraday_buy_rate == Decimal("0.00003")
+    assert costs.get_rate("STT_DELIVERY", datetime.date(2018, 4, 2)) == Decimal("0.0010")
+    assert costs.get_rate("STT_INTRADAY_SELL", datetime.date(2018, 4, 2)) == Decimal("0.00025")
+    assert costs.get_rate("SEBI_TURNOVER", datetime.date(2019, 1, 1)) == Decimal("0.000001")
+    assert costs.get_rate("SEBI_TURNOVER", datetime.date(2020, 6, 1)) == Decimal("0.0000005")
+    assert costs.get_rate("SEBI_TURNOVER", datetime.date(2021, 4, 1)) == Decimal("0.000001")
+    assert costs.get_rate("STAMP_DUTY_DELIVERY_BUY", datetime.date(2020, 6, 30)) == Decimal("0.0001")
+    assert costs.get_rate("STAMP_DUTY_DELIVERY_BUY", datetime.date(2020, 7, 1)) == Decimal("0.00015")
+    assert costs.get_rate("STAMP_DUTY_INTRADAY_BUY", datetime.date(2020, 7, 1)) == Decimal("0.00003")
     assert costs.gst_rate == Decimal("0.18")
     assert costs.brokerage_per_order_inr == Decimal("20.00")
     assert "ipft" in costs.gst_taxable_base_components
+    # Every asserted rate names the committed byte it came from (§10.7)
+    for fee in costs.effective_dated_exchange_fees:
+        assert len(fee.circular_sha256) == 64, fee.circular_ref
+    for interval in costs.statutory_rate_intervals:
+        assert len(interval.source_sha256) == 64, interval.component
 
 
 def test_effective_dated_nse_fee_schedule_resolution():
     """
     Verify resolution of official NSE circulars across historical dates:
-    - Pre-April 2023: NSE/FA/46730 (Turnover 0.0000345, IPFT 0.000000001 = ₹0.01/cr)
+    - 2018-04-01 to 2020-12-31: NSE/FA/46730 "Existing" column (Turnover 0.0000325, IPFT ₹0.01/cr)
+    - 2021-01-01 to 2023-03-31: NSE/FA/46730 (Turnover 0.0000345, IPFT 0.000000001 = ₹0.01/cr)
     - April 2023 to March 2024: NSE/FA/56129 (Turnover 0.0000325, IPFT 0.000001 = ₹10/cr)
     - April 2024 to Sept 2024: NSE/FA/61137 (Turnover 0.0000322, IPFT 0.000001 = ₹10/cr)
-    - Oct 2024 to Feb 2026: NSE/FA/64323 / SEBI uniform (Turnover 0.0000297, IPFT 0.000001 = ₹10/cr)
+    - Oct 2024 to Feb 2026: NSE/FA/64232 / SEBI uniform (Turnover 0.0000297, IPFT 0.000001 = ₹10/cr)
     - March 2026 onwards: NSE/FA/73061 (Turnover 0.000030699, IPFT 0.000000001 = ₹0.01/cr)
     """
     criteria = load_go_no_go_criteria()
     costs = criteria.statutory_costs
+
+    # 0. Pre-2021 sessions are priced by the row whose rate NSE/FA/46730 replaced
+    p0 = costs.get_exchange_fee_for_date(datetime.date(2018, 4, 2))
+    assert p0.circular_ref == "NSE/FA/46730"
+    assert p0.exchange_turnover_rate == Decimal("0.0000325")
+    assert p0.ipft_rate == Decimal("0.000000001")
 
     # 1. 2022 Pre-April 2023
     p1 = costs.get_exchange_fee_for_date(datetime.date(2022, 6, 15))
@@ -97,7 +113,7 @@ def test_effective_dated_nse_fee_schedule_resolution():
     assert p3_end.circular_ref == "NSE/FA/61137"
 
     p4 = costs.get_exchange_fee_for_date(datetime.date(2024, 10, 1))
-    assert p4.circular_ref == "NSE/FA/64323"
+    assert p4.circular_ref == "NSE/FA/64232"
     assert p4.exchange_turnover_rate == Decimal("0.0000297")
     assert p4.ipft_rate == Decimal("0.000001")
 

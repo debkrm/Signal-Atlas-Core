@@ -604,7 +604,7 @@ def test_walk_forward_trial_registry_integration(wf_environment):
     assert record.seq == 1
     assert record.trial_id == "TRIAL-WF-001"
     assert record.dataset_fingerprint == res.dataset_content_fingerprint
-    assert record.criteria_version == "1.1.15"
+    assert record.criteria_version == "1.1.16"
     assert record.execution_config is not None
     assert record.execution_config == res.execution_config
     assert record.sharpe_ratio == res.annualized_sharpe
@@ -1137,13 +1137,13 @@ def test_wave2_dataset_content_fingerprint_binding_and_rejection(wf_environment)
         )
 
     # Criteria version dynamic default (Audit §31 H-34)
-    assert res.criteria_version == "1.1.15"
-    assert trial_rec.criteria_version == "1.1.15"
+    assert res.criteria_version == "1.1.16"
+    assert trial_rec.criteria_version == "1.1.16"
 
     # Execution configuration bound to WalkForwardResult, TrialRecord, and hashed into result fingerprint (Audit §31 H-33 / §32 H-37)
     assert res.execution_config is not None
     assert res.execution_config["execution_latency_sessions"] == 1
-    assert res.execution_config["criteria_version"] == "1.1.15"
+    assert res.execution_config["criteria_version"] == "1.1.16"
     assert trial_rec.execution_config == res.execution_config
     assert isinstance(res.execution_config["cost_model"], dict)
     assert res.execution_config["cost_model"]["model"] == "TransactionCostModel"

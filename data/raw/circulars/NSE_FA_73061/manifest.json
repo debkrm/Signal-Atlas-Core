@@ -1,0 +1,13 @@
+{
+  "circular_ref": "NSE_FA_73061",
+  "filename": "FA73061.pdf",
+  "source_url": "https://nsearchives.nseindia.com/content/circulars/FA73061.pdf",
+  "retrieved_at": "2026-11-19T04:59:35+00:00",
+  "http_status": 200,
+  "byte_count": 163365,
+  "sha256": "6085601a26177ed61e37e5347960b936d71464ab625d6a0d9fe72b2ec838ac09",
+  "subject": "Revision in Transaction Charges",
+  "issued_by": "NSE / Finance & Accounts",
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "note": "Byte-exact payload as retrieved; never edited. Digest is over the raw file bytes."
+}

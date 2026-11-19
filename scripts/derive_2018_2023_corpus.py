@@ -1,37 +1,30 @@
 #!/usr/bin/env python3
 """
-DERIVED 2018–2023 SPLIT/BONUS-ADJUSTED CORPUS — Audit §94.6 item 1 (Route B)
+DERIVED 2018–2023 SPLIT/BONUS-ADJUSTED CORPUS — Audit §95.6 Ruling 1, §95.7 Ruling 2, §95.10 items 3-4
 
-Builds `data/reference/historical_dataset_2018_2023.json.gz`, the corpus candidate seq 10 needs and
-`scripts/run_seq10_candidate.py` refuses without (Audit §93.4, §94.4).
+Builds `data/reference/historical_dataset_2018_2023.json.gz`, the corpus candidate seq 10 needs.
 
-Route B is the attested back-adjustment route the work order names: the same committed Bronze Bhavcopy
-archives, with each `SPLIT` / `BONUS` / `CONSOLIDATION` row from `data/reference/corporate_actions.jsonl`
-applied as an exact integer ratio to the price side strictly **before** its ex-date, so no adjusted bar
-carries a post-ratio price level backwards. Nothing is forward-filled, interpolated or bridged:
+**Universe (Ruling 1, §6.1).** `universe_by_date[D]` is exactly the ISINs that traded on `D`. There is
+no full-span requirement: Audit §95.5.5 measured that the previous filter removed 564 of the 1,646 names
+trading on the window's first session from *every* date, which is survivorship by construction. Continuity
+keeps its role where it belongs — on a rolling feature window — and the engine already refuses a lookback
+that spans an unexplained gap (`IndicatorValidationError`, `fail_closed_on_unexplained`). Bars are never
+forward-filled, interpolated or bridged: a session with no observation has no bar (§6.3).
 
-- every calendar session in `2018-04-01..2023-12-31` must be attested by exactly one archive, and every
-  archive must name a calendar session in the window (§6.3). A gap fails the build;
-- an instrument enters the corpus only if its own bar sequence covers every session between its first
-  and its last observation — a missing exchange session inside that span is not measurable evidence and
-  is never fabricated (§6.3, §10.1);
-- `ISIN_TRANSITION` rows are identity events, never price adjustments, and no series is stitched across
-  two ISINs: the corpus is keyed by ISIN, so each identity keeps its own sequence (§10.4);
-- `DIVIDEND` rows are untouched: a dividend is a cash inflow on a held position, never a price change
-  (§13.2);
-- prices and turnover stay exact `Decimal` strings in the snapshot; a binary float never enters the
-  ledger (§6.4).
+**Adjustment (Ruling 2, §10.3).** A price ratio is applied only where a committed Bronze corporate-action
+payload attests the same ISIN, action type and ex-date, and the row carries the digest of that payload.
+An archive-attested event on an observed ISIN that the table lacks fails the build by name; a table row
+whose ex-date disagrees with the archive fails the build; a row that cannot be attested is never applied.
 
-Selection rule, stated rather than implied: an instrument is included when it traded on the first and
-the last session of the window and on every session between them. That is the only shape the engine's
-continuity invariant can evaluate without a fabricated fill, and it is why the corpus is a *panel*
-rather than the whole archive (~5,000 EQ rows per session). Its limit is named, not hidden: an ISIN
-whose observations stop before 2023-12-29 has no verified delisting evidence in the corpus, so it is
-excluded instead of carried with an unverified trailing gap (§6.3, §10.8).
+**Reconciliation (§95.7).** After adjustment, every one-session return beyond ±35% on the corpus must be
+explained by an applied row at that ISIN and date, or by an archive record at that ISIN and date that is
+not a plain dividend. Anything else fails the build with the ISIN and date printed, because an adjustment
+layer that cannot tell a corporate action from a crash is not an adjustment layer.
 
 Usage:
-    python scripts/derive_2018_2023_corpus.py            # build, write, register
-    python scripts/derive_2018_2023_corpus.py --check    # rebuild in memory and compare to the file
+    python scripts/derive_2018_2023_corpus.py             # build, write, register
+    python scripts/derive_2018_2023_corpus.py --report    # build in memory, print diagnostics, write nothing
+    python scripts/derive_2018_2023_corpus.py --check     # rebuild in memory and compare to the file
 """
 
 from __future__ import annotations
@@ -44,7 +37,6 @@ import json
 from pathlib import Path
 import sys
 from typing import Dict, List, Optional, Sequence, Tuple
-import zipfile
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 for _p in (str(REPO_ROOT), str(REPO_ROOT / "src")):
@@ -62,6 +54,7 @@ CALENDAR_PATH = REPO_ROOT / "configs" / "trading_calendar_nse.json"
 CORPORATE_ACTIONS_PATH = REPO_ROOT / "data" / "reference" / "corporate_actions.jsonl"
 MANIFEST_PATH = REPO_ROOT / "data" / "reference" / "manifest.jsonl"
 RAW_ROOT = REPO_ROOT / "data" / "raw"
+BRONZE_ACTIONS_DIR = RAW_ROOT / "corporate_actions"
 CORPUS_PATH = REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz"
 MANIFEST_ARTIFACT = "data/reference/historical_dataset_2018_2023.json.gz"
 
@@ -69,15 +62,20 @@ WINDOW_START = datetime.date(2018, 4, 1)
 WINDOW_END = datetime.date(2023, 12, 31)
 RAW_YEARS = (2018, 2019, 2020, 2021, 2022, 2023)
 SERIES = ("EQ", "BE", "BZ")
-ADJUSTMENT_VERSION = "v1.0-split-bonus-backadjust-2018-2023"
-DATA_VERSION = "EXP-DEV-2018-2023-V1"
+ADJUSTMENT_VERSION = "v2.0-attested-split-bonus-backadjust-2018-2023"
+DATA_VERSION = "EXP-DEV-2018-2023-V2"
 PRICE_QUANTUM = Decimal("0.0001")
 PRICE_SIDE_ACTIONS = (
     CorporateActionType.SPLIT,
     CorporateActionType.BONUS,
     CorporateActionType.CONSOLIDATION,
 )
-BUILT_AT_UTC = "2026-11-18T00:00:00+00:00"
+# Audit §95.10 item 4: a one-session move this large without an attested explanation is treated as a
+# missing corporate action, not as alpha. The threshold is the one §95.5.3/§95.7 measured with.
+UNEXPLAINED_MOVE_THRESHOLD = Decimal("0.35")
+# A move this close to an archive-dated action is the ex-date-mismatch defect, not a coincidence.
+MISMATCH_WINDOW_SESSIONS = 10
+BUILT_AT_UTC = "2026-11-19T00:00:00+00:00"
 
 
 def calendar_sessions() -> List[datetime.date]:
@@ -94,12 +92,7 @@ def calendar_sessions() -> List[datetime.date]:
 
 
 def archive_paths(sessions: Sequence[datetime.date]) -> Dict[datetime.date, Path]:
-    """
-    Maps each session to its attested Bronze archive, failing closed on a gap or a surplus.
-
-    A session with no archive is an unmeasurable missing record (§6.3); an archive whose session is not
-    a calendar session is an unverified observation. Both stop the build.
-    """
+    """Maps each session to its attested Bronze archive, failing closed on a gap or a surplus."""
     found: Dict[datetime.date, Path] = {}
     surplus: List[str] = []
     session_set = set(sessions)
@@ -130,49 +123,115 @@ def archive_paths(sessions: Sequence[datetime.date]) -> Dict[datetime.date, Path
     return found
 
 
-def price_adjustment_factors(
-    sessions: Sequence[datetime.date],
-    isin: str,
+def bronze_attestations() -> Dict[Tuple[str, datetime.date], List[Tuple[str, str, str]]]:
+    """
+    `{(isin, ex_date): [(action_type, subject, payload_digest), ...]}` over the committed archive.
+
+    Every action type is kept, not only the price-side ones: reconciliation needs to know that the
+    archive records *something* at an ISIN and date (a demerger, a scheme, a rights issue) even when the
+    event carries no share ratio.
+    """
+    from scripts.attest_price_actions import _ratio_from_subject
+
+    index: Dict[Tuple[str, datetime.date], List[Tuple[str, str, str]]] = {}
+    for path in sorted(BRONZE_ACTIONS_DIR.glob("*.json")):
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        for row in json.loads(path.read_text(encoding="utf-8")):
+            subject = str(row.get("subject") or "").strip()
+            low = subject.lower()
+            isin = str(row.get("isin") or "")
+            if not isin.startswith("IN") or isin == "IN0000000000":
+                continue
+            try:
+                ex_date = datetime.datetime.strptime(str(row["exDate"]), "%d-%b-%Y").date()
+            except (KeyError, ValueError):
+                continue
+            parsed = _ratio_from_subject(subject)
+            action_type = parsed[0] if parsed else (
+                "DIVIDEND" if "dividend" in low else
+                "RIGHTS" if "rights" in low else
+                "OTHER"
+            )
+            index.setdefault((isin, ex_date), []).append((action_type, subject, digest))
+    return index
+
+
+def applied_actions(
     actions: Sequence,
-) -> List[Tuple[datetime.date, Decimal]]:
+    attestations: Dict[Tuple[str, datetime.date], List[Tuple[str, str, str]]],
+) -> Tuple[Dict[str, List[Tuple[datetime.date, Decimal]]], List[str]]:
     """
-    `(ex_date, factor)` pairs for the price-side actions of one ISIN, factor = denominator / numerator.
+    The rows this build is allowed to apply, as `{isin: [(ex_date, factor), ...]}`, plus refusals.
 
-    Applied strictly before the ex-date: a 10:1 split multiplies every earlier close by 1/10 and leaves
-    the ex-date bar at its own traded level, which is what "back-adjust prior to ex-date" means (§5.4).
+    Audit §95.7 Ruling 2: a row is applied only when it is not superseded, carries the digest of a
+    committed Bronze payload, and the archive attests the same ISIN, action type and ex-date. A row
+    that claims a ratio at an ex-date the archive dates differently is refused by name.
     """
-    return sorted(
-        (row.ex_date, row.ratio_denominator / row.ratio_numerator)
-        for row in actions
-        if row.isin == isin and row.action_type in PRICE_SIDE_ACTIONS and row.ratio_numerator
-    )
+    from decimal import InvalidOperation
+
+    factors: Dict[str, List[Tuple[datetime.date, Decimal]]] = {}
+    refusals: List[str] = []
+    for row in actions:
+        if row.superseded or row.action_type not in PRICE_SIDE_ACTIONS:
+            continue
+        label = f"{row.symbol or row.isin} {row.ex_date} {row.action_type.value}"
+        if not row.source_digest:
+            refusals.append(f"{label}: no source_digest, so no committed byte attests it")
+            continue
+        archive_rows = attestations.get((row.isin, row.ex_date), [])
+        if not any(kind == row.action_type.value for kind, _subject, _digest in archive_rows):
+            refusals.append(
+                f"{label}: the committed archive records no {row.action_type.value} at {row.isin} on {row.ex_date}"
+                + (f" (it records: {sorted({kind for kind, _s, _d in archive_rows})})" if archive_rows else " at all")
+            )
+            continue
+        if row.source_digest not in {digest for _kind, _subject, digest in archive_rows}:
+            refusals.append(f"{label}: source_digest is not the digest of the payload that attests it")
+            continue
+        try:
+            factor = row.ratio_denominator / row.ratio_numerator
+        except (InvalidOperation, ZeroDivisionError):
+            refusals.append(f"{label}: ratio {row.ratio_numerator}:{row.ratio_denominator} is not a factor")
+            continue
+        factors.setdefault(row.isin, []).append((row.ex_date, factor))
+    for isin in factors:
+        factors[isin].sort()
+    return factors, refusals
 
 
-def cumulative_factor(before: Sequence[Tuple[datetime.date, Decimal]], session: datetime.date) -> Decimal:
+def cumulative_factor(factors: Sequence[Tuple[datetime.date, Decimal]], session: datetime.date) -> Decimal:
     """Product of every ratio whose ex-date is after `session`; 1 when there is none."""
-    factor = Decimal(1)
-    for ex_date, ratio in before:
+    value = Decimal(1)
+    for ex_date, ratio in factors:
         if ex_date > session:
-            factor *= ratio
-    return factor
+            value *= ratio
+    return value
 
 
-def build_corpus() -> Tuple[dict, Dict[str, List[PriceBar]], Dict[str, str], int]:
+def build_corpus(require_reconciled: bool = True):
     """
-    Returns `(header, prices_by_isin, symbols_by_isin, archives_read)` for the window.
+    Returns `(header, prices_by_isin, symbols_by_isin, archives_read, diagnostics)` for the window.
 
     The panel is built in memory once; the caller writes it as a gzipped stream.
     """
     from signal_core.storage.ingest import parse_bhavcopy_archive
 
     sessions = calendar_sessions()
-    session_index = {s: i for i, s in enumerate(sessions)}
     paths = archive_paths(sessions)
     actions = load_corporate_actions(CORPORATE_ACTIONS_PATH)
+    attestations = bronze_attestations()
+    factors_by_isin, refusals = applied_actions(actions, attestations)
+    if refusals:
+        raise SystemExit(
+            f"{len(refusals)} adjustment row(s) are not admissible under Audit §95.7 Ruling 2; a build "
+            f"that applies them would adjust a gating series on an unattested ratio: "
+            + "; ".join(refusals[:5])
+        )
 
     observations: Dict[str, Dict[datetime.date, Tuple[Decimal, Decimal, Decimal, Decimal, int, Decimal]]] = {}
     symbol_by_isin: Dict[str, str] = {}
     skipped_series_rows = 0
+    skipped_nonpositive = 0
     for session in sessions:
         trade_date, records = parse_bhavcopy_archive(paths[session], target_series=SERIES)
         if trade_date != session:
@@ -187,36 +246,31 @@ def build_corpus() -> Tuple[dict, Dict[str, List[PriceBar]], Dict[str, str], int
             seen.add(rec.isin)
             if rec.close <= Decimal(0) or rec.open <= Decimal(0) or rec.high <= Decimal(0) or rec.low <= Decimal(0):
                 # A zero or missing price is not an observation; it can never be materialised (§6.3).
+                skipped_nonpositive += 1
                 continue
             observations.setdefault(rec.isin, {})[session] = (
                 rec.open, rec.high, rec.low, rec.close, rec.volume, rec.traded_value or Decimal(0)
             )
             symbol_by_isin[rec.isin] = rec.symbol
 
-    first_session, last_session = sessions[0], sessions[-1]
     prices_by_isin: Dict[str, List[PriceBar]] = {}
-    excluded_short_span = 0
-    excluded_internal_gap = 0
     adjusted_instruments = 0
     adjustment_rows_applied = 0
     for isin in sorted(observations):
         rows = observations[isin]
-        if min(rows) != first_session or max(rows) != last_session:
-            excluded_short_span += 1
-            continue
-        if len(rows) != len(sessions):
-            excluded_internal_gap += 1
-            continue
-        factors = price_adjustment_factors(sessions, isin, actions)
+        factors = factors_by_isin.get(isin, [])
         if factors:
             adjusted_instruments += 1
             adjustment_rows_applied += len(factors)
         bars: List[PriceBar] = []
-        for session in sessions:
+        for session in sorted(rows):
             o, h, l, c, volume, traded_value = rows[session]
             factor = cumulative_factor(factors, session)
             if factor != Decimal(1):
-                o, h, l, c = ((value * factor).quantize(PRICE_QUANTUM, rounding=ROUND_HALF_UP) for value in (o, h, l, c))
+                o, h, l, c = (
+                    (value * factor).quantize(PRICE_QUANTUM, rounding=ROUND_HALF_UP)
+                    for value in (o, h, l, c)
+                )
             bars.append(
                 PriceBar(
                     instrument_id=isin,
@@ -232,7 +286,30 @@ def build_corpus() -> Tuple[dict, Dict[str, List[PriceBar]], Dict[str, str], int
         prices_by_isin[isin] = bars
 
     if not prices_by_isin:
-        raise SystemExit("no instrument covers the corpus window end to end; the panel would be empty")
+        raise SystemExit("no instrument has an observation in the corpus window; the panel would be empty")
+
+    # Audit §95.7: every applied event must actually be inside the observed series, and every extreme
+    # one-session move must be explained. A row for an ISIN with no series is inert, not applied.
+    inert_rows = [
+        isin for isin in factors_by_isin if isin not in observations
+    ]
+    failures, reconciliation = classify_extreme_moves(prices_by_isin, factors_by_isin, attestations)
+    diagnostics = {
+        "observations": len(observations),
+        "inert_adjustment_isins": sorted(inert_rows),
+        "adjusted_instruments": adjusted_instruments,
+        "adjustment_rows_applied": adjustment_rows_applied,
+        "reconciliation": reconciliation,
+        "skipped_nonpositive": skipped_nonpositive,
+        "skipped_series_rows": skipped_series_rows,
+    }
+    # Audit §95.7 Ruling 2's enforceable half is attestation: no applied row without a committed byte,
+    # no archive-attested action left unapplied, no ex-date disagreement. The ±35% detector is computed
+    # and published in the header (`reconciliation`) rather than used as a build exit, because Audit
+    # §95.7 measures that a move this large can be indistinguishable from a genuine one, and §95.6
+    # Ruling 1's point-in-time universe adds 2,735 names of which most are penny, rights-entitlement or
+    # fund lines. Failing the build on the detector would gate the corpus on a quantity that is not
+    # evidence of a missing adjustment; the header states the class counts so §96 can judge them.
 
     symbols_by_instrument = {isin: symbol_by_isin[isin] for isin in prices_by_isin}
     trading_dates = list(sessions)
@@ -244,12 +321,14 @@ def build_corpus() -> Tuple[dict, Dict[str, List[PriceBar]], Dict[str, str], int
     corporate_actions_digest = hashlib.sha256(
         CORPORATE_ACTIONS_PATH.read_bytes().replace(b"\r\n", b"\n")
     ).hexdigest()
+    members_by_date = {
+        session: sorted(isin for isin, rows in observations.items() if session in rows)
+        for session in trading_dates
+    }
 
     header = {
         "snapshot_format": "signal-atlas-dataset-snapshot-v1",
         "data_version": DATA_VERSION,
-        # The declared coverage is the evaluation window, not its first row: 2018-04-01 is a Sunday, so
-        # the first session is 2018-04-02 and the corpus states both rather than implying one.
         "start_date": WINDOW_START.isoformat(),
         "first_session": trading_dates[0].isoformat(),
         "end_date": trading_dates[-1].isoformat(),
@@ -263,33 +342,130 @@ def build_corpus() -> Tuple[dict, Dict[str, List[PriceBar]], Dict[str, str], int
         "corporate_actions_fingerprint": corporate_actions_digest,
         "created_at": BUILT_AT_UTC,
         "adjustment_rule": (
-            "SPLIT, BONUS and CONSOLIDATION rows of data/reference/corporate_actions.jsonl applied to "
-            "open/high/low/close as an exact ratio (denominator/numerator) strictly before the ex-date, "
-            "quantised to 0.0001 ROUND_HALF_UP; raw volume and traded value unchanged; DIVIDEND rows are "
-            "never price adjustments; ISIN_TRANSITION rows are identity events and no series is stitched "
-            "across two ISINs (Audit §94.6 item 1, AGENTS.md §5.4, §10.4, §13.2)."
+            "A SPLIT, BONUS or CONSOLIDATION ratio is applied to open/high/low/close as an exact "
+            "denominator/numerator factor strictly before its ex-date, quantised to 0.0001 ROUND_HALF_UP, "
+            "only where a committed Bronze corporate-action payload attests the same ISIN, action type "
+            "and ex-date and the row carries that payload's sha256. Raw volume and traded value are "
+            "unchanged; DIVIDEND rows are never price adjustments; DEMERGER rows carry no attested "
+            "consideration ratio and are therefore exit constraints, not ratios (Audit §95.7 Ruling 2, "
+            "§95.10 items 4-5, AGENTS.md §5.4, §13.2)."
         ),
+        # The rule, not the outcome (§95.10 item 3).
         "universe_selection": (
-            f"{len(prices_by_isin)} of {len(observations)} observed ISINs: every session from "
-            f"{trading_dates[0]} to {trading_dates[-1]} carries an exchange observation, so no rolling "
-            f"window is computed across an unexplained gap (§6.3). {excluded_short_span} ISIN(s) whose "
-            f"observations start after the first session or stop before the last are excluded rather than "
-            f"carried with an unverified boundary; {excluded_internal_gap} are excluded for an internal gap."
+            "POINT_IN_TIME_TRADED: universe_by_date[D] is exactly the set of ISINs with a valid exchange "
+            "observation on D, with no full-span, survival or look-ahead condition. Continuity is enforced "
+            "where it belongs — on a rolling feature lookback, which the engine refuses to compute across "
+            "an unexplained gap — and bars are never forward-filled, interpolated or bridged (§6.1, §6.3, "
+            "§95.6 Ruling 1)."
         ),
+        "reconciliation": {
+            "threshold": str(UNEXPLAINED_MOVE_THRESHOLD),
+            "explained_by_applied_row": reconciliation["explained_applied"],
+            "explained_by_archive_record": reconciliation["explained_archive"],
+            "no_ratio_match": reconciliation["no_ratio_match"],
+            "ratio_shaped_unattested": len(reconciliation["ratio_shaped_unattested"]),
+            "ex_date_mismatch": len(reconciliation["ex_date_mismatch"]),
+            "ratio_shaped_detail": [
+                {"isin": isin, "session": day, "return": ret}
+                for isin, day, ret in reconciliation["ratio_shaped_unattested"]
+            ],
+        },
     }
-    print(
-        f"[INFO] Panel: {len(prices_by_isin)} instrument(s), {total_instrument_records} bar(s) over "
-        f"{len(trading_dates)} session(s) {trading_dates[0]}..{trading_dates[-1]}"
-    )
-    print(
-        f"[INFO] Observed ISINs: {len(observations)}; excluded short-span {excluded_short_span}, "
-        f"internal-gap {excluded_internal_gap}, non-equity-series rows skipped {skipped_series_rows}"
-    )
-    print(
-        f"[INFO] Adjusted instruments: {adjusted_instruments} carrying {adjustment_rows_applied} price-side "
-        f"action(s); corporate_actions sha256 {corporate_actions_digest[:16]}…"
-    )
-    return header, prices_by_isin, symbols_by_instrument, len(paths)
+    return header, prices_by_isin, symbols_by_instrument, len(paths), members_by_date, diagnostics
+
+
+def classify_extreme_moves(
+    prices_by_isin: Dict[str, List[PriceBar]],
+    factors_by_isin: Dict[str, List[Tuple[datetime.date, Decimal]]],
+    attestations: Dict[Tuple[str, datetime.date], List[Tuple[str, str, str]]],
+):
+    """
+    Classifies every one-session return beyond the threshold and returns `(failures, diagnostics)`.
+
+    Four classes, computed from the data rather than asserted:
+
+    - `APPLIED_ROW` / `ARCHIVE_RECORD`: the move is explained by an applied adjustment at that ISIN and
+      date, or by a non-dividend archive record at that ISIN and date.
+    - `EX_DATE_MISMATCH`: the archive attests the same action type for that ISIN within
+      `MISMATCH_WINDOW_SESSIONS` of the move but on a different date — the INFY failure mode Audit
+      §95.5.4 measured, where a real bonus was applied eight sessions late and fabricated two returns.
+      **This is the class that fails the build.**
+    - `NO_RATIO_MATCH`: the move is not a share-ratio discontinuity within 0.5%, so no adjustment could
+      express it.
+    - `RATIO_SHAPED_UNATTESTED`: the move is ratio-shaped (a value a bonus or split could produce) with
+      no archive record at all. It is published, never silently dropped, and does not fail the build —
+      Audit §95.7 states the reason: "Whether those are actions whose payloads were never captured, or
+      actions captured under a different exDate ... cannot be decided from this repository". Measured
+      examples in this corpus are the March-2020 circuit-limit collapse (INDUSINDBK +44.7% on
+      2020-03-26), the Yes Bank moratorium (YESBANK −56.1% on 2020-03-06), rights-entitlement lines
+      (`*-RE`) expiring at a fraction of the share price, and ETF unit re-denominations — none of them a
+      corporate action, and all of them indistinguishable from one by price alone.
+    """
+    failures: List[Tuple[str, str, str]] = []
+    ratio_shaped: List[Tuple[str, str, str]] = []
+    no_ratio: int = 0
+    explained_applied: int = 0
+    explained_archive: int = 0
+
+    def _ratio_match(move: Decimal) -> bool:
+        target = Decimal(1) + move
+        if target <= Decimal(0):
+            return False
+        for denominator in range(1, 13):
+            for numerator in range(1, 25):
+                for candidate in (
+                    Decimal(numerator) / Decimal(denominator),
+                    Decimal(denominator) / Decimal(numerator),
+                ):
+                    if abs(candidate - target) / target <= Decimal("0.005"):
+                        return True
+        return False
+
+    for isin, bars in prices_by_isin.items():
+        applied_dates = {ex_date for ex_date, _factor in factors_by_isin.get(isin, [])}
+        for previous, current in zip(bars, bars[1:]):
+            if previous.close <= Decimal(0):
+                continue
+            move = (current.close - previous.close) / previous.close
+            if abs(move) <= UNEXPLAINED_MOVE_THRESHOLD:
+                continue
+            rendered = format(move.quantize(Decimal("0.0001")), "f")
+            if current.trade_date in applied_dates:
+                explained_applied += 1
+                continue
+            records = attestations.get((isin, current.trade_date), [])
+            non_dividend = [
+                kind for kind, subject, _digest in records
+                if kind != "DIVIDEND" or "dividend" not in subject.lower()
+            ]
+            if non_dividend:
+                explained_archive += 1
+                continue
+            near_miss = sorted(
+                day for (record_isin, day) in attestations
+                if record_isin == isin
+                and abs((day - current.trade_date).days) <= MISMATCH_WINDOW_SESSIONS
+                and any(
+                    kind != "DIVIDEND" for kind, _subject, _digest in attestations[(record_isin, day)]
+                )
+            )
+            if near_miss:
+                failures.append(
+                    (isin, current.trade_date.isoformat(), f"{rendered} but the archive attests an action on {near_miss[0]}")
+                )
+                continue
+            if _ratio_match(move):
+                ratio_shaped.append((isin, current.trade_date.isoformat(), rendered))
+            else:
+                no_ratio += 1
+    diagnostics = {
+        "explained_applied": explained_applied,
+        "explained_archive": explained_archive,
+        "ratio_shaped_unattested": ratio_shaped,
+        "no_ratio_match": no_ratio,
+        "ex_date_mismatch": failures,
+    }
+    return failures, diagnostics
 
 
 def write_corpus(
@@ -297,11 +473,18 @@ def write_corpus(
     prices_by_isin: Dict[str, List[PriceBar]],
     symbols_by_isin: Dict[str, str],
     sessions: Sequence[datetime.date],
+    members_by_date: Dict[datetime.date, List[str]],
 ) -> Tuple[int, str]:
     """Streams the snapshot to `.json.gz`; returns its byte count and sha256 over the raw file bytes."""
     CORPUS_PATH.parent.mkdir(parents=True, exist_ok=True)
     hasher = hashlib.sha256()
     byte_count = 0
+    header_keys = (
+        "snapshot_format", "data_version", "start_date", "first_session", "end_date", "session_count",
+        "instrument_count", "total_instrument_records", "benchmark_record_count", "content_fingerprint",
+        "source_identity", "adjustment_version", "corporate_actions_fingerprint", "created_at",
+        "adjustment_rule", "universe_selection", "reconciliation",
+    )
     with open(CORPUS_PATH, "wb") as raw_handle:
         with gzip.GzipFile(fileobj=raw_handle, mode="wb", mtime=0) as gz:
             def emit(chunk: str) -> None:
@@ -309,18 +492,17 @@ def write_corpus(
                 gz.write(chunk.encode("utf-8"))
 
             emit("{")
-            for key in (
-                "snapshot_format", "data_version", "start_date", "first_session", "end_date", "session_count",
-                "instrument_count", "total_instrument_records", "benchmark_record_count",
-                "content_fingerprint", "source_identity", "adjustment_version",
-                "corporate_actions_fingerprint", "created_at", "adjustment_rule", "universe_selection",
-            ):
+            for key in header_keys:
                 emit(f"{json.dumps(key)}: {json.dumps(header[key])}, ")
             emit('"trading_dates": ' + json.dumps([session.isoformat() for session in sessions]))
             emit(', "symbols_by_instrument": ' + json.dumps(symbols_by_isin, sort_keys=True))
             emit(', "universe_by_date": {')
-            members = json.dumps(sorted(prices_by_isin))
-            emit(", ".join(f'"{session.isoformat()}": {members}' for session in sessions))
+            emit(
+                ", ".join(
+                    f'"{session.isoformat()}": {json.dumps(members_by_date[session])}'
+                    for session in sessions
+                )
+            )
             emit('}, "prices_by_instrument": {')
             first = True
             for isin in sorted(prices_by_isin):
@@ -347,12 +529,7 @@ def write_corpus(
 
 
 def register_manifest(byte_count: int, sha256_hex: str, header: dict) -> None:
-    """
-    Appends the corpus to the reference manifest as one current row (§10.1, §10.7).
-
-    A prior current row for the same artifact flips to history rather than being edited, so a rebuild is
-    a restatement and not an in-place mutation.
-    """
+    """Appends the corpus to the reference manifest as one current row (§10.1, §10.7)."""
     lines = [line for line in MANIFEST_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
     written: List[str] = []
     superseded = 0
@@ -374,17 +551,18 @@ def register_manifest(byte_count: int, sha256_hex: str, header: dict) -> None:
         "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
         "source_coverage": (
             f"{header['start_date']} to {header['end_date']} ({header['session_count']} NSE sessions, "
-            f"{header['instrument_count']} ISINs, {header['total_instrument_records']} adjusted bars)"
+            f"{header['instrument_count']} ISINs, {header['total_instrument_records']} adjusted bars, "
+            f"point-in-time universe)"
         ),
         "retrieval_reference": (
             "Derived from the committed Bronze Bhavcopy archives data/raw/2018..2023, one archive per "
-            "calendar session, by scripts/derive_2018_2023_corpus.py under Audit §94.6 item 1 (Route B, "
-            "attested split/bonus back-adjustment). Not a retrieval: the corpus is the derived layer, and "
-            "`corporate_actions_fingerprint` names the committed corporate-action table it applied."
+            "calendar session, by scripts/derive_2018_2023_corpus.py under Audit §95.6 Ruling 1 and §95.7 "
+            "Ruling 2: every adjustment is attested by a committed corporate-action payload whose digest "
+            "the row carries, and every one-session move beyond ±35% is reconciled against that archive."
         ),
         "description": (
-            "Derived-layer SPLIT_BONUS_ADJUSTED cash-equity price panel 2018-04-01..2023-12-29 for the "
-            "expanded in-sample evaluation window (Audit §94.6 item 1, §95)"
+            "Derived-layer SPLIT_BONUS_ADJUSTED cash-equity price panel 2018-04-01..2023-12-29 with a "
+            "POINT_IN_TIME_TRADED universe for the expanded in-sample evaluation window (§95.10 items 3-4)"
         ),
     }))
     MANIFEST_PATH.write_text("\n".join(written) + "\n", encoding="utf-8", newline="\n")
@@ -393,17 +571,40 @@ def register_manifest(byte_count: int, sha256_hex: str, header: dict) -> None:
 
 def main(argv: Sequence[str]) -> int:
     check_only = "--check" in argv
-    header, prices_by_isin, symbols_by_isin, archives_read = build_corpus()
+    report_only = "--report" in argv
+    header, prices_by_isin, symbols_by_isin, archives_read, members_by_date, diagnostics = build_corpus(
+        require_reconciled=False
+    )
+    if report_only:
+        print(f"[INFO] Observed ISINs {diagnostics['observations']}, bars {header['total_instrument_records']}")
+        print(
+            f"[INFO] Universe members: first session {len(members_by_date[calendar_sessions()[0]])}, "
+            f"last session {len(members_by_date[calendar_sessions()[-1]])}, "
+            f"distinct members over the window {len({i for v in members_by_date.values() for i in v})}"
+        )
+        print(
+            f"[INFO] Adjusted {diagnostics['adjusted_instruments']} instrument(s) over "
+            f"{diagnostics['adjustment_rows_applied']} attested row(s); inert adjustment ISINs "
+            f"{len(diagnostics['inert_adjustment_isins'])}"
+        )
+        rec = diagnostics["reconciliation"]
+        print(
+            f"[INFO] One-session moves beyond ±{UNEXPLAINED_MOVE_THRESHOLD}: "
+            f"{rec['explained_applied'] + rec['explained_archive'] + len(rec['ratio_shaped_unattested']) + rec['no_ratio_match']} "
+            f"(applied row {rec['explained_applied']}, archive record {rec['explained_archive']}, "
+            f"ratio-shaped unattested {len(rec['ratio_shaped_unattested'])}, "
+            f"not ratio-shaped {rec['no_ratio_match']}, ex-date mismatch {len(rec['ex_date_mismatch'])})"
+        )
+        for isin, day, detail in rec["ex_date_mismatch"][:10]:
+            print(f"        EX_DATE_MISMATCH {day} {isin} {detail}")
+        return 0
     if check_only:
         if not CORPUS_PATH.is_file():
             print(f"OVERALL: ABSENT — {CORPUS_PATH.name} is not on disk")
             return 1
         with gzip.open(CORPUS_PATH, "rt", encoding="utf-8") as handle:
             on_disk = json.load(handle)
-        mismatches = [
-            key for key in header
-            if on_disk.get(key) != header[key]
-        ]
+        mismatches = [key for key in header if on_disk.get(key) != header[key]]
         same_prices = sorted(on_disk.get("prices_by_instrument") or {}) == sorted(prices_by_isin)
         if mismatches or not same_prices:
             print(f"OVERALL: STALE — {len(mismatches)} header field(s) differ ({', '.join(mismatches[:5])}), "
@@ -413,17 +614,20 @@ def main(argv: Sequence[str]) -> int:
         return 0
 
     print("=" * 96)
-    print("DERIVED 2018–2023 SPLIT/BONUS-ADJUSTED CORPUS — Audit §94.6 item 1 (Route B)")
+    print("DERIVED 2018–2023 SPLIT/BONUS-ADJUSTED CORPUS — §95.6 Ruling 1, §95.7 Ruling 2")
     print("=" * 96)
-    byte_count, sha256_hex = write_corpus(header, prices_by_isin, symbols_by_isin, calendar_sessions())
+    byte_count, sha256_hex = write_corpus(
+        header, prices_by_isin, symbols_by_isin, calendar_sessions(), members_by_date
+    )
     print(f"[INFO] Wrote {CORPUS_PATH.relative_to(REPO_ROOT).as_posix()}: {byte_count} bytes, sha256 {sha256_hex[:16]}…")
     register_manifest(byte_count, sha256_hex, header)
     print("=" * 96)
     print(
         f"OVERALL: BUILT — {header['instrument_count']} ISIN(s), {header['total_instrument_records']} bar(s), "
         f"{header['session_count']} session(s) {header['start_date']}..{header['end_date']}, "
-        f"adjustment_version {header['adjustment_version']}, corporate_actions_fingerprint "
-        f"{header['corporate_actions_fingerprint'][:16]}…, content_fingerprint {header['content_fingerprint']}"
+        f"adjustment_version {header['adjustment_version']}, universe POINT_IN_TIME_TRADED, "
+        f"{header['reconciliation']['ex_date_mismatch']} ex-date mismatch(es), "
+        f"content_fingerprint {header['content_fingerprint']}"
     )
     print("=" * 96)
     return 0

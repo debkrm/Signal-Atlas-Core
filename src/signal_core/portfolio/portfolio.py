@@ -236,6 +236,13 @@ class Portfolio:
             self._positions[new_isin] = pos
             return None
 
+        elif action.action_type == CorporateActionType.DEMERGER:
+            # Audit §95.10 item 5 / §13.2: no consideration ratio is attested, so nothing is restated
+            # and nothing is settled at book value. The held-position rule is an exit constraint
+            # (DEMERGER_FORCED_EXIT) applied by the harness before the ex-date.
+            pos.apply_corporate_action(action)
+            return None
+
         elif action.action_type in (
             CorporateActionType.SPLIT,
             CorporateActionType.BONUS,

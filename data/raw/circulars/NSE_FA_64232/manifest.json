@@ -1,0 +1,13 @@
+{
+  "circular_ref": "NSE_FA_64232",
+  "filename": "FA64232.pdf",
+  "source_url": "https://nsearchives.nseindia.com/content/circulars/FA64232.pdf",
+  "retrieved_at": "2026-11-19T04:59:35+00:00",
+  "http_status": 200,
+  "byte_count": 104198,
+  "sha256": "85b816208f33bdd1c6c0d827b1ba996aba1fe08fe883a6d31c6a2c0ad55304a4",
+  "subject": "Revision in Transaction Charges (SEBI/HO/MRD/TPD-1/P/CIR/2024/92 true-to-label)",
+  "issued_by": "NSE / Finance & Accounts",
+  "provenance_status": "CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED",
+  "note": "Byte-exact payload as retrieved; never edited. Digest is over the raw file bytes."
+}

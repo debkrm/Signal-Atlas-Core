@@ -90,7 +90,7 @@ def test_delivery_sell_costs_stamp_duty_zero():
     assert breakdown.gross_amount == Decimal("100000.00")
     assert breakdown.stt == Decimal("100.000")  # 0.1%
     assert breakdown.stamp_duty == Decimal("0")   # ZERO on SELL
-    assert breakdown.exchange_turnover_fee == Decimal("2.970")  # ₹297/cr (NSE/FA/64323)
+    assert breakdown.exchange_turnover_fee == Decimal("2.970")  # ₹297/cr (NSE/FA/64232)
     assert breakdown.ipft == Decimal("0.100")                  # ₹10/cr
     assert breakdown.sebi_turnover_fee == Decimal("0.100")      # ₹10/cr
 
@@ -98,7 +98,7 @@ def test_delivery_sell_costs_stamp_duty_zero():
     assert breakdown.gst == expected_gst
 
     assert breakdown.net_cash_flow == (Decimal("100000.00") - breakdown.total_charges)
-    assert breakdown.circular_ref == "NSE/FA/64323"
+    assert breakdown.circular_ref == "NSE/FA/64232"
     # Post-Oct-2024 has NO slab flattening disclosure
     assert len(breakdown.disclosures) == 0
 
@@ -145,7 +145,7 @@ def test_historical_fee_schedules_transition():
     - 2023-03-31: ₹345/cr (NSE/FA/46730)
     - 2023-04-01: ₹325/cr (NSE/FA/56129)
     - 2024-09-30: ₹322/cr (NSE/FA/61137)
-    - 2024-10-01: ₹297/cr (NSE/FA/64323)
+    - 2024-10-01: ₹297/cr (NSE/FA/64232)
     - 2026-03-01: ₹306.99/cr (NSE/FA/73061)
     """
     model = TransactionCostModel()
@@ -196,9 +196,10 @@ def test_cost_model_fail_closed_rejections():
     with pytest.raises(CostCalculationError, match="finite positive Decimal"):
         model.compute_costs(valid_date, OrderSide.BUY, OrderProduct.DELIVERY, 10, Decimal("-100"))
 
-    # 4. Reject unmapped historical date before 2021
-    with pytest.raises(CriteriaValidationError, match="No governing NSE exchange fee schedule found"):
-        model.compute_costs(datetime.date(2019, 1, 1), OrderSide.BUY, OrderProduct.DELIVERY, 10, Decimal("100"))
+    # 4. Reject an unmapped historical date before the schedule's first row (2018-04-01). The levy that
+    #    resolves first raises, so the message names the component rather than the schedule.
+    with pytest.raises(CriteriaValidationError, match="covers trade date 2018-03-28"):
+        model.compute_costs(datetime.date(2018, 3, 28), OrderSide.BUY, OrderProduct.DELIVERY, 10, Decimal("100"))
 
 
 def test_paise_rounding_policy_at_breakdown_boundary_e6():

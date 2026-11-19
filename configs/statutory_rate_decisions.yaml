@@ -1,0 +1,98 @@
+# Statutory cost rate decisions — spans, sources, and what is deliberately not modelled
+#
+# Audit §95.10 item 2 authorises this file as the alternative to an interval table: "either convert them
+# to interval rows under the same attestation discipline, or commit a decision file that names the span
+# and the source for each rate and states that no change falls inside it."
+#
+# The re-ratable levies ARE interval rows now (`statutory_indian_cost_schedule.statutory_rate_intervals`
+# in configs/go_no_go_criteria.yaml), so this file does not restate their rates — a second copy would
+# be a second source of truth. It records the four things the interval table cannot express on its own,
+# each with the span and the source, and each one a conservative direction:
+
+metadata:
+  version: "1.0"
+  effective_from: "2018-04-01"
+  audit_section: "§95.10 item 2 (feat-s96)"
+
+interval_tables:
+  # Where the rates live, so a reader of this file is not left guessing.
+  declared_in: "configs/go_no_go_criteria.yaml: statutory_indian_cost_schedule.statutory_rate_intervals"
+  attested_by: "data/raw/circulars/<source_ref>/ (payload + manifest.json with sha256, source_url, retrieved_at)"
+  fail_closed:
+    - "signal_core.contracts.criteria: a row without a 64-hex source_sha256 is refused at load"
+    - "signal_core.contracts.criteria: a component with no covering interval refuses `get_rate` rather than charging zero"
+    - "scripts.run_seq10_candidate.statutory_source_problem: a digest that resolves to no committed byte refuses the run"
+
+# ---------------------------------------------------------------------------------------------------
+# 1. The 1,000x IPFT step Audit §95.8 could not resolve from the schedule alone.
+#    Settled from the circular text: it is real, and both adjacent rows were correct.
+not_a_defect:
+  - ref: "IPFT 0.000000001 -> 0.000001 on 2023-04-01"
+    finding: "Audit §95.8: 'a 1,000x step in adjacent rows ... one of the two rows is wrong by three orders of magnitude'"
+    resolution: >
+      NSE/FA/56129 (2023-03-24) recalibrates the contribution explicitly: "from existing Rs.0.01 per
+      crore of the traded value to Rs.10 per crore of the traded value in Cash Equities Market
+      Segment". Rs 0.01 per crore is 1e-9 of traded value and Rs 10 per crore is 1e-6, so the step is
+      a real 1,000x re-rating, not a typo. NSE/FA/73061 (2026-02-27) reverses it from 2026-03-01
+      ("roll back the increase ... at the level levied prior to April 1, 2023"), which is the same
+      1,000x step back. Both rows stand as committed.
+    source: "NSE_FA_56129, NSE_FA_73061"
+
+# ---------------------------------------------------------------------------------------------------
+# 2. A rate change inside the window that this schedule does NOT model, with its span.
+not_modelled:
+  - ref: "2020 COVID concessional cash-market turnover charge"
+    span: "2020-08-01 .. 2021-03-31"
+    applicable_to: >
+      EQ-series stocks other than NIFTY 50 constituents, NIFTY Next 50 constituents, debt-oriented ETFs
+      and GSM stocks.
+    rate_not_applied: "Rs 2.75 per lakh up to Rs 7,500 cr of monthly traded value, Rs 1.75 above it"
+    source: "NSE_FA_45147 (2020-07-27, Aug 1-Oct 31 2020), NSE_FA_46225 (2020-10-30, extended Nov 1 2020-Mar 31 2021)"
+    why_not: >
+      The single authoritative cost engine receives no instrument identity, so it cannot tell an index
+      constituent from a non-index stock, and applying the concession to the whole market would
+      understate cost on exactly the names that did not receive it. The committed slab-1 rate is applied
+      instead, which OVERSTATES cost by Rs 70 per crore (3.45 -> 2.75) for eligible names in that
+      eight-month span. Direction of the error is conservative for a long/short equity book whose
+      verdict gates on expectancy after cost.
+    closes_when: "the engine accepts a point-in-time per-instrument concession predicate (§10.5 interval join)"
+
+  - ref: "GST on the SEBI turnover fee"
+    span: "2018-04-01 .. 2022-07-18"
+    source: "BSE Notice 20261030-1 restating the 2022-07-18 effective date of GST on SEBI turnover fees"
+    why_not: >
+      `gst_taxable_base_components` lists `sebi_turnover` for the whole window, so sessions before
+      2022-07-18 are charged 18% GST on a fee that was not itself taxable then. The overstatement is
+      0.18 x 1e-6 of turnover (Rs 1.8 per crore), and it is inside the same 18% base the criteria
+      already fix. Not changed here: the GST base is a criteria field, not one of the three levies this
+      item orders, and moving it would change every historical cost with no attested replacement row.
+    closes_when: "the GST base itself becomes an effective-dated interval table"
+
+  - ref: "Stamp duty before 2020-07-01"
+    span: "2018-04-01 .. 2020-06-30"
+    source: "MAHARASHTRA_STAMP_DUTY_2019"
+    why_not: >
+      Before the Indian Stamp Act amendments took effect on 2020-07-01, stamp duty on listed share
+      transfers was set by state schedules, and the payer was the buyer and the seller per the state
+      table. The committed row uses the Maharashtra schedule (0.01% delivery, 0.002% non-delivery) as the
+      venue proxy and charges the BUYER leg only, so the seller leg the state schedule also charged is
+      not modelled. The row is labelled CONTENT_IDENTIFIED_ONLY for that reason; the post-boundary
+      uniform rate is sourced from the SEBI FAQ and is pan-India.
+
+  - ref: "Brokerage"
+    span: "2018-04-01 .."
+    rate_not_statutory: "Rs 20.00 per executed order"
+    why_not: >
+      Brokerage is a broker's commercial charge, not a statutory levy. It is kept as a single scalar
+      because it is an assumption of the experiment, not a rate the repository can attest; a broker
+      that changed its per-order fee inside the window would require an interval row of its own.
+
+# ---------------------------------------------------------------------------------------------------
+# 3. Which sessions the tables price, so a gating window cannot silently fall outside them.
+coverage:
+  exchange_turnover_and_ipft: "2018-04-01 .. open (five rows, each with a committed circular digest)"
+  stt_delivery: "2018-04-01 .. open"
+  stt_intraday_sell: "2018-04-01 .. open"
+  sebi_turnover: "2018-04-01 .. 2020-05-31 at 1e-6; 2020-06-01 .. 2021-03-31 at 5e-7; 2021-04-01 .. open at 1e-6"
+  stamp_duty_delivery_buy: "2018-04-01 .. 2020-06-30 at 1e-4 (state schedule proxy); 2020-07-01 .. open at 1.5e-4"
+  stamp_duty_intraday_buy: "2018-04-01 .. 2020-06-30 at 2e-5 (state schedule proxy); 2020-07-01 .. open at 3e-5"

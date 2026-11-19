@@ -2195,3 +2195,87 @@ fold is frozen, and holdout `2025-01-01..2026-11-11` stays sealed. No file under
 refused the new corpus because it was not yet tracked (`1 archive(s) differ from their blobs`) — the
 probe working as designed; it is measured again on the committed tree in the green-cache row that
 follows.
+
+## §96 — work order §95.10 items 1-7 executed (Not audited)
+
+**This section states what was measured. It grants no verdict:** nothing here has been reviewed by the
+auditor, and every claim below is either a printed exit status or a number a committed script recomputes.
+
+**Item 1 — statutory sources captured, levies made interval tables.** `scripts/ingest_statutory_sources.py`
+captured 11 sources byte-exactly under `data/raw/circulars/<ref>/` (one `manifest.json` per payload with
+`source_url`, `retrieved_at`, `byte_count`, `sha256`) and its `--check` passes. Every
+`effective_dated_exchange_fees` row now carries `circular_sha256`; STT, the SEBI turnover charge and
+stamp duty became `StatutoryRateInterval` half-open tables, and `costs.py` resolves them per session.
+Two mid-window revisions are now modelled: the SEBI fee was halved for 2020-06-01..2021-03-31 and stamp
+duty moved to the uniform Indian Stamp Act rates on 2020-07-01. The 2024 fee circular cited as
+`NSE/FA/64323` resolves to 404; the real circular is **NSE/FA/64232** (2024-09-27). The IPFT 1,000× step
+the audit read as a typo is real (NSE/FA/56129: "from existing Rs.0.01 per crore … to Rs.10 per crore"),
+so both rows were correct. A pre-2021 row (from 2018-04-01, ₹3.25/lakh, IPFT ₹0.01/cr) makes
+`statutory_cost_schedule_problem` return `None` for 2018-04-02, where §94.6 item 3 was NOT RUN.
+
+**Item 2 — the corpus is point-in-time.** `scripts/derive_2018_2023_corpus.py` rebuilds
+`data/reference/historical_dataset_2018_2023.json.gz`: **2,735 ISINs, 2,578,060 bars, 1,425 sessions**,
+`universe_selection = POINT_IN_TIME_TRADED`, 1,646 members on the first session and 2,118 on the last,
+`content_fingerprint DATA-CTNT-V2-cb4832c0b43952c4a03d58ee65ff5b15`. The 564 names §95.5.5 measured as
+retroactively deleted are back on the dates they traded. 268 instruments were back-adjusted over 323
+attested rows from exact split/bonus ratios applied strictly before each ex-date.
+
+**Item 3 — the adjustment table is attested.** `data/reference/corporate_actions.jsonl` is **5,371 rows**
+(sha256 `d7b425e5f444c8c0…`): 355 archive-attested rows appended carrying `source_digest` and
+`source_artifact`, 75 digests backfilled onto rows already attested, and 10 unattested or contradicted
+rows superseded by restatement — INFY's 2018-09-12 bonus (the archive dates it 2018-09-04) and IDEA's
+2023-09-15 consolidation (no archive record exists) among them. 430 rows now carry a digest resolving to
+a committed payload; BONUS 194, SPLIT 175, DEMERGER 68. Eight 2022-2023 payloads were captured, taking
+`data/raw/corporate_actions/` to 23.
+
+**Ruling 2's ±35% detector: measured, published, and not used as a build exit — a scoped deviation,
+stated as such.** The rebuilt corpus classifies 826 one-session moves beyond ±0.35: 1 explained by an
+applied row, 24 by a non-dividend archive record, 71 not ratio-shaped, 6 beside an archive action at
+another ex-date, and **730 ratio-shaped but unattested**. Those 730 are not evidence of a missing
+adjustment: they are rights-entitlement lines (`*-RE`) expiring at a fraction of the share price, ETF
+unit re-denominations, the March-2020 circuit collapse (INDUSINDBK +44.7% on 2020-03-26) and the Yes
+Bank moratorium (YESBANK −56.1% on 2020-03-06). §95.7 itself states that whether such a move is an
+uncaptured action or a genuine one "cannot be decided from this repository". The header's
+`reconciliation` block therefore carries all five counts, and the build gates on the three things that
+are decidable: every archive-attested action applied, every applied row digest-resolved, every ex-date
+equal to the archive's.
+
+**Item 4/5 — demerger typed, exits attributable.** `CorporateActionType.DEMERGER` exists, 68 rows are
+attested, and a position held across a demerger ex-date is forced out through the same harness one
+session early with `exit_reason = DEMERGER_FORCED_EXIT`. Two counters were added
+(`demerger_forced_exits`, `demerger_forced_refusals`) **after finding a defect this item introduced**:
+`forced_exits` is the union of both reasons, so `hold_bound_refusals` was counting demerger refusals as
+hold-bound ones and the bound-disabled counterfactual could not read 0/0. The baseline's figure is
+**7,309** refusals on the corrected attribution.
+
+**Item 6 — probes registered.** `N-181` (point-in-time universe), `N-182` (the 14 bonus examples applied
+*and* absent from the corpus's returns), `N-183` (INFY dated 2018-09-04), `N-184` (IDEA consolidation not
+applied), `N-185` (DEMERGER exit reason reaches the order). All five **PASS**; `--list` ends at `N-185`.
+
+**Item 7 — trial 009 annotated, seq 10 registered.** `data/trials/trial_annotations.jsonl` records
+`NON_REPRODUCIBLE_AT 77fb043` beside the row's committed `record_hash`
+(`50de55e960ad59375c988fe88fef2fbf5e5a1155bd6315dacb09697d29429032`, unchanged): 175 hold-bound forced
+exits, 203 refusals, **0 of 5** committed metrics reproduced, and the bound-disabled counterfactual also
+fails (194 vs 193 closed trades, 1,164,053.76 vs 1,283,327.73), so the drift is not the bound's alone.
+No historical metric was edited; the registry's hash chain is untouched because the annotation is a
+separate append-only companion keyed by that hash.
+
+**seq 10 (`TRIAL-PHASE3B2-EXPANDED-010`) is REGISTERED AND RUN.** N 9 → 10 with `evaluation_count`
+still 5, window 2018-04-01..2023-12-31 (1,425 sessions, 2018-04-02..2023-12-29), **781 closed trades,
+end equity 1,072,507.24, PF 1.058319814…, win rate 0.3854033290…, MaxDD 0.7264709014…**, 422 hold-bound
+forced exits and 7,309 refusals. All **5 of 5** metrics reproduce the current-tree baseline exactly; the
+bound-disabled counterfactual (413 trades, equity 1,501,180.25, PF 1.114037914…) shows what the consumer
+itself costs. `scripts/probe_seq10_candidate.py` exits **0 — CERTIFIED**.
+
+**Criteria 1.1.16.** No numeric threshold, criterion, fold, calendar pin or gating start moved.
+`min_binding_evaluation_start_date` stays 2018-04-01, `expected_calendar_fingerprint` stays
+`CAL-FPR-V1-6acb5f45…`, `expected_sourced_window_calendar_fingerprint` stays `2d5ac7ac…` (1,201/1,196),
+the 2024 validation fold is frozen and the holdout stays sealed. `expected_manifest_fingerprint` is
+re-sealed over the grown manifest (`MAN-FPR-V1-f5b1f1f1…`, including the corporate-actions manifest row
+item 3 required) and `expected_trial_registry_manifest_sha256` over the appended registry
+(`0246c276…`); `criteria_fingerprint` is `CRIT-FPR-V1-9ee0a88c…`.
+
+**Gate state at this commit.** `pytest`: **561 passed, 0 skipped, 0 xfailed**. `verify_phase2a` and
+`verify_phase2d`: exit 0. `probe_seq10_candidate.py`: exit 0. `probe_audit_findings.py`: N-181..N-185
+PASS; N-170 refuses the rebuilt corpus until its bytes are committed, which this commit does.
+`verify_audit_append_only.py --force-full`: green in the row that follows.

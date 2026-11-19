@@ -28,7 +28,8 @@ corpus whose prices are split/bonus back-adjusted: 74 split/bonus ex-dates fall 
 alone, and an unadjusted series carries each of them as a price jump that SMA/ATR read as a move. The
 committed dev snapshot covers 2022-01-03..2024-12-31, so it is refused by coverage. The corpus this
 runner accepts is `data/reference/historical_dataset_2018_2023.json.gz`
-(`scripts/derive_2018_2023_corpus.py`, Audit §94.6 item 1 Route B): 1,061 ISINs over 1,425 sessions,
+(`scripts/derive_2018_2023_corpus.py`, Audit §94.6 item 1 Route B, rebuilt point-in-time under §95.10
+item 3): every ISIN that traded, 2,735 over the window and 1,646 on the first session, 1,425 sessions,
 `adjustment_version` stated, `corporate_actions_fingerprint` equal to the committed table's digest. The
 check is still live rather than assumed — a corpus that covers 2022+ only, omits `adjustment_version`
 or names another digest is refused by name, before anything is registered.
@@ -47,6 +48,7 @@ Usage:
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import hashlib
 import json
@@ -61,6 +63,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import scripts.run_phase3b2_walkforward as walkforward  # noqa: E402
+from signal_core.contracts.criteria import compute_criteria_fingerprint  # noqa: E402
 
 REGISTRY_PATH = REPO_ROOT / "data" / "trials" / "trial_registry.jsonl"
 REGISTRY_SIDECARS = (".manifest", ".evaluations", ".evaluations.manifest")
@@ -159,17 +162,86 @@ def locate_corporate_action_adjusted_corpus() -> tuple:
     )
 
 
+CIRCULARS_ROOT = REPO_ROOT / "data" / "raw" / "circulars"
+
+
+def committed_source_digests() -> dict:
+    """`{source_ref: {sha256, ...}}` over the committed payloads under `data/raw/circulars/<ref>/`."""
+    import hashlib
+
+    index: dict = {}
+    if not CIRCULARS_ROOT.is_dir():
+        return index
+    for directory in sorted(p for p in CIRCULARS_ROOT.iterdir() if p.is_dir()):
+        digests = set()
+        for payload in sorted(p for p in directory.iterdir() if p.name != "manifest.json"):
+            digests.add(hashlib.sha256(payload.read_bytes()).hexdigest())
+        if digests:
+            index[directory.name] = digests
+    return index
+
+
+def statutory_source_problem(criteria, index: Optional[dict] = None) -> Optional[str]:
+    """
+    Every asserted rate must resolve to a committed byte (Audit §95.10 item 1, §10.7).
+
+    Audit §95.8 measured that five exchange-fee rows cited `NSE/FA/*` references while
+    `data/raw/circulars/` held no `NSE/FA/*` payload for any period, and that STT, stamp duty and the
+    SEBI turnover charge were scalars with no date dimension at all. A row that names a rate but no
+    committed byte is an unsourced numeric input (§6.5); this refuses one by name instead of charging
+    from it.
+    """
+    index = committed_source_digests() if index is None else index
+    costs = criteria.statutory_costs
+
+    def _resolve(label: str, ref: str, digest: str) -> Optional[str]:
+        available = index.get(ref)
+        if not available:
+            return (
+                f"{label} cites {ref}, but data/raw/circulars/{ref}/ holds no committed payload; the "
+                f"rate resolves to no byte (§6.5, §10.7)"
+            )
+        if digest not in available:
+            return (
+                f"{label} cites {ref} with sha256 {digest[:16]}…, which is not the digest of any "
+                f"committed payload under data/raw/circulars/{ref}/ ({sorted(d[:16] + '…' for d in available)})"
+            )
+        return None
+
+    for fee in costs.effective_dated_exchange_fees:
+        problem = _resolve(
+            f"exchange-fee row {fee.circular_ref!r} ({fee.from_date}..{fee.to_date})",
+            fee.circular_ref.replace("NSE/FA/", "NSE_FA_"),
+            fee.circular_sha256,
+        )
+        if problem:
+            return problem
+    for interval in costs.statutory_rate_intervals:
+        problem = _resolve(
+            f"{interval.component} interval from {interval.from_date}",
+            interval.source_ref,
+            interval.source_sha256,
+        )
+        if problem:
+            return problem
+    return None
+
+
 def statutory_cost_schedule_problem(criteria) -> Optional[str]:
     """
-    Every session in the window must be priced by a committed exchange-fee schedule (§7.2).
+    Every session in the window must be priced by a committed, byte-attested cost schedule (§7.2).
 
-    The committed schedule's earliest effective row starts 2021-01-01, so the 2018–2020 sessions have no
-    governing NSE circular and `StatutoryCostCriteria.get_exchange_fee_for_date` raises before the first
-    fill. That is a precondition of the window, not a property of a trade: an unpriced year is NOT RUN,
-    and a rate inserted for it would be an unsourced numeric input (§6.5, §9.1). Measured here so the
-    refusal names the missing schedule instead of surfacing as a traceback 40 minutes into a run.
+    Two separate refusals, in order. First the sources: each fee row and each statutory rate interval
+    must carry a digest that resolves to a committed payload (`statutory_source_problem`), because a
+    row asserting a rate no byte supports is an unsourced numeric input (§6.5). Second the coverage:
+    the window's first session must be priced by a governing fee row and by every re-ratable levy, so
+    an unpriced year is NOT RUN rather than silently flat.
     """
     from signal_core.contracts.criteria import CriteriaValidationError
+
+    source_problem = statutory_source_problem(criteria)
+    if source_problem:
+        return source_problem
 
     first_session = walkforward.load_anchored_nse_trading_calendar().sessions_in_range(
         WINDOW_START, WINDOW_END
@@ -186,6 +258,17 @@ def statutory_cost_schedule_problem(criteria) -> Optional[str]:
             f"pre-{earliest} turnover rate exists in this repository, so the window cannot be priced and "
             f"AGENTS.md §7.2 prohibits a flat or invented rate (§6.5, §9.1)"
         )
+    for component in (
+        "STT_DELIVERY",
+        "STT_INTRADAY_SELL",
+        "SEBI_TURNOVER",
+        "STAMP_DUTY_DELIVERY_BUY",
+        "STAMP_DUTY_INTRADAY_BUY",
+    ):
+        try:
+            criteria.statutory_costs.get_rate(component, first_session)
+        except CriteriaValidationError as exc:
+            return f"the window's first session {first_session} is unpriced for {component}: {exc}"
     return None
 
 
@@ -346,7 +429,7 @@ def main() -> int:
 
         original_loader = walkforward.load_go_no_go_criteria
         try:
-            walkforward.load_go_no_go_criteria = lambda: walkforward.dataclasses.replace(
+            walkforward.load_go_no_go_criteria = lambda: dataclasses.replace(
                 original_loader(), max_hold_trading_sessions=UNREACHABLE_BOUND
             )
             run_b, _copy_b, seconds_b = _run(
@@ -395,6 +478,9 @@ def main() -> int:
             dataset, root / "run_c", TRIAL_ID, HYPOTHESIS, RATIONALE, record=False
         )
         sessions_c = _check_sessions(run_c, "seq 10")
+        # The harness writes its artifact into its own workspace; `reports/verdicts/trial_010/` is the
+        # citation target, so the bytes are copied while the temporary root still exists.
+        shutil.copyfile(root / "run_c" / "verdicts" / ARTIFACT_NAME, VERDICT_ARTIFACT)
         print(
             f"[INFO] seq 10: {len(sessions_c)} session(s) {min(sessions_c)}..{max(sessions_c)} in "
             f"{seconds_c:.1f}s; hold_bound_forced_exits={run_c.hold_bound_forced_exits}, "
@@ -427,7 +513,7 @@ def main() -> int:
         "trial_id": TRIAL_ID,
         "window": f"{WINDOW_START.isoformat()}..{WINDOW_END.isoformat()}",
         "criteria_version": criteria.version,
-        "criteria_fingerprint": criteria.criteria_fingerprint,
+        "criteria_fingerprint": compute_criteria_fingerprint(criteria),
         "hold_bound_trading_sessions": criteria.max_hold_trading_sessions,
         "hold_bound_active_rule": True,
         "evaluation_count": walkforward.TrialRegistry(REGISTRY_PATH).evaluated_trial_count,

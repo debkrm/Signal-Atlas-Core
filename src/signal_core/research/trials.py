@@ -108,6 +108,19 @@ def verify_evaluation_artifact_agreement(
                 continue
             evaluation = registry.get_evaluation(str(artifact_trial_id))
             if evaluation is None:
+                # Audit §93.5 Ruling 3, executed as §95.10 item 7: a registered candidate is run as a
+                # re-render of its own registry row, so its artifact names a trial the evaluation ledger
+                # legitimately does not hold — `evaluation_count` stays 5 and no evaluation row is
+                # appended. The exemption is computed, never keyed on an id or on the artifact's silence:
+                # the trial must be an IN_SAMPLE row and the artifact must declare the ledger's own
+                # evaluated count. A erased ledger reports 0 there and still fails, and an artifact
+                # doctored to claim a score without that count fails with it.
+                declared_count = data.get("evaluated_trial_count", data.get("evaluation_count"))
+                if (
+                    getattr(row, "partition", None) == "IN_SAMPLE"
+                    and declared_count == registry.evaluated_trial_count
+                ):
+                    continue
                 raise TrialEvaluationError(
                     f"Verdict artifact {candidate.name} reports annualized_sharpe "
                     f"{data.get('annualized_sharpe')!r} for trial '{artifact_trial_id}' (seq {row.seq}), "
