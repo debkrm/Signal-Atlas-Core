@@ -2741,3 +2741,230 @@ Ordered by what it unblocks. Items 1–3 are one chain: the corpus, then the fol
 - If the corpus it refuses over actually existed, the block would be a false NOT RUN. Measured: both committed snapshots declare `2022-01-03..2024-12-31` and `CA-FPR-6d7aae6d8…`; `data/silver/bhavcopy` is empty; the alternative path raises at two named lines.
 - If N-180 were harmless because the certificate catches it, the registry would still have moved to 10 before the catch. Measured: the two fold fingerprints differ, and `_register` writes the template's.
 - If a superseded row's `gating_mode` were meant to be pinned too, §94.3's T4 would be a missed failure rather than a correct pass. Measured: the relabel is exactly what the flip moves, so it is excluded by design.
+
+## §95 — Audit of `77fb043` (tag `feat-s95-77fb043`): the corpus reproduces bit-for-bit and then charges its own fake returns, the three checks close with one hole apiece, and the panel built to carry seq 10 is a survivor set
+
+**Date:** 19 November 2026
+**Commit under review:** `dcfbe35` (17 files, +1,006/−101: the 433-line corpus builder, the fold derived from the requested window at `run_phase3b2_walkforward.py:724-778` and `:1090`, the superseded-row count pin in the Bronze certificate, five tests in `test_phase3b2_audit_s95_items.py`, the criteria bump 1.1.14 → 1.1.15, and the 45.5 MB corpus artifact with its manifest row) and `1ccf341` (3 files, +20/−6: the Phase 2D Tier-A restatement under 1.1.15), plus `77fb043` (the green-cache row, +19 lines). None of the three touches a path under `reports/audit/`, `data/trials/`, `data/raw/2025`, `data/raw/2026` or `configs/partition_spec.yaml`.
+**Verdicts:** **§94.6 item 5 CLOSED as ordered** (N-178) · **item 6 CLOSED as ordered** (N-179) · **item 2 CLOSED as ordered** (N-180) — each carrying one named residual rather than a reopening · **§94.6 item 1 PARTIAL** — the artifact exists, reproduces exactly from 1,425 committed archives, and its ratio arithmetic is correct on every row it applies, but its adjustment table is not the archive's and its panel is not a universe · **§7.2 refusal PASS** on a live, measured precondition, with the provenance of the schedule it refuses on as the next blocker · **Ruling 1:** the full-span filter is a continuity construct and is inadmissible as a point-in-time universe · **Ruling 2:** an adjustment row is admissible only where the committed archive and the panel's own prices both attest it.
+
+### 95.1 Baseline re-measured at `77fb043`
+
+| Measurement | Result |
+|---|---|
+| `scripts/verify_audit_append_only.py --force-full` | **exit 0** — `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Suite under the gate | **557 passed in 188.07 s**, **0 skipped / 0 xfailed** — 552 at `0287aae`; the five added are `test_phase3b2_audit_s95_items.py`'s |
+| Verifiers | **10/10 exit 0**. The tree has carried ten `scripts/verify_*.py` since before `0287aae` (`git ls-tree`), so §94.1's "9/9" was one short; no script was added here |
+| W0.5-4 / W0.5-5 | every tag verified, including `feat-s95-77fb043` → `77fb043`; **1,001** current artifacts match byte count and sha256, **958** superseded rows skipped as history |
+| Green cache | source tree `e26be07f…` already recorded at this commit; the forced run printed `already recorded; not appending a duplicate row`; `git status` clean before and after |
+| Findings ledger | **52** rows / **32** ids; latest-per-id **27 CLOSED**, **4 OPEN** (N-150, N-178, N-179, N-180), **1 ACCEPTED** (N-152); `verify_audit_findings.py` **exit 0** inside the verifier sweep |
+| Criteria / pins | **1.1.15**; `MAN-FPR-V1-4b813090cab7f9be555833039029b1882dc60b05485fb83c0e9dcaba76609c1d` recomputed over **1,867,504** bytes of `data/reference/manifest.jsonl` (matches); **97** leaves, **8** numeric; the 1.1.14 → 1.1.15 leaf diff is **2 changed leaves, 0 numeric** (`metadata.version`, `expected_manifest_fingerprint`) |
+| Trials / fold / holdout | **9** rows, seq 1–9, **5** evaluation rows, pin `3326b1b2…` recomputed over `data/trials/trial_registry.jsonl.manifest` (matches); in-sample `2018-04-01..2023-12-31`, validation **2024** frozen, holdout `2025-01-01..2026-11-11` with the all-zero token hash; `data/trials/` byte-identical after every run below |
+| `probe_audit_findings.py` | **N-177, N-178, N-179, N-180 all exit 0** (`PASS <id>`) |
+| `probe_pre2022_bronze_coverage.py` | **exit 0** — `COVERED — 931/931 … 931 of 931 pinned, 0 problem(s)` |
+| `probe_pre2022_preconditions.py` | **exit 0, READY 9/9** — A1 246/245/252/248, A2 17,864/19,283 sessions, A4 **4,357** dividend ex-dates, A5 `0 of 4,903` before 2018-04-01 |
+| `derive_2018_2023_corpus.py --check` | **exit 0** — `OVERALL: CURRENT — historical_dataset_2018_2023.json.gz reproduces the Bronze-derived header over 1425 archive(s)`; `Panel: 1082 instrument(s), 1541850 bar(s)`; `Observed ISINs: 2735; excluded short-span 1463, internal-gap 190`; `Adjusted instruments: 7 carrying 8 price-side action(s)` |
+| `run_seq10_candidate.py` | **exit 1** — `NOT REGISTERED`, now on the cost schedule rather than the corpus |
+| `probe_seq10_candidate.py` | **exit 1** — `NOT CERTIFIED`; `N = 9`, `N_eval = 5`, seq 10 rows 0; sealed-era arm raises `HoldoutSealedError` |
+| `probe_hold_bound_invariance.py` | **exit 1** — `NOT INVARIANT`: **175** forced exits / **203** refusals, run B `0 / 0`, and **5/5** committed metrics fail to reproduce in **both** runs. Carried from §94.4, re-measured here |
+| Files the code commits touch | 20 across `dcfbe35` + `1ccf341`; **no** path under `reports/audit/`, `data/trials/`, `data/raw/2025`, `data/raw/2026`, `configs/partition_spec.yaml` |
+
+### 95.2 §94.6 item 5 — CLOSED as ordered: the seam's reachability refuses now, and a `for` body over an empty tuple still passes
+
+N-178 asked for a check that can see the passthrough line *executed* rather than merely written. `_session_loop_passthrough_problem` now collects the call's enclosing statements while walking the module and refuses a call whose ancestors exclude a reachable context; `probe_n178` builds the mutation the item names. Attacks in the detached worktree at `77fb043`, each restored with `git checkout --`:
+
+| Mutation | `probe_audit_findings.py N-178` | Committed test |
+|---|---|---|
+| none (control) | **exit 0**, `PASS N-178` | passed |
+| the `if forced_exits is None:` guard of §94.2 row D (the ordered mutation) | **exit 1**, naming the unexecuted guard | failed, as intended |
+| live call placed under `for _unreachable in ():` | **exit 0**, `PASS N-178` | passed |
+| the keyword deleted outright | **exit 1** | failed |
+
+The ordered mutation fails closed, so the item is **CLOSED as ordered** (§14.5). The residual is named, not smoothed: the ancestor walk tests `isinstance(cursor, (ast.If, ast.While, ast.Try))` (`probe_audit_findings.py:1892`) and nothing else, so a call a tuple literal can never reach is still accepted — the same §14.4 shape one statement-type narrower. Separately, `probe_n178`'s own text-surgery mutation raised `IndentationError` when the tree was edited under it; a probe that dies is a probe that cannot assert, and it belongs in the work order with the ancestor gap it was written to catch.
+
+### 95.3 §94.6 item 6 — CLOSED as ordered: the count is pinned, so a deletion refuses; a deletion plus a fabricated replacement does not
+
+| Mutation | Bronze certificate | `probe_audit_findings.py N-179` |
+|---|---|---|
+| none (control) | **exit 0**, `931 superseded session row(s) retain their archive digest and provenance` | **exit 0**, `PASS N-179` |
+| one superseded session row deleted | **exit 1**, `930` vs the pinned `931` | **exit 1**, naming the same `930` |
+| one superseded row duplicated | **exit 1**, `932` | **exit 1** |
+| one row deleted **and** a synthetic superseded row appended carrying the current row's six archive fields | **exit 0**, `931/931` | **exit 0**, `PASS N-179` |
+
+The ordered mutation (deletion) now fails closed, so the item is **CLOSED as ordered**. The residual: the pin is a **count**, so a substitution that preserves the count is invisible. Closing that requires identity — a digest over the ordered set of superseded `(artifact, sha256, session_date)` triples — and it is named in the work order rather than used to reopen the item.
+
+### 95.4 §94.6 item 2 — CLOSED as ordered: the fold is derived from the window, on one of the two paths
+
+`derive_in_sample_fold(calendar, eval_start, eval_end)` (`:724`) computes test as the evaluation year's sessions and train as every session before them, and `in_sample_fold_for_dates` / `in_sample_fold_fingerprint` read it from the anchored calendar once. Measured, not read:
+
+| Window | Derived fold | `FOLD-SPEC-V1-…` |
+|---|---|---|
+| `2018-04-01..2023-12-31` | train `2018-04-01..2022-12-30`, test `2023-01-02..2023-12-31`, embargo 0, `IN_SAMPLE` | **`36a39987dcade377afd18ce6b544596d82b830f10c24314665dfa700e134fce7`** |
+| `2022-01-03..2023-12-29` | train `2022-01-03..2022-12-30`, test `2023-01-02..2023-12-29` | **`4b44a1f25f3087e4c7e089834496b33a6a06753f06f9457094ae2a7cb1b972a3`** — identical to the last registry row (§14.5: the derivation reproduces the typed fold it replaced) |
+
+| Mutation | `probe_audit_findings.py N-180` |
+|---|---|
+| none (control) | **exit 0**, `PASS N-180` |
+| `WINDOW_END` moved to `2023-12-29` | **exit 1** — `FOLD-SPEC-V1-e31b8ae6…` vs `36a39987…`, the disagreement §94.4 measured |
+| the template copy restored (`fold_spec_fingerprint` taken from the previous row) | **exit 1** |
+
+Both mutations fail closed, so the item is **CLOSED as ordered**. Two residuals are named. First, the derivation runs only when `in_sample_only` is true (`:1090`); the walk-forward branch at `:1091-1100` still types `2022-01-03..2023-12-29` and ignores the requested window, which is the additive-fix shape §14.4 warns about, one `if` above the one that was fixed — harmless today because no validation run is authorised over the expanded window and 2024 is frozen outside the corpus. Second, a derived fold is still **one** train/test split; N-150's "second fold or recorded admission" is untouched by this item.
+
+### 95.5 §94.6 item 1 — PARTIAL: the corpus is real, reproduces exactly, and is wrong in its universe and incomplete in its adjustments
+
+`data/reference/historical_dataset_2018_2023.json.gz` — **45,565,892** bytes, sha256 `5926e1c2aea6c6c220f9452597bc2c525899598bced5beddd9c66b8ccd2982c5` (the current manifest row; the superseded row `aff57c09…`, 45,565,871 bytes, is one manifest line above it), `content_fingerprint DATA-CTNT-V2-1862c1f2f26c14bf3c48cb3521f2fda7`, `data_version EXP-DEV-2018-2023-V1`, `1,082` instrument ids, `1,425` sessions `2018-04-02..2023-12-29`, `1,541,850` bars, `adjustment_version v1.0-split-bonus-backadjust-2018-2023`, `corporate_actions_fingerprint 6ff7d3ed…` equal to the sha256 of `data/reference/corporate_actions.jsonl`.
+
+#### 95.5.1 Form, provenance and what the artifact cannot express
+
+The manifest row declares `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED` and its `retrieval_reference` says in terms that the artifact is derived, not retrieved, and names the builder and the action table it applied. That is the §6.5 / §10.2 discipline correctly applied to a derived artifact, and it is the reason the defects below are *scope* questions rather than provenance claims: nothing here overstates its own status. `--check` rebuilds in memory and compares header and every bar: `CURRENT`, and the sha256 is stable across the run.
+
+What the artifact does not carry: **series**. Bars were drawn from `EQ`, `BE` and `BZ` (`derive_2018_2023_corpus.py:71`) but a bar stores only `instrument_id`, date, OHLC, volume and traded value, so the artifact cannot say which series a name was in on a date. This is not an entry-eligibility hole — the harness pins `explicit_series=ExchangeSeries.EQ` (`run_phase3b2_walkforward.py:1323`), so §13.1 is enforced at the call — but it means a reader of the artifact cannot verify the series mix the builder claims, and any future `BE`-eligibility question must go back to Bronze.
+
+#### 95.5.2 The ratio arithmetic is exact wherever a row is applied
+
+The five in-window applications on panel ISINs were recomputed against the raw bars: INFY 2018-09-12 ×0.5, IOC 2022-06-30, GAIL 2022-09-06, ASTRAL 2023-03-14, IDEA 2023-09-15 ×10 — each equals its row's `denominator/numerator` to the last quantised digit, applies strictly before the ex-date and leaves the ex-date bar at its traded level, volume and traded value untouched, and `cumulative_factor` composes multiple rows correctly. There is no float anywhere in the path, no interpolation, no forward fill and no zero-price bar (`derive_2018_2023_corpus.py:182-186` refuses a non-positive price rather than materialising it). **The arithmetic is not the problem. The table and the panel are.**
+
+#### 95.5.3 The table is not the archive: 95 attested actions are missing, 44 of them on the panel
+
+Committed Bronze carries **166** price-side attestations over **160** distinct `(ISIN, ex-date)` pairs (subject text matched on `split`/`sub-division`, `bonus`, `consolidation`). The committed table carries **85** price-side rows (75 `SPLIT`, 7 `BONUS`, 3 `CONSOLIDATION`). Set difference, measured both ways:
+
+| Direction | Count | Composition |
+|---|---|---|
+| in the archive, absent from the table | **95** | **94 `BONUS`**, **1 `CONSOLIDATION`** (`INE743C01013` 2018-08-29, capital reduction), **0 `SPLIT`** |
+| in the table, absent from the archive | **14** | 13 rows whose `circular_ref` begins `UNATTESTED_`, plus one `AVANTIFEED` 2018-06-26 row labelled `ATTESTED_NSE_CA_…` with no matching archive record |
+| absent from the table **and** on a panel ISIN at a panel session | **44** | all `BONUS`; **34** of the 44 show a one-session move beyond **±25%** in the corpus, because a bonus is not a return |
+
+The fourteen largest, from the panel:
+
+| Ex-date | Symbol | Attested action | Corpus one-session return |
+|---|---|---|---|
+| 2021-10-13 | SRF | Bonus 4:1 | **−0.8069** |
+| 2021-12-16 | KKCL | Bonus 4:1 | **−0.7997** |
+| 2020-09-30 | AARTIDRUGS | Bonus 3:1 | **−0.7375** |
+| 2021-09-14 | MAHLIFE | Bonus 2:1 | **−0.6715** |
+| 2018-07-11 | UNOMINDA | Bonus 2:1 + dividend | **−0.6644** |
+| 2021-03-18 | INFIBEAM | Bonus 1:1 | **−0.5718** |
+| 2018-07-18 | MMFL | Bonus 1:1 | **−0.5350** |
+| 2019-06-12 | BIOCON | Bonus 1:1 | **−0.5198** |
+| 2018-07-12 | GICRE | Bonus 1:1 + dividend | **−0.5147** |
+| 2019-07-09 | GAIL | Bonus 1:1 | **−0.5131** |
+| 2018-09-11 | GLAXO | Bonus 1:1 | **−0.5130** |
+| 2018-06-20 | EPL | Bonus 1:1 | **−0.5099** |
+| 2018-06-27 | NIACL | Bonus 1:1 + dividend | **−0.5076** |
+| 2018-08-08 | WHEELS | Bonus 1:1 | **−0.5072** |
+
+Across the whole panel there are 1,540,768 one-session returns, `|r|>0.35` **88**, `>0.50` **47**, `>0.75` **11**, `>1.0` **1**. Attributed by date, the 88 are: **2** on a row the corpus applies (`INFY` **+1.0234**, `IDEA` **−0.8927** — both fabricated), **24** on an archive-attested action the table omits, **16** on a date the committed archive records *some* action (10 of them demerger, scheme-of-arrangement or merger rows, one an "Interim Dividend − Rs 974 Per Share" that is a demerger's own record date), and **46** on a date with **no archive record at all** — `BEL` 2022-09-15 **−0.6692**, `BSE` 2022-03-21 **−0.6681**, `GMMPFAUDLR` 2022-07-11 **−0.6467**, `AUBANK` 2022-06-09 **−0.5126**, `EMAMILTD` 2018-06-21 **−0.5061**, and 41 more. Several of the 46 are almost certainly real corporate actions the committed corporate-action payloads do not carry; the point that survives either way is that **on those dates the artifact cannot tell a corporate action from a crash**, which is exactly what an adjustment layer exists to settle. The builder prints no warning for any of them.
+
+#### 95.5.4 The fourteen rows with no archive counterpart, and the one the archive contradicts
+
+Thirteen of the fourteen carry `UNATTESTED_NSE_CML_*`, which is honest in form and unusable in effect. Five have ex-dates outside the window: `RELIANCE` 2017-09-07 is inert (its ex-date precedes every bar), `RELIANCE` 2024-10-28 applies ×0.5 to the whole series and is the correct back-adjustment for a 2024 bonus, and `NESTLEIND` 2024-01-05, `RCOM` 2024-03-22, `BPCL` 2024-06-21 are inert because their ISINs are not on the panel. Eight are applied inside the window. One of the eight is a **contradiction of committed evidence**:
+
+- **INFY, `UNATTESTED_NSE_CML_2018_BONUS_INFY`, 2018-09-12.** The committed archive row says `exDate 04-Sep-2018`, `subject Bonus 1:1`. The table says 2018-09-12. The corpus therefore leaves 2018-09-04 unadjusted (**−0.4860** on the session the price actually halved) and then applies ×0.5 to every bar before 2018-09-12, so the 2018-09-12 return is **+1.0234** — the single `>1.0` observation in the panel, and the panel's largest. One correct 0% ex-date return is replaced by two fabricated ones, eight sessions apart, in a Nifty-50 name.
+- **IDEA, `UNATTESTED_NSE_CML_2023_CONSOL_IDEA`, 2023-09-15, `CONSOLIDATION` 1:10.** No archive record of any price-side action for `INE669E01016` on or near that date, and no fall in the raw series: the corpus multiplies every earlier bar by 10 and prints **−0.8927** on 2023-09-15. This is a fabricated corporate action applied to a held-position series for the last three months of the window.
+- The remaining six in-window unattested rows (`IOC` 2022-06-30, `GAIL` 2022-09-06, `ASTRAL` 2023-03-14, `LLOYDSENG` 2022-04-18, `TATASTEEL`-labelled `INE081A01012` 2022-07-28, `VBL` 2023-06-15) and the out-of-window `NESTLEIND`, `RCOM`, `BPCL` rows are unattested but not contradicted by anything committed — unverifiable rather than false, which is the difference between §6.5's two states and why they cannot be gating input either.
+
+The single `ATTESTED_NSE_CA_2018-04-01_AVANTIFEED_20180626` row is the sharpest form of the same problem: a row that *says* attested and points at no committed byte. Either the attestation exists somewhere and the reference is wrong, or the label is the claim.
+
+#### 95.5.5 The panel is a survivor set, and it removes almost exactly the names the table was built for
+
+The builder's own header states the rule: *"1082 of 2735 observed ISINs: every session from 2018-04-02 to 2023-12-29 carries an exchange observation … 1463 ISIN(s) whose observations start after the first session or **stop before the last** are excluded"*, and `derive_2018_2023_corpus.py:204` implements it as `min(rows) != first_session or max(rows) != last_session → skip`. Measured consequences:
+
+| Measurement | Result |
+|---|---|
+| ISINs trading on 2018-04-02 (the window's first session) | **1,646** — 1,505 `EQ` + 118 `BE` + 23 `BZ` |
+| of those, in the panel | **1,082** (every panel member trades on day one) |
+| of those, excluded from **every** date in the panel | **564 — 34.3%** |
+| panel members per date | **1,082 on all 1,425 dates**; `universe_by_date` is the identical list 1,425 times |
+| excluded in total | 1,653 of 2,735 (60.4%) — 1,463 short-span, 190 with an internal gap |
+| table rows that touch the panel | **8** of **85**; **2** of the **74** pre-2022 rows (`INFY` 2018-09-12, `RELIANCE` 2017-09-07) |
+
+The last row is the interaction that matters. The 74 pre-2022 split/bonus rows this artifact exists to apply sit almost entirely on names the filter deleted, and on the panel the net position is **2 rows applied against 44 attested actions missing**. The corpus's pre-2022 adjusted coverage of its own panel is therefore negative: it fabricates two returns on one name while leaving 44 unadjusted bonus drops in place, 34 of them beyond ±25%.
+
+Two things are true at once and both are measured. The continuity requirement itself is legitimate — §6.3 forbids computing a lookback across an unexplained gap, and requiring an observation on every session is a clean way to guarantee that. Selecting **membership** by it is not: a name that stops trading in 2021 is dropped from 2018 as well, which is exactly `§6.1`'s "never select universe constituents based on … survival". And the requirement is not even necessary for continuity, because the engine already partitions on gaps independently (`IndicatorValidationError` refusals, `continuous_instruments_passed`, `fail_closed_on_unexplained`) — the filter is a second, cross-sectional copy of a per-series rule.
+
+#### 95.5.6 Holding-period events: 32 attested demergers, none of them a type
+
+The table's action types are `BONUS` 7, `DIVIDEND` 4,495, `SPLIT` 75, `ISIN_TRANSITION` 426, `CONSOLIDATION` 3, `RIGHTS` 4, `MERGER` 3, `DELISTING` 3 — 5,016 rows. There is no `DEMERGER` type and no row mentions one. The archive attests **32** demerger events in the window, of which **1** has any table row at the same ISIN and date and **28** sit on panel ISINs, with one-session moves of:
+
+`SUVEN` 2020-01-21 **−0.9471**, `GFLLIMITED` 2019-08-06 **−0.8911**, `AGI` 2019-08-19 **−0.7371**, `ARVIND` 2018-11-28 **−0.6509**, `TATACHEM` 2020-03-04 **−0.5653**, `THOMASCOOK` 2019-12-05 **−0.5555**, `CENTURYTEX` 2019-10-11 **−0.5536**, `DCM` 2019-05-30 **−0.4903**, `ANANTRAJ` 2020-10-06 **−0.4386**, `DEEPENR` 2020-11-10 **−0.3853**, `TATACOMM` 2019-09-17 **−0.3481`, and 17 more between −0.03 and −0.26.
+
+§13.2 requires a corporate action inside a holding window to be applied to the open position, and a demerger delivers shares in the resulting entity — so a position carried through one of these dates is booked as a −65% to −95% loss and the consideration is never credited. The corpus is not the ledger, so this is not yet a P&L error; it becomes one the moment a gating run holds a name across any of these 28 dates, and today there is no action type with which to book it.
+
+#### 95.5.7 Two counts in prose that the artifact contradicts
+
+`configs/go_no_go_criteria.yaml:132` and `scripts/run_seq10_candidate.py:31` both say the corpus holds **1,061** ISINs. The artifact, the builder's own `--check` output and the certificate all say **1,082**. The builder's counters are internally consistent (7 instruments carrying 8 price actions, matching the header); only the two comments are stale. This is a prose number in a file that gates a run, and it is fixed with the rebuild below rather than separately.
+
+### 95.6 Ruling 1 — the full-span filter is a continuity construct, not a universe, and it may not carry a gating evaluation
+
+*The artifact's `universe_by_date` is admissible only as a continuity panel. It is inadmissible as the point-in-time universe of any gating evaluation, including candidate seq 10.*
+
+The reason is literal (§6.1): membership is conditioned on trading on the window's **last** session, so a name delisted, merged, suspended or simply illiquid after 2021 is removed from 2018–2020 as well. Measured, that is 564 names — 34.3% of the securities trading on the window's first day — deleted retroactively, and a panel that is the identical 1,082-name list on all 1,425 dates. A backtest over it cannot lose a name that died, which is the definition of survivorship.
+
+The remedy is not a relabel, and the repository already contains the correct construction: `build_historical_dataset_from_raw_bhavcopy` (`run_phase3b2_walkforward.py:556`) builds `universe_by_date` as **exactly the ISINs that traded that session** from the same committed archives, with no full-span requirement, and that is the route trials 1–9 ran through. So the 2018–2023 window does not *need* a survivor panel to be loadable; the filter was a choice, and it is the one thing that makes the new artifact unusable where the old route was usable.
+
+What this ruling does **not** do is block §94.6 item 3. Candidate seq 10 may be registered and run on this corpus as a **non-gating pipeline measurement** under the §94.5 Ruling: registering it is required by §8.2's trial accounting, and the claim it supports is that the pipeline executes end-to-end over 2018–2023 — not that any number in it estimates a return. A gating verdict, a DSR, or a comparison against trials 1–9 computed on this panel would be a report of a survivor set, and is refused until the panel is rebuilt point-in-time.
+
+### 95.7 Ruling 2 — an adjustment row is admitted only where the archive and the panel's own prices both attest it
+
+*An adjustment may be applied to a gating series only when (a) a committed Bronze corporate-action record attests the same ISIN, action type and ex-date, and (b) the panel's own prices move at that ex-date in the direction and magnitude the ratio implies. The build fails closed on any archive-attested action it lacks for an in-panel ISIN.*
+
+Both halves are necessary and neither is sufficient. Attestation alone cannot catch a row that is real but dated wrong — the INFY row is the demonstration: it is a genuine bonus for a genuine ISIN, and the archive dates it eight days earlier, which is why checking the ex-date is not a formality but the whole check. Price confirmation alone cannot catch a ratio that happens to match a move caused by something else. Together they would have caught all three defects found here: the INFY date (archive mismatch), the IDEA consolidation (no archive record **and** no price move), and the 44 missing bonuses (archive record **and** a −50% move with no row to explain it).
+
+The ruling applies to the archive as well as the table, and the archive falls short of it on its own terms: **46** panel returns beyond ±35% sit on dates for which the committed corporate-action payloads hold no record whatsoever (`BEL` 2022-09-15, `BSE` 2022-03-21, `AUBANK` 2022-06-09, `GMMPFAUDLR` 2022-07-11, `EMAMILTD` 2018-06-21, `MIRZAINT` 2023-03-29, `NDLVENTURE` 2022-11-22, and 39 more). Whether those are actions whose payloads were never captured, or actions captured under a different `exDate` (the INFY failure mode), cannot be decided from this repository — and either way, no adjustment layer can be attested against an action set that is itself incomplete. Reconciling those 46 dates is therefore a precondition of attesting anything, not a refinement of it.
+
+Under this ruling the committed artifact is **not** gating input today, for two independent reasons: its universe fails Ruling 1 and its adjustment set fails this one. The builder's own honest provenance (`CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED`) is the correct label for what it is — a derived panel whose sources are named but whose content is not attested — and it is what keeps this a scope refusal rather than a provenance overclaim.
+
+### 95.8 §7.2 — the statutory-cost refusal is live, correct, and standing on rows that no committed byte attests
+
+`run_seq10_candidate.py` refuses with `NOT REGISTERED — … the earliest exchange-fee row starts 2021-01-01 … the first session 2018-04-02 has no governing NSE circular`. Re-measured rather than read: with the earliest fee row's `from_date` monkeypatched to `2018-01-01`, `2018-04-02` passes (`problem None`) and `2018-04-03` and `2019-01-01` still refuse, each naming the first uncovered session — so the refusal is a boundary, not a blanket. The registry stayed at 9 rows / 5 evaluations, `data/trials/` was byte-identical afterwards, and the sealed-era arm still raises `HoldoutSealedError`. **The §7.2 refusal works.**
+
+What it refuses on is thinner than it looks:
+
+| Component | Representation at 1.1.15 | Attested by committed bytes? |
+|---|---|---|
+| exchange turnover charge + IPFT | 5 interval rows `2021-01-01 → null`, keyed by `circular_ref` (`NSE/FA/46730`, `56129`, `61137`, `64323`, `73061`) | **No.** `data/raw/circulars/` holds **20** files and every one is a CMTR/MSD trading-calendar circular; there is **no `NSE/FA/*` payload for any period**, so even the 2021+ rows are attested by a string in a YAML file |
+| STT (delivery and intraday), stamp duty (delivery and intraday), SEBI turnover, GST, brokerage | **single scalars**, no date dimension | No, and structurally cannot be: a scalar cannot represent a within-window statutory change even in principle (§10.5's interval-table rule applied to costs) |
+
+Two consequences follow, both measured in the file rather than argued from outside it. First, the schedule cannot represent a rate that changed inside `2018-04-01..2023-12-29` at all, so a session in 2018 and a session in 2023 are charged the identical stamp duty and STT by construction; whether each scalar equals the rate that governed 2018, 2023, or neither is **not determinable from this repository**, because no circular bytes exist to check it against. Second, the same field carries `ipft_rate 0.000000001` for `2021-01-01..2023-03-31` and `0.000001` from `2023-04-01` — a **1,000×** step in adjacent rows of the same schedule, with the second row's own description calling it the "revised ₹10/cr IPFT". One of the two rows is wrong by three orders of magnitude (worth ~0.0001% of turnover), and only a sourced circular can say which.
+
+So the block on seq 10 is not a corpus problem, a fold problem, or a code problem. It is the §7.2 requirement that a cost schedule be attested, met by a schedule whose exchange rows have no bytes and whose statutory rows have no dates.
+
+### 95.9 Phase verdicts
+
+| Phase | Verdict at `77fb043` | Named residuals |
+|---|---|---|
+| `§12.4` / `§14.4` §94.6 item 5 — seam reachability | **CLOSED as ordered** — the ordered guard mutation refuses, keyword deletion refuses, a committed test binds both | a call under `for _unreachable in ():` still passes (ancestor set lacks `ast.For`); `probe_n178`'s text surgery raised `IndentationError` under edit |
+| `§10.1` / `§10.5` §94.6 item 6 — superseded rows | **CLOSED as ordered** — 931 pinned, deletion and duplication both refuse and name the count | count pinned, identity not: delete-plus-fabricate passes |
+| `§12.4` §94.6 item 2 — derived in-sample fold | **CLOSED as ordered** — `36a39987…` for the expanded window, `4b44a1f2…` reproduced for the old one, both mutations refuse | derivation only on the `in_sample_only` path; the walk-forward branch still types the 2022–2023 fold; one split is not a walk-forward (N-150 open) |
+| `§5.4` / `§10.3` §94.6 item 1 — derived corpus | **PARTIAL** — artifact exists, 45,565,892 bytes, reproduces exactly from 1,425 archives, exact Decimal ratios, honest `CONTENT_IDENTIFIED_ONLY` label | universe is a survivor set (§95.6); 95 attested actions missing (44 on the panel, 34 beyond ±25%); 14 rows unattested, one contradicted (INFY +1.0234), one fabricated (IDEA −0.8927); 46 dates where the panel moves beyond ±35% and the committed archive holds no record at all; no `DEMERGER` type for 28 in-window events; two prose counts say 1,061 |
+| `§7.2` — statutory cost schedule | **PASS** on the refusal — live boundary, registry and holdout intact | the schedule it refuses on has no circular bytes for any period and no date dimension for STT/stamp/SEBI; IPFT rows differ 1,000× |
+| `§13.2` / Phase 3B-2 item 3 — seq 10 | **BLOCKED, correctly** — `NOT REGISTERED` on the cost precondition, `NOT CERTIFIED`, `N = 9`, `N_eval = 5` | the block now sits exactly on §7.2 sourcing (work order 1) |
+| `§10.8` labels / A1 / A2 / A4 / A5 | **PASS** — `931 BINDING_EVALUATION, 0 WARMUP_NOT_GATABLE`; READY 9/9 on the expanded window | A5 still evaluates the post-2022 verdict corpus only (carried) |
+| Gate / cache | **GO** — 557 passed, 10/10 verifiers, tree `e26be07f…` already recorded, no duplicate row | §94.1's verifier count was one short; corrected here |
+
+### 95.10 Work order for feat-s96
+
+Ordered by what it unblocks. Items 1–2 unblock the cost precondition seq 10 refuses on; items 3–5 make the corpus usable at all; item 6 is the registration step that lets §96 close what this section can only name.
+
+1. **Source and commit the exchange-charge circular bytes for every fee row, starting with `2018-04-01..2020-12-31`** (serves `§7.2`, `§10.7`; unblocks seq 10's cost precondition). The pre-2021 cash-equity turnover circular is the specific gap the refusal names, but the 2021+ rows (`NSE/FA/46730`, `56129`, `61137`, `64323`, `73061`) are unattested too, and fixing only the first would leave four rows asserting rates no committed byte supports. Each row gains `circular_sha256` resolving to a byte-exact payload under `data/raw/circulars/<ref>/` with its manifest line (URL, retrieval timestamp, byte count, sha256), and the schedule gains a row whose `from_date` covers `2018-04-02`. **Probe:** `statutory_cost_schedule_problem(2018-04-02)` returns `None` **because** a covering row's `circular_sha256` resolves to a committed file — today that passes only when a synthetic row is monkeypatched in, and no row carries a digest at all; a row whose digest resolves to no committed byte fails closed.
+2. **Resolve the 1,000× IPFT step and give the statutory scalars a date dimension** (serves `§7.2`, `§10.5`). `ipft_rate` is `0.000000001` for `2021-01-01..2023-03-31` and `0.000001` afterwards; the circular text settles which. STT, stamp duty and the SEBI turnover charge are scalars over a 5.7-year window, so a within-window change cannot be represented at all — either convert them to interval rows under the same attestation discipline, or commit a decision file that names the span and the source for each rate and states that no change falls inside it. **Probe:** a session either side of any re-rated component is costed from different rows, or the decision file names each rate's span and source; a scalar schedule with no decision file fails closed.
+3. **Rebuild the corpus with a point-in-time universe** (serves `§6.1`, `§5.4`, `§13.2`; Ruling 1). `universe_by_date[D]` is the ISINs that traded on `D`. Continuity keeps its role for **feature windows** (the engine already refuses a lookback spanning an unexplained gap) and loses it as a membership condition. Record `universe_selection` as the rule, not as the outcome, and fix the two `1,061` prose counts while touching them. **Probe:** `universe_by_date` differs between `2018-04-02` and `2018-12-31`; the 564 names trading on the first session appear on the dates they traded; a name whose observations stop in 2021 is absent after its last session and present before it, rather than missing from all 1,425 dates.
+4. **Attest the adjustment table against the archive and fail the build on any gap** (Ruling 2; serves `§5.4`, `§6.5`, `§13.2`). Add the **94** missing `BONUS` rows (44 on panel ISINs at panel sessions, 34 beyond ±25%), correct INFY's ex-date to `2018-09-04`, resolve or delete the IDEA consolidation (no archive record, −0.8927 fabricated), replace the `ATTESTED_NSE_CA_…` AVANTIFEED reference with a real digest or relabel it, and attach `source_digest` to every row. First reconcile the **46** dates at which the panel moves beyond ±35% and the archive holds no record at all (§95.7): each is either a payload to capture or an `exDate` to correct, and until each is one or the other no completeness claim can be made. **Probe:** a builder run over a table missing one archive-attested action for an in-panel ISIN exits non-zero naming the action; a row whose ex-date disagrees with the archive fails closed; every panel return beyond ±35% is explained by an applied row or by an archive record at that ISIN and date, and any that is not fails the build with the ISIN and date printed (today: **46** dates, **88** returns, **62** unexplained by the adjustment layer).
+5. **Add a `DEMERGER` / merger-consideration action type and exercise it on a held position** (serves `§13.2`). 32 attested events, 28 on the panel, 1 table row, 0 typed. **Probe:** a position held across a demerger ex-date books the consideration (or is force-exited with a reason) instead of realising the raw −65%…−95% drop; today no type exists to book it.
+6. **Register probes for the corpus defects before registering the findings** (serves `§9.1`, `§14.2`). §95.5 measures five defects and registers **no** ledger rows, because `verify_audit_findings.py` executes every row's probe and no committed probe asserts them yet — a row without an executable probe would either fail the gate or be a row that cannot fail. **Probe:** `probe_audit_findings.py N-181`…`N-185` exist and exit 0 on the defect (survivor filter, missing bonuses, INFY date, IDEA row, demerger type); §96 then registers them with those commands. Do not add the rows first.
+7. **A registry row whose metrics do not reproduce** (carried, `§94.4`, re-measured here). `probe_hold_bound_invariance.py` exits 1: 175 forced exits / 203 refusals, and **5/5** metrics fail to reproduce even with the consumer disabled (run B: 194 closed trades vs 193 committed, `end_equity` 1,164,053.76 vs 1,283,327.73). The engine moved after seq 9 ran, so `TRIAL-PHASE3B2-RANKED-009`'s committed numbers cannot be regenerated by this tree. Either annotate the row `NON_REPRODUCIBLE_AT <sha>` with the measured divergence, or re-run and restate it. **Probe:** a registry row whose committed metrics do not reproduce under the current tree is refused by the certificate, or carries the annotation and the divergence.
+8. **Carried, unchanged:** N-150 (`CRIT-OVERFIT-06` needs a second fold or a recorded admission); the replay counter's `get`/`popitem` (§92.10 item 6); the Phase 2D artifact's `timestamp_utc` still `2026-11-16T10:00:00+00:00` (LOW).
+
+### 95.11 What would falsify this verdict
+
+- If the ordered N-178 mutation still passed, item 5 would be unclosed. Measured: `probe_n178` exit 1 and the committed test failing on the guarded call.
+- If the `for`-body residual were unreachable code a reviewer would never write, calling it a residual would overstate it. Measured: the module parses, the suite passes and `probe_n178` prints `PASS N-178` with the call beneath `for _unreachable in ():`, so nothing in the gate distinguishes the two.
+- If deleting a superseded row were still invisible, item 6 would be unclosed. Measured: certificate exit 1 at `930` vs `931`.
+- If the derived fold disagreed with the committed 2022–2023 fold, item 2 would have changed a historical definition rather than generalised it. Measured: `4b44a1f2…` reproduced exactly.
+- If the corpus's 44 missing bonuses were immaterial because those names produce no signals, the ruling on the table would still stand but its severity would not. Measured: all 44 are on panel ISINs at panel sessions, and 34 of them carry moves beyond ±25%.
+- If the panel's largest returns were all fabricated, the reading of the tail would be simpler than it is. Measured: of the 11 beyond ±75%, 2 are applied rows, 2 are omitted attested actions, and 7 are explained by nothing the table carries (6 of them demergers or scheme-of-arrangement dates the archive does record), so the adjustment layer is wrong in both directions — it invents moves and it leaves real ones unexplained.
+- If the survivor filter removed only untradeable microcaps, Ruling 1 would be a theoretical objection. Measured: 564 of 1,646 names trading on 2018-04-02 are removed from every date, and the panel is the identical list on all 1,425 dates.
+- If the archive's INFY row were wrong and the table right, §95.5.4 would be a false accusation. Measured: the committed Bronze row reads `exDate 04-Sep-2018`, `Bonus 1:1`, and the raw price series halves on 2018-09-04, not 2018-09-12.
+- If the corpus were already filed as gating input, the provenance label would be a lie rather than a scope question. Measured: the manifest row says `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED`, and no trial row names the artifact.
+- If seq 10's block were the fold or the corpus, item 1–2 of §94.6 would be unfinished. Measured: both preconditions clear, and the refusal names the fee schedule.
+- If the fee schedule's missing circular bytes did not matter because the rates are only used as a constant, the §7.2 finding would be cosmetic. Measured: the statutory component varies inside the window, the exchange component varies by circular, and the schedule can express neither without dates it does not have.
