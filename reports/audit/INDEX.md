@@ -6,7 +6,7 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | Volume | Path | Sections | Lines | Frozen | SHA-256 |
 |---|---|---|---|---|---|
 | `signal_atlas_phase1c_audit_deepseek_review_.md` | `reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md` | 1-78 | 8442 | yes | `f4ca03d58466bebb…` |
-| `volume2.md` | `reports/audit/volume2.md` | 79+ | 2970 | no | `9c51ce99512d8fe3…` |
+| `volume2.md` | `reports/audit/volume2.md` | 79+ | 3181 | no | `07332725bbcf14a0…` |
 
 | Section | Title | Volume | Lines | Finding ids |
 |---|---|---|---|---|
@@ -104,5 +104,6 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | §92 | Audit of `1aff4c6` (tag `feat-s92-1aff4c6`): the hold bound exits through the engine, Gate COV-3 computes its attribution, the scan is caught five of five, and the binding start moves while its labels stay | `volume2.md` | 2316–2481 | N-150, N-174, N-176, N-177 |
 | §93 | Audit of `e5e9217` (tag `feat-s93-e5e9217`): the 931 labels align with the binding start and the certificate reads the criteria, the seam test binds the harness but not the engine, and seq 10's baseline does not reproduce | `volume2.md` | 2482–2618 | N-130, N-150, N-152, N-177 |
 | §94 | Audit of `0287aae` (tag `feat-s94-0287aae`): the seam is asserted in the source and the row in its fields, seq 10 refuses on a measured block, and neither new check can see a live path | `volume2.md` | 2619–2744 | N-150, N-152, N-177, N-178, N-179, N-180 |
-| §95 | Audit of `77fb043` (tag `feat-s95-77fb043`): the corpus reproduces bit-for-bit and then charges its own fake returns, the three checks close with one hole apiece, and the panel built to carry seq 10 is a survivor set | `volume2.md` | 2745–2970 | N-150, N-152, N-177, N-178, N-179, N-180, N-181, N-185 |
+| §95 | Audit of `77fb043` (tag `feat-s95-77fb043`): the corpus reproduces bit-for-bit and then charges its own fake returns, the three checks close with one hole apiece, and the panel built to carry seq 10 is a survivor set | `volume2.md` | 2745–2971 | N-150, N-152, N-177, N-178, N-179, N-180, N-181, N-185 |
+| §96 | Audit of `ac16232` (tag `feat-s96-12c6dae`): the statutory schedule prices every session and one of its eleven sources does not resolve to the bytes git stores, the point-in-time universe closes, and the builder's own fatal class is published instead of failing | `volume2.md` | 2972–3181 | N-150, N-152, N-170, N-174, N-178, N-181, N-182, N-183, N-184, N-185, N-186, N-187, N-188, N-189, N-190 |
 

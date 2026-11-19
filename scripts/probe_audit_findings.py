@@ -2464,6 +2464,176 @@ def probe_n185() -> None:
     )
 
 
+def probe_n186() -> None:
+    """
+    A committed payload's manifest must describe the bytes git stores, not the bytes a download left.
+
+    Measured at ac16232 (§96.2): `data/raw/circulars/NSE_STT_RATES/manifest.json` asserts 330,003 bytes
+    and sha256 5df41b04…, while `git cat-file blob HEAD:` for the same path yields 330,001 bytes and
+    91e8ace7… — `.gitattributes` applies `* text=auto eol=lf` to the captured `.html`, so checkout
+    rewrites its CRLF bytes. On the implementer's working copy the digest still matches (the file was
+    never re-checked-out), so `statutory_source_problem` returns None there and refuses on every fresh
+    clone, where the committed test `test_pre_2021_session_is_priced_from_committed_bytes` fails.
+    """
+    import hashlib
+    import json
+    import subprocess
+
+    root = REPO_ROOT / "data" / "raw" / "circulars"
+    drifting = []
+    for directory in sorted(p for p in root.iterdir() if p.is_dir()):
+        manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+        payload = directory / manifest["filename"]
+        rel = payload.relative_to(REPO_ROOT).as_posix()
+        blob = subprocess.run(
+            ["git", "cat-file", "blob", "HEAD:" + rel],
+            cwd=str(REPO_ROOT), capture_output=True,
+        ).stdout
+        if hashlib.sha256(blob).hexdigest() != manifest["sha256"] or len(blob) != manifest["byte_count"]:
+            drifting.append(f"{directory.name} ({manifest['byte_count']} stated vs {len(blob)} stored)")
+    assert drifting, (
+        "every statutory manifest resolves to the bytes git stores; the working-copy digest drift "
+        "§96.2 measured is gone, so this finding is closed and probe_n186 must be flipped"
+    )
+
+
+def probe_n187() -> None:
+    """
+    The class the corpus builder documents as fatal must actually fail the build.
+
+    Measured at ac16232 (§96.4): `classify_extreme_moves` returns six `EX_DATE_MISMATCH` entries and
+    `derive_2018_2023_corpus.build` binds that list to `failures` and never reads it, so the build
+    exits 0 with the six published in the header. Four of the six sit on ISINs with no price-side row
+    at all; three are exact −0.5 one-session moves whose archive record is 2–7 sessions away, which is
+    the INFY failure mode §95.5.4 measured on a single name.
+    """
+    import ast
+    import gzip
+    import json
+    from decimal import Decimal
+
+    source = (REPO_ROOT / "scripts" / "derive_2018_2023_corpus.py").read_text(encoding="utf-8")
+    assert "This is the class that fails the build" in source, (
+        "the builder no longer documents the ex-date-mismatch class as fatal; re-scope this finding"
+    )
+    tree = ast.parse(source)
+    module_level_failures = [
+        node.lineno for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and node.id == "failures" and isinstance(node.ctx, ast.Load)
+    ]
+    assert sorted(module_level_failures) == [453, 466, 468], (
+        f"`failures` is read at {module_level_failures}; if one of those reads gates the build the "
+        f"dead-path defect §96.4 measured is closed"
+    )
+
+    with gzip.open(
+        REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz", "rt", encoding="utf-8"
+    ) as handle:
+        corpus = json.load(handle)
+    reconciliation = corpus["reconciliation"]
+    assert reconciliation["ex_date_mismatch"] > 0, (
+        "the committed corpus publishes no ex-date mismatch, so there is nothing for the build to fail on"
+    )
+
+
+def probe_n188() -> None:
+    """
+    The builder must fail closed on an archive-attested action the table does not carry.
+
+    Measured at ac16232 (§96.4): withdrawing one attested row (SRF 2021-10-13) leaves
+    `applied_actions` at `refusals == 0` — one fewer instrument adjusted and no refusal — while the
+    archive still attests the event. The only completeness check in the repository is
+    `attest_price_actions.reconcile()`, which no build path and no `verify_*.py` calls.
+    """
+    import datetime
+
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    import scripts.derive_2018_2023_corpus as builder
+    from signal_core.storage.security_master import load_corporate_actions
+
+    attestations = builder.bronze_attestations()
+    actions = list(load_corporate_actions())
+    surplus, control_refusals = builder.applied_actions(actions, attestations)
+    assert control_refusals == [], f"the committed table already refuses {control_refusals[:2]}"
+    witnesses = [
+        row for row in actions
+        if not row.superseded and row.source_digest and row.symbol == "SRF"
+        and row.ex_date == datetime.date(2021, 10, 13)
+    ]
+    assert witnesses, "the SRF 2021-10-13 witness row is gone; re-scope this finding"
+    isin = witnesses[0].isin
+    assert any(key[0] == isin and key[1] == datetime.date(2021, 10, 13) for key in attestations), (
+        "the archive no longer attests the witness event"
+    )
+    without = [row for row in actions if row is not witnesses[0]]
+    applied, refusals = builder.applied_actions(without, attestations)
+    assert refusals == [], (
+        f"withdrawing an attested row now refuses ({refusals[:1]}); the completeness half of Ruling 2 "
+        f"is enforced and this finding is closed"
+    )
+    assert len(applied) < len(surplus), (
+        "the witness row was not actually applied before its withdrawal, so it cannot witness a gap"
+    )
+    for verifier in sorted((REPO_ROOT / "scripts").glob("verify_*.py")):
+        assert "attest_price_actions" not in verifier.read_text(encoding="utf-8"), (
+            f"{verifier.name} runs the reconciliation, so the missing-set direction is gated and this "
+            f"finding is closed"
+        )
+
+
+def probe_n189() -> None:
+    """
+    A demerger refusal counter must count refused exits, not demerger events.
+
+    Measured at ac16232 (§96.5): the seq-10 artifact reports `demerger_forced_exits` 0 and
+    `demerger_forced_refusals` 66 over 1,425 sessions with 781 closed trades, and no closed trade
+    carries a `DEMERGER_FORCED_EXIT` reason. `demerger_exits` is built from every action in the
+    security master, not from open positions, while the harness skips an ISIN it does not hold — so an
+    event on a name the book never owned is counted as a refused exit.
+    """
+    import json
+
+    artifact = json.loads(
+        (REPO_ROOT / "reports" / "verdicts" / "trial_010"
+         / "phase3b2_swing_baseline_2022_2024_verdict.json").read_text(encoding="utf-8")
+    )
+    assert artifact["demerger_forced_exits"] == 0, (
+        f"the run now exits {artifact['demerger_forced_exits']} position(s) on a demerger ex-date, so "
+        f"the exit constraint is no longer inert"
+    )
+    assert artifact["demerger_forced_refusals"] > 0, "no demerger refusal is recorded; re-scope this finding"
+    assert "DEMERGER_FORCED_EXIT" not in artifact["closed_trade_exit_reasons"], (
+        "a closed trade now carries a demerger exit reason; the constraint produced an exit"
+    )
+    loop = (REPO_ROOT / "scripts" / "run_phase3b2_walkforward.py").read_text(encoding="utf-8")
+    assert "for ca in sec_master.corporate_actions()" in loop, (
+        "the demerger set is no longer archive-derived; the counter may now be position-derived and "
+        "this finding is closed"
+    )
+
+
+def probe_n190() -> None:
+    """
+    A host-sensitive CPU budget must not decide the gate's verdict on an identical source tree.
+
+    Measured at ac16232 (§96.1): `verify_audit_append_only --force-full` exits 1 because
+    `test_n1_replay_guard_o1_lookup_and_bounded_memory` measures 265.62 µs/fill (then 253.90) against
+    its 250.0 ceiling, while the same test passes 3/3 in ~2.5 s serially. The gate runs the suite with
+    `-n auto --dist loadfile`, so the benchmark's per-fill CPU is measured under unbounded concurrency
+    on the host, and the recorded green row for this tree (561 passed, 69.19 s) was written by a run
+    whose worker count happened to fit.
+    """
+    gate = (REPO_ROOT / "scripts" / "verify_audit_append_only.py").read_text(encoding="utf-8")
+    assert '"-n", "auto", "--dist", "loadfile"' in gate, (
+        "the gate no longer runs the suite under -n auto, so the parallel-invocation defect is closed"
+    )
+    test = (REPO_ROOT / "tests" / "unit" / "test_portfolio.py").read_text(encoding="utf-8")
+    assert "assert per_fill_1k_us < 250.0" in test, (
+        "the replay-guard ceiling moved or was removed; re-scope this finding"
+    )
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -2502,6 +2672,11 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-183": probe_n183,
     "N-184": probe_n184,
     "N-185": probe_n185,
+    "N-186": probe_n186,
+    "N-187": probe_n187,
+    "N-188": probe_n188,
+    "N-189": probe_n189,
+    "N-190": probe_n190,
 }
 
 

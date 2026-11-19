@@ -2968,3 +2968,214 @@ Ordered by what it unblocks. Items 1–2 unblock the cost precondition seq 10 re
 - If the corpus were already filed as gating input, the provenance label would be a lie rather than a scope question. Measured: the manifest row says `CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED`, and no trial row names the artifact.
 - If seq 10's block were the fold or the corpus, item 1–2 of §94.6 would be unfinished. Measured: both preconditions clear, and the refusal names the fee schedule.
 - If the fee schedule's missing circular bytes did not matter because the rates are only used as a constant, the §7.2 finding would be cosmetic. Measured: the statutory component varies inside the window, the exchange component varies by circular, and the schedule can express neither without dates it does not have.
+
+## §96 — Audit of `ac16232` (tag `feat-s96-12c6dae`): the statutory schedule prices every session and one of its eleven sources does not resolve to the bytes git stores, the point-in-time universe closes, and the builder's own fatal class is published instead of failing
+
+**Date:** 19 November 2026
+**Commit under review:** `12c6dae` (69 files, +37,453/−310: 11 captured statutory sources with manifests and `ingest_statutory_sources.py`, the interval-table rewrite of `StatutoryCostCriteria` and `costs.py`, six `effective_dated_exchange_fees` rows each carrying `circular_sha256`, the 407-line `attest_price_actions.py`, the rebuilt 75.4 MB corpus, 355 appended and 10 superseded corporate-action rows, `DEMERGER` as a type and as a forced-exit constraint, `scripts/probe_audit_findings.py` `N-181..N-185`, the seq-10 registry row and `reports/verdicts/trial_010/`, the `trial_annotations.jsonl` sidecar, the 119-line `test_phase3b2_audit_s96_items.py`, and criteria 1.1.15 → 1.1.16) and `ac16232` (the green-cache row, +19 lines). Neither touches a path under `reports/audit/`, `data/raw/2025` or `data/raw/2026`.
+**Verdicts:** **§95.10 item 3 CLOSED** (N-181) · **item 6 CLOSED as ordered** (N-181…N-185 registered, flipping on the reverted fix 5 of 5) · **item 7 CLOSED as ordered** (sidecar re-measured, divergence identical) · **item 1 PARTIAL** — every levy is an attested interval, `2018-04-02` prices, and the 1,000× IPFT step is settled by the circular; one of the eleven sources resolves to nothing git stores (N-186) · **item 4 PARTIAL** — the archive and the table reconcile exactly in both directions, but the class the builder calls fatal is published not refused (N-187) and the missing-set direction has no build gate (N-188) · **item 5 PARTIAL** — the demerger is typed and attributable, and in the only run that exercised it the exit never filled and the refusal counter counts events (N-189) · **seq 10 CERTIFIED and NO-GO**, with a named residual that no ledger row checks its score · **the gate's verdict on this SHA is not reproducible**: two heavy runs fail and one passes on the same bytes (N-190).
+
+### 96.1 Baseline re-measured at `ac16232`
+
+The tree is unchanged from `12c6dae`; `ac16232` appends one cache row. Everything below was measured on that tree before any edit in this section.
+
+| Measurement | Result |
+|---|---|
+| `scripts/verify_audit_append_only.py --force-full` | **exit 1** — `OVERALL VERDICT: ONE OR MORE GATES FAILED`. The failing gate is W0.5-3: **1 failed, 560 passed in 76.52 s**, `test_n1_replay_guard_o1_lookup_and_bounded_memory` at **265.62 µs/fill** against its `250.0` ceiling. **No row was appended**; `git status` was clean apart from the auditor's own scratch file, which was moved out of the tree. Of three further `--force-full` runs on the same source, **two exit 0** (`561 passed in 62.48 s` and `561 passed in 72.71 s`) and one re-ran the suite command directly at 253.90 µs. Two of four heavy runs on one source tree fail; two pass |
+| Gate W0.5-2 (verifiers) | **9/9 exit 0** — the gate discovers and runs every `verify_*.py` except itself, so the tree's **10** files are 9 executed + the gate. §95.1's "10/10" and §94.1's "9/9" are the gate's own count and the file count respectively; the gate prints `All 9 verification scripts passed exit 0` |
+| Gate W0.5-4 / W0.5-5 | **108/108 commit-bearing tags verified**, `feat-s96-12c6dae` → `12c6dae` included; **1,009** current artifacts match byte count and sha256, **960** superseded rows skipped as history |
+| Re-run of the gate's own suite command | `python -m pytest -n auto --dist loadfile -q` → **1 failed, 560 passed in 83.52 s**, the same test at **253.90 µs**; the same test serially **passes 3/3** (2.54 s, 2.55 s, 2.27 s). The committed green row for this tree records `561 passed, 69.19 s` |
+| Green cache | a row for this source tree is recorded at `12c6dae` (suite 561, 69.19 s); the heavy run above did not reproduce it, so nothing was appended and nothing reused |
+| Findings ledger at `ac16232` | **55** rows / **32** ids — latest-per-id **30 CLOSED**, **1 OPEN** (`N-150`), **1 ACCEPTED** (`N-152`); after this section **65** rows / **42** ids — **35 CLOSED**, **6 OPEN**, **1 ACCEPTED**; `verify_audit_findings.py` **exit 0**, **42/42 probes matched** |
+| Criteria / pins | **1.1.16**; `CRIT-FPR-V1-9ee0a88c260d27fbe3ab13bb7c8c4c992e7d185986f28f5f803cf5db6db8634e`; `MAN-FPR-V1-f5b1f1f12e62564a…` recomputed over **1,875,421** bytes of `data/reference/manifest.jsonl` (matches, was 1,867,504 at 1.1.15); `min_binding_evaluation_start_date` **2018-04-01**; `expected_calendar_fingerprint` `CAL-FPR-V1-6acb5f45…` and `expected_sourced_window_calendar_fingerprint` `CAL-FPR-V1-2d5ac7ac…` unchanged |
+| Leaf diff 1.1.15 → 1.1.16 | 97 → 169 leaves, **30 changed / 77 added / 5 removed**; **0 thresholds moved**. The only numeric movement is the new `2018-04-01..2020-12-31` fee row plus index shifts — re-keyed by `from_date`, all five pre-existing rows keep byte-identical `exchange_turnover_rate` and `ipft_rate` (`2024-10-01` changes only its `circular_ref`, `NSE/FA/64323` → `NSE/FA/64232`). The five STT/SEBI/stamp scalars are **gone from the schema**, not shadowed |
+| Trials / fold / holdout | **10** rows, seq 1–10, **5** evaluation rows, pin `0246c276d52d3a9b…` recomputed over `data/trials/trial_registry.jsonl.manifest` (matches the criteria pin); seq 10 `IN_SAMPLE`, `FOLD-SPEC-V1-36a39987…`; validation **2024** frozen; holdout `2025-01-01..2026-11-11` sealed and refused by the engine |
+| `probe_audit_findings.py` | **N-181, N-182, N-183, N-184, N-185 exit 0** (`PASS <id>`); `--list` ends at **N-190** |
+| `probe_pre2022_bronze_coverage.py` | **exit 0** — `COVERED — 931/931`, `931 BINDING_EVALUATION, 0 WARMUP_NOT_GATABLE`, 931 superseded rows retain digest and provenance |
+| `probe_pre2022_preconditions.py` | **exit 0, READY 9/9** — A1 246/245/252/248, A2 17,864/19,283, A4 **4,357** dividend ex-dates and now `enforced at 1 production call site(s); refusals=1`, A5 `0 of 7,753` before 2018-04-01 |
+| `probe_seq10_candidate.py` | **exit 0 — `CERTIFIED`** |
+| `probe_hold_bound_invariance.py` | **exit 1 — `NOT INVARIANT`**, run A 175 forced exits / 203 refusals, **5/5** committed metrics absent, run B 194 closed trades / `1,164,053.76` — reproducing the sidecar's recorded divergence exactly |
+| `derive_2018_2023_corpus.py --check` | **exit 0 — `OVERALL: CURRENT`** (§96.4 reports the printed line) |
+| Files the code commits touch | 69; **no** path under `reports/audit/`, `data/raw/2025`, `data/raw/2026`, `configs/partition_spec.yaml` |
+
+The gate's verdict is the first thing a reader has to hold, because it decides what "green" means for every claim below. On one unchanged source tree it is **not a function of the tree**: four heavy runs give two exits 1 (265.62 µs and 253.90 µs against a 250.0 ceiling) and two exits 0 (561 passed in 62.48 s and 72.71 s), while the same test passes **3/3 serially** (2.54 s, 2.55 s, 2.27 s) in every one of those windows. The failure is **fail-closed** — a run is refused, nothing is certified that did not run — but it is **nondeterministic**: per-fill cost is ~47 µs serially, so the ceiling carries 5.3× headroom that the gate's own `-n auto` invocation can consume entirely when the host is busy, and the committed green row for this tree (561 passed, 69.19 s) is indistinguishable from the run that passed here and from the two that failed. Registered as **N-190**; no threshold was moved to clear it (§12.4).
+
+### 96.2 §95.10 items 1–2 — PARTIAL: every levy is attested and priced per session, and one of the eleven sources is not the bytes git stores
+
+Item 1 asked for the exchange-charge circular bytes, `circular_sha256` on every fee row, and a row covering `2018-04-02`; item 2 asked for the 1,000× IPFT step to be resolved and the statutory scalars to gain a date dimension. Both halves are present and measured.
+
+| Claim | Measurement |
+|---|---|
+| 11 sources under `data/raw/circulars/<ref>/`, byte-exact, with manifests | **11/11 directories**, each a payload + `manifest.json` carrying `source_url`, `retrieved_at`, `http_status`, `byte_count`, `sha256`, `provenance_status: CONTENT_IDENTIFIED_ONLY / SOURCE_UNVERIFIED`. 7 `NSE/FA/*` PDFs (`45147`, `46225`, `46730`, `56129`, `61137`, `64232`, `73061`), `MAHARASHTRA_STAMP_DUTY_2019`, `SEBI_PAYMENT_OF_FEES_2020_011`, `SEBI_STAMP_DUTY_FAQ` (ten PDFs in all), plus the NSE STT/turnover HTML |
+| `circular_sha256` on **all** fee rows, `NSE/FA/64232` included | **6/6 rows** carry a 64-hex digest; `criteria._digest_field` refuses anything else at load. `NSE/FA/64232` = `85b816208f33bdd1…`, equal to the committed `FA64232.pdf`. The row's `from_date 2024-10-01..2026-02-28`, rate `0.0000297` — the unverified `NSE/FA/64323` reference is gone |
+| Half-open `[from, to)` intervals for STT / SEBI / stamp duty | Boundaries measured on `StatutoryCostCriteria.get_rate`: `SEBI_TURNOVER` **1e-6** on 2020-05-31, **5e-7** on 2020-06-01 and 2021-03-31, **1e-6** on 2021-04-01; `STAMP_DUTY_DELIVERY_BUY` **1e-4** on 2020-06-30 → **1.5e-4** on 2020-07-01; `STAMP_DUTY_INTRADAY_BUY` **2e-5** → **3e-5** on the same boundary; `STT_DELIVERY` 1e-3 and `STT_INTRADAY_SELL` 2.5e-4 identical at 2018-04-02 and 2023-12-29. The consumer is the engine, not a second table: `costs.py` calls `get_rate` at all five levy sites (STT delivery, STT intraday sell, SEBI turnover, stamp duty delivery buy, stamp duty intraday buy) and the scalars no longer exist on the dataclass |
+| Pre-2023 IPFT confirmed | The pre-2021 and `2021-01-01..2023-03-31` rows both carry `ipft_rate 1e-9` (₹0.01/cr), the `2023-04-01..2024-03-31` row `1e-6` (₹10/cr) — the 1,000× step §95.8 could not settle is a real re-rating, stated in `configs/statutory_rate_decisions.yaml` with the circular quotation, and reversed from 2026-03-01 by `NSE/FA/73061` |
+| `2018-04-02` priced | `statutory_cost_schedule_problem` returns **None** on the working copy; the first session resolves `NSE/FA/46730` `2018-04-01..2020-12-31`, ₹3.25/lakh slab 1, IPFT ₹0.01/cr, and every levy has a covering interval |
+| Source substantiation is live, not declared | In a detached worktree: deleting `FA64232.pdf` → `exchange-fee row 'NSE/FA/64232' … cites NSE_FA_64232, but data/raw/circulars/NSE_FA_64232/ holds no committed payload`; deleting `NSE_STT_RATES/` → the same refusal naming that ref; zeroing a `source_sha256` → `…which is not the digest of any committed payload…` |
+
+The one thing that is not true is the premise under all of it. **`NSE_STT_RATES` does not resolve to the bytes git stores**:
+
+| | stated | worktree | `git cat-file blob HEAD:` |
+|---|---|---|---|
+| `NSE_SEBI_TURNOVER_FEES_STT_OTHER_LEVIES.html` | 330,003 B, `5df41b04…` | 330,001 B, `91e8ace7…` (fresh checkout) | 330,001 B, `91e8ace7…` |
+
+`.gitattributes` opens with `* text=auto eol=lf`, so the captured `.html` is normalised on checkout and its CRLF bytes are rewritten; `git status` cannot see the difference because the same attribute makes the comparison normalising. In the main working copy the file is still the 330,003-byte download, so `statutory_source_problem` returns `None` there and the committed test passes. In a fresh checkout of the same commit it returns `SEBI_TURNOVER interval from 2018-04-01 cites NSE_STT_RATES with sha256 5df41b049103c757…, which is not the digest of any committed payload under data/raw/circulars/NSE_STT_RATES/ ([91e8ace7fde9ca8b…])`, `statutory_cost_schedule_problem` is non-`None`, seq 10 is **NOT REGISTERED**, and `tests/unit/test_phase3b2_audit_s96_items.py::test_pre_2021_session_is_priced_from_committed_bytes` **fails (1 failed, 3 passed)**. The attestation is a working-copy digest — the precise defect §79.7 recorded for the frozen-volume pin and §86.3 (N-170) for 1,221 archives, recurring on a new file type; N-170's repair marked archives `-text` and did not reach `data/raw/circulars/`. Ten payloads resolve to both worktree and blob; the 23 corporate-action `.json` payloads resolve to both. Registered as **N-186**.
+
+So item 1's substance is right and item 1's *evidence chain* fails on every clone. **PARTIAL.**
+
+### 96.3 §95.10 item 3 — CLOSED: the universe is the ISINs that traded, and a name that dies stays on the dates it lived
+
+| Measurement | `77fb043` (§95.5.5) | `ac16232` |
+|---|---|---|
+| header rule | `"1082 of 2735 observed ISINs: every session from … 1463 ISIN(s) … are excluded"` | `POINT_IN_TIME_TRADED: universe_by_date[D] is exactly the set of ISINs with a valid exchange observation on D, with no full-span, survival or look-ahead condition` |
+| members on the first session | 1,082 (the whole panel) | **1,646** |
+| members on the last session | 1,082 | **2,118** |
+| membership identical on every date | yes, all 1,425 | **no** — min 1,619, max 2,139, mean 1,809.2 |
+| distinct members over the window | 1,082 | **2,735** |
+| instruments stopping before the last session | excluded from all dates | **617**, each present on its own last bar and absent the next |
+| the witness | — | `IN9623B01058` last trades 2023-12-26: a member that day, absent 2023-12-27 |
+
+`instrument_count` 2,735 and `total_instrument_records` 2,578,060 match the header and the commit claim exactly. The 564 day-one names §95.5.5 measured as retroactively deleted are back on the dates they traded. `universe_selection` states the rule rather than the outcome, which is what item 3 asked for, and the two `1,061` prose counts are gone (§95.5.7). **CLOSED**, registered as **N-181**.
+
+The residual that survives is structural and was not created here: a bar carries no series, so the artifact cannot label a `BE`/`BZ` observation. §13.1 entry eligibility is enforced at the call site (`explicit_series=ExchangeSeries.EQ`), so this is not an entry hole — but it is not provable from the artifact either.
+
+### 96.4 §95.10 item 4 — PARTIAL: the table is the archive in both directions, and the class the builder calls fatal is published instead of failing
+
+The reconciliation is now an equality, not a count of examples. Measured independently over the committed archive and table:
+
+| Measurement | Result |
+|---|---|
+| archive-attested price-side events | **430** over **23** payloads |
+| attested but absent from the table | **0** (was 95) |
+| live price-side rows with no attestation | **0** (was 14) |
+| live rows that are attested | **430** — exact both ways |
+| applied factors | **301** ISINs, **0** refusals |
+| rows with `source_digest` | **430** of 5,371; every one resolves to a committed payload on both the worktree and the blob |
+| table census | `DIVIDEND` 4,495, `ISIN_TRANSITION` 426, `BONUS` 194, `SPLIT` 175, **`DEMERGER` 68**, `RIGHTS` 4, `CONSOLIDATION` 3, `MERGER` 3, `DELISTING` 3 — 5,371 rows, sha256 `d7b425e5f444c8c0…` equal to the corpus header's `corporate_actions_fingerprint` |
+
+**INFY (N-183).** `ATTESTED_NSE_CA_S96_INFY_20180904` (BONUS 2:1, digest-resolved) is the live row; the `2018-09-12` row is superseded by `RESTATED_S96_INE009A01021_2018-09-12`. On the corpus INFY returns **+0.0279 on 2018-09-04** and **+0.0117 on 2018-09-12**, where §95.5.4 measured −0.4860 and +1.0234.
+
+**IDEA (N-184).** The `2023-09-15` CONSOLIDATION is superseded by `RESTATED_S96_INE669E01016_2023-09-15` with no replacement — the ordered outcome was "resolve or delete" and there is no archive record to re-date it to. IDEA returns **+0.0734** on 2023-09-15, where §95.5.4 measured −0.8927.
+
+**What is not true.** `classify_extreme_moves` says of its `EX_DATE_MISMATCH` class, in the committed docstring: *"**This is the class that fails the build.**"* It does not. `build` binds `failures` at `derive_2018_2023_corpus.py:296` and never reads it; an AST census finds the name loaded only at `:453`, `:466`, `:468`, all inside the function's own local. Re-running the classifier over the committed corpus reproduces the header exactly — 1 applied, 24 archive, 71 not ratio-shaped, 730 ratio-shaped unattested, **6 ex-date mismatch** — and names the six:
+
+| ISIN | session | one-session return | the archive attests an action on |
+|---|---|---|---|
+| `INE292A01023` | 2018-07-06 | **−0.5000** | 2018-07-11 |
+| `INE292A01023` | 2019-12-09 | **−0.5000** | 2019-12-19 |
+| `INE292A01023` | 2019-12-20 | **−0.5000** | 2019-12-19 |
+| `INE803A01027` | 2019-09-18 | **−0.5000** | 2019-09-16 |
+| `INE251H01024` | 2022-08-12 | **+1.2800** | 2022-08-18 |
+| `INE784B01035` | 2023-09-26 | **+56.0000** | 2023-09-22 |
+
+Four of the four ISINs carry **no price-side row anywhere in the table**, so each of these six returns is a real discontinuity charged as a return, on a name the archive does say something about within seven sessions. That is the INFY failure mode at six more observations, in the class the builder's own sentence calls fatal. Item 4's probe required "any that is not fails the build with the ISIN and date printed"; the ISIN and date are printed during a build and the build exits 0. Registered as **N-187**.
+
+The ±35% detector's *other* four classes being publish-only is the scoped deviation the work order authorised and it is defensible: 730 ratio-shaped unattested moves are rights-entitlement expiries, ETF unit re-denominations and the March-2020 collapse, and §95.7 states this repository cannot tell those from an uncaptured action. The `EX_DATE_MISMATCH` class is not in that deviation. One prose consequence of the same sentence: `CURRENT_STAGE_OF_WORK.md` §96 says "classifies **826** one-session moves beyond ±0.35" and then lists five buckets — 1 + 24 + 71 + 6 + 730 = **832**. 826 is the four-bucket total the builder prints; the sentence's total excludes the six it names in the same line.
+
+**The second half of the item has no consumer.** `applied_actions` refuses an inadmissible row and `build` raises on a non-empty refusal list, so the direction "a row in the table that the archive contradicts" is live. The direction "an attested action the table does not carry" is not: withdrawing the single attested row `SRF 2021-10-13` — which the archive still attests, `(INE647A01010, 2021-10-13)` is a key in `bronze_attestations()` — leaves **0 refusals** and 300 instead of 301 applied ISINs. The only completeness check in the repository is `attest_price_actions.reconcile()` / `report()`, which exits 1 and names the gap; **no build path calls it and no `verify_*.py` mentions the module**, so the gate never runs it. That is the §14.4 shape exactly — the check exists beside the build, not in it. Registered as **N-188**. Item 4 is **PARTIAL**: reconciled today by measurement, not by a gate that would notice tomorrow.
+
+### 96.5 §95.10 item 5 — PARTIAL: the demerger is typed, attributable, and never exited
+
+| Claim | Measurement |
+|---|---|
+| `DEMERGER` exists as a type | `CorporateActionType.DEMERGER` present; the ledger books it as a named no-op that "invents no ratio and settles at book value" (`portfolio.py`, `position.py`) |
+| every attested demerger is a typed row with a digest | **68** rows, **68** with `source_digest`, **0** superseded |
+| the exit constraint runs off the archive, not the book | the loop builds `demerger_exits` from `sec_master.corporate_actions()` filtered on `not ca.superseded` for `sessions_to_run[i+2]`, seeds `forced_reasons.setdefault(isin, "DEMERGER_FORCED_EXIT")`, passes `forced_exit_reasons=forced_reasons`, and the harness stamps `intent_id = SWING_{reason}_{isin}_{date}` |
+| the reason reaches the order | measured by reversion: replacing `DEMERGER_FORCED_EXIT` in the loop makes probe N-185 exit 1; restoring returns PASS |
+| the two counters are attributed apart | `hold_bound_exits` is filtered on the reason, so the **7,309** hold-bound refusals no longer absorb demerger reasons; the bound-disabled counterfactual reads **0 / 0** on both counters, and the fraction the comparison records (`413` trades, `1,501,180.25`, PF `1.1140…`) is the consumer's own effect |
+| **did it exit anything?** | **No.** `demerger_forced_exits` **0**, `demerger_forced_refusals` **66**, and `closed_trade_exit_reasons` = `{SIGNAL_EXIT 55, STOP_LOSS 304, MAX_HOLD_BOUND_EXIT 422}` summing to the 781 closed trades — not one `DEMERGER_FORCED_EXIT` among them |
+
+The reason the 66 cannot be read as "66 refused exits" is structural: `demerger_exits` is every non-superseded demerger on the session after `next_session`, **archive-derived**, with no held-position filter, while `execute_swing_strategy_session` skips `held is None or held.is_closed or held.quantity <= 0`. A demerger on a name the book never owned is therefore counted as a refused exit, and the artifact cannot distinguish "66 positions could not exit" from "66 events, none of them held". Over 1,425 sessions and 781 closed trades, `0` fills also means no held position is *known* to have crossed a demerger date — so whether the constraint ever bound a real position is unmeasured. Registered as **N-189**. Item 5 is **PARTIAL**: the mechanism and the attribution are real and the reversion attack fails closed; the operation and the counter are not.
+
+### 96.6 §95.10 item 6 — CLOSED as ordered: the five probes exist, pass, and fail on the reverted fix
+
+Item 6 ordered the probes *before* the rows, and §95.10 was explicit that a row without an executable probe is either a gate failure or a row that cannot fail. All five exist in `scripts/probe_audit_findings.py` and all five **PASS** on the committed tree (`--list` now ends at `N-190`). Each was then made to face the fix it was written for, in a detached worktree at `ac16232`:
+
+| Reverted fix | probe | `PASS` when committed |
+|---|---|---|
+| A. header rule restored to the full-span text and `universe_by_date` collapsed to the last session's list | N-181 | **exit 1** — `the corpus does not state a point-in-time rule …` |
+| B. one attested bonus row marked superseded (`SRF 2021-10-13`) | N-182 | **exit 1** — `… is still not applied with an archive digest: ['SRF 2021-10-13']` |
+| C. the `2018-09-12` INFY bonus un-superseded | N-183 | **exit 1** — `the 2018-09-12 INFY bonus row is still live` |
+| D. the IDEA consolidation un-superseded | N-184 | **exit 1** — `the unattested IDEA 2023-09-15 consolidation is still live` |
+| E. `DEMERGER_FORCED_EXIT` removed from the session loop | N-185 | **exit 1** — `the session loop does not force a position out of a demerger ex-date` |
+| control, all restored | all five | **exit 0** — `PASS <id>` |
+
+The five `CLOSED` rows are registered with those commands. Two residuals are named rather than smoothed. First, `probe_n182` asserts **fourteen named examples**, not the general set; the equality that actually holds is `attest_price_actions.reconcile()`'s 430 = 430, measured here and gated nowhere (N-188). Second, `probe_n185` asserts the exit reason is *reached*, not that it ever *fires* — which is N-189.
+
+### 96.7 §95.10 item 7 — CLOSED as ordered: the sidecar is real, and its divergence re-measures identically
+
+`data/trials/trial_annotations.jsonl` carries one row keyed on the committed seq-9 `record_hash 50de55e960ad5937…` (the registry row's own hash, unchanged): `annotation NON_REPRODUCIBLE_AT`, `annotated_at_sha 77fb043`, and a `divergence` block. Re-measured at `ac16232` by running `probe_hold_bound_invariance.py` rather than reading its output:
+
+| Sidecar claim | Re-measured |
+|---|---|
+| hold-bound forced exits 175 / refusals 203 | **175 / 203** |
+| committed metrics reproduced 0 of 5 | **0 of 5** — `closed_trades` 382 vs 193, `end_equity` 1,086,020.54 vs 1,283,327.73, PF 1.1070 vs 0.9920, win rate 0.4084 vs 0.2539, MaxDD 0.3264 vs 0.2073 |
+| run B (bound disabled) 194 trades / `1,164,053.76` | **194 / 1,164,053.76** — identical, so the annotation's "the drift is not the bound's alone" is confirmed and not merely asserted |
+
+No historical metric was edited, the hash chain is untouched, and the row stays at criteria 1.1.5 as history. **CLOSED as ordered.** The residual: nothing consumes the annotation. `probe_seq10_candidate.py` does not read the file, `verify_*.py` does not, and `probe_hold_bound_invariance.py` is a `probe_*.py` the gate does not execute — so the sidecar is read by one committed unit test and by whoever opens the directory. The written contract ("refused by the certificate, **or** carries the annotation and the divergence") is met; a *computed* consequence is not.
+
+### 96.8 Candidate seq 10 — CERTIFIED, NO-GO, and the exemption is wider than it looks
+
+`python scripts/probe_seq10_candidate.py` exits **0 — CERTIFIED**, printing `N = 10 (expected 10), N_eval = 5, seq 10 rows = 1`, the registry-manifest and criteria pins agreeing at `0246c276…`, the row's criteria `1.1.16` and partition `IN_SAMPLE`, `FOLD-SPEC-V1-36a39987dca…` reproduced from `2018-04-01..2023-12-31` by the same function the engine runs, the artifact at `2018-04-02..2023-12-29` with `hold_bound_forced_exits 422` / `hold_bound_refusals 7309`, a baseline that is a current-tree run (`reports/analysis/s94/seq10_baseline_2018_2023_verdict.json`, `f5fe3af5a1e2de83…`, criteria 1.1.16) whose digest re-computes, and a sealed-era window refused by the engine with `HoldoutSealedError`.
+
+| Claim | Measurement |
+|---|---|
+| `N = 10, N_eval = 5` | 10 registry rows, 5 evaluation rows; seq 10 carries `returns_digest: null` and every metric `null` — a registration, not an evaluation, so the count correctly did not move |
+| criteria 1.1.16 | row, artifact, comparison and the live criteria all read `1.1.16`; the RATIONALE's stale `1.1.13` that §94.4 measured is gone |
+| 2024 fold frozen / holdout sealed | partition `IN_SAMPLE`, fold test ends 2023-12-31; no registry row's provenance contains `2025-01-01`, `data/raw/2025` or `data/raw/2026`; a 2025 window raises `HoldoutSealedError` before a bar is read |
+| `781` trades, `1,072,507.24`, PF `1.0583`, `72.65%` MaxDD | artifact `closed_trades` 781, `end_equity` 1,072,507.24, `closed_only_profit_factor` 1.058319814…, `max_drawdown` 0.7264709014…; `5/5` `metric_agreement` true between the candidate artifact and a baseline run of the same configuration recorded under a different digest (`f5fe3af5a1e2de83…`) with identical figures. What was measured here is the agreement of the two committed artifacts and the digest of each, **not** a third execution of the run |
+| `422` forced exits / `7,309` refusals | artifact counters, and the bound-disabled counterfactual reads `0 / 0` with 413 trades — the consumer's own cost, isolated |
+| verdict | `overall_verdict: NO-GO`. PF 1.0583 < `min_profit_factor 1.50`, MaxDD 72.65% ≫ `max_portfolio_drawdown 0.25`, `positive_is_fold_ratio` 0, annualized Sharpe 0.1843, `2,735`/`2,578,060` rows resolved 100%. Under §95.6 Ruling 1 this is a non-gating pipeline measurement and it does not need to pass; it would fail every profitability gate if it were offered as one |
+
+**The `G2A-6.7` re-render exemption** (`trials.py`, N-178's neighbour) is the item's weakest seam and it behaves as designed and wider than it reads. It exempts an artifact from the artifact→ledger direction when the trial's row is `IN_SAMPLE` and the artifact declares the registry's own evaluated count. Attacked against a copy of the real `reports/verdicts/` tree:
+
+| Artifact | Result |
+|---|---|
+| the committed seq-10 artifact | **accepted** (`checked=5`) |
+| **seq 10 with `annualized_sharpe: "99.9"` and `evaluated_trial_count: 5`** | **accepted** — the score is exempt from the ledger check, by construction |
+| seq 9 doctored to `42.0` (has an evaluation row) | refused — `does not equal the ledger's 0.8730934047…` |
+| seq 5 doctored to `42.0` (has an evaluation row) | refused — `does not equal the ledger's −0.6995862169…` |
+| seq 10 doctored, **no** declared count / wrong count `4` | refused — the exemption does not open without the count |
+| an unregistered trial id | refused — `is not in the registry; a scored figure must be registered` |
+| seq 1–4 (pre-sidecar carve-out) | accepted, as `_PRE_SIDECAR_TRIAL_SEQ_MAX` documents |
+
+So the exemption's two clauses both fail closed, and within them **nothing checks the score**. That is the correct reading of §93.5 Ruling 3 — a candidate run as a re-render of its own row has no evaluation to compare against — and it means seq 10's 0.1843 Sharpe and 781 trades rest on the certificate plus the artifact digest, not on a ledger row. It is named here as a residual, not a defect: the `99.9` attack succeeding is the *definition* of the exemption, and its containment is that `evaluation_count` cannot move and the artifact must declare it.
+
+### 96.9 Phase verdicts
+
+| Phase | Verdict at `ac16232` | Named residuals |
+|---|---|---|
+| `§7.2` / `§10.5` / `§10.7` §95.10 items 1–2 — statutory sources and interval tables | **PARTIAL** — 11 sources captured, 6/6 fee rows digest-attested, all five levies resolve per session, both 2020 boundaries exact, `2018-04-02` priced, three refusal paths measured live | **N-186**: `NSE_STT_RATES` is a working-copy digest (330,003/`5df41b04…` stated vs 330,001/`91e8ace7…` stored), so a fresh checkout refuses the schedule and the committed S96 test fails. GST on SEBI turnover before 2022-07-18 and the 2020 turnover concession remain declared-not-modelled |
+| `§6.1` §95.10 item 3 — point-in-time universe | **CLOSED** — 1,646 / 2,118 / 2,735, membership varies, 617 names stop and stay on their dates | artifact cannot label a bar's series |
+| `§5.4` / `§6.5` §95.10 item 4 — attested adjustments | **PARTIAL** — 430 = 430 in both directions, 301 applied / 0 refused, INFY and IDEA corrected by restatement | **N-187**: the `EX_DATE_MISMATCH` class is documented as fatal, counted at 6, and `failures` is never read; 4 ISINs carry no row at all. **N-188**: withdrawing an attested row leaves 0 refusals; `reconcile()` has no gate consumer. Prose: `826` vs its own five buckets `832` |
+| `§13.2` §95.10 item 5 — demerger | **PARTIAL** — type, attested rows, forced exit and attributable reason all present and reversion-tested | **N-189**: 0 fills / 66 refusals, and the refusal counter counts events, not refused exits, because the set is archive-derived and unheld ISINs are skipped silently |
+| `§9.1` §95.10 item 6 — probes | **CLOSED as ordered** — five probes exist, pass, and exit 1 on each reverted fix | `probe_n182` asserts 14 examples not the general equality; `probe_n185` asserts reach, not effect |
+| `§8.2` / `§10.1` §95.10 item 7 — non-reproducible row | **CLOSED as ordered** — sidecar keyed on the unchanged hash, divergence re-measured identical | nothing computes a consequence of the annotation |
+| `§13.2` / Phase 3B-2 item 3 — seq 10 | **CERTIFIED, NO-GO** — N 10 / N_eval 5, fold `36a39987…`, holdout sealed, 5/5 metrics reproduce a current-tree baseline | the score is ledger-unattested by the Ruling's own design; the run is diagnostic until the corpus is gating input |
+| Gate / cache | **NOT REPRODUCIBLE** — of four heavy runs on one source tree, two exit 1 at W0.5-3 (265.62 and 253.90 µs) and two exit 0 (561 passed in 62.48 s and 72.71 s); 9/9 verifiers and 108/108 tags pass in every one | **N-190**: a 250 µs CPU budget decided by the gate's own `-n auto`; the recorded row for this tree reads 561 passed, which is what half the runs measured |
+
+### 96.10 Work order for feat-s97
+
+Ordered by what it unblocks. Item 1 is a gate defect, so it is first: nothing else can be certified while the gate's green is a function of host load. Items 2–3 restore the two attestation chains; items 4–6 close what §96 named; item 7 is carried.
+
+1. **Make the gate's verdict independent of host load** (serves `§12.3`, `§12.4`; N-190). Pin the worker count the gate passes to pytest, or replace the replay guard's CPU-per-fill ceilings with the structural count N-174 already names, and record which was done. **Probe:** `python scripts/verify_audit_append_only.py --force-full` exits 0 on a tree whose serial suite is green **and** exits 0 on the same tree when the host is loaded to saturation; three consecutive heavy runs of one tree must return one verdict. Do not raise `250.0` — that is a threshold move under §12.4.
+2. **Re-state the `NSE_STT_RATES` payload so its manifest describes the bytes git stores** (serves `§10.7`, `§6.5`; N-186). Either capture the payload again with `data/raw/circulars/** -text` in `.gitattributes` and re-digest 330,001/`91e8ace7…` from the stored bytes, or correct the manifest and the four criteria rows to the blob it already has. State which, because the two answers mean different things about what was retrieved. **Probe:** a fresh `git clone --no-local` runs `test_pre_2021_session_is_priced_from_committed_bytes` green and `statutory_source_problem` returns `None` with **no** working-copy bytes in the path; every manifest's `sha256` equals `git cat-file blob HEAD:` of its payload. `probe_n186` must then exit 1.
+3. **Make the builder fail on the class it calls fatal, and gate the missing direction** (serves `§9.1`, `§95.7` Ruling 2; N-187, N-188). Consume `failures`: a non-empty `EX_DATE_MISMATCH` list must raise, naming ISIN and date, so the six measured here are either re-dated to the archive or the archive record is corrected — not published. Then call `attest_price_actions.reconcile()` from `build` and raise on `missing`, or run it from a `verify_*.py`. **Probe:** deleting one attested row makes the build exit non-zero naming the ISIN, action and ex-date; an `EX_DATE_MISMATCH` of one makes the build exit non-zero; `probe_n187` and `probe_n188` both exit 1 afterwards.
+4. **Make the demerger counter count refused exits of held positions** (serves `§13.2`; N-189). Intersect `demerger_exits` with the book before counting, and record whether any position was ever held across one; if none was, say so and measure the constraint on a synthetic hold instead of reading a zero as an effect. **Probe:** a demerger event on an ISIN the book does not hold increments no refusal counter; an event on a held ISIN increments `demerger_forced_exits` when it fills and `demerger_forced_refusals` only when it does not. `probe_n189` must then exit 1.
+5. **Filter superseded rows where the action feed is read** (serves `§10.1`, `§13.2`; N-183's residual). The corpus builder and the demerger set filter `superseded`; `SecurityMaster.get_corporate_actions()` does not, so the superseded INFY 2018-09-12 and IDEA 2023-09-15 rows still reach `walkforward.py:650`'s ex-date adjustment. **Probe:** a superseded row is absent from `get_corporate_actions(isin)` output, and a session whose only action is superseded books no adjustment.
+6. **Let the certificate see the annotation** (serves `§9.1`, `§8.2`; item 7's residual). A row carrying `NON_REPRODUCIBLE_AT` should either be refused when offered as a comparator or printed by the certificate as the reason it is not one. **Probe:** `probe_seq10_candidate.py` prints the annotation for seq 9 and fails if a row annotated `NON_REPRODUCIBLE_AT` is used as a baseline.
+7. **Carried, unchanged:** N-150 (`CRIT-OVERFIT-06` needs a second fold or a recorded admission); the replay counter's `get`/`popitem` (§92.10 item 6); the Phase 2D artifact's `timestamp_utc` still `2026-11-16T10:00:00+00:00` (LOW); N-178's `for`-body ancestor gap.
+
+### 96.11 What would falsify this verdict
+
+- If the gate were deterministically green at this SHA, N-190 would be a measurement artefact of the auditor's host. Measured: of four heavy runs on one source tree, two exit 1 (265.62 and 253.90 µs) and two exit 0 (561 passed in 62.48 s and 72.71 s), while the single test passes 3/3 serially inside every one of those windows — so the verdict is not a function of the bytes committed. If a fifth run fails to reproduce *either* outcome the pass/fail split is the finding; if four runs all agreed, there would be none.
+- If `NSE_STT_RATES` resolved to the stored blob, N-186 would be a checkout artefact rather than a committed digest. Measured: `git cat-file blob HEAD:` yields 330,001 bytes / `91e8ace7…`, the manifest and four criteria rows state 330,003 / `5df41b04…`, and a fresh worktree at `ac16232` refuses the schedule and fails the committed test.
+- If the six `EX_DATE_MISMATCH` returns were a classification artefact, N-187 would overstate. Measured: they are 4 ISINs / 6 one-session returns of −0.5000 or larger, re-derived from the committed corpus with the builder's own function, four of the ISINs having no price-side row anywhere.
+- If `failures` were consumed anywhere, the builder's sentence would be true. Measured: an AST census shows the module-level binding read nowhere.
+- If withdrawing an attested row refused, N-188 would be closed. Measured: 0 refusals, 300 vs 301 applied ISINs, and the archive still attests the event.
+- If a demerger exit had ever fired, N-189's "inert" reading would be wrong. Measured: `demerger_forced_exits 0` and no `DEMERGER_FORCED_EXIT` among 781 closed-trade reasons.
+- If the point-in-time universe still removed names retroactively, item 3 would not close. Measured: 1,646 first / 2,118 last / 2,735 distinct, with a named name absent the session after its last bar.
+- If INFY or IDEA still carried their wrong rows, items 4's closures would be prose. Measured: both superseded by restatement, corpus returns +0.0279 / +0.0117 / +0.0734 where §95.5.4 measured −0.4860 / +1.0234 / −0.8927, and the probes flip on the revert.
+- If the seq-10 exemption refused a doctored score, the residual would be overstated. Measured: `99.9` is accepted for an `IN_SAMPLE` row with no evaluation row and the declared count, and refused without it.
+- If seq 10's metrics did not reproduce, `CERTIFIED` would be wrong. Measured: 5/5 agreement between the candidate artifact and the baseline artifact, with both digests re-computed. A third execution was not performed, so what is established is agreement between two recorded runs, not that either re-executes today.
+- If the 7,309 hold-bound refusals still absorbed demerger reasons, the attribution fix would be prose. Measured: `hold_bound_exits` is filtered on `MAX_HOLD_BOUND_EXIT`, the two counter pairs sum independently, and the bound-disabled run reads `0 / 0`.
