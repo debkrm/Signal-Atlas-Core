@@ -30,6 +30,7 @@ Usage:
 from __future__ import annotations
 
 import datetime
+import dataclasses
 import hashlib
 import json
 from pathlib import Path
@@ -41,7 +42,10 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import scripts.run_phase3b2_walkforward as walkforward  # noqa: E402
 import scripts.run_seq10_candidate as candidate_runner  # noqa: E402
-from signal_core.contracts.criteria import load_go_no_go_criteria  # noqa: E402
+from signal_core.contracts.criteria import (  # noqa: E402
+    compute_criteria_fingerprint,
+    load_go_no_go_criteria,
+)
 
 REGISTRY_PATH = REPO_ROOT / "data" / "trials" / "trial_registry.jsonl"
 REGISTRY_MANIFEST = REPO_ROOT / "data" / "trials" / "trial_registry.jsonl.manifest"
@@ -50,6 +54,13 @@ VERDICT_ARTIFACT = (
     REPO_ROOT / "reports" / "verdicts" / "trial_010" / "phase3b2_swing_baseline_2022_2024_verdict.json"
 )
 COMPARISON_ARTIFACT = REPO_ROOT / "reports" / "verdicts" / "trial_010" / "seq10_baseline_comparison.json"
+# Audit §97.10 items 3-4: the hash and the pair the committed artifacts publish are restated by append,
+# never edited, and both restatements are read by this certificate (§10.1).
+# Both restatements live outside `reports/verdicts/`, which the Phase 2A and pre-2022 gates read as the
+# verdict corpus: a note is not a verdict artifact.
+CRITERIA_RESTATEMENT = REPO_ROOT / "reports" / "analysis" / "s98" / "criteria_restatement.json"
+DEMERGER_RESTATEMENT = REPO_ROOT / "reports" / "analysis" / "s98" / "seq10_demerger_restatement.json"
+CERTIFICATES = (VERDICT_ARTIFACT, candidate_runner.BASELINE_ARTIFACT, COMPARISON_ARTIFACT)
 
 WINDOW_START = datetime.date(2018, 4, 1)
 WINDOW_END = datetime.date(2023, 12, 31)
@@ -153,6 +164,102 @@ def registry_row_problem(row: dict, criteria) -> Optional[str]:
 def _expected_fold_fingerprint() -> str:
     """The fold the authorised window implies, derived by the same function the engine runs (N-180)."""
     return walkforward.in_sample_fold_fingerprint(WINDOW_START, WINDOW_END)
+
+
+def _relative(path: Path) -> str:
+    try:
+        return Path(path).relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return Path(path).as_posix()
+
+
+def certificate_problem(certificate_path, live_fingerprint: str, criteria, restatement) -> Optional[str]:
+    """
+    A certificate's stored `criteria_fingerprint` must be the live one, or a pin-only restatement (§97.10 item 3).
+
+    `criteria_version` cannot identify a criteria set: the expected manifest pin is inside
+    `compute_criteria_fingerprint` (Audit §97.7). Two artifacts cited `1.1.16` under `9ee0a88c…` while the live
+    criteria computed `b2876d98…` and no gate read a stored hash. A certificate that differs from the live
+    fingerprint is accepted only when a restatement names its artifact, the executed fingerprint the
+    certificate cites, and the manifest pin the run executed under — and substituting that pin into the
+    **live** criteria reproduces the cited fingerprint exactly. That recomputation is the attestation: any
+    other change to a criterion, threshold, fold, cost row or gating start would move the hash.
+    """
+    path = Path(certificate_path)
+    relative = _relative(path)
+    if not path.is_file():
+        return f"no certificate at {relative}"
+    stored = json.loads(path.read_text(encoding="utf-8")).get("criteria_fingerprint")
+    if not isinstance(stored, str) or not stored.startswith("CRIT-FPR-V1-"):
+        return f"{relative} carries no CRIT-FPR-V1 fingerprint (found {stored!r})"
+    if stored == live_fingerprint:
+        return None
+    if not isinstance(restatement, dict):
+        return (
+            f"{relative} cites {stored} while the live criteria {criteria.version} compute {live_fingerprint}, "
+            f"and no pin-only restatement attests the difference (§97.10 item 3)"
+        )
+    attested_live = restatement.get("live_criteria_fingerprint")
+    if attested_live != live_fingerprint:
+        return (
+            f"the restatement attests live {attested_live} but the committed criteria {criteria.version} "
+            f"compute {live_fingerprint}; the restatement is stale by name"
+        )
+    entries = [row for row in (restatement.get("certificates") or []) if row.get("artifact") == relative]
+    if not entries:
+        return f"the restatement names no executed fingerprint for {relative}"
+    entry = entries[0]
+    if entry.get("executed_criteria_fingerprint") != stored:
+        return (
+            f"the restatement records {entry.get('executed_criteria_fingerprint')} for {relative}, but the "
+            f"certificate cites {stored}"
+        )
+    executed_pin = entry.get("executed_manifest_fingerprint")
+    if not isinstance(executed_pin, str) or not executed_pin.startswith("MAN-FPR-V1-"):
+        return f"the restatement records no executed MAN-FPR-V1 pin for {relative} (found {executed_pin!r})"
+    recomputed = compute_criteria_fingerprint(
+        dataclasses.replace(criteria, expected_manifest_fingerprint=executed_pin)
+    )
+    if recomputed != stored:
+        return (
+            f"substituting the restatement's pin {executed_pin} into the live criteria yields {recomputed}, "
+            f"not the cited {stored}; the difference between {stored} and {live_fingerprint} is not pin-only"
+        )
+    return None
+
+
+def demerger_restatement_problem(artifact, restatement) -> Optional[str]:
+    """
+    The published demerger pair must be the one the code computes, or an append must name the restatement.
+
+    Audit §97.5 replaced the event counter with `count_forced_exit_outcomes`; the committed artifacts still
+    publish `0` / `66` from the replaced one (N-194) and §10.1 makes the correction an append. The restatement
+    must restate exactly the pair on disk, carry the held-position measurement that replaces it, and reproduce
+    the run's other published counters so a reader cannot attach it to a different configuration.
+    """
+    pair = (artifact.get("demerger_forced_exits"), artifact.get("demerger_forced_refusals"))
+    if not all(isinstance(value, int) and not isinstance(value, bool) for value in pair):
+        return f"the artifact carries no integer demerger pair (found {pair})"
+    if not isinstance(restatement, dict):
+        return f"the artifact publishes demerger_forced_exits/refusals {pair} with no restatement naming it"
+    restated = restatement.get("restated") or {}
+    if (restated.get("demerger_forced_exits"), restated.get("demerger_forced_refusals")) != pair:
+        return (
+            f"the restatement restates {restated.get('demerger_forced_exits')}/"
+            f"{restated.get('demerger_forced_refusals')}, but the artifact publishes {pair[0]}/{pair[1]}"
+        )
+    measurement = restatement.get("measurement") or {}
+    for key in ("demerger_forced_exits", "demerger_forced_refusals"):
+        if not isinstance(measurement.get(key), int) or isinstance(measurement.get(key), bool):
+            return f"the restatement carries no integer `{key}` measurement"
+    replay = restatement.get("replay") or {}
+    for key in ("hold_bound_forced_exits", "hold_bound_refusals"):
+        if replay.get(key) != artifact.get(key):
+            return (
+                f"the restatement's replay records {key} {replay.get(key)}, but the artifact publishes "
+                f"{artifact.get(key)}; the measurement is not this artifact's run"
+            )
+    return None
 
 
 def _registry_rows() -> list[dict]:
@@ -262,6 +369,67 @@ def main() -> int:
                     "an artifact whose evaluated set ends 2025-06-30 is accepted by the window check, so the "
                     "sealed-era refusal does not fail closed"
                 )
+
+        # Audit §97.10 items 3-4: a stored fingerprint and a published demerger pair are gates, not prose.
+        live_fingerprint = compute_criteria_fingerprint(criteria)
+        restatement = (
+            json.loads(CRITERIA_RESTATEMENT.read_text(encoding="utf-8"))
+            if CRITERIA_RESTATEMENT.is_file()
+            else None
+        )
+        for certificate in CERTIFICATES:
+            certificate_text = certificate_problem(certificate, live_fingerprint, criteria, restatement)
+            if certificate_text:
+                problems.append(certificate_text)
+            else:
+                print(f"[INFO] Certificate {_relative(certificate)} reconciles with {live_fingerprint[:24]}…")
+        if restatement is not None and artifact is not None:
+            stale = [
+                certificate
+                for certificate in CERTIFICATES
+                if json.loads(certificate.read_text(encoding="utf-8")).get("criteria_fingerprint")
+                != live_fingerprint
+            ]
+            for label, mutant in (
+                ("a stale live hash", {**restatement, "live_criteria_fingerprint": "CRIT-FPR-V1-forged"}),
+                (
+                    "a forged executed fingerprint",
+                    {
+                        **restatement,
+                        "certificates": [
+                            {**row, "executed_criteria_fingerprint": "CRIT-FPR-V1-forged"}
+                            for row in restatement.get("certificates") or []
+                        ],
+                    },
+                ),
+            ):
+                if stale and certificate_problem(stale[0], live_fingerprint, criteria, mutant) is None:
+                    problems.append(
+                        f"a restatement carrying {label} is accepted, so the certificate gate does not fall "
+                        f"closed (§97.10 item 3)"
+                    )
+            demerger_restatement = (
+                json.loads(DEMERGER_RESTATEMENT.read_text(encoding="utf-8"))
+                if DEMERGER_RESTATEMENT.is_file()
+                else None
+            )
+            demerger_text = demerger_restatement_problem(artifact, demerger_restatement)
+            if demerger_text:
+                problems.append(demerger_text)
+            else:
+                print(
+                    f"[INFO] Demerger pair {artifact.get('demerger_forced_exits')}/"
+                    f"{artifact.get('demerger_forced_refusals')} restated by "
+                    f"{_relative(DEMERGER_RESTATEMENT)}"
+                )
+                if (
+                    demerger_restatement_problem(artifact, {**demerger_restatement, "measurement": {}})
+                    is None
+                ):
+                    problems.append(
+                        "a restatement with no measurement is accepted, so the demerger restatement check "
+                        "does not fall closed (§97.10 item 4)"
+                    )
 
         if not COMPARISON_ARTIFACT.is_file():
             problems.append(f"no comparison artifact at {COMPARISON_ARTIFACT.relative_to(REPO_ROOT).as_posix()}")

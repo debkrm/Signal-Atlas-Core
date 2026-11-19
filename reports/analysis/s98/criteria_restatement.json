@@ -1,0 +1,35 @@
+{
+  "artifact_format": "signal-atlas-criteria-restatement-v1",
+  "section": "§97.10 item 3",
+  "trial_id": "TRIAL-PHASE3B2-EXPANDED-010",
+  "criteria_version": "1.1.16",
+  "live_criteria_fingerprint": "CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470",
+  "live_manifest_fingerprint": "MAN-FPR-V1-be45b7e791d5d3cd683ee119ae4beeae8cba3aab7728ac194d6b19521a691045",
+  "restatement": "The certificates below were produced under expected_manifest_fingerprint MAN-FPR-V1-f5b1f1f1… and cite CRIT-FPR-V1-9ee0a88c…. Audit §97 re-sealed that pin to MAN-FPR-V1-e79d7915… (no criterion, threshold, fold boundary, calendar pin, cost-schedule row or gating start moved) and §98 re-sealed it again to MAN-FPR-V1-be45b7e7… when the §97.10 items 1-2 fix republished the corpus header. criteria_version is held at 1.1.16 because the seq-10 registry row is append-only and names it (Audit §97.7). The certificates are not edited (§10.1); this append names the executed hash and the live one, and the pin-only claim is mechanical: substituting the executed pin into the committed criteria reproduces the executed fingerprint exactly.",
+  "pin_only_proof": {
+    "method": "compute_criteria_fingerprint(dataclasses.replace(live_criteria, expected_manifest_fingerprint=executed_manifest_fingerprint))",
+    "executed_manifest_fingerprint": "MAN-FPR-V1-f5b1f1f12e62564a92b6a76719013d445f58d7b3b3e4d99e3441b5637b05af3a",
+    "reproduces": "CRIT-FPR-V1-9ee0a88c260d27fbe3ab13bb7c8c4c992e7d185986f28f5f803cf5db6db8634e",
+    "intermediate_pin": "MAN-FPR-V1-e79d791518a4337adaa871fed32257f12e09359ddcdbaf2c3f8e4094feb411ee",
+    "intermediate_pin_reproduces": "CRIT-FPR-V1-b2876d9850088fb01b90374bfc648fd2505a09bd766c839319aeacdf7b3917cd"
+  },
+  "certificates": [
+    {
+      "artifact": "reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json",
+      "executed_criteria_fingerprint": "CRIT-FPR-V1-9ee0a88c260d27fbe3ab13bb7c8c4c992e7d185986f28f5f803cf5db6db8634e",
+      "executed_manifest_fingerprint": "MAN-FPR-V1-f5b1f1f12e62564a92b6a76719013d445f58d7b3b3e4d99e3441b5637b05af3a"
+    },
+    {
+      "artifact": "reports/verdicts/trial_010/seq10_baseline_comparison.json",
+      "executed_criteria_fingerprint": "CRIT-FPR-V1-9ee0a88c260d27fbe3ab13bb7c8c4c992e7d185986f28f5f803cf5db6db8634e",
+      "executed_manifest_fingerprint": "MAN-FPR-V1-f5b1f1f12e62564a92b6a76719013d445f58d7b3b3e4d99e3441b5637b05af3a"
+    },
+    {
+      "artifact": "reports/analysis/s94/seq10_baseline_2018_2023_verdict.json",
+      "executed_criteria_fingerprint": "CRIT-FPR-V1-9ee0a88c260d27fbe3ab13bb7c8c4c992e7d185986f28f5f803cf5db6db8634e",
+      "executed_manifest_fingerprint": "MAN-FPR-V1-f5b1f1f12e62564a92b6a76719013d445f58d7b3b3e4d99e3441b5637b05af3a"
+    }
+  ],
+  "read_by": "scripts/probe_seq10_candidate.py:certificate_problem (fails closed naming both hashes)",
+  "not_audited": true
+}

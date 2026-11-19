@@ -1,0 +1,218 @@
+{
+  "artifact_format": "signal-atlas-seq10-drawdown-decomposition-v1",
+  "drawdown_by_period": {
+    "2018-2019": {
+      "end_equity": "468548.41",
+      "first_session": "2018-04-03",
+      "last_session": "2019-12-31",
+      "max_drawdown": "0.5776455452867894612701342531",
+      "sessions": 430,
+      "start_equity": "1000000.00"
+    },
+    "2020-03": {
+      "end_equity": "301394.78",
+      "first_session": "2020-03-02",
+      "last_session": "2020-03-31",
+      "max_drawdown": "0.7264709014681672238018483779",
+      "sessions": 21,
+      "start_equity": "421194.68"
+    },
+    "2020-04..2023-12": {
+      "end_equity": "1072507.24",
+      "first_session": "2020-04-01",
+      "last_session": "2023-12-29",
+      "max_drawdown": "0.7085101932534254603840764115",
+      "sessions": 930,
+      "start_equity": "304629.73"
+    },
+    "outside": {
+      "end_equity": "429448.07",
+      "first_session": "2020-01-01",
+      "last_session": "2020-02-28",
+      "max_drawdown": "0.5890757775612071246322644663",
+      "sessions": 43,
+      "start_equity": "480326.21"
+    }
+  },
+  "generated_at_utc": "2026-11-19T15:03:55.253622+00:00",
+  "not_audited": true,
+  "open_positions_at_end_count": 16,
+  "published_comparison": {
+    "artifact": "reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json",
+    "hold_bound_forced_exits": 422,
+    "hold_bound_refusals": 7309
+  },
+  "read_only": true,
+  "refusals_by_period": {
+    "2018-2019": {
+      "locked_bar_refusals": 0,
+      "sessions": 430,
+      "skipped_missing_band": 0,
+      "tickets_no_trade": 81243,
+      "tickets_rejected": 2547
+    },
+    "2020-03": {
+      "locked_bar_refusals": 0,
+      "sessions": 21,
+      "skipped_missing_band": 0,
+      "tickets_no_trade": 458,
+      "tickets_rejected": 186
+    },
+    "2020-04..2023-12": {
+      "locked_bar_refusals": 6,
+      "sessions": 930,
+      "skipped_missing_band": 0,
+      "tickets_no_trade": 383841,
+      "tickets_rejected": 3897
+    },
+    "outside": {
+      "locked_bar_refusals": 0,
+      "sessions": 43,
+      "skipped_missing_band": 0,
+      "tickets_no_trade": 17161,
+      "tickets_rejected": 359
+    }
+  },
+  "registry": {
+    "digest_after": {
+      "data/trials/trial_registry.jsonl": "b3a05b5b5e67b09512fdb614c09f757c4db5d18cfdb4239a165d40bb1a078c3b",
+      "data/trials/trial_registry.jsonl.evaluations": "a7d1c1c6eedae354ae708594c57f76b3f3243ffca1abfdfc1b29a76514f1686f",
+      "data/trials/trial_registry.jsonl.evaluations.manifest": "acb6bdff895c2059163c9a172fb0f569905cc85a0b70d667d7e989165e4438a5",
+      "data/trials/trial_registry.jsonl.manifest": "0246c276d52d3a9bd1d81a2cce9c2145b138a49e5232a2a4731a8d2e7e47a4f1"
+    },
+    "digest_before": {
+      "data/trials/trial_registry.jsonl": "b3a05b5b5e67b09512fdb614c09f757c4db5d18cfdb4239a165d40bb1a078c3b",
+      "data/trials/trial_registry.jsonl.evaluations": "a7d1c1c6eedae354ae708594c57f76b3f3243ffca1abfdfc1b29a76514f1686f",
+      "data/trials/trial_registry.jsonl.evaluations.manifest": "acb6bdff895c2059163c9a172fb0f569905cc85a0b70d667d7e989165e4438a5",
+      "data/trials/trial_registry.jsonl.manifest": "0246c276d52d3a9bd1d81a2cce9c2145b138a49e5232a2a4731a8d2e7e47a4f1"
+    },
+    "mutated": false,
+    "paths": [
+      "data/trials/trial_registry.jsonl",
+      "data/trials/trial_registry.jsonl.manifest",
+      "data/trials/trial_registry.jsonl.evaluations",
+      "data/trials/trial_registry.jsonl.evaluations.manifest"
+    ]
+  },
+  "rejection_reasons": {
+    "BUY:REJECTED_INSUFFICIENT_TURNOVER": 1322,
+    "BUY:REJECTED_LOCKED_SESSION": 4,
+    "BUY:REJECTED_RISK_LIMIT": 367,
+    "SELL:REJECTED_INSUFFICIENT_TURNOVER": 5294,
+    "SELL:REJECTED_LOCKED_SESSION": 2
+  },
+  "replay": {
+    "closed_trades": 781,
+    "corpus_fingerprint": "DATA-CTNT-V2-cb4832c0b43952c4a03d58ee65ff5b15",
+    "criteria_fingerprint": "CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470",
+    "criteria_version": "1.1.16",
+    "demerger_forced_exits": 0,
+    "demerger_forced_refusals": 0,
+    "final_equity": "1072507.24",
+    "first_session": "2018-04-02",
+    "hold_bound_forced_exits": 422,
+    "hold_bound_refusals": 7309,
+    "last_session": "2023-12-29",
+    "max_drawdown": "0.7264709014681672238018483779",
+    "sessions": 1425
+  },
+  "section": "\u00a797.10 item 3",
+  "trades_by_liquidity_tier": {
+    "1 cr <= ADTV_20 < 5 cr": {
+      "closed_trades": 152,
+      "costs": "22674.6889989920190",
+      "exit_reasons": {
+        "MAX_HOLD_BOUND_EXIT": 101,
+        "SIGNAL_EXIT": 4,
+        "STOP_LOSS": 47
+      },
+      "gross_pnl": "-86920.35",
+      "net_pnl": "-104927.7889989920190",
+      "wins": 55
+    },
+    "5 cr <= ADTV_20 < 25 cr": {
+      "closed_trades": 314,
+      "costs": "48276.3941290000480",
+      "exit_reasons": {
+        "MAX_HOLD_BOUND_EXIT": 146,
+        "SIGNAL_EXIT": 30,
+        "STOP_LOSS": 138
+      },
+      "gross_pnl": "-53893.90",
+      "net_pnl": "-93852.0941290000480",
+      "wins": 116
+    },
+    "ADTV_20 < 1 cr": {
+      "closed_trades": 44,
+      "costs": "6766.3297846147870",
+      "exit_reasons": {
+        "MAX_HOLD_BOUND_EXIT": 34,
+        "STOP_LOSS": 10
+      },
+      "gross_pnl": "81703.60",
+      "net_pnl": "78092.6202153852130",
+      "wins": 19
+    },
+    "ADTV_20 >= 25 cr": {
+      "closed_trades": 271,
+      "costs": "43493.6516239981900",
+      "exit_reasons": {
+        "MAX_HOLD_BOUND_EXIT": 141,
+        "SIGNAL_EXIT": 21,
+        "STOP_LOSS": 109
+      },
+      "gross_pnl": "212474.75",
+      "net_pnl": "176025.6783760018100",
+      "wins": 111
+    }
+  },
+  "trades_by_period": {
+    "2018-2019": {
+      "closed_trades": 213,
+      "costs": "34821.0864956845480",
+      "exit_reasons": {
+        "MAX_HOLD_BOUND_EXIT": 89,
+        "SIGNAL_EXIT": 31,
+        "STOP_LOSS": 93
+      },
+      "gross_pnl": "-419544.50",
+      "net_pnl": "-444938.8364956845480",
+      "wins": 60
+    },
+    "2020-03": {
+      "closed_trades": 15,
+      "costs": "1648.4856836120110",
+      "exit_reasons": {
+        "SIGNAL_EXIT": 1,
+        "STOP_LOSS": 14
+      },
+      "gross_pnl": "-47737.25",
+      "net_pnl": "-49385.7356836120110",
+      "wins": 0
+    },
+    "2020-04..2023-12": {
+      "closed_trades": 532,
+      "costs": "82083.2734430912300",
+      "exit_reasons": {
+        "MAX_HOLD_BOUND_EXIT": 322,
+        "SIGNAL_EXIT": 23,
+        "STOP_LOSS": 187
+      },
+      "gross_pnl": "630146.20",
+      "net_pnl": "560926.5565569087700",
+      "wins": 233
+    },
+    "outside": {
+      "closed_trades": 21,
+      "costs": "2658.2189142172550",
+      "exit_reasons": {
+        "MAX_HOLD_BOUND_EXIT": 11,
+        "STOP_LOSS": 10
+      },
+      "gross_pnl": "-9500.35",
+      "net_pnl": "-11263.5689142172550",
+      "wins": 8
+    }
+  },
+  "trades_without_prior_liquidity": 3
+}

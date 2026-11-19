@@ -346,7 +346,10 @@ def build_corpus(require_reconciled: bool = True):
     inert_rows = [
         isin for isin in factors_by_isin if isin not in observations
     ]
-    failures, reconciliation = classify_extreme_moves(prices_by_isin, factors_by_isin, attestations)
+    trading_dates = list(sessions)
+    failures, reconciliation = classify_extreme_moves(
+        prices_by_isin, factors_by_isin, attestations, trading_dates
+    )
     require_no_ex_date_mismatch(failures)
     diagnostics = {
         "observations": len(observations),
@@ -365,7 +368,6 @@ def build_corpus(require_reconciled: bool = True):
     # four classes are computed and published in the header (`reconciliation`) rather than used as exits.
 
     symbols_by_instrument = {isin: symbol_by_isin[isin] for isin in prices_by_isin}
-    trading_dates = list(sessions)
     content_fingerprint = compute_legacy_dataset_content_fingerprint(
         trading_dates=trading_dates,
         prices_by_instrument=prices_by_isin,
@@ -418,9 +420,15 @@ def build_corpus(require_reconciled: bool = True):
             "no_ratio_match": reconciliation["no_ratio_match"],
             "ratio_shaped_unattested": len(reconciliation["ratio_shaped_unattested"]),
             "ex_date_mismatch": len(reconciliation["ex_date_mismatch"]),
-            "ratio_shaped_detail": [
+            "cross_gap_pairs": reconciliation["cross_gap_pairs"],
+            "cross_gap_extreme_moves": len(reconciliation["cross_gap_moves"]),
+            "cross_gap_detail": [
                 {"isin": isin, "session": day, "return": ret}
-                for isin, day, ret in reconciliation["ratio_shaped_unattested"]
+                for isin, day, ret in reconciliation["cross_gap_moves"]
+            ],
+            "ratio_shaped_detail": [
+                {"isin": isin, "session": day, "return": ret, "record": record or None}
+                for isin, day, ret, record in reconciliation["ratio_shaped_unattested"]
             ],
         },
     }
@@ -431,14 +439,25 @@ def classify_extreme_moves(
     prices_by_isin: Dict[str, List[PriceBar]],
     factors_by_isin: Dict[str, List[Tuple[datetime.date, Decimal]]],
     attestations: Dict[Tuple[str, datetime.date], List[Tuple[str, str, str]]],
+    trading_dates: Sequence[datetime.date],
 ):
     """
     Classifies every one-session return beyond the threshold and returns `(failures, diagnostics)`.
 
     Four classes, computed from the data rather than asserted:
 
+    A return is only a one-session return when the two bars' `trade_date`s are consecutive entries in
+    `trading_dates` (Audit §97.10 item 1, §6.3). A pair that straddles a calendar gap is a gap record —
+    counted in `cross_gap_pairs` and published in `cross_gap_moves` when it is beyond the threshold —
+    and never enters the classification below. At 437e0c4 the classifier read such pairs as session
+    moves: 16,194 gap-straddling pairs, 58 of them beyond ±35%, including a "+5600%" move preceded by a
+    bar from 792 sessions earlier.
+
     - `APPLIED_ROW` / `ARCHIVE_RECORD`: the move is explained by an applied adjustment at that ISIN and
-      date, or by a non-dividend archive record at that ISIN and date.
+      date, or by a **price-side** archive record (`SPLIT`, `BONUS`, `CONSOLIDATION`) at that ISIN and
+      date. A record that carries no share ratio — an AGM, a scheme, a rights entitlement, a demerger —
+      cannot explain a ratio-shaped move and does not exonerate it (§97.10 item 2): it is published as
+      `RATIO_SHAPED_UNATTESTED` with the record named.
     - `EX_DATE_MISMATCH`: the archive attests a **price-side** action (`SPLIT`, `BONUS`,
       `CONSOLIDATION`) for that ISIN within `MISMATCH_WINDOW_SESSIONS` of the move but on a different
       date — the INFY failure mode Audit §95.5.4 measured, where a real bonus was applied eight
@@ -458,10 +477,13 @@ def classify_extreme_moves(
       corporate action, and all of them indistinguishable from one by price alone.
     """
     failures: List[Tuple[str, str, str]] = []
-    ratio_shaped: List[Tuple[str, str, str]] = []
+    ratio_shaped: List[Tuple[str, str, str, str]] = []
+    cross_gap_moves: List[Tuple[str, str, str]] = []
+    cross_gap_pairs: int = 0
     no_ratio: int = 0
     explained_applied: int = 0
     explained_archive: int = 0
+    calendar_previous = {trading_dates[index]: trading_dates[index - 1] for index in range(1, len(trading_dates))}
 
     def _ratio_match(move: Decimal) -> bool:
         target = Decimal(1) + move
@@ -483,6 +505,14 @@ def classify_extreme_moves(
             if previous.close <= Decimal(0):
                 continue
             move = (current.close - previous.close) / previous.close
+            if calendar_previous.get(current.trade_date) != previous.trade_date:
+                # A multi-session gap is never one session's return (§6.3, §97.10 item 1).
+                cross_gap_pairs += 1
+                if abs(move) > UNEXPLAINED_MOVE_THRESHOLD:
+                    cross_gap_moves.append(
+                        (isin, current.trade_date.isoformat(), format(move.quantize(Decimal("0.0001")), "f"))
+                    )
+                continue
             if abs(move) <= UNEXPLAINED_MOVE_THRESHOLD:
                 continue
             rendered = format(move.quantize(Decimal("0.0001")), "f")
@@ -490,13 +520,10 @@ def classify_extreme_moves(
                 explained_applied += 1
                 continue
             records = attestations.get((isin, current.trade_date), [])
-            non_dividend = [
-                kind for kind, subject, _digest in records
-                if kind != "DIVIDEND" or "dividend" not in subject.lower()
-            ]
-            if non_dividend:
+            if any(kind in PRICE_SIDE_KINDS for kind, _subject, _digest in records):
                 explained_archive += 1
                 continue
+            non_price_side = sorted({kind for kind, _subject, _digest in records})
             near_miss = sorted(
                 day for (record_isin, day) in attestations
                 if record_isin == isin
@@ -511,7 +538,9 @@ def classify_extreme_moves(
                 )
                 continue
             if _ratio_match(move):
-                ratio_shaped.append((isin, current.trade_date.isoformat(), rendered))
+                ratio_shaped.append(
+                    (isin, current.trade_date.isoformat(), rendered, ",".join(non_price_side))
+                )
             else:
                 no_ratio += 1
     diagnostics = {
@@ -520,6 +549,8 @@ def classify_extreme_moves(
         "ratio_shaped_unattested": ratio_shaped,
         "no_ratio_match": no_ratio,
         "ex_date_mismatch": failures,
+        "cross_gap_pairs": cross_gap_pairs,
+        "cross_gap_moves": cross_gap_moves,
     }
     return failures, diagnostics
 

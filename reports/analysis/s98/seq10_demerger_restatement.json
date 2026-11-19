@@ -1,0 +1,36 @@
+{
+  "artifact_format": "signal-atlas-demerger-restatement-v1",
+  "counter": "count_forced_exit_outcomes(forced_reasons, held_isins, filled_isins, reason): exits and refusals over forced reasons whose ISIN the position book held before the session executed (scripts/run_phase3b2_walkforward.py, Audit \u00a796.5 / \u00a797.5)",
+  "generated_at_utc": "2026-11-19T15:03:55.253622+00:00",
+  "measurement": {
+    "demerger_forced_exits": 0,
+    "demerger_forced_refusals": 0
+  },
+  "not_audited": true,
+  "read_only": true,
+  "replay": {
+    "closed_trades": 781,
+    "corpus_fingerprint": "DATA-CTNT-V2-cb4832c0b43952c4a03d58ee65ff5b15",
+    "criteria_fingerprint": "CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470",
+    "criteria_version": "1.1.16",
+    "demerger_forced_exits": 0,
+    "demerger_forced_refusals": 0,
+    "final_equity": "1072507.24",
+    "first_session": "2018-04-02",
+    "hold_bound_forced_exits": 422,
+    "hold_bound_refusals": 7309,
+    "last_session": "2023-12-29",
+    "max_drawdown": "0.7264709014681672238018483779",
+    "sessions": 1425
+  },
+  "restated": {
+    "demerger_forced_exits": 0,
+    "demerger_forced_refusals": 66
+  },
+  "restates": [
+    "reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json",
+    "reports/analysis/s94/seq10_baseline_2018_2023_verdict.json"
+  ],
+  "section": "\u00a797.10 item 4",
+  "trial_id": "TRIAL-PHASE3B2-EXPANDED-010"
+}

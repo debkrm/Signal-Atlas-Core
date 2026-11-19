@@ -2608,8 +2608,11 @@ def probe_n187() -> None:
 
     move_day = datetime.date(2022, 1, 8)
     prices = {"INE000000001": _bars("INE000000001", ["10", "10", "10", "10", "10", "5"])}
+    synthetic_calendar = [datetime.date(2022, 1, 3) + datetime.timedelta(days=index) for index in range(6)]
     agm_only = {("INE000000001", datetime.date(2022, 1, 11)): [("OTHER", "Annual General Meeting", "d" * 64)]}
-    failures_agm, diagnostics_agm = builder.classify_extreme_moves(prices, {}, agm_only)
+    failures_agm, diagnostics_agm = builder.classify_extreme_moves(
+        prices, {}, agm_only, synthetic_calendar
+    )
     assert failures_agm == [], (
         "a routine AGM within the mismatch window still makes a one-session move fatal: "
         f"{failures_agm}"
@@ -2618,7 +2621,7 @@ def probe_n187() -> None:
         "the move did not land in a published class at all; the classification changed shape"
     )
     bonus_near = {("INE000000001", datetime.date(2022, 1, 11)): [("BONUS", "Bonus 1:1", "d" * 64)]}
-    failures_bonus, _ = builder.classify_extreme_moves(prices, {}, bonus_near)
+    failures_bonus, _ = builder.classify_extreme_moves(prices, {}, bonus_near, synthetic_calendar)
     assert len(failures_bonus) == 1 and failures_bonus[0][0] == "INE000000001", (
         "an archive-attested BONUS five sessions from the move is no longer the fatal class: "
         f"{failures_bonus}"
@@ -2840,20 +2843,16 @@ def probe_n190() -> None:
 
 def probe_n191() -> None:
     """
-    The ex-date-mismatch classifier reads adjacent surviving bars as adjacent sessions.
+    No cross-gap pair may enter the reconciliation as one session's return (§97.10 item 1).
 
-    Measured at 437e0c4 (§97.3): `classify_extreme_moves` zips `bars` with `bars[1:]` and computes
-    `(current.close - previous.close) / previous.close` without asking whether the two `trade_date`s are
-    consecutive entries in `trading_dates`. Two of the six pairs §96.4 named as `EX_DATE_MISMATCH` are not
-    session moves at all: `INE251H01024` 2022-08-12 follows a bar from 2021-08-02 (256 sessions absent) and
-    `INE784B01035` 2023-09-26 follows one from 2020-07-20 (792 absent). Over the committed corpus **16,194**
-    adjacent pairs straddle a calendar gap and **58** of the **832** moves beyond ±35% are computed across
-    one — the assumption §6.3 forbids ("a sequence of N available bars must never be assumed to represent
-    N consecutive trading sessions").
-
-    Closure direction: no adjacent pair enters the reconciliation unless its two dates are consecutive in
-    the corpus calendar; a cross-gap pair is a gap record, never a return.
+    Measured at 437e0c4 (§97.3): `classify_extreme_moves` zipped `bars` with `bars[1:]` and called the
+    quotient a one-session return without asking whether the two `trade_date`s are consecutive in
+    `trading_dates`; 16,194 adjacent pairs straddled a calendar gap and 58 of its 832 extremes were
+    computed across one. This probe asserts the closed state: the classifier takes the calendar, a
+    gap-straddling pair is a gap record, and the committed corpus publishes **zero** extreme moves
+    computed across a gap — 774 of 832, with the 58 published in `cross_gap_detail` instead.
     """
+    import datetime
     import gzip
     import inspect
     import json
@@ -2862,27 +2861,51 @@ def probe_n191() -> None:
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
     import scripts.derive_2018_2023_corpus as builder
+    from signal_core.contracts.price_bar import PriceBar
 
-    body = inspect.getsource(builder.classify_extreme_moves)
-    assert "trading_dates" not in body and "calendar" not in body.lower(), (
-        "the classifier now consults the calendar; re-scope this finding"
+    signature = inspect.signature(builder.classify_extreme_moves)
+    assert "trading_dates" in signature.parameters, (
+        "the classifier takes no calendar, so an adjacent pair of surviving bars is still read as one "
+        "session's return (§97.10 item 1)"
     )
-    assert "zip(bars, bars[1:])" in body, (
-        "the classifier no longer pairs adjacent surviving bars; re-scope this finding"
+    body = inspect.getsource(builder.classify_extreme_moves)
+    assert "calendar_previous" in body, "the classifier does not look up the calendar-previous session"
+
+    def _bar(day: datetime.date, close: str) -> PriceBar:
+        return PriceBar(
+            instrument_id="INE000000091", trade_date=day,
+            open=Decimal(close), high=Decimal(close), low=Decimal(close), close=Decimal(close),
+            volume=1000, traded_value=Decimal("1000"),
+        )
+
+    first = datetime.date(2022, 1, 3)
+    synthetic_calendar = [first, datetime.date(2022, 1, 4), datetime.date(2022, 2, 3)]
+    failures_gap, diagnostics_gap = builder.classify_extreme_moves(
+        {"INE000000091": [_bar(first, "10"), _bar(datetime.date(2022, 2, 3), "5")]},
+        {},
+        {},
+        synthetic_calendar,
+    )
+    assert failures_gap == [], f"a cross-gap pair still fails the build as a session move: {failures_gap}"
+    assert diagnostics_gap["cross_gap_pairs"] == 1, diagnostics_gap["cross_gap_pairs"]
+    assert [row[1] for row in diagnostics_gap["cross_gap_moves"]] == ["2022-02-03"], (
+        f"the cross-gap pair is not published as a gap record: {diagnostics_gap['cross_gap_moves']}"
+    )
+    assert diagnostics_gap["ratio_shaped_unattested"] == [], (
+        "a cross-gap pair still enters a one-session return class"
     )
 
     with gzip.open(REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz", "rt") as f:
         header = json.load(f)
     dates = header["trading_dates"]
-    calendar_previous = {dates[i]: dates[i - 1] for i in range(1, len(dates))}
+    calendar_previous = {dates[index]: dates[index - 1] for index in range(1, len(dates))}
     gap_pairs = 0
-    extreme = 0
-    across_gap = 0
-    for bars in header["prices_by_instrument"].values():
+    consecutive_extremes = 0
+    across_gap = []
+    for isin, bars in header["prices_by_instrument"].items():
         for previous, current in zip(bars, bars[1:]):
-            previous_day = previous["trade_date"]
-            current_day = current["trade_date"]
-            if calendar_previous.get(current_day) != previous_day:
+            is_consecutive = calendar_previous.get(current["trade_date"]) == previous["trade_date"]
+            if not is_consecutive:
                 gap_pairs += 1
             previous_close = Decimal(previous["close"])
             if previous_close <= 0:
@@ -2890,43 +2913,56 @@ def probe_n191() -> None:
             move = (Decimal(current["close"]) - previous_close) / previous_close
             if abs(move) <= Decimal("0.35"):
                 continue
-            extreme += 1
-            if calendar_previous.get(current_day) != previous_day:
-                across_gap += 1
+            if is_consecutive:
+                consecutive_extremes += 1
+            else:
+                across_gap.append((isin, current["trade_date"]))
 
+    reconciliation = header["reconciliation"]
     assert gap_pairs == 16194, f"cross-gap adjacent pairs moved: {gap_pairs} (was 16,194 at 437e0c4)"
-    assert extreme == 832, f"moves beyond ±35% moved: {extreme} (was 832 at 437e0c4)"
-    assert across_gap == 58, f"extreme moves computed across a gap moved: {across_gap} (was 58 at 437e0c4)"
-
-    for isin, day, absent in (
-        ("INE251H01024", "2022-08-12", 256),
-        ("INE784B01035", "2023-09-26", 792),
-    ):
-        bars = header["prices_by_instrument"][isin]
-        sessions = [bar["trade_date"] for bar in bars]
-        index = sessions.index(day)
-        previous_day = sessions[index - 1]
-        missing = dates.index(day) - dates.index(previous_day) - 1
-        assert missing == absent, (
-            f"{isin} {day}: {missing} missing sessions between {previous_day} and {day}, expected {absent}"
-        )
+    assert len(across_gap) == 58, f"cross-gap extreme moves moved: {len(across_gap)} (was 58 at 437e0c4)"
+    assert reconciliation["cross_gap_pairs"] == gap_pairs, (
+        f"the header publishes {reconciliation['cross_gap_pairs']} cross-gap pairs, recomputed {gap_pairs}"
+    )
+    assert reconciliation["cross_gap_extreme_moves"] == len(across_gap), (
+        f"the header publishes {reconciliation['cross_gap_extreme_moves']} cross-gap extremes, "
+        f"recomputed {len(across_gap)}"
+    )
+    published_gaps = {
+        (row["isin"], row["session"]) for row in reconciliation["cross_gap_detail"]
+    }
+    assert published_gaps == set(across_gap), (
+        f"the published gap records differ from the recomputed set by {len(published_gaps ^ set(across_gap))} row(s)"
+    )
+    in_classes = (
+        reconciliation["explained_by_applied_row"]
+        + reconciliation["explained_by_archive_record"]
+        + reconciliation["no_ratio_match"]
+        + reconciliation["ratio_shaped_unattested"]
+    )
+    assert in_classes == consecutive_extremes, (
+        f"the classes account for {in_classes} moves but only {consecutive_extremes} are computed between "
+        f"consecutive sessions; {in_classes - consecutive_extremes} cross-gap pair(s) still enter a return class"
+    )
+    for isin, day in (("INE251H01024", "2022-08-12"), ("INE784B01035", "2023-09-26")):
+        assert (isin, day) in published_gaps, f"{isin} {day} is no longer a published gap record"
+        assert not any(
+            row["isin"] == isin and row["session"] == day
+            for row in reconciliation["ratio_shaped_detail"]
+        ), f"{isin} {day} is still published as a one-session ratio-shaped move"
 
 
 def probe_n192() -> None:
     """
-    An exact-date archive record that carries no share ratio exonerates the move.
+    Only a price-side archive record may explain a move (§97.10 item 2).
 
-    Measured at 437e0c4 (§97.3): the classifier's `explained_by_archive_record` branch accepts any record
-    whose kind is not `DIVIDEND`, before the move is tested for a ratio shape, so an Annual General
-    Meeting, a scheme or a rights entitlement at the exact date disposes of the move with no diagnostic.
-    **26** moves beyond ±35% sit on a date whose archive records are all non-price-side, one of them
-    `INE803A01027` 2019-09-16 at **+0.5000** under an `OTHER` record — a 2× move filed as explained by an
-    AGM. 13,003 of the 13,348 archive keys carry no price-side record; how many of the 24 counted by the
-    header are of that kind is not published.
-
-    Closure direction: only a price-side record may explain a ratio-shaped move; a non-ratio record at the
-    exact date is `RATIO_SHAPED_UNATTESTED` with the record named, not an explanation.
+    Measured at 437e0c4 (§97.3): the exact-date branch admitted any non-`DIVIDEND` record before the ratio
+    test, so 26 moves beyond ±35% sat on a date whose records carried no share ratio and one of them —
+    `INE803A01027` 2019-09-16 at **+0.5000** under an `OTHER` (AGM) record — was filed as explained. This
+    probe asserts the closed state: `explained_by_archive_record` is **0**, and that move is published as
+    `RATIO_SHAPED_UNATTESTED` with `OTHER` named beside it.
     """
+    import datetime
     import gzip
     import json
     from decimal import Decimal
@@ -2934,136 +2970,208 @@ def probe_n192() -> None:
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
     import scripts.derive_2018_2023_corpus as builder
+    from signal_core.contracts.price_bar import PriceBar
 
     source = (REPO_ROOT / "scripts" / "derive_2018_2023_corpus.py").read_text(encoding="utf-8")
-    assert "if non_dividend:" in source, (
-        "the exact-date exoneration branch is gone or reshaped; re-scope this finding"
+    assert "if non_dividend:" not in source, (
+        "the exact-date exoneration branch still admits a record that carries no share ratio"
+    )
+    assert "any(kind in PRICE_SIDE_KINDS" in source, (
+        "the exact-date exoneration is not restricted to price-side records; N-192 is open"
     )
 
-    price_side = set(builder.PRICE_SIDE_KINDS)
-    attestations = builder.bronze_attestations()
-    non_price_side = {
-        key: records for key, records in attestations.items()
-        if not any(kind in price_side for kind, _subject, _digest in records)
-    }
-    assert len(attestations) == 13348, f"archive key count moved: {len(attestations)}"
-    assert len(non_price_side) == 13003, f"non-price-side key count moved: {len(non_price_side)}"
+    def _bar(day: datetime.date, close: str) -> PriceBar:
+        return PriceBar(
+            instrument_id="INE000000092", trade_date=day,
+            open=Decimal(close), high=Decimal(close), low=Decimal(close), close=Decimal(close),
+            volume=1000, traded_value=Decimal("1000"),
+        )
+
+    move_day = datetime.date(2022, 1, 4)
+    prices = {"INE000000092": [_bar(datetime.date(2022, 1, 3), "10"), _bar(move_day, "5")]}
+    calendar = [datetime.date(2022, 1, 3), move_day]
+    agm_at_exact_date = {("INE000000092", move_day): [("OTHER", "Annual General Meeting", "d" * 64)]}
+    failures_agm, diagnostics_agm = builder.classify_extreme_moves(
+        prices, {}, agm_at_exact_date, calendar
+    )
+    assert failures_agm == [], f"an AGM at the exact date is still treated as a mis-dated ratio: {failures_agm}"
+    assert diagnostics_agm["explained_archive"] == 0, (
+        "an AGM at the exact date still exonerates the move without a diagnostic"
+    )
+    published = [row for row in diagnostics_agm["ratio_shaped_unattested"] if row[1] == move_day.isoformat()]
+    assert published and published[0][3] == "OTHER", (
+        f"the AGM-silenced move is not published with the record named: {diagnostics_agm}"
+    )
+    bonus_at_exact_date = {("INE000000092", move_day): [("BONUS", "Bonus 1:1", "d" * 64)]}
+    _, diagnostics_bonus = builder.classify_extreme_moves(prices, {}, bonus_at_exact_date, calendar)
+    assert diagnostics_bonus["explained_archive"] == 1, (
+        "a price-side record at the exact date no longer explains the move"
+    )
 
     with gzip.open(REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz", "rt") as f:
         header = json.load(f)
-    prices = header["prices_by_instrument"]
-    silenced = []
-    for (isin, day), records in non_price_side.items():
-        bars = prices.get(isin)
-        if not bars:
-            continue
-        sessions = [bar["trade_date"] for bar in bars]
-        if day.isoformat() not in sessions:
-            continue
-        index = sessions.index(day.isoformat())
-        if index == 0:
-            continue
-        previous_close = Decimal(bars[index - 1]["close"])
-        if previous_close <= 0:
-            continue
-        move = (Decimal(bars[index]["close"]) - previous_close) / previous_close
-        if abs(move) <= Decimal("0.35"):
-            continue
-        silenced.append((isin, day.isoformat(), move, sorted({kind for kind, _s, _d in records})))
-
-    assert len(silenced) == 26, f"moves exonerated by a non-price-side record moved: {len(silenced)}"
-    golden = [row for row in silenced if row[0] == "INE803A01027" and row[1] == "2019-09-16"]
-    assert golden and golden[0][3] == ["OTHER"], (
-        f"the INE803A01027 2019-09-16 OTHER witness is gone: {golden}"
+    reconciliation = header["reconciliation"]
+    assert reconciliation["explained_by_archive_record"] == 0, (
+        f"the committed corpus still files {reconciliation['explained_by_archive_record']} move(s) as "
+        f"explained by an archive record"
     )
-    assert format(golden[0][2].quantize(Decimal("0.0001")), "f") == "0.5000", (
-        f"the witness move changed: {golden[0][2]}"
+    witness = [
+        row for row in reconciliation["ratio_shaped_detail"]
+        if row["isin"] == "INE803A01027" and row["session"] == "2019-09-16"
+    ]
+    assert witness, "the INE803A01027 2019-09-16 witness is not published as an unattested ratio-shaped move"
+    assert witness[0]["record"] == "OTHER", f"the witness does not name its record: {witness[0]}"
+    assert witness[0]["return"] == "0.5000", f"the witness move changed: {witness[0]}"
+    named = [row for row in reconciliation["ratio_shaped_detail"] if row["record"]]
+    assert len(named) == 18, (
+        f"{len(named)} ratio-shaped move(s) name a non-price-side record, expected the 18 measured in §98"
     )
+    price_side = set(builder.PRICE_SIDE_KINDS)
+    for row in named:
+        assert not price_side & set(row["record"].split(",")), (
+            f"a ratio-shaped move is still exonerated by a price-side record at its exact date: {row}"
+        )
 
 
 def probe_n193() -> None:
     """
-    Two artifacts under `criteria_version` 1.1.16 cite two different criteria fingerprints.
+    A certificate's stored criteria fingerprint must reconcile with the live one (§97.10 item 3).
 
-    Measured at 437e0c4 (§97.7): `compute_criteria_fingerprint` hashes `expected_manifest_fingerprint`, so
-    the §97 re-seal moved it from `CRIT-FPR-V1-9ee0a88c…` to `CRIT-FPR-V1-b2876d98…` while the version
-    stayed `1.1.16`. The Phase 2D pair was regenerated; `reports/verdicts/trial_010/` was not, so the
-    seq-10 certificate still cites `9ee0a88c…` under `1.1.16`. No gate compares a certificate's
-    `criteria_fingerprint` with the live one: `verify_phase2d_verdicts.py` prints it, and
-    `probe_seq10_candidate.py` compares the registry row's `criteria_version` to the live version, never a
-    stored hash.
-
-    Closure direction: a gate compares every registered certificate's `criteria_fingerprint` with the live
-    fingerprint and refuses a mismatch by naming both, or the certificate records the hash it executed
-    under and the live hash beside it.
+    Measured at 437e0c4 (§97.7): the trial_010 pair and the s94 baseline cited `CRIT-FPR-V1-9ee0a88c…`
+    while the live criteria computed `b2876d98…` under the same `criteria_version 1.1.16`, and no gate read
+    a stored hash. This probe asserts the closed state: the live fingerprint is `535e47f5…` (the §98
+    re-seal), every certificate reconciles through `probe_seq10_candidate.certificate_problem`, a
+    restatement attests the executed hash as pin-only by recomputation, and a forged or missing
+    restatement is refused **naming both hashes**.
     """
+    import dataclasses
     import json
-    import pathlib
 
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
+    import scripts.probe_seq10_candidate as certificate
     from signal_core.contracts.criteria import compute_criteria_fingerprint, load_go_no_go_criteria
 
     criteria = load_go_no_go_criteria()
     live = compute_criteria_fingerprint(criteria)
-    assert live == "CRIT-FPR-V1-b2876d9850088fb01b90374bfc648fd2505a09bd766c839319aeacdf7b3917cd", (
+    assert criteria.version == "1.1.16", f"criteria_version moved to {criteria.version}; seq 10 is append-only"
+    assert live == "CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470", (
         f"the live fingerprint moved: {live}"
     )
 
-    cited = {}
-    for relative in (
-        "reports/verdicts/trial_010/seq10_baseline_comparison.json",
-        "reports/analysis/s94/seq10_baseline_2018_2023_verdict.json",
-    ):
-        document = json.loads((REPO_ROOT / relative).read_text(encoding="utf-8"))
-        cited[relative] = document["criteria_fingerprint"]
-    assert len(set(cited.values())) == 1, f"the two certificates disagree with each other: {cited}"
-    stale = next(iter(cited.values()))
-    assert stale == "CRIT-FPR-V1-9ee0a88c260d27fbe3ab13bb7c8c4c992e7d185986f28f5f803cf5db6db8634e", (
-        f"the certificates no longer cite 9ee0a88c…; re-scope this finding: {stale}"
-    )
-    assert stale != live, "the certificate and the live criteria agree; re-scope this finding"
+    restatement = json.loads(certificate.CRITERIA_RESTATEMENT.read_text(encoding="utf-8"))
+    executed_pin = "MAN-FPR-V1-f5b1f1f12e62564a92b6a76719013d445f58d7b3b3e4d99e3441b5637b05af3a"
+    executed = "CRIT-FPR-V1-9ee0a88c260d27fbe3ab13bb7c8c4c992e7d185986f28f5f803cf5db6db8634e"
+    assert restatement["live_criteria_fingerprint"] == live
+    entries = {row["artifact"]: row for row in restatement["certificates"]}
+    stale_certificates = []
+    for path in certificate.CERTIFICATES:
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        problem_text = certificate.certificate_problem(path, live, criteria, restatement)
+        assert problem_text is None, f"{relative}: {problem_text}"
+        stored = json.loads(path.read_text(encoding="utf-8"))["criteria_fingerprint"]
+        assert stored in (live, executed), f"{relative} cites an unexplained fingerprint {stored}"
+        if stored != live:
+            stale_certificates.append(path)
+            assert entries[relative]["executed_criteria_fingerprint"] == stored
+            assert entries[relative]["executed_manifest_fingerprint"] == executed_pin
+    assert stale_certificates, "no certificate is stale, so this finding has nothing to attest"
 
-    verifier = (REPO_ROOT / "scripts" / "verify_phase2d_verdicts.py").read_text(encoding="utf-8")
-    assert "seq10_baseline_comparison" not in verifier, (
-        "a verifier now reads the trial_010 certificate; re-scope this finding"
+    recomputed = compute_criteria_fingerprint(
+        dataclasses.replace(criteria, expected_manifest_fingerprint=executed_pin)
+    )
+    assert recomputed == executed, (
+        f"the restatement's pin does not reproduce the executed fingerprint: substituting {executed_pin} "
+        f"yields {recomputed}"
+    )
+    stale = stale_certificates[0]
+    without = certificate.certificate_problem(stale, live, criteria, None)
+    assert without is not None and executed[:24] in without and live[:24] in without, (
+        f"a stale certificate with no restatement is accepted or names one hash only: {without}"
+    )
+    forged = {
+        **restatement,
+        "certificates": [
+            {**row, "executed_criteria_fingerprint": "CRIT-FPR-V1-forged"} for row in restatement["certificates"]
+        ],
+    }
+    forged_problem = certificate.certificate_problem(stale, live, criteria, forged)
+    assert forged_problem is not None, "a restatement with a forged executed fingerprint is accepted"
+    forged_pin = {
+        **restatement,
+        "certificates": [
+            {**row, "executed_manifest_fingerprint": "MAN-FPR-V1-forged"} for row in restatement["certificates"]
+        ],
+    }
+    assert certificate.certificate_problem(stale, live, criteria, forged_pin) is not None, (
+        "a restatement whose pin does not reproduce the executed fingerprint is accepted, so the mix is "
+        "not attested as pin-only"
     )
 
 
 def probe_n194() -> None:
     """
-    The seq-10 artifacts publish the counter the code no longer computes.
+    The seq-10 demerger pair is restated by append, and the certificate refuses while it is unmeasured (§97.10 item 4).
 
-    Measured at 437e0c4 (§97.5): the feat commit touched no path under `reports/`, so
-    `reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json` and
-    `reports/analysis/s94/seq10_baseline_2018_2023_verdict.json` still publish
-    `demerger_forced_exits 0` / `demerger_forced_refusals 66` — the event-counted pair §96.5 proved wrong
-    and §97.5 replaced. Whether any position was ever held across a demerger ex-date is therefore still
-    unmeasured on this tree, and the published metric is not what the committed runner computes.
-
-    Closure direction: the artifacts are regenerated, or an append-only restatement row names the pair
-    restated and the session-level measurement that replaces it.
+    Measured at 437e0c4 (§97.5): both committed artifacts still publish `demerger_forced_exits 0` /
+    `demerger_forced_refusals 66` from the event counter §97.5 replaced. This probe asserts the closed
+    state: the artifacts are **not** edited (§10.1), a restatement names the pair it restates and the
+    held-position measurement that replaces it, that measurement reproduces the artifact's own hold-bound
+    counters through `probe_seq10_candidate.demerger_restatement_problem`, and a missing measurement is
+    refused naming the published pair.
     """
     import json
 
-    artifacts = {
-        "reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json": None,
-        "reports/analysis/s94/seq10_baseline_2018_2023_verdict.json": None,
-    }
-    for relative in artifacts:
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    import scripts.probe_seq10_candidate as certificate
+
+    published = {}
+    for relative in (
+        "reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json",
+        "reports/analysis/s94/seq10_baseline_2018_2023_verdict.json",
+    ):
         document = json.loads((REPO_ROOT / relative).read_text(encoding="utf-8"))
-        artifacts[relative] = (document["demerger_forced_exits"], document["demerger_forced_refusals"])
-    assert set(artifacts.values()) == {(0, 66)}, (
-        f"the published demerger pair moved; re-scope this finding: {artifacts}"
+        published[relative] = (document["demerger_forced_exits"], document["demerger_forced_refusals"])
+    assert set(published.values()) == {(0, 66)}, (
+        f"an artifact was edited rather than restated (§10.1); it now reads {published}"
     )
 
-    source = (REPO_ROOT / "scripts" / "run_phase3b2_walkforward.py").read_text(encoding="utf-8")
-    assert "count_forced_exit_outcomes" in source, (
-        "the held-position counter is gone; re-scope this finding"
+    restatement = json.loads(certificate.DEMERGER_RESTATEMENT.read_text(encoding="utf-8"))
+    assert (restatement["restated"]["demerger_forced_exits"], restatement["restated"]["demerger_forced_refusals"]) == (0, 66)
+    measurement = restatement["measurement"]
+    for key in ("demerger_forced_exits", "demerger_forced_refusals"):
+        assert isinstance(measurement[key], int) and not isinstance(measurement[key], bool), (
+            f"the restatement carries no computed `{key}`"
+        )
+    assert restatement["counter"].startswith("count_forced_exit_outcomes"), restatement["counter"]
+    replay = restatement["replay"]
+    assert replay["demerger_forced_exits"] == measurement["demerger_forced_exits"]
+    assert replay["demerger_forced_refusals"] == measurement["demerger_forced_refusals"]
+
+    artifact = json.loads(
+        (REPO_ROOT / "reports" / "verdicts" / "trial_010" / "phase3b2_swing_baseline_2022_2024_verdict.json")
+        .read_text(encoding="utf-8")
     )
-    assert "demerger_exits - demerger_filled" not in source, (
-        "the code still counts events; re-scope this finding"
+    assert certificate.demerger_restatement_problem(artifact, restatement) is None
+    assert replay["hold_bound_forced_exits"] == artifact["hold_bound_forced_exits"], (
+        "the restatement's replay does not reproduce the artifact's hold-bound exits"
     )
+    assert replay["hold_bound_refusals"] == artifact["hold_bound_refusals"], (
+        "the restatement's replay does not reproduce the artifact's hold-bound refusals"
+    )
+    missing = certificate.demerger_restatement_problem(artifact, None)
+    assert missing is not None and "0" in missing and "66" in missing, (
+        f"an unmeasured published pair is accepted, or the refusal names no pair: {missing}"
+    )
+    empty = certificate.demerger_restatement_problem(artifact, {**restatement, "measurement": {}})
+    assert empty is not None and "demerger_forced_exits" in empty, (
+        f"a restatement with no measurement is accepted: {empty}"
+    )
+    stale = certificate.demerger_restatement_problem(
+        {**artifact, "demerger_forced_refusals": 65}, restatement
+    )
+    assert stale is not None, "a restatement is accepted for a pair the artifact no longer publishes"
 
 
 PROBES: Dict[str, Callable[[], None]] = {

@@ -483,7 +483,14 @@ market_data_and_accounting_invariants:
   # current + 961 superseded). No numeric threshold moved, no archive byte changed, and `criteria_version`
   # is held at 1.1.16 deliberately — the seq-10 registry row is append-only and declares 1.1.16, so a
   # version bump here would make its own certificate refuse the row it was registered under.
-  expected_manifest_fingerprint: "MAN-FPR-V1-e79d791518a4337adaa871fed32257f12e09359ddcdbaf2c3f8e4094feb411ee"
+  # Re-sealed 2026-11-19 under Audit §97.10 items 1-2 (N-191, N-192): the ±35% reconciliation now computes
+  # returns only between consecutive calendar sessions and exonerates a move only on a price-side record,
+  # so the corpus header republishes its classes (832 → 774 moves: 1 applied, 0 archive, 699 ratio-shaped,
+  # 74 not ratio-shaped, 0 ex-date mismatch) with prices, bars, sessions and content_fingerprint unchanged.
+  # Its current row was superseded and one new row appended: MAN-FPR-V1 now covers 1,877,557 bytes / 1,971
+  # rows (1,009 current + 962 superseded). No numeric threshold moved, no archive byte changed, and
+  # `criteria_version` stays 1.1.16 for the reason above.
+  expected_manifest_fingerprint: "MAN-FPR-V1-be45b7e791d5d3cd683ee119ae4beeae8cba3aab7728ac194d6b19521a691045"
 
   # Finding N-128 (Audit §72.3, §72.5 item 3): the trial-registry manifest witnesses
   # {evaluation_count, head_eval_hash} outside the (sidecar, anchor) pair. Pinning its SHA-256 here

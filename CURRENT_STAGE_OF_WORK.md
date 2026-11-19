@@ -2368,3 +2368,123 @@ included). `N-186`…`N-190` remain `OPEN` pending the auditor's §97.
 `probe_seq10_candidate.py`: exit 0. `derive_2018_2023_corpus.py --check`: `OVERALL: CURRENT`. Probes
 N-186…N-190 all `PASS`; `verify_audit_findings.py` runs every ledger row's probe. `verify_audit_append_only.py
 --force-full` is run on this commit's tree and the row that follows records it.
+
+## §98 — work order §97.10 items 1-4 executed for N-191…N-194, and a read-only seq-10 drawdown diagnostic (Not audited)
+
+**Reviews:** `bf5de9f` (tag `audit-s97-78da364`), the parent of this round. **Contract:** the §97 verdict at
+`612e82a`/`437e0c4` and its work order §97.10. **Nothing here is audited.** `N-191`…`N-194` stay `OPEN` in the
+ledger until the next audit section says otherwise; every number below is a measurement this round took.
+
+**Item 1 — N-191, no cross-gap pair enters the reconciliation as a return.** At `bf5de9f`
+`classify_extreme_moves` zipped `bars` with `bars[1:]` and called the quotient a *one-session* return without
+asking whether the two `trade_date`s were consecutive sessions, so 16,194 adjacent pairs straddled a calendar
+gap and 58 of its 832 extremes were computed across one. The classifier now takes `trading_dates` and computes
+`calendar_previous` first; a pair whose dates are not consecutive is a **gap record** (`cross_gap_pairs`,
+`cross_gap_moves`) and never reaches a class. The corpus was rebuilt: the reconciliation now accounts for
+**774** moves (was 832) — **1** applied row, **0** archive record, **699** ratio-shaped unattested, **74** not
+ratio-shaped, **0** ex-date mismatch — with **16,194** cross-gap pairs and **58** cross-gap extremes published
+as `cross_gap_detail` instead of as returns. `INE251H01024` 2022-08-12 (+1.2800 after a bar from 2021-08-02)
+and `INE784B01035` 2023-09-26 (+56.0000 after 2020-07-20) are now gap records. `probe_n191` was flipped first
+and exits **1** at `bf5de9f` (`the classifier takes no calendar…`).
+
+**Item 2 — N-192, only a price-side record may explain a move.** The exact-date branch admitted any
+non-`DIVIDEND` record before the ratio test, so an AGM, scheme, rights or demerger record disposed of the move.
+Exoneration is now `kind in PRICE_SIDE_KINDS` only; a non-price-side record at the exact date is published as
+`RATIO_SHAPED_UNATTESTED` with the record named (`ratio_shaped_detail[].record`). Measured on the rebuilt
+corpus: `explained_by_archive_record` **0** (was 24), `ratio_shaped_unattested` **699** (was 735),
+`no_ratio_match` **74** (was 72), and **18** ratio-shaped moves name their non-price-side record — including
+`INE803A01027` 2019-09-16 **+0.5000** under an `OTHER` record, which §97.3 measured as a 2× move filed as
+explained by an Annual General Meeting. `probe_n192` was flipped first and exits **1** at `bf5de9f`.
+
+**The pin this forced, stated because it is the cost of items 1-2.** Prices, bars, sessions and
+`content_fingerprint DATA-CTNT-V2-cb4832c0b43952c4a03d58ee65ff5b15` are unchanged; only the header's
+reconciliation moved. The rebuilt artifact is **75,390,706 bytes / `ea0b65a3…`**, its manifest row supersedes
+the previous current row (`1,971` rows: `1,009` current + `962` superseded over **1,877,557** bytes), so
+`expected_manifest_fingerprint` is re-sealed to `MAN-FPR-V1-be45b7e7…` and `criteria_fingerprint` moves
+`b2876d98…` → **`535e47f5…`**. No criterion, threshold, fold boundary, calendar pin, cost-schedule row or
+gating start moved (`git diff configs/go_no_go_criteria.yaml` is one pin line and a comment), and
+`criteria_version` is **held at `1.1.16`** for the reason §97.7 gives — the seq-10 registry row is append-only
+and names it. `N=10`, `N_eval=5`, the 2024 validation fold untouched (`validation_folds_count = 0`) and the
+holdout `2025-01-01..2026-11-11` unread.
+
+**Item 3 — N-193, a certificate's fingerprint is compared with the live one.** `probe_seq10_candidate.py`
+now carries `certificate_problem(certificate, live, criteria, restatement)`: a stored `criteria_fingerprint`
+that differs from the live one is refused unless an appended restatement names that artifact, the executed
+fingerprint and the executed manifest pin, **and substituting that pin into the live criteria reproduces the
+cited fingerprint exactly** — the recomputation is the attestation, so any other change would move the hash.
+`reports/analysis/s98/criteria_restatement.json` records `CRIT-FPR-V1-9ee0a88c…` executed under
+`MAN-FPR-V1-f5b1f1f1…` for all three certificates (the trial_010 pair and the s94 baseline), with the §97 pin
+`e79d7915…` → `b2876d98…` recorded as the intermediate step. Substitution reproduces both hashes; the gate
+refuses a stale live hash, a forged executed fingerprint and a pin that does not reproduce, by name.
+Measured: `probe_seq10_candidate.py` **exit 0 — CERTIFIED**, all three certificates reconcile with
+`535e47f5…`, demerger pair `0/66` restated. `probe_n193` was flipped first and exits **1** at `bf5de9f`.
+
+**Item 4 — N-194, the seq-10 demerger pair is restated by measurement.** The committed artifacts are **not
+edited** (§10.1); `scripts/diagnose_seq10_drawdown.py` re-renders seq 10's own configuration (same
+`BASELINE_TRIAL_ID`, window, criteria and parameters) into a temporary registry copy and publishes
+`reports/analysis/s98/seq10_demerger_restatement.json`. Measured: `demerger_forced_exits 0` /
+`demerger_forced_refusals` **0** (was `0` / `66`) over **1,425** sessions — no position was ever held across a
+demerger ex-date in the only run that exercised the constraint, and the 66 were events on ISINs the book did
+not own. The replay is tied to the artifact it restates: `hold_bound_forced_exits` **422**,
+`hold_bound_refusals` **7,309**, **781** closed trades, `max_drawdown 0.7264709014681672238018483779`,
+`final_equity 1072507.24` — the committed artifact's own numbers — and the registry's four files hash
+identically before and after (`mutated: false`), so no registration was rewritten. The certificate refuses an
+artifact that publishes a pair with no restatement, a restatement whose restated pair differs, and a
+restatement with no measurement.
+
+**Request item 3 — the read-only seq-10 drawdown and refusal decomposition** (`reports/analysis/s98/seq10_drawdown_decomposition.json`,
+no registry mutation). The equity curve's 72.65% maximum drawdown is reached **inside March 2020**, on a book
+already down 57.76% through 2018-2019:
+
+| Period | Sessions | Max DD (running peak) | Closed trades | Net PnL (₹) | Ticket rejections |
+|---|---|---|---|---|---|
+| 2018-04-01..2019-12-31 | 430 | 57.7646% | 213 | **−444,938.84** | 2,547 |
+| 2020-01-01..2020-02-28 | 43 | 58.9076% | 21 | −11,263.57 | 359 |
+| 2020-03-02..2020-03-31 | 21 | **72.6471%** | 15 | −49,385.74 | 186 |
+| 2020-04-01..2023-12-29 | 930 | 70.8510% | 532 | **+560,926.56** | 3,897 |
+
+The first 430 sessions carry 213 of 781 closed trades and lose 44% of starting capital; the recovery is earned
+in 2020-04..2023-12 (+₹560,926.56) and never closes the 2018-2019 hole in absolute terms (final equity
+₹1,072,507.24 on ₹1,000,000 after 1,424 marked sessions; the 1,425th executed session carries no snapshot).
+Exit mix is bound-dominated (`MAX_HOLD_BOUND_EXIT` 422 of 781, `STOP_LOSS` 304, `SIGNAL_EXIT` 55), and **16**
+positions were open at the window end.
+
+By entry-date liquidity (20-session median traded value before entry, from the committed corpus):
+
+| Tier | Closed trades | Net PnL (₹) | Costs (₹) |
+|---|---|---|---|
+| ADTV20 ≥ ₹25 cr | 271 | **+176,025.68** | 43,493.65 |
+| ₹5 cr ≤ ADTV20 < ₹25 cr | 314 | −93,852.09 | 48,276.39 |
+| ₹1 cr ≤ ADTV20 < ₹5 cr | 152 | −104,927.79 | 22,674.69 |
+| ADTV20 < ₹1 cr | 44 | +78,092.62 | 6,766.33 |
+
+3 trades had no prior 20-session history and fall in the `< ₹1 cr` row by construction. The mid-tier book (466
+trades) is where the 2018-2023 loss sits; the top tier and the sub-₹1 cr row are positive on 271 and 44 trades,
+so the last row is a small-sample observation, not a finding.
+
+**Refusals — the 7,309 are not circuit freezes, and the units differ.** `hold_bound_refusals` is a
+**position-session** counter (a refused exit is counted again on the next session, which is what makes a
+frozen bid an unbounded delay, §5.3), while the session summaries attribute **6,989** ticket rejections:
+`SELL:REJECTED_INSUFFICIENT_TURNOVER` **5,294**, `BUY:REJECTED_INSUFFICIENT_TURNOVER` **1,322**,
+`BUY:REJECTED_RISK_LIMIT` **367**, `BUY:REJECTED_LOCKED_SESSION` **4**, `SELL:REJECTED_LOCKED_SESSION` **2**
+(`locked_bar_refusals` 6, all in 2020-04..2023-12). **6 of 6,989** attributed rejections are locked sessions,
+so in this configuration the binding exit constraint is liquidity/participation
+(`REJECTED_INSUFFICIENT_TURNOVER`), not a circuit freeze. This decomposes the two counters as each is defined
+rather than re-attributing one to the other, and it is what seq 11 should size against.
+
+**Not in this round's order, unchanged:** §97.10's carried items — §96.10 item 5 (superseded rows in
+`get_corporate_actions()`), item 6 (the certificate reading the `NON_REPRODUCIBLE_AT` annotation) and item 7
+(the carried residuals, `N-150` included). `N-191`…`N-194` stay `OPEN` pending the next audit.
+
+**Gate state at this commit.** `pytest --collect-only`: **571** collected; parallel invocation **570 passed**
+in 87.80 s (replay-guard benchmark deselected) + isolated **1 passed** in 2.38 s = **571 of 571**, 0 skipped,
+0 xfailed. `tests/unit/test_phase3b2_audit_s98_items.py` **6 passed**. Probes N-187 and N-191…N-194 all `PASS`
+on this tree, and N-191…N-194 each exit **1** in a detached worktree at `bf5de9f`.
+`probe_seq10_candidate.py`: **exit 0 — CERTIFIED**. `verify_phase2a_containment_and_trials.py` and
+`verify_phase2d_verdicts.py`: exit 0 after the criteria restatement was moved out of `reports/verdicts/` (a
+note is not a verdict artifact: G2A-6.7 read it as a post-sidecar verdict with no ledger row, and the pre-2022
+pin test read it as a verdict). One red on the pre-commit tree is recorded because it is real:
+`verify_audit_findings.py` exits 1 on `N-170` alone, because the rebuilt corpus is not yet the byte git stores;
+`N-170` is green only once this commit's corpus bytes are in the object store, which this commit does.
+`verify_audit_append_only.py --force-full` is run on this commit's tree and the row that follows records its
+verdict.
