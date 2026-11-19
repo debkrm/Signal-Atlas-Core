@@ -21,4 +21,12 @@ reports/audit/** text eol=lf
 *.json.gz -text
 *.zip -text
 *.gz -text
+# Audit §96.2 → §97 (N-186): a captured statutory source under data/raw/circulars/<ref>/ is bytes, not
+# lines. The NSE STT/turnover payload is an HTML document whose retrieved bytes carry CRLF, and
+# `* text=auto eol=lf` rewrote it on checkout: the blob held 330,001 bytes / 91e8ace7… while its manifest
+# and the four criteria rows it backs state the retrieved 330,003 / 5df41b04…. Attribute rules are
+# last-match-wins, so this sits after every `text` rule and stores each captured payload's own bytes.
+# The calendar circulars at data/raw/circulars/*.json are not matched: they are JSON, which the rule
+# above already pins to LF.
+data/raw/circulars/*/** -text
 

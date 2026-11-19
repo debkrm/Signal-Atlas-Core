@@ -2279,3 +2279,92 @@ item 3 required) and `expected_trial_registry_manifest_sha256` over the appended
 `verify_phase2d`: exit 0. `probe_seq10_candidate.py`: exit 0. `probe_audit_findings.py`: N-181..N-185
 PASS; N-170 refuses the rebuilt corpus until its bytes are committed, which this commit does.
 `verify_audit_append_only.py --force-full`: green in the row that follows.
+
+## §97 — work order §96.10 items 1-4 executed for N-186…N-190 (Not audited)
+
+**Reviews:** `bb6d335` (tag `audit-s96-e094cbc`), the parent of this round. **Contract:** the §96 verdict at
+`e094cbc` and its work order §96.10. **Nothing here is audited.** Every arrow below is a measurement this
+round took, not a status the auditor has granted; `N-186`…`N-190` stay `OPEN` in the ledger until §97
+says otherwise.
+
+**Item 1 — N-190, the gate's verdict no longer depends on its own concurrency.** At `bb6d335` the gate ran
+the whole suite under `-n auto --dist loadfile`, so `test_n1_replay_guard_o1_lookup_and_bounded_memory`
+measured per-fill CPU beside fifteen other workers: §96.1 recorded 253.90–265.62 µs/fill against its 250.0
+ceiling on two of four heavy runs of one unchanged tree (serial figure ~47 µs). `ISOLATED_TIMING_TESTS` now
+deselects that node from the parallel invocation and `serial_pytest_command()` runs it in an invocation of
+its own, where no xdist worker exists; `check_test_suite_zero_skip_xfail` reconciles the two counts against
+`pytest --collect-only` instead of a literal, so a deselect that dropped a test cannot read green. Measured:
+`--check-suite-only` exit 0 — `564 passed` parallel + `1 passed` isolated = **565 of 565 collected**,
+66.89 s. **Neither ceiling moved** (`250.0` twice, `< 2.5` are byte-identical to `bb6d335`, and the
+structural replay-guard count N-174 added is untouched). `probe_n190` was flipped first and exited 1 at
+`bb6d335` (`the gate names no isolated timing test`).
+
+**Item 2 — N-186, the statutory payload is the bytes git stores.** At `bb6d335` `probe_n186` measured
+`NSE_STT_RATES (330003 stated vs 330001 stored; 5df41b04.. vs 91e8ace7..)`: `.gitattributes` opened with
+`* text=auto eol=lf`, so the captured HTML's two CRLF bytes were rewritten on checkout and the attestation
+described the download rather than the blob. The reconciliation taken is the one §96.10 item 2 offers as
+its first answer and the working copy already held: **store what was retrieved.** A
+`data/raw/circulars/*/** -text` rule pins every captured statutory payload to its own bytes (the calendar
+JSONs at `data/raw/circulars/*.json` are not matched), and the payload was re-staged, taking the blob from
+330,001 / `91e8ace7…` to the retrieved **330,003 / `5df41b04…`** — the value `manifest.json` and the four
+`NSE_STT_RATES` criteria interval rows already carried, so neither the manifest, `data/reference/manifest.jsonl`,
+the four `source_sha256` rows nor any threshold was edited for this item. Measured in a detached checkout of
+this round's exact tree: `tests/unit/test_phase3b2_audit_s96_items.py` **4 passed**, `probe_n186` **PASS**,
+`statutory_source_problem` **None**, `statutory_cost_schedule_problem` **None** — no working-copy bytes in
+the path, because the checkout's bytes are the blob's.
+
+**Item 3 — N-187/N-188, the builder fails on both directions of Ruling 2.** At `bb6d335` `failures` was
+bound at `:296` and never read, and the class fired on **six** moves across four names (`UVSL`,
+`ATNINTER`, `GVKPIL`, `WINSOME`) whose nearest archive record is an `Annual General Meeting` — a row that
+carries no share ratio and therefore cannot be a mis-dated ratio. The near miss now requires a **price-side**
+kind (`SPLIT`, `BONUS`, `CONSOLIDATION`), which is what the classifier's own sentence always said, and those
+six re-enter the publish-only classes (5 `RATIO_SHAPED_UNATTESTED`, 1 `NO_RATIO_MATCH`); the move total is
+unchanged at **832** (1 applied + 24 archive + 72 not-ratio-shaped + 735 ratio-shaped + **0** mismatch), which
+is also the correction to §96's "826" — that figure was the four-bucket total and excluded the six it named.
+`require_no_ex_date_mismatch(failures)` now raises naming ISIN and session, and
+`require_attested_actions_present(attested_actions_missing_from_table())` calls
+`attest_price_actions.reconcile()` from `build`, so the missing-set direction that §96.4 measured at
+0 refusals / 300 applied is a build exit. Measured: the corpus was rebuilt —
+**2,735 ISINs / 2,578,060 bars / 1,425 sessions, 0 ex-date mismatch (was 6)**, content fingerprint
+`DATA-CTNT-V2-cb4832c0b43952c4a03d58ee65ff5b15` unchanged (prices are untouched; only the header's
+reconciliation counts moved), `75,390,038` bytes / `609084fa…`, and `--check` reads **`OVERALL: CURRENT`**
+over 1,425 archives. Withdrawing the attested row `SRF 2021-10-13` from a copy of the table now names
+`INE647A01010 2021-10-13 BONUS` as a gap; the committed table's gap set is empty. `probe_n187` and
+`probe_n188` were flipped first and both exited 1 at `bb6d335` (`exposes no ex-date-mismatch gate`,
+`exposes no attested-action completeness gate`).
+
+**The pin this forced, stated because it is the cost of item 3.** The rebuilt corpus supersedes its own
+manifest row and appends one (`1,970` rows: `1,009` current + `961` superseded), so
+`expected_manifest_fingerprint` is re-sealed to `MAN-FPR-V1-e79d791518a4…` over **1,876,489** bytes and
+`reports/verdicts/phase2d_tier_a_2022_2026_verdict.{json,md}` is regenerated (Gate 2D-5 compares bytes).
+No numeric threshold, criterion, fold, calendar pin or gating start moved; `criteria_version` is **held at
+1.1.16** deliberately rather than bumped, because the seq-10 registry row is append-only and declares
+`1.1.16`, so a bump would make `probe_seq10_candidate.py` refuse the row it was registered under. The cost
+is named: `criteria_fingerprint` moves from `CRIT-FPR-V1-9ee0a88c…` to `CRIT-FPR-V1-b2876d98…` **without a
+version bump**, so `1.1.16` now labels two contents and a citation of the version is not a citation of the
+fingerprint. `probe_seq10_candidate.py` then exits **0 — CERTIFIED** on this tree (N 10, N_eval 5, fold
+`36a39987…`, baseline `f5fe3af5a1e2de83…`, 422 forced exits / 7,309 refusals).
+
+**Item 4 — N-189, the demerger refusal counts a refused exit of a held position.** At `bb6d335`
+`demerger_exits` was every non-superseded `DEMERGER` on the session after `next_session`, archive-derived,
+while the harness skips an ISIN the book does not hold, so 66 events were reported as 66 refused exits with
+0 fills. `count_forced_exit_outcomes(forced_reasons, held_isins, filled_isins, reason)` now computes
+`(exits, refusals)` over `forced_reasons` entries whose ISIN is **held** (passed for the demerger pair,
+whose refusals used `demerger_exits - demerger_filled`), with the held set read from the position book before
+the session executes. `tests/unit/test_phase3b2_audit_s97_items.py` asserts the pairing — one held fill reads
+(1, 0), one held refusal (0, 1), two held and none filled (0, 2), an unheld event (0, 0), and the bound pair
+never absorbs a demerger fill — **4 passed**. `probe_n189` was flipped first and exited 1 at `bb6d335`
+(`still counts forced exits without a held-position rule`). **Not done, deliberately:** the committed seq-10
+artifacts still read `demerger_forced_exits 0` / `demerger_forced_refusals 66`, because they record a run
+made by the previous counter and re-running seq 10 would rewrite a certified registration; whether any
+position was ever held across a demerger ex-date therefore remains **unmeasured** on this tree, as §96.10
+item 4's second clause asks, and the constraint is measured on synthetic holds instead.
+
+**Not in this round's order, unchanged:** §96.10 items 5 (superseded rows in `get_corporate_actions()`),
+6 (the certificate reading the `NON_REPRODUCIBLE_AT` annotation) and 7 (the carried residuals, N-150
+included). `N-186`…`N-190` remain `OPEN` pending the auditor's §97.
+
+**Gate state at this commit.** `pytest`: **565 passed, 0 skipped, 0 xfailed** (`564 + 1 isolated`).
+`probe_seq10_candidate.py`: exit 0. `derive_2018_2023_corpus.py --check`: `OVERALL: CURRENT`. Probes
+N-186…N-190 all `PASS`; `verify_audit_findings.py` runs every ledger row's probe. `verify_audit_append_only.py
+--force-full` is run on this commit's tree and the row that follows records it.

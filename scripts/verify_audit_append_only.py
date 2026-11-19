@@ -712,32 +712,63 @@ def check_verification_scripts() -> Tuple[bool, Dict[str, int]]:
     return all_passed, exits
 
 
+# Audit §96.1 → §97 (N-190): a CPU-per-fill budget must not be decided by the gate's own concurrency.
+# `test_n1_replay_guard_o1_lookup_and_bounded_memory` measures per-fill CPU against a 250 µs ceiling; run
+# inside `-n auto` it measured 253.90–265.62 µs/fill on this host (5.3x its 47 µs serial figure) and two of
+# four heavy runs on one unchanged source tree exited 1 while the same test passed 3/3 in ~2.5 s serially.
+# These nodes are therefore deselected from the parallel invocation and run in one invocation of their
+# own, where no worker competes for the CPU. Neither ceiling is moved (§12.4).
+ISOLATED_TIMING_TESTS: tuple[str, ...] = (
+    "tests/unit/test_portfolio.py::test_n1_replay_guard_o1_lookup_and_bounded_memory",
+)
+
+
 def pytest_command() -> List[str]:
     """
     The suite command. `-n auto --dist loadfile` when `pytest-xdist` is importable — same suite, same
     zero-skip/xfail assertions, one worker per test file — and the plain sequential run otherwise, so
     the gate's verdict does not depend on an optional package being installed (§12.3).
+
+    `ISOLATED_TIMING_TESTS` are deselected here and executed by `serial_pytest_command()`; the caller
+    requires the two invocations together to cover the collected suite (§96.1, N-190).
     """
     import importlib.util
 
     if importlib.util.find_spec("xdist") is None:
-        return [sys.executable, "-m", "pytest", "-q"]
-    return [sys.executable, "-m", "pytest", "-n", "auto", "--dist", "loadfile", "-q"]
-
-
-def check_test_suite_zero_skip_xfail() -> Tuple[bool, int, float]:
-    """Runs the suite and asserts exit 0 with zero skip, zero xfail, and zero failures (§12.4)."""
-    print("--- Gate W0.5-3: Offline Test Suite with Zero Skip/Xfail (§12.3, §12.4) ---")
-    env = os.environ.copy()
-    src_path = str(REPO_ROOT / "src")
-    if "PYTHONPATH" in env:
-        env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+        base = [sys.executable, "-m", "pytest", "-q"]
     else:
-        env["PYTHONPATH"] = src_path
+        base = [sys.executable, "-m", "pytest", "-n", "auto", "--dist", "loadfile", "-q"]
+    for node in ISOLATED_TIMING_TESTS:
+        base.extend(["--deselect", node])
+    return base
 
-    start_t = time.perf_counter()
-    command = pytest_command()
-    print(f"[INFO] pytest invocation: {' '.join(command[1:])}")
+
+def serial_pytest_command() -> List[str]:
+    """The isolated timing tests, in a run with no xdist worker beside them (§96.1, N-190)."""
+    return [sys.executable, "-m", "pytest", "-q", *ISOLATED_TIMING_TESTS]
+
+
+def collected_test_count(env: dict) -> int:
+    """How many tests the tree collects, so the parallel + isolated invocations can be reconciled."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "--collect-only"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    if proc.returncode != 0:
+        print(f"[FAIL] pytest --collect-only exited with code {proc.returncode}")
+        return 0
+    match = re.search(r"(\d+) tests? collected", proc.stdout or "")
+    return int(match.group(1)) if match else 0
+
+
+def run_pytest_invocation(command: List[str], env: dict, label: str) -> Tuple[bool, int]:
+    """Runs one pytest invocation and asserts zero failures, zero skip and zero xfail in its summary."""
+    print(f"[INFO] pytest invocation ({label}): {' '.join(command[1:])}")
     proc = subprocess.run(
         command,
         cwd=str(REPO_ROOT),
@@ -750,36 +781,77 @@ def check_test_suite_zero_skip_xfail() -> Tuple[bool, int, float]:
         errors="replace",
         env=env,
     )
-    elapsed = time.perf_counter() - start_t
 
     if proc.returncode != 0:
-        print(f"[FAIL] pytest exited with code {proc.returncode} ({elapsed:.2f}s)")
+        print(f"[FAIL] {label}: pytest exited with code {proc.returncode}")
         print((proc.stdout or "")[-1000:])
         print((proc.stderr or "")[-500:])
-        return False, 0, elapsed
+        return False, 0
 
     summary_line = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
-    print(f"[INFO] pytest summary: {summary_line} ({elapsed:.2f}s)")
+    print(f"[INFO] {label} summary: {summary_line}")
 
     # Assert no skipped, xfailed, or failed tests
     if "failed" in summary_line.lower() and not "0 failed" in summary_line.lower():
-        print(f"[FAIL] Found test failures: {summary_line}")
-        return False, 0, elapsed
+        print(f"[FAIL] {label}: found test failures: {summary_line}")
+        return False, 0
 
     if "skipped" in summary_line.lower():
-        print(f"[FAIL] Found skipped tests (Rule 12.4 prohibition): {summary_line}")
-        return False, 0, elapsed
+        print(f"[FAIL] {label}: found skipped tests (Rule 12.4 prohibition): {summary_line}")
+        return False, 0
 
     if "xfail" in summary_line.lower():
-        print(f"[FAIL] Found xfailed tests (Rule 12.4 prohibition): {summary_line}")
-        return False, 0, elapsed
+        print(f"[FAIL] {label}: found xfailed tests (Rule 12.4 prohibition): {summary_line}")
+        return False, 0
 
     if "passed" not in summary_line.lower():
-        print(f"[FAIL] No passed tests reported: {summary_line}")
-        return False, 0, elapsed
+        print(f"[FAIL] {label}: no passed tests reported: {summary_line}")
+        return False, 0
 
     passed_match = re.search(r"(\d+) passed", summary_line)
-    passed_count = int(passed_match.group(1)) if passed_match else 0
+    return True, (int(passed_match.group(1)) if passed_match else 0)
+
+
+def check_test_suite_zero_skip_xfail() -> Tuple[bool, int, float]:
+    """
+    Runs the suite and asserts exit 0 with zero skip, zero xfail, and zero failures (§12.4).
+
+    Two invocations, one suite: the parallel run covers everything except `ISOLATED_TIMING_TESTS`, and
+    the isolated run executes those alone (§96.1, N-190). The counts are reconciled against
+    `--collect-only`, so the split cannot pass by silently dropping a test.
+    """
+    print("--- Gate W0.5-3: Offline Test Suite with Zero Skip/Xfail (§12.3, §12.4) ---")
+    env = os.environ.copy()
+    src_path = str(REPO_ROOT / "src")
+    if "PYTHONPATH" in env:
+        env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+    else:
+        env["PYTHONPATH"] = src_path
+
+    start_t = time.perf_counter()
+    parallel_ok, parallel_passed = run_pytest_invocation(pytest_command(), env, "parallel suite")
+    if not parallel_ok:
+        return False, 0, time.perf_counter() - start_t
+    isolated_ok, isolated_passed = run_pytest_invocation(
+        serial_pytest_command(), env, "isolated timing tests"
+    )
+    elapsed = time.perf_counter() - start_t
+    if not isolated_ok:
+        return False, 0, elapsed
+
+    collected = collected_test_count(env)
+    passed_count = parallel_passed + isolated_passed
+    print(
+        f"[INFO] {parallel_passed} passed in the parallel invocation + {isolated_passed} isolated = "
+        f"{passed_count} of {collected} collected ({elapsed:.2f}s)"
+    )
+    if collected <= 0 or passed_count != collected:
+        print(
+            f"[FAIL] The two invocations account for {passed_count} of {collected} collected tests; a "
+            f"deselect or an isolation that drops a test is not a green suite (§12.4)"
+        )
+        return False, 0, elapsed
+
     print("[PASS] Gate W0.5-3: Full test suite passed with 0 skipped and 0 xfailed.\n")
     return True, passed_count, elapsed
 

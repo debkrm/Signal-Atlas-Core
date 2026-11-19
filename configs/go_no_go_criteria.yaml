@@ -477,7 +477,13 @@ market_data_and_accounting_invariants:
   # Re-pinned 2026-11-19 under Audit §95.10 items 1-3 / criteria 1.1.16: five statutory circular
   # payloads, five statutory/levy sources, eight 2022-2023 corporate-action payloads and the rebuilt
   # point-in-time corpus are current rows. Superseded rows are history and are never edited (§10.1).
-  expected_manifest_fingerprint: "MAN-FPR-V1-f5b1f1f12e62564a92b6a76719013d445f58d7b3b3e4d99e3441b5637b05af3a"
+  # Re-sealed 2026-11-19 under Audit §97 item 2 (N-187): the builder now fails on the class it documents
+  # as fatal, so the 2018-2023 corpus was rebuilt with 0 ex-date mismatches (was 6). Its current row was
+  # superseded and one new row appended: MAN-FPR-V1 now covers 1,876,489 bytes / 1,970 rows (1,009
+  # current + 961 superseded). No numeric threshold moved, no archive byte changed, and `criteria_version`
+  # is held at 1.1.16 deliberately — the seq-10 registry row is append-only and declares 1.1.16, so a
+  # version bump here would make its own certificate refuse the row it was registered under.
+  expected_manifest_fingerprint: "MAN-FPR-V1-e79d791518a4337adaa871fed32257f12e09359ddcdbaf2c3f8e4094feb411ee"
 
   # Finding N-128 (Audit §72.3, §72.5 item 3): the trial-registry manifest witnesses
   # {evaluation_count, head_eval_hash} outside the (sidecar, anchor) pair. Pinning its SHA-256 here

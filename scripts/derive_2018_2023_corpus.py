@@ -16,10 +16,14 @@ payload attests the same ISIN, action type and ex-date, and the row carries the 
 An archive-attested event on an observed ISIN that the table lacks fails the build by name; a table row
 whose ex-date disagrees with the archive fails the build; a row that cannot be attested is never applied.
 
-**Reconciliation (§95.7).** After adjustment, every one-session return beyond ±35% on the corpus must be
-explained by an applied row at that ISIN and date, or by an archive record at that ISIN and date that is
-not a plain dividend. Anything else fails the build with the ISIN and date printed, because an adjustment
-layer that cannot tell a corporate action from a crash is not an adjustment layer.
+**Reconciliation (§95.7).** After adjustment, every one-session return beyond ±35% on the corpus is
+classified and published in the header. One class fails the build: `EX_DATE_MISMATCH`, a move within
+`MISMATCH_WINDOW_SESSIONS` of an archive-attested **price-side** action (split, bonus, consolidation) on
+a different date — the INFY failure mode, where a real bonus was applied eight sessions late. A routine
+agreement, a dividend or a scheme record carries no share ratio and cannot be a mis-dated adjustment, so
+it is not a near miss (Audit §96.4, §97). The remaining classes stay publish-only: §95.7 measures that a
+±35% move can be indistinguishable from a rights-entitlement expiry, an ETF re-denomination or the
+March-2020 collapse, so they are reported, never silently dropped, and never a build exit.
 
 Usage:
     python scripts/derive_2018_2023_corpus.py             # build, write, register
@@ -75,6 +79,9 @@ PRICE_SIDE_ACTIONS = (
 UNEXPLAINED_MOVE_THRESHOLD = Decimal("0.35")
 # A move this close to an archive-dated action is the ex-date-mismatch defect, not a coincidence.
 MISMATCH_WINDOW_SESSIONS = 10
+# The action types a mis-dated adjustment can take. A dividend, a rights entitlement, an AGM or a
+# demerger record states no share ratio, so it cannot be one of these (§96.4, §97).
+PRICE_SIDE_KINDS = tuple(action.value for action in PRICE_SIDE_ACTIONS)
 BUILT_AT_UTC = "2026-11-19T00:00:00+00:00"
 
 
@@ -199,6 +206,51 @@ def applied_actions(
     return factors, refusals
 
 
+def require_no_ex_date_mismatch(failures: Sequence[Tuple[str, str, str]]) -> None:
+    """
+    Fails the build on a non-empty `EX_DATE_MISMATCH` list, naming each ISIN and session (Audit §97).
+
+    §96.4 measured the class documented as fatal being published instead: `failures` was bound and never
+    read. A list this size cannot be resolved by a threshold move — the row is either re-dated to the
+    archive or the archive record is named, so the build stops and prints what it found.
+    """
+    if not failures:
+        return
+    raise SystemExit(
+        f"{len(failures)} one-session move(s) beyond ±{UNEXPLAINED_MOVE_THRESHOLD} sit within "
+        f"{MISMATCH_WINDOW_SESSIONS} sessions of an archive-attested price-side action on a different date; "
+        f"the EX_DATE_MISMATCH class fails the build (§95.7 Ruling 2): "
+        + "; ".join(f"{isin} {day} ({detail})" for isin, day, detail in failures[:10])
+    )
+
+
+def attested_actions_missing_from_table() -> List[str]:
+    """
+    Archive-attested price-side events the table does not carry, one named line each (§95.7 Ruling 2).
+
+    `applied_actions` walks the table and refuses a row it cannot admit, which by construction cannot see
+    an attested event the table simply lacks: §96.4 measured that withdrawing an attested row left 0
+    refusals and one fewer adjusted instrument. The completeness direction is already computed by
+    `scripts/attest_price_actions.reconcile()`; this wrapper exists so the *build* consults it instead of
+    the check sitting beside the build unread (§14.4).
+    """
+    from scripts.attest_price_actions import reconcile
+
+    missing, _contradicted, _present = reconcile()
+    return [f"{event.isin} {event.ex_date} {event.action_type}" for event in missing]
+
+
+def require_attested_actions_present(gaps: Sequence[str]) -> None:
+    """Fails the build on an archive-attested action the table does not carry (Audit §97)."""
+    if not gaps:
+        return
+    raise SystemExit(
+        f"{len(gaps)} archive-attested price-side action(s) for an in-corpus ISIN are absent from "
+        f"{CORPORATE_ACTIONS_PATH.name}; the missing-set direction of §95.7 Ruling 2 fails the build, and the "
+        f"row is appended (never inferred): " + "; ".join(gaps[:10])
+    )
+
+
 def cumulative_factor(factors: Sequence[Tuple[datetime.date, Decimal]], session: datetime.date) -> Decimal:
     """Product of every ratio whose ex-date is after `session`; 1 when there is none."""
     value = Decimal(1)
@@ -227,6 +279,7 @@ def build_corpus(require_reconciled: bool = True):
             f"that applies them would adjust a gating series on an unattested ratio: "
             + "; ".join(refusals[:5])
         )
+    require_attested_actions_present(attested_actions_missing_from_table())
 
     observations: Dict[str, Dict[datetime.date, Tuple[Decimal, Decimal, Decimal, Decimal, int, Decimal]]] = {}
     symbol_by_isin: Dict[str, str] = {}
@@ -294,6 +347,7 @@ def build_corpus(require_reconciled: bool = True):
         isin for isin in factors_by_isin if isin not in observations
     ]
     failures, reconciliation = classify_extreme_moves(prices_by_isin, factors_by_isin, attestations)
+    require_no_ex_date_mismatch(failures)
     diagnostics = {
         "observations": len(observations),
         "inert_adjustment_isins": sorted(inert_rows),
@@ -304,12 +358,11 @@ def build_corpus(require_reconciled: bool = True):
         "skipped_series_rows": skipped_series_rows,
     }
     # Audit §95.7 Ruling 2's enforceable half is attestation: no applied row without a committed byte,
-    # no archive-attested action left unapplied, no ex-date disagreement. The ±35% detector is computed
-    # and published in the header (`reconciliation`) rather than used as a build exit, because Audit
-    # §95.7 measures that a move this large can be indistinguishable from a genuine one, and §95.6
-    # Ruling 1's point-in-time universe adds 2,735 names of which most are penny, rights-entitlement or
-    # fund lines. Failing the build on the detector would gate the corpus on a quantity that is not
-    # evidence of a missing adjustment; the header states the class counts so §96 can judge them.
+    # no archive-attested action left unapplied, no ex-date disagreement. Those three now fail the build
+    # above. Of the ±35% detector's classes, only EX_DATE_MISMATCH does (§97): Audit §95.7 measures that
+    # a large move can be indistinguishable from a genuine one, and §95.6 Ruling 1's point-in-time
+    # universe adds 2,735 names of which most are penny, rights-entitlement or fund lines, so the other
+    # four classes are computed and published in the header (`reconciliation`) rather than used as exits.
 
     symbols_by_instrument = {isin: symbol_by_isin[isin] for isin in prices_by_isin}
     trading_dates = list(sessions)
@@ -386,9 +439,12 @@ def classify_extreme_moves(
 
     - `APPLIED_ROW` / `ARCHIVE_RECORD`: the move is explained by an applied adjustment at that ISIN and
       date, or by a non-dividend archive record at that ISIN and date.
-    - `EX_DATE_MISMATCH`: the archive attests the same action type for that ISIN within
-      `MISMATCH_WINDOW_SESSIONS` of the move but on a different date — the INFY failure mode Audit
-      §95.5.4 measured, where a real bonus was applied eight sessions late and fabricated two returns.
+    - `EX_DATE_MISMATCH`: the archive attests a **price-side** action (`SPLIT`, `BONUS`,
+      `CONSOLIDATION`) for that ISIN within `MISMATCH_WINDOW_SESSIONS` of the move but on a different
+      date — the INFY failure mode Audit §95.5.4 measured, where a real bonus was applied eight
+      sessions late and fabricated two returns. Only a ratio-bearing record can be a mis-dated ratio:
+      an AGM, a dividend, a rights entitlement or a scheme record near the move is not a near miss, and
+      treating it as one made this class fire on six routine AGMs (§96.4, §97).
       **This is the class that fails the build.**
     - `NO_RATIO_MATCH`: the move is not a share-ratio discontinuity within 0.5%, so no adjustment could
       express it.
@@ -446,7 +502,7 @@ def classify_extreme_moves(
                 if record_isin == isin
                 and abs((day - current.trade_date).days) <= MISMATCH_WINDOW_SESSIONS
                 and any(
-                    kind != "DIVIDEND" for kind, _subject, _digest in attestations[(record_isin, day)]
+                    kind in PRICE_SIDE_KINDS for kind, _subject, _digest in attestations[(record_isin, day)]
                 )
             )
             if near_miss:

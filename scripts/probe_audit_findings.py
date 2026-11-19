@@ -2470,17 +2470,26 @@ def probe_n186() -> None:
 
     Measured at ac16232 (§96.2): `data/raw/circulars/NSE_STT_RATES/manifest.json` asserts 330,003 bytes
     and sha256 5df41b04…, while `git cat-file blob HEAD:` for the same path yields 330,001 bytes and
-    91e8ace7… — `.gitattributes` applies `* text=auto eol=lf` to the captured `.html`, so checkout
-    rewrites its CRLF bytes. On the implementer's working copy the digest still matches (the file was
-    never re-checked-out), so `statutory_source_problem` returns None there and refuses on every fresh
-    clone, where the committed test `test_pre_2021_session_is_priced_from_committed_bytes` fails.
+    91e8ace7… — `.gitattributes` applied `* text=auto eol=lf` to the captured `.html`, so checkout
+    rewrote its CRLF bytes and the attestation was a working-copy digest that refused on every clone.
+
+    Closure direction (feat-s97): every one of the captured statutory payloads resolves to the blob git
+    stores, the attributes forbid re-normalising a captured payload, and the four criteria interval rows
+    that cite `NSE_STT_RATES` carry the digest of that stored payload.
     """
     import hashlib
     import json
     import subprocess
 
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from scripts.ingest_statutory_sources import SOURCES
+
     root = REPO_ROOT / "data" / "raw" / "circulars"
+    declared = {source.ref: source for source in SOURCES}
     drifting = []
+    checked = 0
+    digests: dict = {}
     for directory in sorted(p for p in root.iterdir() if p.is_dir()):
         manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
         payload = directory / manifest["filename"]
@@ -2489,25 +2498,59 @@ def probe_n186() -> None:
             ["git", "cat-file", "blob", "HEAD:" + rel],
             cwd=str(REPO_ROOT), capture_output=True,
         ).stdout
+        checked += 1
+        digests[directory.name] = manifest["sha256"]
         if hashlib.sha256(blob).hexdigest() != manifest["sha256"] or len(blob) != manifest["byte_count"]:
-            drifting.append(f"{directory.name} ({manifest['byte_count']} stated vs {len(blob)} stored)")
-    assert drifting, (
-        "every statutory manifest resolves to the bytes git stores; the working-copy digest drift "
-        "§96.2 measured is gone, so this finding is closed and probe_n186 must be flipped"
+            drifting.append(
+                f"{directory.name} ({manifest['byte_count']} stated vs {len(blob)} stored; "
+                f"{manifest['sha256'][:8]}.. vs {hashlib.sha256(blob).hexdigest()[:8]}..)"
+            )
+    assert checked == len(declared), (
+        f"{checked} captured source(s) on disk against {len(declared)} the capture script declares"
     )
+    assert not drifting, (
+        "statutory manifest(s) do not describe the bytes git stores, so the attestation is a "
+        "working-copy digest: " + "; ".join(drifting)
+    )
+
+    attributes = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "data/raw/circulars/*/** -text" in attributes, (
+        "no attribute pins the captured statutory payloads to their own bytes, so a checkout can "
+        "rewrite them again (§96.2)"
+    )
+
+    # The chain the finding names: four interval rows cite NSE_STT_RATES, and that digest must be the
+    # stored payload's, not a second copy of a number that happens to match a working copy.
+    from signal_core.contracts.criteria import load_go_no_go_criteria
+
+    criteria = load_go_no_go_criteria()
+    citing = [
+        interval for interval in criteria.statutory_costs.statutory_rate_intervals
+        if interval.source_ref == "NSE_STT_RATES"
+    ]
+    assert len(citing) == 4, f"{len(citing)} interval row(s) cite NSE_STT_RATES, not the 4 §96.2 measured"
+    for interval in citing:
+        assert interval.source_sha256 == digests["NSE_STT_RATES"], (
+            f"{interval.component} from {interval.from_date} cites {interval.source_sha256[:8]}.., which "
+            f"is not the stored payload's {digests['NSE_STT_RATES'][:8]}.."
+        )
 
 
 def probe_n187() -> None:
     """
     The class the corpus builder documents as fatal must actually fail the build.
 
-    Measured at ac16232 (§96.4): `classify_extreme_moves` returns six `EX_DATE_MISMATCH` entries and
-    `derive_2018_2023_corpus.build` binds that list to `failures` and never reads it, so the build
-    exits 0 with the six published in the header. Four of the six sit on ISINs with no price-side row
-    at all; three are exact −0.5 one-session moves whose archive record is 2–7 sessions away, which is
-    the INFY failure mode §95.5.4 measured on a single name.
+    Measured at ac16232 (§96.4): `classify_extreme_moves` returned six `EX_DATE_MISMATCH` entries and
+    `build` bound that list to `failures` and never read it, so the build exited 0 with the six
+    published in the header. The six were also misclassified: each sat within ten sessions of an
+    archive record that carries **no share ratio at all** (an Annual General Meeting), which cannot be a
+    mis-dated adjustment and made the fatal class fire on noise.
+
+    Closure direction (feat-s97): the near miss is a price-side action only, the build refuses a
+    non-empty fatal list by name, and the committed corpus publishes 0.
     """
     import ast
+    import datetime
     import gzip
     import json
     from decimal import Decimal
@@ -2516,23 +2559,80 @@ def probe_n187() -> None:
     assert "This is the class that fails the build" in source, (
         "the builder no longer documents the ex-date-mismatch class as fatal; re-scope this finding"
     )
+
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    import scripts.derive_2018_2023_corpus as builder
+    from signal_core.contracts.price_bar import PriceBar
+
+    # 1. The fatal gate exists, refuses the INFY shape by name, and accepts an empty list.
+    gate = getattr(builder, "require_no_ex_date_mismatch", None)
+    assert gate is not None, (
+        "derive_2018_2023_corpus exposes no ex-date-mismatch gate, so `failures` is still published not read"
+    )
+    gate([])
+    try:
+        gate([("INE009A01021", "2018-09-04", "0.5000 but the archive attests an action on 2018-09-12")])
+    except SystemExit as exc:
+        message = str(exc)
+        assert "INE009A01021" in message and "2018-09-04" in message, (
+            f"the gate refuses without naming the ISIN and session: {message!r}"
+        )
+    else:
+        raise AssertionError("a non-empty EX_DATE_MISMATCH list did not fail the build")
+
+    # 2. `build_corpus` is the caller: the gate is reached with the classifier's own list.
     tree = ast.parse(source)
-    module_level_failures = [
+    callers = [
         node.lineno for node in ast.walk(tree)
-        if isinstance(node, ast.Name) and node.id == "failures" and isinstance(node.ctx, ast.Load)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "require_no_ex_date_mismatch"
+        and any(getattr(arg, "id", "") == "failures" for arg in node.args)
     ]
-    assert sorted(module_level_failures) == [453, 466, 468], (
-        f"`failures` is read at {module_level_failures}; if one of those reads gates the build the "
-        f"dead-path defect §96.4 measured is closed"
+    assert callers, (
+        "no module-level call passes the classifier's `failures` list into the gate, so the build still "
+        "exits 0 with the class published"
     )
 
+    # 3. The near miss is a price-side action: an AGM within the window is not a mis-dated ratio, a
+    #    bonus is. (The six §96.4 named sat on AGM rows, not on price-side rows.)
+    def _bars(isin: str, closes: list) -> list:
+        day = datetime.date(2022, 1, 3)
+        return [
+            PriceBar(
+                instrument_id=isin, trade_date=day + datetime.timedelta(days=index),
+                open=Decimal(value), high=Decimal(value), low=Decimal(value), close=Decimal(value),
+                volume=1000, traded_value=Decimal("1000"),
+            )
+            for index, value in enumerate(closes)
+        ]
+
+    move_day = datetime.date(2022, 1, 8)
+    prices = {"INE000000001": _bars("INE000000001", ["10", "10", "10", "10", "10", "5"])}
+    agm_only = {("INE000000001", datetime.date(2022, 1, 11)): [("OTHER", "Annual General Meeting", "d" * 64)]}
+    failures_agm, diagnostics_agm = builder.classify_extreme_moves(prices, {}, agm_only)
+    assert failures_agm == [], (
+        "a routine AGM within the mismatch window still makes a one-session move fatal: "
+        f"{failures_agm}"
+    )
+    assert any(row[1] == move_day.isoformat() for row in diagnostics_agm["ratio_shaped_unattested"]), (
+        "the move did not land in a published class at all; the classification changed shape"
+    )
+    bonus_near = {("INE000000001", datetime.date(2022, 1, 11)): [("BONUS", "Bonus 1:1", "d" * 64)]}
+    failures_bonus, _ = builder.classify_extreme_moves(prices, {}, bonus_near)
+    assert len(failures_bonus) == 1 and failures_bonus[0][0] == "INE000000001", (
+        "an archive-attested BONUS five sessions from the move is no longer the fatal class: "
+        f"{failures_bonus}"
+    )
+
+    # 4. The committed corpus publishes the class at zero.
     with gzip.open(
         REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz", "rt", encoding="utf-8"
     ) as handle:
         corpus = json.load(handle)
     reconciliation = corpus["reconciliation"]
-    assert reconciliation["ex_date_mismatch"] > 0, (
-        "the committed corpus publishes no ex-date mismatch, so there is nothing for the build to fail on"
+    assert reconciliation["ex_date_mismatch"] == 0, (
+        f"the committed corpus still publishes {reconciliation['ex_date_mismatch']} ex-date mismatch(es), "
+        "so a fatal class this size would fail its own build"
     )
 
 
@@ -2540,22 +2640,55 @@ def probe_n188() -> None:
     """
     The builder must fail closed on an archive-attested action the table does not carry.
 
-    Measured at ac16232 (§96.4): withdrawing one attested row (SRF 2021-10-13) leaves
+    Measured at ac16232 (§96.4): withdrawing one attested row (SRF 2021-10-13) left
     `applied_actions` at `refusals == 0` — one fewer instrument adjusted and no refusal — while the
-    archive still attests the event. The only completeness check in the repository is
-    `attest_price_actions.reconcile()`, which no build path and no `verify_*.py` calls.
+    archive still attested the event. The only completeness check in the repository was
+    `attest_price_actions.reconcile()`, which no build path and no `verify_*.py` called.
+
+    Closure direction (feat-s97): the build calls the reconciliation and refuses a gap by name; the
+    SRF witness, withdrawn from a copy of the table, is still named.
     """
+    import ast
     import datetime
+    import json
+    import tempfile
+    from pathlib import Path
 
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
+    import scripts.attest_price_actions as attestation_tool
     import scripts.derive_2018_2023_corpus as builder
     from signal_core.storage.security_master import load_corporate_actions
 
-    attestations = builder.bronze_attestations()
+    # 1. The gate exists and refuses a named gap.
+    gate = getattr(builder, "require_attested_actions_present", None)
+    assert gate is not None, (
+        "derive_2018_2023_corpus exposes no attested-action completeness gate, so the missing-set "
+        "direction still has no consumer"
+    )
+    gate([])
+    try:
+        gate(["INE647A01010 2021-10-13 BONUS"])
+    except SystemExit as exc:
+        assert "INE647A01010" in str(exc) and "2021-10-13" in str(exc), (
+            f"the gate refuses without naming the ISIN and ex-date: {exc!r}"
+        )
+    else:
+        raise AssertionError("a non-empty attested-action gap did not fail the build")
+
+    source = (REPO_ROOT / "scripts" / "derive_2018_2023_corpus.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    callers = [
+        node.lineno for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "require_attested_actions_present"
+    ]
+    assert callers, "the build never calls the completeness gate (§14.4: the check sits beside the build)"
+
+    # 2. With the committed table the gap set is empty; withdrawing the witness row names it.
+    assert builder.attested_actions_missing_from_table() == [], (
+        f"the committed table already has gap(s): {builder.attested_actions_missing_from_table()[:3]}"
+    )
     actions = list(load_corporate_actions())
-    surplus, control_refusals = builder.applied_actions(actions, attestations)
-    assert control_refusals == [], f"the committed table already refuses {control_refusals[:2]}"
     witnesses = [
         row for row in actions
         if not row.superseded and row.source_digest and row.symbol == "SRF"
@@ -2563,53 +2696,90 @@ def probe_n188() -> None:
     ]
     assert witnesses, "the SRF 2021-10-13 witness row is gone; re-scope this finding"
     isin = witnesses[0].isin
-    assert any(key[0] == isin and key[1] == datetime.date(2021, 10, 13) for key in attestations), (
-        "the archive no longer attests the witness event"
+
+    original_path = attestation_tool.ACTIONS_PATH
+    with tempfile.TemporaryDirectory() as workspace:
+        withdrawn = Path(workspace) / "corporate_actions.jsonl"
+        kept = []
+        for line in original_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if (
+                str(row.get("isin")) == isin
+                and str(row.get("ex_date"))[:10] == "2021-10-13"
+                and str(row.get("action_type")) == "BONUS"
+            ):
+                continue
+            kept.append(line)
+        withdrawn.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        attestation_tool.ACTIONS_PATH = withdrawn
+        try:
+            gaps = builder.attested_actions_missing_from_table()
+        finally:
+            attestation_tool.ACTIONS_PATH = original_path
+    assert any("INE647A01010" in gap and "2021-10-13" in gap for gap in gaps), (
+        f"withdrawing the attested SRF row produced no named gap: {gaps}"
     )
-    without = [row for row in actions if row is not witnesses[0]]
-    applied, refusals = builder.applied_actions(without, attestations)
-    assert refusals == [], (
-        f"withdrawing an attested row now refuses ({refusals[:1]}); the completeness half of Ruling 2 "
-        f"is enforced and this finding is closed"
-    )
-    assert len(applied) < len(surplus), (
-        "the witness row was not actually applied before its withdrawal, so it cannot witness a gap"
-    )
-    for verifier in sorted((REPO_ROOT / "scripts").glob("verify_*.py")):
-        assert "attest_price_actions" not in verifier.read_text(encoding="utf-8"), (
-            f"{verifier.name} runs the reconciliation, so the missing-set direction is gated and this "
-            f"finding is closed"
-        )
 
 
 def probe_n189() -> None:
     """
     A demerger refusal counter must count refused exits, not demerger events.
 
-    Measured at ac16232 (§96.5): the seq-10 artifact reports `demerger_forced_exits` 0 and
+    Measured at ac16232 (§96.5): the seq-10 artifact reported `demerger_forced_exits` 0 and
     `demerger_forced_refusals` 66 over 1,425 sessions with 781 closed trades, and no closed trade
-    carries a `DEMERGER_FORCED_EXIT` reason. `demerger_exits` is built from every action in the
-    security master, not from open positions, while the harness skips an ISIN it does not hold — so an
-    event on a name the book never owned is counted as a refused exit.
-    """
-    import json
+    carried a `DEMERGER_FORCED_EXIT` reason. `demerger_exits` is built from every action in the security
+    master, not from open positions, while the harness skips an ISIN it does not hold — so an event on a
+    name the book never owned was counted as a refused exit.
 
-    artifact = json.loads(
-        (REPO_ROOT / "reports" / "verdicts" / "trial_010"
-         / "phase3b2_swing_baseline_2022_2024_verdict.json").read_text(encoding="utf-8")
+    Closure direction (feat-s97): the refusal is counted over held positions only, so an unheld event
+    counts as nothing, a held event that fills counts as an exit and one that does not as a refusal.
+    """
+    import ast
+
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    import scripts.run_phase3b2_walkforward as runner
+
+    counter = getattr(runner, "count_forced_exit_outcomes", None)
+    assert counter is not None, (
+        "the walk-forward runner still counts forced exits without a held-position rule, so a demerger "
+        "event on a name the book does not hold is a refused exit"
     )
-    assert artifact["demerger_forced_exits"] == 0, (
-        f"the run now exits {artifact['demerger_forced_exits']} position(s) on a demerger ex-date, so "
-        f"the exit constraint is no longer inert"
+
+    forced = {
+        "HELD_AND_FILLED": "DEMERGER_FORCED_EXIT",
+        "HELD_AND_REFUSED": "DEMERGER_FORCED_EXIT",
+        "NOT_HELD": "DEMERGER_FORCED_EXIT",
+        "HELD_UNDER_THE_BOUND": "MAX_HOLD_BOUND_EXIT",
+    }
+    held = {"HELD_AND_FILLED", "HELD_AND_REFUSED", "HELD_UNDER_THE_BOUND"}
+    assert counter(forced, held, {"HELD_AND_FILLED"}, "DEMERGER_FORCED_EXIT") == (1, 1), (
+        "one held fill and one held refusal must read (1 exit, 1 refusal)"
     )
-    assert artifact["demerger_forced_refusals"] > 0, "no demerger refusal is recorded; re-scope this finding"
-    assert "DEMERGER_FORCED_EXIT" not in artifact["closed_trade_exit_reasons"], (
-        "a closed trade now carries a demerger exit reason; the constraint produced an exit"
+    assert counter(forced, held, set(), "DEMERGER_FORCED_EXIT") == (0, 2), (
+        "two held, none filled must read two refusals"
     )
-    loop = (REPO_ROOT / "scripts" / "run_phase3b2_walkforward.py").read_text(encoding="utf-8")
-    assert "for ca in sec_master.corporate_actions()" in loop, (
-        "the demerger set is no longer archive-derived; the counter may now be position-derived and "
-        "this finding is closed"
+    assert counter(forced, set(), set(), "DEMERGER_FORCED_EXIT") == (0, 0), (
+        "a demerger event on an ISIN the book never held incremented a counter"
+    )
+    assert counter(forced, held, {"HELD_AND_FILLED"}, "MAX_HOLD_BOUND_EXIT") == (0, 1), (
+        "the bound pair must still read the position it forced and the demerger's fill must not "
+        "be attributed to it"
+    )
+
+    source = (REPO_ROOT / "scripts" / "run_phase3b2_walkforward.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    callers = [
+        node.lineno for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "count_forced_exit_outcomes"
+    ]
+    assert callers, (
+        "the counter exists but no session loop calls it, so the demerger pair still counts events (§14.4)"
+    )
+    assert "demerger_exits - demerger_filled" not in source, (
+        "the event-counting form `demerger_exits - demerger_filled` is still in the loop"
     )
 
 
@@ -2617,21 +2787,55 @@ def probe_n190() -> None:
     """
     A host-sensitive CPU budget must not decide the gate's verdict on an identical source tree.
 
-    Measured at ac16232 (§96.1): `verify_audit_append_only --force-full` exits 1 because
-    `test_n1_replay_guard_o1_lookup_and_bounded_memory` measures 265.62 µs/fill (then 253.90) against
-    its 250.0 ceiling, while the same test passes 3/3 in ~2.5 s serially. The gate runs the suite with
-    `-n auto --dist loadfile`, so the benchmark's per-fill CPU is measured under unbounded concurrency
-    on the host, and the recorded green row for this tree (561 passed, 69.19 s) was written by a run
-    whose worker count happened to fit.
+    Measured at ac16232 (§96.1): `verify_audit_append_only --force-full` exited 1 because
+    `test_n1_replay_guard_o1_lookup_and_bounded_memory` measured 265.62 µs/fill (then 253.90) against
+    its 250.0 ceiling, while the same test passed 3/3 in ~2.5 s serially. The gate ran the suite with
+    `-n auto --dist loadfile`, so the benchmark's per-fill CPU was measured beside every other worker on
+    the host, and two of four heavy runs on one source tree failed while two passed.
+
+    Closure direction (feat-s97): the timing benchmark is deselected from the parallel invocation and
+    run in an invocation of its own with no worker beside it, and both ceilings are unchanged.
     """
-    gate = (REPO_ROOT / "scripts" / "verify_audit_append_only.py").read_text(encoding="utf-8")
-    assert '"-n", "auto", "--dist", "loadfile"' in gate, (
-        "the gate no longer runs the suite under -n auto, so the parallel-invocation defect is closed"
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    import scripts.verify_audit_append_only as gate
+
+    isolated = tuple(getattr(gate, "ISOLATED_TIMING_TESTS", ()))
+    assert isolated, (
+        "the gate names no isolated timing test, so the replay-guard benchmark still measures per-fill "
+        "CPU under the parallel suite (§96.1)"
     )
+    benchmark = [node for node in isolated if "test_n1_replay_guard_o1_lookup_and_bounded_memory" in node]
+    assert benchmark, f"the replay-guard benchmark is not in the isolated set: {isolated}"
+
+    parallel = gate.pytest_command()
+    for node in isolated:
+        assert "--deselect" in parallel and node in parallel, (
+            f"{node} is not deselected from the parallel invocation: {' '.join(parallel[1:])}"
+        )
+
+    serial = gate.serial_pytest_command()
+    assert "-n" not in serial, (
+        f"the isolated invocation still starts xdist workers: {' '.join(serial[1:])}"
+    )
+    for node in isolated:
+        assert node in serial, f"{node} is not run by the isolated invocation"
+
+    # The two invocations must be reconciled against the collection count, not against a literal: a
+    # deselect that silently dropped a test would otherwise read green.
+    source = (REPO_ROOT / "scripts" / "verify_audit_append_only.py").read_text(encoding="utf-8")
+    assert "serial_pytest_command()" in source and "collect-only" in source, (
+        "the gate does not reconcile its parallel and isolated invocations against the collected suite"
+    )
+
+    # Neither ceiling moved, and the structural counter N-174 added is still asserted.
     test = (REPO_ROOT / "tests" / "unit" / "test_portfolio.py").read_text(encoding="utf-8")
-    assert "assert per_fill_1k_us < 250.0" in test, (
-        "the replay-guard ceiling moved or was removed; re-scope this finding"
-    )
+    for ceiling in (
+        "assert per_fill_1k_us < 250.0",
+        "assert per_fill_4k_us < 250.0",
+        "assert scaling_ratio < 2.5",
+    ):
+        assert ceiling in test, f"the replay-guard ceiling moved or was removed: {ceiling!r}"
 
 
 PROBES: Dict[str, Callable[[], None]] = {

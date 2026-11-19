@@ -772,6 +772,28 @@ def in_sample_fold_for_dates(
     return derive_in_sample_fold(load_anchored_nse_trading_calendar(), eval_start, eval_end)
 
 
+def count_forced_exit_outcomes(
+    forced_reasons: Mapping[str, str],
+    held_isins: Any,
+    filled_isins: Any,
+    reason: str,
+) -> Tuple[int, int]:
+    """
+    `(exits, refusals)` for one forced-exit reason, counted over held positions only (Audit §96.5, §97).
+
+    A forced exit is only ever evaluated against a held position: `execute_swing_strategy_session`
+    skips an ISIN that is absent, closed or flat, so an event on a name the book does not hold produced
+    neither a fill nor a refusal and must be counted as neither. §96.5 measured the demerger pair
+    reporting 66 events as 66 refused exits with 0 fills over a run where no position was known to be
+    held across one; the hold-bound pair was already reason-filtered but the demerger pair was not.
+    """
+    forced = {
+        isin for isin, why in forced_reasons.items() if why == reason and isin in held_isins
+    }
+    filled = forced & set(filled_isins)
+    return len(filled), len(forced - filled)
+
+
 def in_sample_fold_fingerprint(eval_start: datetime.date, eval_end: datetime.date) -> str:
     """
     Fold-spec fingerprint the requested window implies.
@@ -1330,6 +1352,11 @@ def run_phase3b2_walkforward(
         for isin in demerger_exits:
             forced_reasons.setdefault(isin, "DEMERGER_FORCED_EXIT")
         forced_exits = set(forced_reasons)
+        # Audit §96.5 / §97: the refusal is counted over the book, not over the archive. A demerger on an
+        # ISIN the position book does not hold is an event the harness skips, not an exit it refused.
+        held_for_forced_exits = {
+            isin for isin, position in portfolio.get_open_positions().items() if position.quantity > 0
+        }
         # Audit §95.10 item 5: the two reasons are counted apart. `forced_exits` is the union the harness
         # acts on; a refusal is attributed to the reason that produced it, so a demerger exit the session
         # could not fill is never booked as a hold-bound refusal.
@@ -1451,8 +1478,11 @@ def run_phase3b2_walkforward(
             and ticket.fill_result is not None
             and ticket.fill_result.filled_quantity > 0
         }
-        total_demerger_forced_exits += len(demerger_filled)
-        total_demerger_forced_refusals += len(demerger_exits - demerger_filled)
+        demerger_exits_count, demerger_refusals_count = count_forced_exit_outcomes(
+            forced_reasons, held_for_forced_exits, demerger_filled, "DEMERGER_FORCED_EXIT"
+        )
+        total_demerger_forced_exits += demerger_exits_count
+        total_demerger_forced_refusals += demerger_refusals_count
 
         # Mark-to-Market Session Valuation across active holdings
         mtm_prices: Dict[str, Decimal] = {}
