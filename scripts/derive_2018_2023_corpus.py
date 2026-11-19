@@ -236,7 +236,7 @@ def attested_actions_missing_from_table() -> List[str]:
     """
     from scripts.attest_price_actions import reconcile
 
-    missing, _contradicted, _present = reconcile()
+    missing, _contradicted, _present = reconcile(quiet=True)
     return [f"{event.isin} {event.ex_date} {event.action_type}" for event in missing]
 
 

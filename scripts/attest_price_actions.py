@@ -228,8 +228,14 @@ def _plain(value) -> str:
     return text
 
 
-def attested_events() -> List[Attested]:
-    """Every price-side / consideration event the committed archive attests, deduplicated by key."""
+def attested_events(quiet: bool = False) -> List[Attested]:
+    """
+    Every price-side / consideration event the committed archive attests, deduplicated by key.
+
+    `quiet` suppresses the advisory note about a placeholder identity. A build path calls this, and a
+    caller's stdout is a machine-readable channel (`probe_n188` must emit `PASS N-188` and nothing
+    else), so the note is printed only when a human is running the tool (Audit §97).
+    """
     best: Dict[Tuple[str, datetime.date, str], Attested] = {}
     unreadable: List[str] = []
     skipped_identity: List[str] = []
@@ -270,8 +276,9 @@ def attested_events() -> List[Attested]:
                 source_digest=digest,
             )
             best.setdefault(key, candidate)
-    for note in skipped_identity:
-        print(f"[INFO] skipped, no attachable identity: {note}")
+    if not quiet:
+        for note in skipped_identity:
+            print(f"[INFO] skipped, no attachable identity: {note}")
     if unreadable:
         raise SystemExit(
             f"{len(unreadable)} archive subject line(s) name a price event whose ratio cannot be read; "
@@ -287,9 +294,9 @@ def table_rows() -> List[dict]:
 PRICE_SIDE = ("SPLIT", "BONUS", "CONSOLIDATION", "DEMERGER")
 
 
-def reconcile() -> Tuple[List[Attested], List[dict], List[dict]]:
+def reconcile(quiet: bool = False) -> Tuple[List[Attested], List[dict], List[dict]]:
     """`(missing_from_table, contradicted_or_unattested_rows, attested_rows_present)`."""
-    attested = attested_events()
+    attested = attested_events(quiet=quiet)
     rows = table_rows()
     live = [
         row for row in rows
