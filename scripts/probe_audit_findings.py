@@ -2838,6 +2838,234 @@ def probe_n190() -> None:
         assert ceiling in test, f"the replay-guard ceiling moved or was removed: {ceiling!r}"
 
 
+def probe_n191() -> None:
+    """
+    The ex-date-mismatch classifier reads adjacent surviving bars as adjacent sessions.
+
+    Measured at 437e0c4 (§97.3): `classify_extreme_moves` zips `bars` with `bars[1:]` and computes
+    `(current.close - previous.close) / previous.close` without asking whether the two `trade_date`s are
+    consecutive entries in `trading_dates`. Two of the six pairs §96.4 named as `EX_DATE_MISMATCH` are not
+    session moves at all: `INE251H01024` 2022-08-12 follows a bar from 2021-08-02 (256 sessions absent) and
+    `INE784B01035` 2023-09-26 follows one from 2020-07-20 (792 absent). Over the committed corpus **16,194**
+    adjacent pairs straddle a calendar gap and **58** of the **832** moves beyond ±35% are computed across
+    one — the assumption §6.3 forbids ("a sequence of N available bars must never be assumed to represent
+    N consecutive trading sessions").
+
+    Closure direction: no adjacent pair enters the reconciliation unless its two dates are consecutive in
+    the corpus calendar; a cross-gap pair is a gap record, never a return.
+    """
+    import gzip
+    import inspect
+    import json
+    from decimal import Decimal
+
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    import scripts.derive_2018_2023_corpus as builder
+
+    body = inspect.getsource(builder.classify_extreme_moves)
+    assert "trading_dates" not in body and "calendar" not in body.lower(), (
+        "the classifier now consults the calendar; re-scope this finding"
+    )
+    assert "zip(bars, bars[1:])" in body, (
+        "the classifier no longer pairs adjacent surviving bars; re-scope this finding"
+    )
+
+    with gzip.open(REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz", "rt") as f:
+        header = json.load(f)
+    dates = header["trading_dates"]
+    calendar_previous = {dates[i]: dates[i - 1] for i in range(1, len(dates))}
+    gap_pairs = 0
+    extreme = 0
+    across_gap = 0
+    for bars in header["prices_by_instrument"].values():
+        for previous, current in zip(bars, bars[1:]):
+            previous_day = previous["trade_date"]
+            current_day = current["trade_date"]
+            if calendar_previous.get(current_day) != previous_day:
+                gap_pairs += 1
+            previous_close = Decimal(previous["close"])
+            if previous_close <= 0:
+                continue
+            move = (Decimal(current["close"]) - previous_close) / previous_close
+            if abs(move) <= Decimal("0.35"):
+                continue
+            extreme += 1
+            if calendar_previous.get(current_day) != previous_day:
+                across_gap += 1
+
+    assert gap_pairs == 16194, f"cross-gap adjacent pairs moved: {gap_pairs} (was 16,194 at 437e0c4)"
+    assert extreme == 832, f"moves beyond ±35% moved: {extreme} (was 832 at 437e0c4)"
+    assert across_gap == 58, f"extreme moves computed across a gap moved: {across_gap} (was 58 at 437e0c4)"
+
+    for isin, day, absent in (
+        ("INE251H01024", "2022-08-12", 256),
+        ("INE784B01035", "2023-09-26", 792),
+    ):
+        bars = header["prices_by_instrument"][isin]
+        sessions = [bar["trade_date"] for bar in bars]
+        index = sessions.index(day)
+        previous_day = sessions[index - 1]
+        missing = dates.index(day) - dates.index(previous_day) - 1
+        assert missing == absent, (
+            f"{isin} {day}: {missing} missing sessions between {previous_day} and {day}, expected {absent}"
+        )
+
+
+def probe_n192() -> None:
+    """
+    An exact-date archive record that carries no share ratio exonerates the move.
+
+    Measured at 437e0c4 (§97.3): the classifier's `explained_by_archive_record` branch accepts any record
+    whose kind is not `DIVIDEND`, before the move is tested for a ratio shape, so an Annual General
+    Meeting, a scheme or a rights entitlement at the exact date disposes of the move with no diagnostic.
+    **26** moves beyond ±35% sit on a date whose archive records are all non-price-side, one of them
+    `INE803A01027` 2019-09-16 at **+0.5000** under an `OTHER` record — a 2× move filed as explained by an
+    AGM. 13,003 of the 13,348 archive keys carry no price-side record; how many of the 24 counted by the
+    header are of that kind is not published.
+
+    Closure direction: only a price-side record may explain a ratio-shaped move; a non-ratio record at the
+    exact date is `RATIO_SHAPED_UNATTESTED` with the record named, not an explanation.
+    """
+    import gzip
+    import json
+    from decimal import Decimal
+
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    import scripts.derive_2018_2023_corpus as builder
+
+    source = (REPO_ROOT / "scripts" / "derive_2018_2023_corpus.py").read_text(encoding="utf-8")
+    assert "if non_dividend:" in source, (
+        "the exact-date exoneration branch is gone or reshaped; re-scope this finding"
+    )
+
+    price_side = set(builder.PRICE_SIDE_KINDS)
+    attestations = builder.bronze_attestations()
+    non_price_side = {
+        key: records for key, records in attestations.items()
+        if not any(kind in price_side for kind, _subject, _digest in records)
+    }
+    assert len(attestations) == 13348, f"archive key count moved: {len(attestations)}"
+    assert len(non_price_side) == 13003, f"non-price-side key count moved: {len(non_price_side)}"
+
+    with gzip.open(REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz", "rt") as f:
+        header = json.load(f)
+    prices = header["prices_by_instrument"]
+    silenced = []
+    for (isin, day), records in non_price_side.items():
+        bars = prices.get(isin)
+        if not bars:
+            continue
+        sessions = [bar["trade_date"] for bar in bars]
+        if day.isoformat() not in sessions:
+            continue
+        index = sessions.index(day.isoformat())
+        if index == 0:
+            continue
+        previous_close = Decimal(bars[index - 1]["close"])
+        if previous_close <= 0:
+            continue
+        move = (Decimal(bars[index]["close"]) - previous_close) / previous_close
+        if abs(move) <= Decimal("0.35"):
+            continue
+        silenced.append((isin, day.isoformat(), move, sorted({kind for kind, _s, _d in records})))
+
+    assert len(silenced) == 26, f"moves exonerated by a non-price-side record moved: {len(silenced)}"
+    golden = [row for row in silenced if row[0] == "INE803A01027" and row[1] == "2019-09-16"]
+    assert golden and golden[0][3] == ["OTHER"], (
+        f"the INE803A01027 2019-09-16 OTHER witness is gone: {golden}"
+    )
+    assert format(golden[0][2].quantize(Decimal("0.0001")), "f") == "0.5000", (
+        f"the witness move changed: {golden[0][2]}"
+    )
+
+
+def probe_n193() -> None:
+    """
+    Two artifacts under `criteria_version` 1.1.16 cite two different criteria fingerprints.
+
+    Measured at 437e0c4 (§97.7): `compute_criteria_fingerprint` hashes `expected_manifest_fingerprint`, so
+    the §97 re-seal moved it from `CRIT-FPR-V1-9ee0a88c…` to `CRIT-FPR-V1-b2876d98…` while the version
+    stayed `1.1.16`. The Phase 2D pair was regenerated; `reports/verdicts/trial_010/` was not, so the
+    seq-10 certificate still cites `9ee0a88c…` under `1.1.16`. No gate compares a certificate's
+    `criteria_fingerprint` with the live one: `verify_phase2d_verdicts.py` prints it, and
+    `probe_seq10_candidate.py` compares the registry row's `criteria_version` to the live version, never a
+    stored hash.
+
+    Closure direction: a gate compares every registered certificate's `criteria_fingerprint` with the live
+    fingerprint and refuses a mismatch by naming both, or the certificate records the hash it executed
+    under and the live hash beside it.
+    """
+    import json
+    import pathlib
+
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from signal_core.contracts.criteria import compute_criteria_fingerprint, load_go_no_go_criteria
+
+    criteria = load_go_no_go_criteria()
+    live = compute_criteria_fingerprint(criteria)
+    assert live == "CRIT-FPR-V1-b2876d9850088fb01b90374bfc648fd2505a09bd766c839319aeacdf7b3917cd", (
+        f"the live fingerprint moved: {live}"
+    )
+
+    cited = {}
+    for relative in (
+        "reports/verdicts/trial_010/seq10_baseline_comparison.json",
+        "reports/analysis/s94/seq10_baseline_2018_2023_verdict.json",
+    ):
+        document = json.loads((REPO_ROOT / relative).read_text(encoding="utf-8"))
+        cited[relative] = document["criteria_fingerprint"]
+    assert len(set(cited.values())) == 1, f"the two certificates disagree with each other: {cited}"
+    stale = next(iter(cited.values()))
+    assert stale == "CRIT-FPR-V1-9ee0a88c260d27fbe3ab13bb7c8c4c992e7d185986f28f5f803cf5db6db8634e", (
+        f"the certificates no longer cite 9ee0a88c…; re-scope this finding: {stale}"
+    )
+    assert stale != live, "the certificate and the live criteria agree; re-scope this finding"
+
+    verifier = (REPO_ROOT / "scripts" / "verify_phase2d_verdicts.py").read_text(encoding="utf-8")
+    assert "seq10_baseline_comparison" not in verifier, (
+        "a verifier now reads the trial_010 certificate; re-scope this finding"
+    )
+
+
+def probe_n194() -> None:
+    """
+    The seq-10 artifacts publish the counter the code no longer computes.
+
+    Measured at 437e0c4 (§97.5): the feat commit touched no path under `reports/`, so
+    `reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json` and
+    `reports/analysis/s94/seq10_baseline_2018_2023_verdict.json` still publish
+    `demerger_forced_exits 0` / `demerger_forced_refusals 66` — the event-counted pair §96.5 proved wrong
+    and §97.5 replaced. Whether any position was ever held across a demerger ex-date is therefore still
+    unmeasured on this tree, and the published metric is not what the committed runner computes.
+
+    Closure direction: the artifacts are regenerated, or an append-only restatement row names the pair
+    restated and the session-level measurement that replaces it.
+    """
+    import json
+
+    artifacts = {
+        "reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json": None,
+        "reports/analysis/s94/seq10_baseline_2018_2023_verdict.json": None,
+    }
+    for relative in artifacts:
+        document = json.loads((REPO_ROOT / relative).read_text(encoding="utf-8"))
+        artifacts[relative] = (document["demerger_forced_exits"], document["demerger_forced_refusals"])
+    assert set(artifacts.values()) == {(0, 66)}, (
+        f"the published demerger pair moved; re-scope this finding: {artifacts}"
+    )
+
+    source = (REPO_ROOT / "scripts" / "run_phase3b2_walkforward.py").read_text(encoding="utf-8")
+    assert "count_forced_exit_outcomes" in source, (
+        "the held-position counter is gone; re-scope this finding"
+    )
+    assert "demerger_exits - demerger_filled" not in source, (
+        "the code still counts events; re-scope this finding"
+    )
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -2881,6 +3109,10 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-188": probe_n188,
     "N-189": probe_n189,
     "N-190": probe_n190,
+    "N-191": probe_n191,
+    "N-192": probe_n192,
+    "N-193": probe_n193,
+    "N-194": probe_n194,
 }
 
 

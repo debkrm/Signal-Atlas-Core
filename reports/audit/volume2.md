@@ -3179,3 +3179,155 @@ Ordered by what it unblocks. Item 1 is a gate defect, so it is first: nothing el
 - If the seq-10 exemption refused a doctored score, the residual would be overstated. Measured: `99.9` is accepted for an `IN_SAMPLE` row with no evaluation row and the declared count, and refused without it.
 - If seq 10's metrics did not reproduce, `CERTIFIED` would be wrong. Measured: 5/5 agreement between the candidate artifact and the baseline artifact, with both digests re-computed. A third execution was not performed, so what is established is agreement between two recorded runs, not that either re-executes today.
 - If the 7,309 hold-bound refusals still absorbed demerger reasons, the attribution fix would be prose. Measured: `hold_bound_exits` is filtered on `MAX_HOLD_BOUND_EXIT`, the two counter pairs sum independently, and the bound-disabled run reads `0 / 0`.
+## §97 — Audit of `612e82a` (tag `feat-s97-612e82a`): the captured statutory payload survives a clone, the builder refuses the class it documents as fatal, a demerger refusal counts a held exit, and the gate is green three times running
+
+**Date:** 19 November 2026
+**Commit under review:** `612e82a` (13 files, +648/−122: `.gitattributes`, `configs/go_no_go_criteria.yaml`, the re-staged 330,003-byte `NSE_STT_RATES` payload, the rebuilt 75,390,038-byte corpus with the manifest row that supersedes its predecessor, the regenerated Phase 2D verdict pair, `scripts/derive_2018_2023_corpus.py`, `scripts/run_phase3b2_walkforward.py`, `scripts/verify_audit_append_only.py`, `scripts/probe_audit_findings.py`, `tests/unit/test_phase3b2_audit_s97_items.py` and `CURRENT_STAGE_OF_WORK.md`) and `437e0c4` (the green-cache row, +19 lines). Neither commit touches a path under `reports/audit/`, `data/raw/2025` or `data/raw/2026`.
+**Verdicts:** **§96.10 item 1 CLOSED** (N-186) · **item 2 CLOSED** (N-187) — the gate fires, and the six pairs it used to name leave the fatal class for the reason §96.4 gave; two new findings fall out of the same function (N-191, N-192) · **item 3 CLOSED** (N-188) · **item 4 CLOSED** (N-189) — the counter is right and its artifact still publishes the old number (N-194) · **item 5 CLOSED** (N-190) — three consecutive heavy runs, 3/3, both ceilings byte-identical · **Ruling: `criteria_version` stays at `1.1.16`** (accepted on measurement, conditional on N-193).
+
+### 97.1 Baseline re-measured at `437e0c4`
+
+| Measurement | Result |
+|---|---|
+| `scripts/verify_audit_append_only.py --force-full` ×3 | **exit 0, 0, 0** in **341 s / 364 s / 350 s**. Each run: **564 passed** in the parallel invocation (63.50 s / 82.91 s / 65.75 s) + **1 passed** in the isolated invocation (2.41 s / 2.55 s / 2.50 s), reconciled as `564 + 1 = 565 of 565 collected` (68.93 s / 88.31 s / 70.54 s). `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` three times on one unchanged tree |
+| Gate W0.5-1 / -1b / -1c | Audit report append-only verified; **2** audit volumes; the index reproduces |
+| Gate W0.5-2 (verifiers) | **9/9 exit 0** in every run (`verify_audit_findings.py` 188.02 s, `verify_cash_universe_coverage.py` 46.32 s, `verify_historical_snapshot.py` 6.96 s, `verify_phase2a_containment_and_trials.py` 1.74 s, `verify_phase2b5_storage.py` 3.43 s, `verify_phase2b_significance.py` 1.04 s, `verify_phase2c_walkforward.py` 3.51 s, `verify_phase2d_verdicts.py` 5.02 s, `verify_wave1_thin_slice.py` 5.44 s) |
+| Gate W0.5-4 / W0.5-5 | All commit-bearing tags verified, `feat-s97-612e82a` among them (**110** tags in the repository, was 108 at §96); **1,009** current artifacts match byte count and sha256, **961** superseded rows skipped as history (was 960) |
+| `pytest --collect-only` | **565 tests collected in 0.91 s** — the `564 + 1` split is the collected suite, not a literal |
+| Criteria / pins | **1.1.16**; `CRIT-FPR-V1-b2876d9850088fb01b90374bfc648fd2505a09bd766c839319aeacdf7b3917cd`; `MAN-FPR-V1-e79d791518a4337adaa871fed32257f12e09359ddcdbaf2c3f8e4094feb411ee` **recomputed** over **1,876,489** bytes / **1,970** rows of `data/reference/manifest.jsonl` (**1,009** current + **961** superseded) — equals the pin (was `f5b1f1f1…` / 1,875,421 bytes at §96) |
+| Ledger at `437e0c4` | **65** rows / **42** ids — latest-per-id **35 CLOSED**, **6 OPEN** (`N-150`, `N-186`…`N-190`), **1 ACCEPTED** (`N-152`); `verify_audit_findings.py` **exit 0** in all three heavy runs |
+| Fresh detached worktree at `437e0c4` | `tests/unit/test_phase3b2_audit_s96_items.py` + `tests/unit/test_phase3b2_audit_s97_items.py` → **8 passed in 1.16 s**; `probe_audit_findings.py N-186` **exit 0**; `statutory_source_problem(criteria)` **None**; `statutory_cost_schedule_problem(criteria)` **None**; `git status --porcelain` empty |
+| Corpus | `derive_2018_2023_corpus.py --check` **exit 0 — `OVERALL: CURRENT`** over 1,425 archives. Header: **1,425** sessions (2018-04-02..2023-12-29), **2,735** instruments, **2,578,060** bars, reconciliation **1** applied / **24** archive / **72** no-ratio / **735** ratio-shaped / **0** ex-date mismatch; **832** moves beyond ±35% |
+| Probes | **N-186…N-190 exit 0** (`PASS <id>`); `--list` now ends at **N-194** (four probes added by this section, §97.8) |
+| Trials / fold / holdout | **10** registry rows, seq 1–10; seq 10 `TRIAL-PHASE3B2-EXPANDED-010`, `IN_SAMPLE`, `criteria_version 1.1.16`, `FOLD-SPEC-V1-36a39987dca…`; `probe_seq10_candidate.py` **exit 0 — `CERTIFIED`**, `N = 10` (expected 10), `N_eval = 5`, one seq-10 row, pin `0246c276d52d3a9b…` on both sides, baseline `f5fe3af5a1e2de83…`, 422 forced exits / 7,309 refusals, and the sealed-era fold `2025-01-02..2025-03-31` **refused**; `configs/partition_spec.yaml` validation **2024-01-01..2024-12-31**, holdout **2025-01-01..2026-11-11**, unlock token hash 64 zeros (no token minted) |
+| `probe_pre2022_bronze_coverage.py`, `probe_pre2022_preconditions.py`, `probe_hold_bound_invariance.py` | **NOT RUN** this round (no path they read is touched by either commit; §96.1's values stand: 931/931 covered, READY 9/9, `NOT INVARIANT` 175/203 vs 194) |
+| Files the two commits touch | 13 + 1; **no** path under `reports/`, `data/raw/2025`, `data/raw/2026`, `configs/partition_spec.yaml`, `reports/audit/` |
+
+The gate's verdict is a **function of the tree** on this commit in a way §96.1 could not state: three consecutive `--force-full` runs, three exits 0, the same `564 + 1` split each time, with the benchmark that decided §96 measuring beside no worker (2.41–2.50 s) instead of beside fifteen (253.90–265.62 µs/fill). No threshold moved to get there (§12.4): the two ceilings are byte-identical and `probe_n190` asserts it.
+
+One measurement in this section was the auditor's own error and is recorded so the next round does not repeat it. The first `verify_audit_findings.py` run of this round exited **1** with three failures — `N-160` (`a directory is in the dirty set: ['_audit_wt_s97/']`), `N-163`, and one more — because the auditor's detached worktree was sitting inside the repository while the verifier ran. Removing the worktree (`git worktree remove --force`, then `prune`) made the gate green and the same three probes pass. The dirty-set probes are doing their job; **an auditor's scratch tree is dirty state too**.
+### 97.2 §96.10 item 1 — CLOSED (N-186): the statutory payload is the blob git stores, and a clone proves it
+
+| | stated by `manifest.json` | worktree | `git cat-file blob HEAD:` | fresh detached checkout of `437e0c4` |
+|---|---|---|---|---|
+| `NSE_STT_RATES/NSE_SEBI_TURNOVER_FEES_STT_OTHER_LEVIES.html` | 330,003 B / `5df41b049103c75784324c846f62cf55cd1157c0dcbc2e7748220e6564f2e277` | **330,003 B / `5df41b04…`** | **330,003 B / `5df41b04…`** | **330,003 B / `5df41b04…`**, `git status` clean |
+| attribute | — | `data/raw/circulars/*/**` → `text: unset` (`git check-attr`) | — | same |
+| witness test | — | — | — | `tests/unit/test_phase3b2_audit_s96_items.py` **4 passed**, `probe N-186` **PASS**, both statutory problem functions **None** |
+
+§96.2's defect is gone: the three columns that disagreed (worktree 330,001 / blob 330,001 / manifest 330,003) now agree with the manifest, and the checkout is byte-faithful rather than "faithful in the main working copy only". The four `NSE_STT_RATES` criteria interval rows still carry `5df41b04…`; the manifest, `data/reference/manifest.jsonl` and every threshold were **not** edited for this item, so the pin move measured in §97.1 belongs to item 2.
+
+The reversion is clean. Deleting the `.gitattributes` line and re-running the probe:
+
+```
+FAIL N-186: no attribute pins the captured statutory payloads to their own bytes, so a checkout can rewrite them again (§96.2)
+```
+
+One observation, measured and **not** a finding. A byte comparison of all **2,191** tracked paths under `data/raw` against their index blobs (`git ls-files -s` versus a locally recomputed Git blob hash) finds **11** whose working-copy bytes differ: every `data/raw/circulars/*/manifest.json`, e.g. `NSE_FA_45147/manifest.json` is 626 B with 13 CRLF in the worktree and 613 B / 0 CRLF in the blob. No digest in the repository covers a `manifest.json`'s own bytes, and JSON parsing is indifferent to the line endings, so nothing downstream can observe it; a clone writes the 613-byte blob. It is working-copy staleness, not repository state. **N-186 is CLOSED.**
+### 97.3 §96.10 item 2 — CLOSED for the ordered item (N-187), with two findings on the same function (N-191, N-192)
+
+Both halves §96.4 asked for are present and refuse by name. `require_no_ex_date_mismatch(failures)` raises `SystemExit` naming ISIN and session, is called from the module-level build path with the classifier's own list, and `require_attested_actions_present(attested_actions_missing_from_table())` is called from `build` before any corpus is written. Reverting each in a detached worktree flips the probe:
+
+| Reversion | Probe result |
+|---|---|
+| delete `require_no_ex_date_mismatch(failures)` | `FAIL N-187: no module-level call passes the classifier's failures list into the gate, so the build still exits 0 with the class published` |
+| widen the near miss from `kind in PRICE_SIDE_KINDS` back to `kind != "DIVIDEND"` | `FAIL N-187: a routine AGM within the mismatch window still makes a one-session move fatal: [('INE000000001', '2022-01-08', '-0.5000 but the archive attests an action on 2022-01-11')]` |
+| delete `require_attested_actions_present(attested_actions_missing_from_table())` | `FAIL N-188: the build never calls the completeness gate (§14.4: the check sits beside the build)` |
+
+The committed classification is the one the builder now refuses to publish non-empty: **0** ex-date mismatches, and the six §96.4 named re-enter the publish-only classes exactly as the implementer states — **5** `RATIO_SHAPED_UNATTESTED`, **1** `NO_RATIO_MATCH` (the detail list grows 730 → 735, `NO_RATIO_MATCH` 71 → 72, and the total is unchanged at 832). Their current returns, from the committed corpus:
+
+| ISIN | session | return | previous bar | calendar previous | bucket |
+|---|---|---|---|---|---|
+| `INE292A01023` | 2018-07-06 | **+0.5000** | 2018-07-05 | 2018-07-05 | ratio-shaped |
+| `INE292A01023` | 2019-12-09 | **+0.5000** | 2019-12-06 | 2019-12-06 | ratio-shaped |
+| `INE292A01023` | 2019-12-20 | **+0.5000** | 2019-12-19 | 2019-12-19 | ratio-shaped |
+| `INE803A01027` | 2019-09-18 | **+0.5000** | 2019-09-17 | 2019-09-17 | ratio-shaped |
+| `INE251H01024` | 2022-08-12 | **+1.2800** | **2021-08-02** | 2022-08-11 | ratio-shaped |
+| `INE784B01035` | 2023-09-26 | **+56.0000** | **2020-07-20** | 2023-09-25 | no-ratio |
+
+Four of the six are session moves near an AGM, and §96.4's diagnosis was right: an AGM carries no share ratio, so it cannot be a mis-dated ratio and the fatal class must not fire on it. **The ordered item is delivered. N-187 is CLOSED.**
+
+Two things in the same function are not right, and both were measured before this section was written.
+**N-191 — adjacent bars are not adjacent sessions.** `classify_extreme_moves` pairs `bars` with `bars[1:]` and calls the quotient a *one-session* return; it never asks whether the two `trade_date`s are consecutive in `trading_dates`, which the same header carries. Two of the six are not moves at all: `INE784B01035` 2023-09-26 follows a bar from 2020-07-20 (**792** sessions absent) and produces a "+5600%" return that no session produced; `INE251H01024` 2022-08-12 follows one from 2021-08-02 (**256** absent). Over the corpus, **16,194** adjacent pairs straddle a calendar gap and **58** of **832** extreme moves are computed across one. That is the assumption §6.3 forbids in as many words, and it matters here because the gate's fatal class is defined on these returns: the fix's `0` is a count of a diagnostic whose inputs include 58 gaps. Falsifiable and registered as **N-191**.
+
+**N-192 — a record with no ratio exonerates the move.** The `explained_by_archive_record` branch admits any non-`DIVIDEND` record at the exact date *before* the move is tested for a ratio shape, so an AGM, a scheme, a demerger or a rights entitlement disposes of the move with no diagnostic. **26** moves beyond ±35% sit on a date whose archive records are all non-price-side, and one of them is `INE803A01027` **2019-09-16, +0.5000, under an `OTHER` record** — a 2× move filed as explained by an Annual General Meeting, with the neighbouring 2019-09-18 move (this section's table) published as unattested ratio-shaped. 13,003 of the 13,348 archive keys carry no price-side record. Registered as **N-192**.
+
+### 97.4 §96.10 item 3 — CLOSED (N-188): the build exits on an archive-attested action the table lacks
+
+| Measurement | Result |
+|---|---|
+| gate | `require_attested_actions_present(gaps)` raises `SystemExit` naming ISIN and ex-date; called from `build` with `attested_actions_missing_from_table()` |
+| committed table | gap set **empty** (`attested_actions_missing_from_table() == []`) |
+| the SRF witness | withdrawing `SRF` 2021-10-13 from a copy of the table names `INE647A01010 2021-10-13 BONUS`; the gate refuses `INE647A01010 … 2021-10-13 …` |
+| reversion | deleting the call from `build` → `FAIL N-188`, quoted in §97.3 |
+
+The check is on the build path, not beside it (§14.4), and it is the same reconciliation §96.4 said no build path called. **CLOSED.**
+### 97.5 §96.10 item 4 — CLOSED (N-189), and the artifact that still publishes the old pair (N-194)
+
+`count_forced_exit_outcomes(forced_reasons, held_isins, filled_isins, reason)` returns exits and refusals over `forced_reasons` entries whose ISIN the book held, the held set is read from `portfolio.get_open_positions()` with `quantity > 0` before the session executes, and both counters (demerger and hold-bound) go through it. Four unit tests pin the pairing — (1 fill held) → `(1, 0)`, (1 refusal held) → `(0, 1)`, (2 held, none filled) → `(0, 2)`, (unheld event) → `(0, 0)`, and the bound pair never absorbs the demerger's fill — **4 passed**. Reverting the call site to `len(demerger_exits - demerger_filled)`:
+
+```
+FAIL N-189: the counter exists but no session loop calls it, so the demerger pair still counts events (§14.4)
+```
+
+**CLOSED.** The residual is that the published artifact was not re-run, and the implementer names it as deliberate rather than hiding it.
+
+**N-194 — the certificate publishes a number the code no longer computes.** `612e82a` touches no path under `reports/` (verified from `git show --name-status`), so `reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json` and `reports/analysis/s94/seq10_baseline_2018_2023_verdict.json` still carry `demerger_forced_exits 0` / `demerger_forced_refusals 66` — the event-counted pair §96.5 proved wrong and this commit replaced. Whether any position was held across a demerger ex-date is therefore **still unmeasured on this tree**, and a reader citing the artifact cites the previous counter. §10.1 makes the correction an append, not an edit, which is the right shape for it. Registered as **N-194**.
+
+### 97.6 §96.10 item 5 — CLOSED (N-190): the gate's verdict is a function of the tree
+
+| Measurement | §96.1 at `ac16232` | §97.1 at `437e0c4` |
+|---|---|---|
+| heavy runs on one tree | 1, 1, 0, 0 | **0, 0, 0** |
+| parallel invocation | `-n auto --dist loadfile -q`, 561 tests, benchmark included | `-n auto --dist loadfile -q --deselect tests/unit/test_portfolio.py::test_n1_replay_guard_o1_lookup_and_bounded_memory`, **564 passed** |
+| isolated invocation | none | `-m pytest -q <benchmark>`, no `-n`, **1 passed in 2.41–2.50 s** |
+| reconciliation | none | `564 + 1 = 565 of 565 collected`, refusing a deselect that dropped a test |
+| ceilings | `250.0` µs/fill, `< 2.5` | **byte-identical**, asserted by `probe_n190` |
+
+Three reversions in a detached worktree, each flipping the probe: emptying `ISOLATED_TIMING_TESTS` → `the gate names no isolated timing test`; dropping the `--deselect` loop → `… is not deselected from the parallel invocation: -m pytest -n auto --dist loadfile -q`; putting `-n auto` back into the isolated command → `the isolated invocation still starts xdist workers`. **CLOSED**, with the residual the fix leaves in place: the benchmark still measures CPU per fill on the host, so a machine loaded by something other than the gate can still exceed 250 µs — the gate no longer creates that contention itself, and it has no witness that it did not. That residual is §12.3's, not this round's, and no threshold was moved for it.
+### 97.7 Ruling — `criteria_version` is held at `1.1.16`
+
+The question put to this round is whether re-sealing the manifest pin while holding the version is legitimate. **Ruling: hold `1.1.16`.** The evidence, in order:
+
+1. **No criterion, threshold, fold, calendar pin, cost schedule or gating start moved.** The whole `configs/go_no_go_criteria.yaml` diff is one line: `expected_manifest_fingerprint` `MAN-FPR-V1-f5b1f1f1…` → `MAN-FPR-V1-e79d7915…`, plus a seven-line comment. `configs/partition_spec.yaml` is untouched, and §97.1 re-measures the pin against the file it describes.
+2. **The fingerprint moves only because the pin is inside it, and the version label is inside it too.** Measured directly: recomputing with the previous pin yields `CRIT-FPR-V1-9ee0a88c260d27fbe3ab13bb7c8c4c992e7d185986f28f5f803cf5db6db8634e` — the value every pre-§97 artifact cites — and bumping `version` to `1.1.17` yields `CRIT-FPR-V1-6fdfd4ced312b9bfec385708af77199d9e805d335099cb635a2185a1f56c4744`. So the version string is *not* an identifier of a criteria set; `CRIT-FPR-V1` is. Any rule that treats the label as one has been wrong for 16 pins: the file's history contains **16** distinct `MAN-FPR-V1` values and **16** superseded `version:` strings.
+3. **A bump cannot repair what it would be for.** `probe_seq10_candidate.py` refuses a row whose `criteria_version` differs from the live version, so `1.1.17` would make the certificate reject the row it was registered under; the row is append-only (§12.1) and cannot be rewritten to `1.1.17`. Holding `1.1.16` keeps the registry consistent, and the cost is exactly the one the implementer names: `1.1.16` now labels two contents.
+
+Because of (2), holding the version is only sound if the repository stops citing a bare version where it means a criteria set, and that part is **not** done. The Phase 2D pair was regenerated to `b2876d98…`; `reports/verdicts/trial_010/seq10_baseline_comparison.json` and `reports/analysis/s94/seq10_baseline_2018_2023_verdict.json` still say `criteria_version 1.1.16` with `CRIT-FPR-V1-9ee0a88c…`, and nothing compares a certificate's stored fingerprint with the live one (`verify_phase2d_verdicts.py` prints it; `probe_seq10_candidate.py` compares the row's *version*). So **two artifacts under one label disagree about the criteria they ran under, and no gate can see it** — **N-193**, registered. The ruling is `HOLD`, conditional on the hash being reconciled by append and by a gate, not on a version bump.
+
+### 97.8 Findings ledger after this section
+
+| | before §97 | after §97 |
+|---|---|---|
+| rows / ids | 65 / 42 | **74 / 46** |
+| latest per id | 35 CLOSED, 6 OPEN, 1 ACCEPTED | **40 CLOSED**, **5 OPEN**, **1 ACCEPTED** |
+| OPEN ids | `N-150`, `N-186`…`N-190` | `N-150`, **`N-191`**, **`N-192`**, **`N-193`**, **`N-194`** |
+
+N-186…N-190 gain `CLOSED` rows with `closed_in_section: 97` and the measurement that decided each; the four new rows carry the probe commands added to `scripts/probe_audit_findings.py` in this commit, each passing while the defect it names is live (§96's convention, so the gate stays green and the implementer flips them as they land).
+### 97.9 Phase verdicts
+
+| Phase (`CURRENT_STAGE_OF_WORK.md` §97 row) | Verdict | Residual |
+|---|---|---|
+| Statutory cost schedule / captured sources (item 1) | **CLOSED** — payload, blob and manifest agree, checkout byte-faithful, 8 tests green in a clone | none; the 11 CRLF `manifest.json` working copies are inert (§97.2) |
+| Point-in-time corpus builder (item 2) | **CLOSED as ordered** — both gates fire, the fatal class is 0, the six leave it for the stated reason | **N-191** (cross-gap returns, 58/832), **N-192** (non-ratio exoneration, 26 moves) |
+| Corporate-action completeness (item 3) | **CLOSED** — build-path gate, empty gap set, SRF witness named | a re-introduced gap is still invisible to the ±35% reconciliation if it lands outside the fatal classes (§96.4's note stands) |
+| Demerger forced exit (item 4) | **CLOSED** — held-position counter, 4 tests, call site asserted | **N-194** — the published pair is the old one; whether a hold ever crossed a demerger ex-date is **NOT RUN** on this tree |
+| Gate reproducibility (item 5) | **CLOSED** — 3/3 heavy runs, 564+1 reconciled, ceilings unchanged | host contention outside the gate remains unbounded |
+| Criteria / seq 10 (item 5, version) | **HOLD `1.1.16`** — no threshold moved, the pin is the only change, `probe_seq10_candidate` CERTIFIED (`N=10`, `N_eval=5`, 2024 fold frozen, holdout sealed) | **N-193** — the trial_010 certificate cites the pre-re-seal hash |
+| Phase 2D artifacts | **regenerated and consistent** — `CRIT-FPR-V1-b2876d98…` in both files, `verify_phase2d_verdicts.py` exit 0 | none observed |
+
+### 97.10 Work order (feat-s98), ordered by what it unblocks
+
+1. **N-191 — no cross-gap pair may enter the reconciliation as a return.** The classifier reads adjacent surviving bars as consecutive sessions; two of its six former fatal pairs are 256 and 792 sessions apart and 58 of its 832 "moves" are computed across a calendar gap. Required: a pair whose two `trade_date`s are not consecutive in `trading_dates` is a gap record (or an `UNEXPLAINED_MISSING_RECORD` partition boundary, §6.3), never a one-session return; `probe_audit_findings.py N-191` flips to assert *zero* extreme moves computed across a gap and must exit 1 on this tree before the item is closed. Phase: `CURRENT_STAGE_OF_WORK.md` §97 item 2 (point-in-time corpus).
+2. **N-192 — only a price-side record may explain a ratio-shaped move.** The exact-date exoneration branch admits AGM/scheme/rights/demerger records before the ratio test, so 26 moves beyond ±35% — including `INE803A01027` 2019-09-16 at +0.5000 under an `OTHER` record — are filed as explained by a record that carries no ratio. Required: a non-price-side record at the exact date does not exonerate; the move is published as `RATIO_SHAPED_UNATTESTED` with that record named; `N-192` flips and must fail closed on the AGM witness. Phase: same.
+3. **N-193 — a certificate's criteria fingerprint must be compared with the live one.** Two artifacts under `criteria_version 1.1.16` cite `9ee0a88c…` while the live criteria compute `b2876d98…`, and no gate reads a stored hash. Required: either regenerate the trial_010 pair (if that is what the run computed) or append a restatement naming the executed hash and the live one, **and** add the comparison to `verify_phase2d_verdicts.py` or `probe_seq10_candidate.py` so a mismatch fails closed by naming both hashes. The version label itself stays `1.1.16` per §97.7. Phase: `CURRENT_STAGE_OF_WORK.md` §97 item 2 / §9.1.
+4. **N-194 — restate the seq-10 demerger pair.** Both committed artifacts publish `0` / `66` from the replaced counter. Required: an append-only restatement (a new artifact, or a row in the trial annotation sidecar) naming the pair restated and the held-position measurement that replaces it, with the session-level count the fixed counter produces; "whether any hold crossed a demerger ex-date" is then measured, not inferred. `N-194` flips and must fail closed while the artifact still reads 66. Phase: `CURRENT_STAGE_OF_WORK.md` §97 item 4.
+
+Carried unchanged, still not done: §96.10 items 5 (superseded rows in `get_corporate_actions()`), 6 (the certificate reading the `NON_REPRODUCIBLE_AT` annotation) and 7 (the carried residuals, `N-150` included). N-186…N-190 are closed and leave this list.
+### 97.11 What would falsify this verdict
+
+- **N-186**: a tracked path under `data/raw/circulars/` whose worktree bytes differ from its blob *after* a fresh `git checkout -f` of this commit — the 11 `manifest.json` staleness would then be repository state, not a working copy's.
+- **N-187 / N-188**: a build on this tree that publishes a non-empty `EX_DATE_MISMATCH` or exits 0 with `attested_actions_missing_from_table()` non-empty; or a reversion of either gate that leaves its probe green.
+- **N-189**: a demerger refusal counted for an ISIN the book did not hold, or a held demerger exit counted as a refusal.
+- **N-190**: a fourth heavy run on this unchanged tree that exits 1, or a ceiling that differs from `250.0` / `2.5` in the test source.
+- **The Ruling**: any criterion value, threshold, fold boundary, calendar pin, cost-schedule row or gating start that differs between the configuration that produced `9ee0a88c…` and the one that produces `b2876d98…`. If one exists, `1.1.16` labels a research decision and must be bumped; the diff measured here is the pin and a comment, and a bump is wrong only for the reason given in §97.7.3.
+- **N-191 / N-192 / N-193 / N-194**: their probes as written. Each asserts the defect's current shape, so a fix that leaves the assertion green is no fix.
