@@ -43,7 +43,8 @@ def test_s100_seq10_status_row_publishes_the_artifact_profit_factors():
 def test_s100_verifier_inventory_pin_is_the_discovered_set():
     discovered = discovered_verification_scripts()
     assert list(EXPECTED_VERIFICATION_SCRIPTS) == discovered
-    assert len(discovered) == 10
+    # §101.12 item 1 adds `verify_seq10_baseline_comparison.py` to the discovered sweep.
+    assert len(discovered) == 11
     assert verification_inventory_problem(discovered) is None
 
 

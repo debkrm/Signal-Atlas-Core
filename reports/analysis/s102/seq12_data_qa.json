@@ -269,14 +269,32 @@
   "last_session": "2023-12-29",
   "path": "data/reference/historical_dataset_2018_2023.json.gz",
   "sessions": 1425,
-  "sha256": "0fdc728a81acbb396f626fb54e4f28862c93cec836db3b502814f850a056a984"
+  "sha256": "ea0b65a32a89a7b497cc9dc40cbec3fdbdcb9b582c74105e1a9ea6959d4ab1c5",
+  "sha256_of": "the file's stored bytes, unnormalised: a gzip stream is `-text` and has no LF form, so the raw digest is the only one a reader can reproduce and the one the manifest and the s100 comparison publish (N-204)"
+ },
+ "corpus_reconciliation": {
+  "detail_is_a_census": false,
+  "detail_scope": "`reconciliation.ratio_shaped_detail` lists the 699 moves beyond \u00b10.35 whose one-session return is ratio-shaped within \u00b10.5% and carries no archive record. It is not a census of unadjusted level breaks: a move below the threshold is not listed, a move outside the ratio band is counted in `no_ratio_match` (74 rows), and a pair straddling a calendar gap (16194 pairs) is a gap record, not a session return. Absence from the list is not an exoneration (N-201).",
+  "unattested_unit_break": {
+   "adjustment_stamp": "v2.0-attested-split-bonus-backadjust-2018-2023",
+   "attested": false,
+   "close": "130.2",
+   "isin": "INF732E01011",
+   "listed_in_ratio_shaped_detail": false,
+   "previous_close": "1292.54",
+   "ratio": "0.100732",
+   "session": "2019-12-19",
+   "stamp_scope": "SERIES_POLICY_NOT_A_PER_BAR_ATTESTATION"
+  }
  },
  "criteria": {
   "fingerprint": "CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470",
   "version": "1.1.16"
  },
+ "entry_signal_scope": "executable signals, as the runner resolves them: EQ on that session, in the point-in-time universe, and with a T+1 session to fill at (\u00a77.1). The final session's predicate-and-universe signals are counted in `signals_without_a_next_session` (and the EQ ones in `signals_without_a_next_session_in_eq_series`), not dropped by the guard (\u00a7101.12 item 5).",
  "entry_signals": 93463,
  "entry_signals_in_a_usable_feature_window": 72187,
+ "entry_signals_including_the_final_session": 93525,
  "feature_window_policy": {
   "attestation": "the same test the stop uses: a price-side ratio on the exact ex-date, or a cash amount on the exact ex-date within 0.5% of the previous close",
   "consequence": "such signals are counted below and excluded from the usable-feature-window set; they do not extend the STOP class, which remains the signal-day \u221220% level-step test",
@@ -321,6 +339,7 @@
  "pre_registration": {
   "path": "configs/trial_012_candidate.yaml",
   "sha256": "5a7f7b8f3f7afeaf526622050e3f8814b16a76682a30f0b7c576b88ac1cca90c",
+  "sha256_of": "the config's stored text bytes with CRLF normalised to LF",
   "trial_id": "TRIAL-PHASE3B2-MEANREV-012"
  },
  "restates": {
@@ -360,7 +379,13 @@
   "path": "reports/analysis/s101/seq12_data_qa.json",
   "reason": "N-196: a DIVIDEND or RIGHTS record on the exact ex-date is now an attestation test when its cash amount reproduces the close or the opening price within 0.5% of the previous close. N-197: unattested level steps inside the 200-session feature window are counted and excluded from the usable set. N-199: the three categorical band counters report NOT RUN while data/silver/price_bands is empty. N-200: the archive's coverage travels with the no-record verdict. The window, the rule, the criteria and the corpus are unchanged.",
   "sha256": "54c08bcbe7b76b43130be0335c7366dfacf03e843f863cc2ffb6f68e13f784d7",
+  "sha256_of": "the superseded artifact's stored text bytes with CRLF normalised to LF",
   "superseded_artifact_left_unedited": true
+ },
+ "rights_terp_branch": {
+  "limitation": "the RIGHTS branch of the cash test reprices to the theoretical ex-rights price from an issue ratio and premium parsed out of free-text prose, and no rights record in the committed table sits on a candidate level step, so the branch has never fired on this corpus and its first real use will attest a price level against an unattested record with a regex-extracted number \u2014 that first use is not evidence (\u00a7101.3, \u00a7101.12 item 6)",
+  "records_in_the_table": 4,
+  "records_on_a_candidate_step": 0
  },
  "section": "\u00a7101 Step 2 (AGENTS.md \u00a75.4, \u00a76.3, \u00a79.3)",
  "signal_level_steps_in_lookback": [
@@ -3355,10 +3380,14 @@
    "signal_session": "2020-10-29"
   }
  ],
+ "signal_level_steps_in_lookback_detail_distinct_instruments": 9,
+ "signal_level_steps_in_lookback_detail_scope": "the detail list is a prefix of at most 200 signals in corpus insertion order, not a sample: the distinct-instrument count beside it is the list's reach against the 1668 instruments that carry such an event, so a classifier defect on an instrument outside the prefix leaves every published row clean (\u00a7101.5, \u00a7101.12 item 5)",
  "signal_level_steps_in_lookback_truncated": true,
  "signals_in_non_eq_series": 15441,
  "signals_with_an_unattested_level_step_in_lookback": 21276,
  "signals_without_a_calendar_previous_session": 0,
+ "signals_without_a_next_session": 86,
+ "signals_without_a_next_session_in_eq_series": 62,
  "sma200_available_from_session": "2019-01-18",
  "status": "STOP",
  "stop_reason": "4 entry-signal day(s) open more than 20% below the previous close \u2014 a change of price level between two sessions, not a session's trading \u2014 with no corporate action (share ratio or cash amount) attested on that date; 4 of them are ratio-shaped",

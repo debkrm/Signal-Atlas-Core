@@ -2997,3 +2997,100 @@ amount) attested on that date; 4 of them are ratio-shaped".
   `--force-full` on this commit's tree; the green row is recorded by the commit that follows it (N-160).
 - Protected paths: `reports/audit/**`, `AGENTS.md`, `configs/go_no_go_criteria.yaml` and `data/trials/**` are
   untouched; no fold or holdout session was read; the registry is unchanged at N = 11, N_eval = 6.
+## §103 — §101's items 1, 2, 5 and 6 executed for N-203, N-204 and the two unpublished boundaries; items 3 and 4's corpus half not taken (Not audited)
+
+This log reviews commit `46a99ec` under audit **§101** (`reports/audit/volume2.md`, tag
+`feat-s102-46a99ec`) and executes four of its seven ordered items. **The work is not audited**: no finding is
+marked CLOSED here, no verdict word is claimed, and the ledger stays as §101 left it — `N-150`, `N-199`,
+`N-201`, `N-203`, `N-204` OPEN.
+
+### Item 1 (N-203) — the published digest is the stored bytes' digest, and the gate runs the check
+
+Measured on the tree as `46a99ec` left it, before any edit: `seq10_artifact_sha256` was `4a729dbc…`, the
+sha256 of the trial_010 verdict with LF re-rendered as CRLF, while `git cat-file -p HEAD:` of that path
+hashes `75571da3…`. `probe N-203` failed on the field, and now also fails if the check leaves discovery.
+
+`compare_seq10_baselines.py` hashed the working copy raw. It now has `_sha256` for tracked **text** (CRLF
+normalised to LF — the form `.gitattributes` stores) and `_sha256_bytes` for a binary payload. The artifact is
+regenerated: `seq10_artifact_sha256` is `75571da3…` with a `seq10_artifact_sha256_of` field naming the byte
+sequence. `python scripts/compare_seq10_baselines.py --check` exits 0 here and in the clone below.
+
+The check is on the gate's discovery path: `scripts/verify_seq10_baseline_comparison.py` is a thin hook that
+calls `compare_seq10_baselines.main(["--check"])` and adds no assertion of its own, and it is named in
+`EXPECTED_VERIFICATION_SCRIPTS`, which moves the discovered sweep from 10 to 11. The three unit tests that
+pinned the sweep at 10 are updated to 11 (they still assert exact equality with the committed inventory).
+
+### Item 2 (N-204) — one dataset, one fingerprint
+
+`run_seq12_candidate._digest` applied `read_bytes().replace(b"\r\n", b"\n")` to every path it was given, so
+`corpus.sha256` hashed a mutated gzip stream (`0fdc728a…`). It is now `_digest_text` (config, superseded
+artifact) and `_digest_bytes` (corpus). The regenerated artifact publishes `ea0b65a3…` / 75,390,706 B — the
+manifest's current row and the s100 artifact's `dataset_sha256` — with a `sha256_of` field stating that this
+is the file's stored bytes, unnormalised. `probe N-204` asserts the field equals `sha256(file bytes)` and
+equals the manifest row; it failed before the change and passes after.
+
+### Item 5 — the two silent boundaries are published
+
+The artifact now carries `signals_without_a_next_session` (86), `..._in_eq_series` (62) and
+`entry_signals_including_the_final_session` (93,525 = 93,463 + 62), so §101.5's "62 signals on the final
+session" and the 93,525 that explained the first attempt are reproducible from the artifact. The finals are
+counted **before** the series filter, so `signals_in_non_eq_series` stays 15,441 and no previously published
+count moves. `signal_level_steps_in_lookback_detail_distinct_instruments` is 9 against 1,668 instruments that
+carry an event, with a `..._detail_scope` field saying the list is a prefix in insertion order, not a sample.
+
+### Item 6 — the RIGHTS branch's status, computed rather than asserted
+
+`rights_terp_branch` publishes 4 `RIGHTS` records in the committed table and 0 sitting on a candidate level
+step, beside the stated limitation: the TERP path has never fired, its premium is a regex over prose, and its
+first use will attest a price level against an `UNATTESTED_` record. No sourced rights record was supplied, so
+the branch is neither exercised nor retired.
+
+### Item 4 (N-201) — the corpus half is not taken, and the reason is a pin
+
+The corpus header is covered by the manifest and the manifest by `expected_manifest_fingerprint` in
+`configs/go_no_go_criteria.yaml`. A corpus restatement therefore appends a manifest row, moves `MAN-FPR-V1`
+and needs a criteria re-seal — which this round may not perform. So the boundary stays excluded, **no corpus
+byte changed**, and the correction travels with the artifact that reads the corpus:
+`corpus_reconciliation.detail_is_a_census` is `false` with the three filters named (±35 % threshold, ±0.5 %
+ratio band, gap-straddling pairs excluded), and `unattested_unit_break` names `INF732E01011` 2019-12-19, its
+ratio, its stamp and `stamp_scope = SERIES_POLICY_NOT_A_PER_BAR_ATTESTATION`. `probe N-201` now also fails if
+that published claim stops matching the corpus. **The corpus-header form §101.12 item 4 asked for is not
+delivered**; this is the artifact-surface mark, not the header mark. §101.4's other half — the two dropped
+sessions' real return (−0.042 %, +0.108 %) stated in clause (d) — also remains untaken, because the clause
+lives in `configs/trial_012_candidate.yaml`, which this round may not edit.
+
+Measured while doing it: §101.4 prints the boundary ratio as 0.100731; the artifact recomputes
+130.20 / 1292.54 = 0.100732 at 6 dp, round-half-up. A last-digit difference, not a disagreement about the
+boundary. The artifact's own scope note measures the boundary as **not** in `ratio_shaped_detail` — it is
+counted in `no_ratio_match` (74 rows) because 0.100732 is outside the ±0.5 % band around 0.1.
+
+### Item 3 (N-199) — still BLOCKED
+
+No sourced per-session NSE band archive was supplied. `data/silver/price_bands` stays empty, the three
+categorical counters stay `NOT RUN`, the exit-freeze round trip stays NOT RUN, and nothing was synthesised
+from prices.
+
+### What moved, and what did not
+
+`reports/analysis/s100/seq10_baseline_comparison.json` and `reports/analysis/s102/seq12_data_qa.json` are
+regenerated **by their own producers** (`--check` exit 0 here and in a clean clone); the s102 artifact is a
+restatement in place whose moved fields are the ones named above, and the s101 artifact is untouched. Scripts,
+three verifier-count pins and one new verifier file also changed. **No corpus byte, content fingerprint,
+manifest row, criteria value, trial-registry row, fold or holdout session moved**: corpus 75,390,706 B /
+`ea0b65a3…`, `DATA-CTNT-V2-cb4832c0…`, `CRIT-FPR-V1-535e47f5…`, `N = 11` / `N_eval = 6`,
+`validation_folds_count = 0`, holdout `2025-01-01..2026-11-11` unread.
+
+### Gate state at this commit
+
+- `scripts/verify_*.py`: **11 of 11 exit 0** in the pre-commit `--force-full` run after the pin update
+  (`verify_audit_findings.py` 221.94 s / 56 probes, `verify_seq10_baseline_comparison.py` 25.20 s).
+- The first pre-commit run **failed** on three tests that pinned the sweep at 10; the pin update is the fix
+  and the failure is recorded here rather than smoothed over.
+- `pytest`: **610 passed** in the gate's parallel invocation (66.90 s) + **1 passed** isolated (2.41 s) =
+  **611 of 611 collected**, 0 skipped, 0 xfailed.
+- The post-commit verdict line and the green row: see the note below — the row is **not** recorded, because
+  the working tree carries three pre-existing source-path changes that this round may not commit
+  (`AGENTS.md` modified, `.agents/skills/research-audit/SKILL.md` and `.agents/skills/research-round/SKILL.md`
+  untracked). The gate refuses to certify a tree whose working copy it did not measure (§80.3), and that is
+  the correct outcome rather than a usable one.
+- Nothing here is signed off. The next round is the auditor's.

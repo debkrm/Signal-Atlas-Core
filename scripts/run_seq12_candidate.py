@@ -135,8 +135,105 @@ RATIO_TOLERANCE = Decimal("0.005")
 CORPUS_RECONCILIATION_THRESHOLD = Decimal("0.35")
 
 
-def _digest(path: Path) -> str:
+def _digest_text(path: Path) -> str:
+    """
+    sha256 of a tracked **text** artifact's git-stored form: CRLF normalised to LF (N-203, §9.1).
+
+    `.gitattributes` pins `*.json` to `eol=lf`, so the bytes a clone stores are the LF rendering; a
+    digest of the writing checkout's CRLF rendering is a digest no clone can reproduce.
+    """
     return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def _digest_bytes(path: Path) -> str:
+    """
+    sha256 of a **binary** payload's stored bytes, unnormalised (N-204, §10.5).
+
+    A gzip stream is `-text` in `.gitattributes` and has no LF form: replacing `\r\n` inside it hashes
+    a stream no file contains, so the raw bytes are the only digest a reader can reproduce.
+    """
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def rights_branch_exercise(actions: Dict[str, List[dict]], bars_by_isin: Dict[str, List[PriceBar]], sessions):
+    """
+    How often the RIGHTS/TERP attestation branch could have fired (§101.12 item 6, §5.4).
+
+    A rights entitlement is tested as the theoretical ex-rights price, which needs the issue ratio and
+    premium parsed out of a free-text `description`. The branch is only exercised by a rights record on
+    the exact ex-date of a candidate level step, so this counts those records and the ones that sit on
+    a step of `UNATTESTED_STEP_GAP` or more. A zero here is why the branch's arithmetic is unproven
+    rather than proven.
+    """
+    index = {session: position for position, session in enumerate(sessions)}
+    rows = 0
+    on_a_candidate_step = 0
+    for isin, records in actions.items():
+        bars = {bar.trade_date: bar for bar in bars_by_isin.get(isin, [])}
+        for record in records:
+            if str(record.get("action_type")) != "RIGHTS":
+                continue
+            rows += 1
+            ex_date = datetime.date.fromisoformat(str(record["ex_date"])[:10])
+            position = index.get(ex_date)
+            bar = bars.get(ex_date)
+            if position is None or position == 0 or bar is None:
+                continue
+            previous = bars.get(sessions[position - 1])
+            if previous is None or previous.close < GAP_TEST_MIN_PREVIOUS_CLOSE:
+                continue
+            if abs((bar.open - previous.close) / previous.close) >= UNATTESTED_STEP_GAP:
+                on_a_candidate_step += 1
+    return {"records_in_the_table": rows, "records_on_a_candidate_step": on_a_candidate_step}
+
+
+def corpus_reconciliation_claim(corpus: dict) -> dict:
+    """
+    What the corpus's per-bar stamp and its reconciliation detail actually claim (N-201, §101.12 item 4).
+
+    Two claims travel with the corpus and are corrected here rather than in its bytes. First, the
+    per-bar `adjustment_version` names the series-level adjustment **policy**, not an attestation that
+    this bar's level was adjusted: `INF732E01011`'s 2019-12-19 bar sits at the post-renomination unit
+    because no committed payload attests the 1:10 across its ISIN transition, and it still carries the
+    stamp. Second, `reconciliation.ratio_shaped_detail` is a filtered list — moves beyond ±35% whose
+    one-session return is ratio-shaped within ±0.5% and has no archive record — not a census of
+    unadjusted level breaks: that boundary's ratio is outside the ±0.5% band around 0.1, so it is
+    counted in `no_ratio_match` and appears in no detail list at all.
+
+    The corpus itself is frozen this round: its header is covered by the manifest and the manifest by
+    `expected_manifest_fingerprint`, so restating it is a criteria re-seal, not a data-hygiene edit.
+    """
+    bars = {row["trade_date"]: row for row in corpus["prices_by_instrument"]["INF732E01011"]}
+    previous_close = Decimal(bars["2019-12-18"]["close"])
+    close = Decimal(bars["2019-12-19"]["close"])
+    reconciliation = corpus["reconciliation"]
+    listed = any(
+        row["isin"] == "INF732E01011" and row["session"] == "2019-12-19"
+        for row in reconciliation["ratio_shaped_detail"]
+    )
+    return {
+        "detail_is_a_census": False,
+        "detail_scope": (
+            f"`reconciliation.ratio_shaped_detail` lists the {len(reconciliation['ratio_shaped_detail'])} "
+            f"moves beyond ±{reconciliation['threshold']} whose one-session return is ratio-shaped within "
+            "±0.5% and carries no archive record. It is not a census of unadjusted level breaks: a move "
+            "below the threshold is not listed, a move outside the ratio band is counted in "
+            f"`no_ratio_match` ({reconciliation['no_ratio_match']} rows), and a pair straddling a "
+            f"calendar gap ({reconciliation['cross_gap_pairs']} pairs) is a gap record, not a session "
+            "return. Absence from the list is not an exoneration (N-201)."
+        ),
+        "unattested_unit_break": {
+            "isin": "INF732E01011",
+            "session": "2019-12-19",
+            "previous_close": format(previous_close, "f"),
+            "close": format(close, "f"),
+            "ratio": format((close / previous_close).quantize(Decimal("0.000001")), "f"),
+            "adjustment_stamp": corpus["adjustment_version"],
+            "stamp_scope": "SERIES_POLICY_NOT_A_PER_BAR_ATTESTATION",
+            "attested": False,
+            "listed_in_ratio_shaped_detail": listed,
+        },
+    }
 
 
 def _load_corpus() -> dict:
@@ -521,7 +618,8 @@ def restatement_of_previous(qa: dict) -> dict:
     return {
         "path": path,
         "available": True,
-        "sha256": hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest(),
+        "sha256": _digest_text(RESTATED_ARTIFACT),
+        "sha256_of": "the superseded artifact's stored text bytes with CRLF normalised to LF",
         "superseded_artifact_left_unedited": True,
         "changed_fields": {
             field: {"published_there": previous.get(field), "published_here": qa.get(field)}
@@ -564,6 +662,8 @@ def data_qa(criteria) -> dict:
     consumers = artifact_consumers()
 
     entry_signals = 0
+    signals_without_a_next_session = 0
+    signals_without_a_next_session_in_eq_series = 0
     first_signal_session: Optional[datetime.date] = None
     blocked_adtv = 0
     blocked_locked = 0
@@ -615,8 +715,9 @@ def data_qa(criteria) -> dict:
 
         for session, row in rows.items():
             position = index.get(session)
-            if position is None or position + 1 >= len(sessions):
+            if position is None:
                 continue
+            fillable = position + 1 < len(sessions)
             if row["sma200"] is None or row["rsi2"] is None:
                 continue
             if not (row["close"] > row["sma200"] and row["rsi2"] < ENTRY_RSI_THRESHOLD):
@@ -625,7 +726,18 @@ def data_qa(criteria) -> dict:
             if day_key not in universe_days or isin not in universe[day_key]:
                 continue
             symbol_interval = master.resolve_symbol(isin, session)
-            if symbol_interval is None or symbol_interval.series != "EQ":
+            in_eq_series = symbol_interval is not None and symbol_interval.series == "EQ"
+
+            # §7.1: a signal on the window's final session has no T+1 open to fill at. It is not an
+            # executable signal, and it is counted rather than dropped by the guard (§101.12 item 5).
+            # Counted before the series filter so `signals_in_non_eq_series` keeps describing exactly
+            # the signals the runner refused for their series.
+            if not fillable:
+                signals_without_a_next_session += 1
+                if in_eq_series:
+                    signals_without_a_next_session_in_eq_series += 1
+                continue
+            if not in_eq_series:
                 other_series_filtered += 1
                 continue
 
@@ -725,12 +837,18 @@ def data_qa(criteria) -> dict:
         "mode": "COUNTS_AND_LISTS_ONLY_NO_PNL",
         "pre_registration": {
             "path": CONFIG_PATH.relative_to(REPO_ROOT).as_posix(),
-            "sha256": _digest(CONFIG_PATH),
+            "sha256": _digest_text(CONFIG_PATH),
+            "sha256_of": "the config's stored text bytes with CRLF normalised to LF",
             "trial_id": str(yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))["metadata"]["trial_id"]),
         },
         "corpus": {
             "path": CORPUS_PATH.relative_to(REPO_ROOT).as_posix(),
-            "sha256": _digest(CORPUS_PATH),
+            "sha256": _digest_bytes(CORPUS_PATH),
+            "sha256_of": (
+                "the file's stored bytes, unnormalised: a gzip stream is `-text` and has no LF form, so "
+                "the raw digest is the only one a reader can reproduce and the one the manifest and the "
+                "s100 comparison publish (N-204)"
+            ),
             "sessions": len(sessions),
             "first_session": sessions[0].isoformat(),
             "last_session": sessions[-1].isoformat(),
@@ -739,6 +857,7 @@ def data_qa(criteria) -> dict:
             "version": criteria.version,
             "fingerprint": compute_criteria_fingerprint(criteria),
         },
+        "corpus_reconciliation": corpus_reconciliation_claim(corpus),
         "method": (
             "the pre-registered entry condition (close > SMA(200) and RSI(2) < 10, Wilder, on "
             "split/bonus-adjusted closes) over the point-in-time universe, restricted to identities the "
@@ -754,6 +873,17 @@ def data_qa(criteria) -> dict:
             first_signal_session == WINDOW_FIRST_SESSION if first_signal_session else False
         ),
         "entry_signals": entry_signals,
+        "entry_signal_scope": (
+            "executable signals, as the runner resolves them: EQ on that session, in the point-in-time "
+            "universe, and with a T+1 session to fill at (§7.1). The final session's predicate-and-"
+            "universe signals are counted in `signals_without_a_next_session` (and the EQ ones in "
+            "`signals_without_a_next_session_in_eq_series`), not dropped by the guard (§101.12 item 5)."
+        ),
+        "signals_without_a_next_session": signals_without_a_next_session,
+        "signals_without_a_next_session_in_eq_series": signals_without_a_next_session_in_eq_series,
+        "entry_signals_including_the_final_session": (
+            entry_signals + signals_without_a_next_session_in_eq_series
+        ),
         "blocked_by_adtv_floor": blocked_adtv,
         "blocked_by_locked_session": {
             "total": blocked_locked,
@@ -807,6 +937,16 @@ def data_qa(criteria) -> dict:
         "signals_with_an_unattested_level_step_in_lookback": signals_with_a_level_step_in_lookback,
         "entry_signals_in_a_usable_feature_window": entry_signals - signals_with_a_level_step_in_lookback,
         "signal_level_steps_in_lookback": signal_level_steps,
+        "signal_level_steps_in_lookback_detail_distinct_instruments": len(
+            {row["isin"] for row in signal_level_steps}
+        ),
+        "signal_level_steps_in_lookback_detail_scope": (
+            f"the detail list is a prefix of at most {SIGNAL_LEVEL_STEP_DETAIL_LIMIT} signals in corpus "
+            "insertion order, not a sample: the distinct-instrument count beside it is the list's reach "
+            f"against the {instruments_with_a_level_step} instruments that carry such an event, so a "
+            "classifier defect on an instrument outside the prefix leaves every published row clean "
+            "(§101.5, §101.12 item 5)"
+        ),
         "signal_level_steps_in_lookback_truncated": (
             signals_with_a_level_step_in_lookback > len(signal_level_steps)
         ),
@@ -837,6 +977,16 @@ def data_qa(criteria) -> dict:
                     for row in unattested_steps
                     if bronze_records_by_isin.get(row["isin"], 0) == 0
                 }
+            ),
+        },
+        "rights_terp_branch": {
+            **rights_branch_exercise(actions, bars_by_isin, sessions),
+            "limitation": (
+                "the RIGHTS branch of the cash test reprices to the theoretical ex-rights price from an "
+                "issue ratio and premium parsed out of free-text prose, and no rights record in the "
+                "committed table sits on a candidate level step, so the branch has never fired on this "
+                "corpus and its first real use will attest a price level against an unattested record "
+                "with a regex-extracted number — that first use is not evidence (§101.3, §101.12 item 6)"
             ),
         },
         "gated_by": {

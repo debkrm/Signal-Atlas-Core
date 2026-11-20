@@ -3611,6 +3611,28 @@ def probe_n197() -> None:
         == artifact["entry_signals"] - published
     ), "the usable set does not subtract the published window count"
 
+    # §101.12 item 5: the two boundaries the counts rest on are published, not left for a reader to
+    # discover — the final session's signals the runner's guard excludes, and the detail list's reach.
+    assert artifact["signals_without_a_next_session"] > 0, (
+        "the T+1 guard's excluded signals are published as 0; re-measure them rather than publishing "
+        "an empty field (§101.5)"
+    )
+    assert (
+        artifact["entry_signals_including_the_final_session"]
+        == artifact["entry_signals"] + artifact["signals_without_a_next_session_in_eq_series"]
+    ), (
+        "the published total does not reconcile the labelled executable signals with the final "
+        "session's excluded ones (§101.12 item 5)"
+    )
+    detail = artifact["signal_level_steps_in_lookback"]
+    assert (
+        artifact["signal_level_steps_in_lookback_detail_distinct_instruments"]
+        == len({row["isin"] for row in detail})
+    ), (
+        "the published distinct-instrument count is not the detail list's own reach, so a reader "
+        "cannot see that the evidence for the counts is a prefix (§101.5)"
+    )
+
     with gzip.open(
         REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz",
         "rt",
@@ -3774,6 +3796,22 @@ def probe_n201() -> None:
     assert not [r for r in detail if r["isin"] == "INF732E01011"], (
         "the reconciliation now publishes the boundary it omitted; re-measure N-201"
     )
+    # The claim the stamp makes, and the census claim the detail list invites, are published where the
+    # QA artifact states what it read — the corpus bytes are frozen this round (N-201, §101.12 item 4).
+    from run_seq12_candidate import corpus_reconciliation_claim
+
+    published = _seq12_artifact()["corpus_reconciliation"]
+    assert published["detail_is_a_census"] is False, (
+        f"the QA artifact publishes detail_is_a_census={published['detail_is_a_census']!r}; the corpus's "
+        "ratio_shaped_detail is a filtered list (N-201)"
+    )
+    assert published == corpus_reconciliation_claim(corpus), (
+        "the published claim is not what the corpus and the committed reconciliation produce (N-201)"
+    )
+    break_at = published["unattested_unit_break"]
+    assert break_at["isin"] == "INF732E01011" and break_at["session"] == "2019-12-19", break_at
+    assert break_at["listed_in_ratio_shaped_detail"] is False, break_at
+    assert break_at["stamp_scope"] == "SERIES_POLICY_NOT_A_PER_BAR_ATTESTATION", break_at
 
 
 def probe_n202() -> None:
@@ -3868,13 +3906,28 @@ def probe_n203() -> None:
     lf = artifact.replace(b"\r\n", b"\n")
     stored = hashlib.sha256(lf).hexdigest()
     rendered = hashlib.sha256(lf.replace(b"\n", b"\r\n")).hexdigest()
-    assert committed == rendered, (
-        f"the committed seq-10 digest is {committed}, not the CRLF rendering {rendered}; if it is now "
-        "the stored bytes' digest, the clone failure N-203 measured is repaired"
+    assert committed == stored, (
+        f"the committed seq-10 digest is {committed}, not the stored bytes' sha256 {stored} (it is "
+        f"{'the CRLF rendering ' + rendered if committed == rendered else 'neither hash'}): a checkout "
+        "that stores LF — every clone, since .gitattributes pins *.json to eol=lf — recomputes another "
+        "value and `--check` exits 1 (N-203, §9.1, §12.3)"
     )
-    assert committed != stored, (
-        f"the committed digest is the stored bytes' own sha256 {stored}; N-203 is repaired and "
-        "`compare_seq10_baselines.py --check` should exit 0 in a clean clone"
+    if rendered != stored:
+        assert committed != rendered, (
+            f"the committed digest is the CRLF rendering {rendered}; the field must be the stored "
+            "bytes' digest (N-203)"
+        )
+    # A digest that only a clone can check is not checked: the check must be discovered by the gate.
+    from verify_audit_append_only import EXPECTED_VERIFICATION_SCRIPTS
+
+    hook = "scripts/verify_seq10_baseline_comparison.py"
+    assert (REPO_ROOT / hook).is_file(), (
+        f"`{hook}` is not on disk, so `compare_seq10_baselines.py --check` is off the gate's discovery "
+        "path and a clone-failing comparison passes silently (N-203, §12.3)"
+    )
+    assert hook in EXPECTED_VERIFICATION_SCRIPTS, (
+        f"`{hook}` exists but is not named in EXPECTED_VERIFICATION_SCRIPTS, so the gate refuses to "
+        "discover it and the reproduction never runs (N-203, §12.3)"
     )
 
 
@@ -3895,12 +3948,34 @@ def probe_n204() -> None:
     raw = (REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz").read_bytes()
     stored = hashlib.sha256(raw).hexdigest()
     mutated = hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
-    assert committed == mutated, (
-        f"the artifact publishes {committed} for the corpus, which is not the CRLF-mutated digest "
-        f"{mutated}; if it now equals {stored} the field is repaired and N-204 closes"
+    assert committed == stored, (
+        f"the artifact publishes {committed} for the corpus, whose stored bytes hash to {stored}"
+        + (f" — it is the CRLF-mutated stream digest {mutated}" if committed == mutated else "")
+        + ": a reader cannot reproduce a digest no reader can compute from the file (N-204, §10.5, "
+        "§6.5)"
     )
-    assert committed != stored, (
-        f"the artifact publishes the file's own sha256 {stored}; N-204 is repaired"
+    # One dataset, one fingerprint: the manifest's current row names the same bytes.
+    import json as _json
+
+    manifest_rows = [
+        _json.loads(line)
+        for line in (REPO_ROOT / "data" / "reference" / "manifest.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    current = [
+        row
+        for row in manifest_rows
+        if row.get("is_current")
+        and str(row.get("artifact", "")).endswith("historical_dataset_2018_2023.json.gz")
+    ]
+    assert len(current) == 1, f"{len(current)} current manifest row(s) for the corpus, not 1"
+    assert current[0]["sha256"] == stored, (
+        f"the manifest's current row publishes {current[0]['sha256']} and the file hashes {stored}"
+    )
+    assert committed == current[0]["sha256"], (
+        "the artifact and the manifest disagree about the same corpus bytes (N-204)"
     )
     comparison = json.loads(
         (REPO_ROOT / "reports" / "analysis" / "s100" / "seq10_baseline_comparison.json").read_text(

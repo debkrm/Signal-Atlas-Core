@@ -477,6 +477,7 @@ EXPECTED_VERIFICATION_SCRIPTS: Tuple[str, ...] = (
     "scripts/verify_phase2b_significance.py",
     "scripts/verify_phase2c_walkforward.py",
     "scripts/verify_phase2d_verdicts.py",
+    "scripts/verify_seq10_baseline_comparison.py",
     "scripts/verify_seq10_certificate.py",
     "scripts/verify_wave1_thin_slice.py",
 )

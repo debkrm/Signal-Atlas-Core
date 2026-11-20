@@ -86,8 +86,9 @@ def test_n154_frozen_volume_digest_does_not_depend_on_the_checkout(tmp_path):
 def test_n155_forged_green_cache_row_is_not_reusable():
     now = datetime.datetime(2026, 11, 17, 12, 0, tzinfo=datetime.timezone.utc)
     verifiers = discovered_verification_scripts()
-    # Audit §98.10 item 3 adds `verify_seq10_certificate.py`, so the discovered sweep is 10, not 9.
-    assert len(verifiers) == 10
+    # Audit §98.10 item 3 adds `verify_seq10_certificate.py` and §101.12 item 1 adds
+    # `verify_seq10_baseline_comparison.py`, so the discovered sweep is 11.
+    assert len(verifiers) == 11
 
     healthy = {
         "source_tree_hash": "h1",

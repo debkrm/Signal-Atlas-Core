@@ -122,6 +122,18 @@ DECISION_RULE = (
 
 
 def _sha256(path: Path) -> str:
+    """
+    sha256 of a tracked text artifact's git-stored form: CRLF normalised to LF (N-203, §9.1).
+
+    `.gitattributes` pins `*.json` to `eol=lf`, so a clone stores the LF rendering while the writing
+    checkout may hold CRLF. Hashing the working copy made the published digest a digest of the author's
+    line endings and `--check` unreachable outside that checkout.
+    """
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def _sha256_bytes(path: Path) -> str:
+    """sha256 of a binary payload's stored bytes, unnormalised (`.json.gz` is `-text`, N-204)."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -541,9 +553,14 @@ def build_artifact() -> dict:
         "universe_instrument_count": dataset["instrument_count"],
         "dataset_corpus": DATASET_PATH.relative_to(REPO_ROOT).as_posix(),
         "dataset_content_fingerprint": dataset["content_fingerprint"],
-        "dataset_sha256": _sha256(DATASET_PATH),
+        "dataset_sha256": _sha256_bytes(DATASET_PATH),
+        "dataset_sha256_of": "the corpus gzip's stored bytes, unnormalised (N-204)",
         "seq10_artifact": SEQ10_ARTIFACT.relative_to(REPO_ROOT).as_posix(),
         "seq10_artifact_sha256": _sha256(SEQ10_ARTIFACT),
+        "seq10_artifact_sha256_of": (
+            "the verdict's stored text bytes with CRLF normalised to LF: `.gitattributes` pins *.json "
+            "to eol=lf, so this is the byte sequence every clone stores (N-203)"
+        ),
         "criteria_version": criteria.version,
         "criteria_fingerprint": compute_criteria_fingerprint(criteria),
         "arms": {
@@ -577,10 +594,10 @@ def build_artifact() -> dict:
     }
 
 
-def main() -> int:
+def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="reproduce the committed artifact")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     payload = build_artifact()
     text = json.dumps(payload, indent=1, sort_keys=True) + "\n"
