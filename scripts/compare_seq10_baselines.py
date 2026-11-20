@@ -89,6 +89,27 @@ RANDOM_DRAWS = 200
 VOLUME_PARTICIPATION_CAP = Decimal("0.025")
 # A one-session move this large is a level change (an unattested split/bonus), not a return (§5.3, §6.3).
 LEVEL_BREAK_THRESHOLD = Decimal("0.5")
+# The benchmark a pre-registered decision clause is compared against must be continuous: a retained
+# one-session step at or above this is refused by name rather than carried into a Calmar (§9.2, N-201).
+BENCHMARK_LEVEL_BREAK_REFUSAL = Decimal("0.5")
+
+
+def refuse_unattested_level_break(returns: Sequence[Tuple[str, Decimal]], threshold) -> None:
+    """
+    Refuse a benchmark series that carries a one-session level break, by session and by name (N-201).
+
+    The buy-and-hold arm drops the transition session and any level break, and this runs on the returns
+    it *kept*: a series can only reach a decision clause through here, so an exclusion that stops
+    working fails closed instead of quietly pricing the break.
+    """
+    limit = Decimal(threshold)
+    for session, ret in returns:
+        if abs(ret) >= limit:
+            raise SystemExit(
+                f"refused: the benchmark series carries a one-session step of {ret} at {session} "
+                f"(|return| >= {limit}) — an unattested level break inside the evaluation window makes "
+                f"every Calmar computed from it meaningless (N-201, §5.4, §9.2)"
+            )
 
 # Pre-registered decision rule (§8.1, §9.1) — recorded in the artifact and evaluated from the numbers:
 #   GO   iff SEQ10's round-trip profit factor is above the 95th percentile of the randomized-entry null
@@ -273,6 +294,7 @@ def buy_and_hold_arm(dataset: dict, cost_model: TransactionCostModel) -> dict:
                 continue
             returns.append((current, ret))
 
+        refuse_unattested_level_break(returns, BENCHMARK_LEVEL_BREAK_REFUSAL)
         equity = [INITIAL_CAPITAL]
         for _day, ret in returns:
             equity.append(equity[-1] * (Decimal(1) + ret))

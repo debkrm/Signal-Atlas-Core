@@ -79,7 +79,14 @@ hypothesis: >-
 #   (c) net_expectancy_in_R > 0
 #       — mean realized R over the closed round trips, net of costs and with dividends inside the hold.
 #   (d) calmar > niftybees_buy_and_hold.calmar
-#       — exposure-adjusted: CAGR / max session drawdown on the same window, same convention both arms.
+#       — exposure-adjusted: CAGR / max session drawdown on the same window, same convention both arms,
+#         against the NIFTYBEES series built by the construction named under `decision_rule` clause (d).
+#         Amended at §100.16 item 5 (N-201) before any execution: the ETF's price level steps ~10:1 across
+#         its 2019-12-20 ISIN transition and that ratio is not attested in the committed corporate-action
+#         table, so a benchmark chained across the two ISINs would carry a fabricated −89.93% session and
+#         every Calmar computed from it would be meaningless. The clause therefore names a construction
+#         that is continuous by excluding the boundary, and that refuses by name any level break it would
+#         otherwise carry. Nothing else in this pre-registration moves.
 #
 # If KILL: the daily-bar long-only alpha search is closed. No variant of this family is proposed, and
 # the reason it is closed is that four pre-registered conditions were measured, not that a better
@@ -93,7 +100,12 @@ decision_rule:
     - id: "net_expectancy_positive"
       statement: "mean net realized R per closed round trip > 0"
     - id: "calmar_above_buy_and_hold"
-      statement: "Calmar (CAGR / max drawdown) > NIFTYBEES buy-and-hold Calmar over the same window"
+      statement: "Calmar (CAGR / max drawdown) > the NIFTYBEES buy-and-hold Calmar over the same window, both arms on the same convention"
+      benchmark:
+        construction: "scripts/compare_seq10_baselines.py:buy_and_hold_arm"
+        series: "NIFTYBEES, built from within-ISIN returns only"
+        unmeasured_sessions: "2019-12-19 (a 10:1 level break inside INF732E01011) and 2019-12-20 (the ISIN transition to INF204KB14I2)"
+        refusal: "a retained one-session step of 50% or more is refused by name, not priced"
   on_kill: >-
     The daily-bar long-only alpha search is closed. No variant, no re-parameterisation and no
     re-entry of this family is proposed from this round.
