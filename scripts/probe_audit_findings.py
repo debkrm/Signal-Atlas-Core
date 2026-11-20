@@ -3334,6 +3334,61 @@ def probe_n194() -> None:
     )
 
 
+def probe_n195() -> None:
+    """
+    A status row must publish the profit factor its artifact computes (N-195, AGENTS.md §9.1).
+
+    Measured at 3136783: `CURRENT_STAGE_OF_WORK.md` prints seq 10's profit factor as `1.1178…` and its
+    liquidated profit factor as `1.1773…`, while
+    `reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json` publishes
+    `closed_only_profit_factor` 1.058319814406791810331206697 and `liquidated_profit_factor`
+    1.062288461598504234259941013 over the same 781 closed round trips and final equity of
+    1,072,507.24. `grep -rn 1.1178` over the tree returns only that one status line, so neither figure
+    comes from a committed artifact, verdict or configuration.
+
+    This probe asserts the defect is present while the row is OPEN, the way N-150's does: it fails as
+    soon as the row matches its artifact, which is the moment the finding is closed by replacing this
+    body with the fix-assertion.
+    """
+    import json
+
+    artifact = json.loads(
+        (
+            REPO_ROOT
+            / "reports"
+            / "verdicts"
+            / "trial_010"
+            / "phase3b2_swing_baseline_2022_2024_verdict.json"
+        ).read_text(encoding="utf-8")
+    )
+    closed = artifact["closed_only_profit_factor"]
+    liquidated = artifact["liquidated_profit_factor"]
+    assert closed.startswith("1.058319814"), closed
+    assert liquidated.startswith("1.062288461"), liquidated
+    assert len(artifact["closed_trades"]) == 781, len(artifact["closed_trades"])
+
+    status_rows = [
+        line
+        for line in (REPO_ROOT / "CURRENT_STAGE_OF_WORK.md").read_text(encoding="utf-8").splitlines()
+        if line.startswith("| Profit factor |")
+    ]
+    assert len(status_rows) == 1, status_rows
+    assert "1.1178" in status_rows[0], (
+        "the seq-10 status row no longer publishes 1.1178…; replace this probe with an assertion that "
+        "it publishes the artifact's 1.058319814… and close N-195"
+    )
+
+    hits = [
+        path.relative_to(REPO_ROOT).as_posix()
+        for root in ("reports/verdicts", "reports/analysis", "configs")
+        for path in (REPO_ROOT / root).rglob("*")
+        if path.is_file()
+        and path.suffix in {".json", ".jsonl", ".md", ".yaml", ".yml"}
+        and "1.1178" in path.read_text(encoding="utf-8", errors="replace")
+    ]
+    assert hits == [], f"a committed artifact publishes 1.1178 for seq 10, so the status row is sourced: {hits}"
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -3381,6 +3436,7 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-192": probe_n192,
     "N-193": probe_n193,
     "N-194": probe_n194,
+    "N-195": probe_n195,
 }
 
 

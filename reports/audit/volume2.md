@@ -3515,3 +3515,128 @@ N-191…N-194 gain `CLOSED` rows with `closed_in_section: 98` and the measuremen
 - **N-194**: a replay that does not return 422/7,309 and 0/0 with `max_drawdown 0.7264709…` on this corpus, or any registry or artifact digest that moves across a re-render. Today's pass is a 504-second read-only run, not an inference from the file.
 - **Ruling 1**: any criterion, threshold, fold boundary, calendar pin, cost row or gating start differing between the configuration that produced `9ee0a88c…` and the one producing `535e47f5…`. If one exists, `1.1.16` labels a research decision and the Ruling is wrong, not merely stale — and the substitution test would have to accept it, which §98.4 measured it does not.
 - **§98.10 item 1**: a feature value on `INE784B01035` computed across its 792-session hole. That is where the open part of N-191 now lives.
+
+## §99 — Audit of `3136783` (code commit under tag `feat-s99-b1e5fbd`): the gap now partitions the feature layer and a probe proves it, the certificate runs on the gate, and the implementer's own seq-10 column publishes two profit factors no artifact computes
+
+**Scope.** `3136783` carries the §98.10 work order: `scripts/measure_feature_gap_partition.py` (279 lines), `reports/analysis/s99/feature_gap_partition.json`, `scripts/verify_seq10_certificate.py` (27), `scripts/run_seq11_candidate.py` (459), `configs/trial_011_candidate.yaml` (81), `tests/unit/test_phase3b2_audit_s99_items.py` (181), three `reports/verdicts/trial_011/` artifacts, and the engine/registry/criteria edits behind them. `b1e5fbd` adds `.continue/` to `.gitignore` and appends the green row for tree `16641961842ea5d7…` (577 passed, 72.04 s); the tag `feat-s99-b1e5fbd` points at `b1e5fbd`.
+
+**Verdicts:** **§98.10 item 1 CLOSED** (N-191) · **item 2 CLOSED** (N-194) · **item 3 CLOSED** (N-193) · **§98.6 Ruling 1 holds** — `seq 11`'s controls are in `configs/trial_011_candidate.yaml`, so the live `1.1.16` does not move and the three seq-10 certificates stay attested · **seq 11 evaluated: NO-GO, on `CRIT-STAT-02`, not on statistical ambiguity** · **new HIGH finding N-195 OPEN** — the seq-10 status column publishes two profit factors no committed artifact computes.
+
+### 99.1 Baseline re-measured at `3136783`
+
+`python scripts/verify_audit_append_only.py --force-full`, in the primary checkout, exit 0.
+
+| Measurement | Value |
+|---|---|
+| Overall verdict line | `ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| §11.1 append-only | working tree & index vs HEAD: **0 deleted lines**; commits since `a3a40f1`: **0 deleted lines** |
+| Frozen volume | sha256 and 8,442 lines match the pin (1-78) |
+| Active volume | `volume2.md` HEAD content an unchanged prefix (3,517 committed / 3,517 now) |
+| Audit index | matches the volumes (**98** section rows, before this append) |
+| Discovered verifiers | **10**, every one exit 0 — `verify_audit_findings.py` 202.80 s, `verify_cash_universe_coverage.py` 53.53 s, `verify_historical_snapshot.py` 6.02 s, `verify_phase2a_containment_and_trials.py` 1.92 s, `verify_phase2b5_storage.py` 3.15 s, `verify_phase2b_significance.py` 1.05 s, `verify_phase2c_walkforward.py` 3.18 s, `verify_phase2d_verdicts.py` 4.76 s, `verify_seq10_certificate.py` 1.25 s, `verify_wave1_thin_slice.py` 4.88 s |
+| Suite | 576 parallel + 1 isolated = **577 of 577 collected**, **0 skipped, 0 xfailed**, 63.77 s |
+| Source tree | `16641961842ea5d7…`; already recorded, **no duplicate green row appended**; tree clean after the run |
+
+Two method facts cost this round time and are recorded so the next one does not repeat them:
+
+1. **A linked worktree is not a valid gate environment here.** In `C:/Users/DEB/sa_audit_s99` (detached at `3136783`) the same command exits 1 with `4 FINDING PROBE(S) FAILED`: N-165, N-167, N-168 and N-169 write `.git/info/exclude`, and in a worktree `.git` is a *file*, so `exclude.parent.mkdir(...)` raises `FileExistsError` on the worktree's own `.git` path. The four probes pass in the primary checkout. The red run was mine, not the repository's — but it means a worktree cannot produce a §99.1 baseline.
+2. **A worktree source mutation silently does not apply.** `signal_core` resolves to the primary checkout's `src` even when the process runs inside the worktree (`MODULE_FILE` printed for `signal_core.features.engine` was the primary path). One attack below was void for that reason and was redone in the primary checkout, with the printed module path and the written marker both confirmed before the measurement was believed.
+
+### 99.2 N-191 — the partition reaches the feature layer (CLOSED)
+
+`reports/analysis/s99/feature_gap_partition.json` derives its boundaries from the calendar and the committed corpus, never from a typed list:
+
+| Field | Value |
+|---|---|
+| `partition_fingerprint` | `GAP-PTN-V1-3fe08af638a6ee723031692ffeccb3aa6d6e6f585fd45fe0344128c75742ade6` |
+| instruments with a hole / in-series missing sessions | **539** / **58,941** |
+| subsegments | **16,733** |
+| material holes (≥ 20 sessions) | **74**, longest 792 |
+| feature values measured / computed across a gap | **28,457,131** / **0**, over 12 features |
+| witness `INE251H01024` (GVKPIL) | 1,062 bars, 363 missing, longest contiguous 256, 28 segments, first boundary 2021-01-18 |
+| witness `INE784B01035` (WINSOME) | 404 bars, 1,021 missing, longest contiguous 792, 81 segments, first boundary 2018-04-03 |
+
+The witness geometry is recomputed here from the raw corpus, not read from the artifact: 363 missing / 256 contiguous / 28 segments and 1,021 / 792 / 81; the largest bar-to-bar calendar distance is 257 sessions (2021-08-02 → 2022-08-12) and 793 (2020-07-20 → 2023-09-26), so `longest_hole_sessions` is the longest contiguous run and its label is accurate. `scripts/measure_feature_gap_partition.py --check` reproduces the committed bytes (exit 0). The value the fix suppresses is concrete: on the clean tree the engine's `sma_20` at `INE251H01024` 2021-02-08 is `None`, while the 20-surviving-bar mean an unpartitioned engine would publish is 2.990000.
+
+Attacks, each reverted, tree clean after:
+
+| Attack | Artifact `--check` | `probe N-191` |
+|---|---|---|
+| shared `partition_into_continuous_subsegments` returns one segment | **exit 1** — "the committed partition is not the one this corpus derives" | **exit 1** — "INE251H01024 has 27 contiguous hole(s) but 1 segment(s)" |
+| committed artifact tampered: `values_across_gap` 0 → 7 | **exit 1** | **exit 1** — "7 feature value(s) are computed across a gap" |
+| engine consumer site (`compute_standard_features_for_instrument`) unpartitioned | — | **exit 1** — "sma_20 is computed at 2021-02-08, the first bar after a gap, so its window spans the 363 boundary(ies)" |
+
+**CLOSED.** The residual is named, not implied: the 58,941 missing sessions and 74 material holes are still records absent from `prices_by_instrument`, so "what was observable at T" still depends on a derived artifact plus a probe rather than on `UNEXPLAINED_MISSING_RECORD` rows in the validated layer; and the engine's default is `fail_closed_on_unexplained=False`, so a caller is told by `None` values, not by an exception.
+
+### 99.3 N-193 — the certificate is on the gate (CLOSED)
+
+`scripts/verify_seq10_certificate.py` is a 27-line discovery hook that returns `probe_seq10_candidate.main()` and adds no assertion of its own — the two-paths shape §14.4 names is absent. The gate discovers **10** verifiers including it, and it exits 0 in 1.25 s. `probe_seq10_candidate.py` reports `CERTIFIED`: `N = 11`, `N_eval = 6`, one seq-10 row at `1.1.16`, `FOLD-SPEC-V1-36a39987dca…` reproducing the row, three certificates reconciled through the §98 restatements, the demerger pair restated, and the sealed-era window refused by the engine.
+
+Attack, in the worktree (the target files are read by path, so worktree resolution is the correct one here): forge both `criteria_fingerprint` fields in `reports/verdicts/trial_010/seq10_baseline_comparison.json` to `CRIT-FPR-V1-000…` → the verifier exits 1, naming the restatement's recorded `9ee0a88c…` against the cited `000…`. Baseline exit 0.
+
+**CLOSED.** Residuals: (a) the verifier set is a glob, so deleting `scripts/verify_seq10_certificate.py` drops discovery to **9** with no complaint — measured; nothing pins the inventory, and this is a property of every `verify_*.py`, not of this one; (b) the certificate is still not run by any *other* verifier, so the guarantee is "one more file on the discovery path", which is exactly what §98.10 item 3 asked for.
+
+### 99.4 N-194 — the measurement is compared with its own replay (CLOSED)
+
+`demerger_restatement_problem` now refuses a replay that omits either key and refuses a `measurement` that differs from `replay` on either. Attack: set the restatement's measurement to 7/9 while its replay stays 0/0 → the verifier exits 1, "the restatement measures demerger_forced_exits 7, but its own replay returns 0; the measurement is not this replay's (§98.10 item 2)". `probe N-194` also exits 1 under the same tamper.
+
+**CLOSED.** Residual: `FAIL N-194: ` with an empty diagnostic under that tamper — cosmetic, and the same bare-message shape §98.8.3 recorded.
+
+### 99.5 G2A-6.7 — the exemption counts the evaluations *preceding* the row
+
+`trials.py` computes `prior_evaluations = sum(1 for earlier in registry.get_trials() if earlier.seq < row.seq and registry.get_evaluation(earlier.trial_id) is not None)` and admits an unmatched artifact only when it is `IN_SAMPLE` and `declared_count == prior_evaluations`. Measured against the live ledger (6 evaluations after seq 11 appended): the seq-10 artifact declares 5 and `verify_phase2a_containment_and_trials.py` exits **0**; doctored to 6 (today's total) it exits **1**; doctored to 4 it exits **1**. So a later trial's append cannot retroactively un-attest an earlier artifact, an erased ledger computes 0 and fails, and an inflated claim fails.
+
+### 99.6 seq 11 — measured, and refused by its own criteria
+
+| Metric | seq 10 | seq 11 |
+|---|---|---|
+| Closed round trips | 781 | **1,101** |
+| Profit factor (closed only) | 1.058319814406791810331206697 | 1.215059254115567619027472003 |
+| Net profit factor | 1.020542895… | 1.162521938150914922887549000 |
+| Liquidated profit factor | 1.062288461598504234259941013 | 1.281989670001573246299919807 |
+| Max portfolio drawdown | 0.7264709014681672238018483779 | 0.5193109028986467506648719406 |
+
+The pre-registered drawdown claim is met: the reduction is exactly **0.2071599985695204731369764373 absolute, 28.5159 % relative**. `overall_verdict` is **NO-GO** because `CRIT-STAT-02` reads `1.2820 < 1.50` (`configs/go_no_go_criteria.yaml` pins `min_profit_factor: "1.50"`); `summary_counts` is 15 PASS / 6 FAIL / 7 NOT_RUN, `validation_folds_count` is 0, `evaluated_trial_count` 6. The registry manifest is `total_trials 11` / `evaluation_count 6`, head `e76c249f…`; the criteria pin is `b8ff325c…`, which is also what the live criteria hash under `1.1.16` excludes (`expected_trial_registry_manifest_sha256`, N-139), so the live fingerprint stays `CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470`. The seq-11 controls live in `configs/trial_011_candidate.yaml` (sha256 `199786951cb1c53693732cd52e5a923acfe23cddf0983283706f3a3d6b21d84e`, equal to the comparison artifact's `pre_registration.sha256`), not in `configs/go_no_go_criteria.yaml` — which is what keeps §98.6 Ruling 1 true. The 2024 validation fold is untouched and the holdout `2025-01-01..2026-11-11` is sealed (the engine refuses a sealed-era window by name). The verdict is therefore a NO-GO on the committed floor, and the drawdown improvement does not buy an exemption from it.
+
+### 99.7 N-195 — two cells in the implementer's seq-10 column are unsourced (OPEN, HIGH)
+
+`CURRENT_STAGE_OF_WORK.md:2535` publishes seq 10 as profit factor `1.1178…` and liquidated profit factor `1.1773…`. The committed artifact publishes `closed_only_profit_factor` **1.058319814406791810331206697** and `liquidated_profit_factor` **1.062288461598504234259941013**. The two cells that do match — 781 closed round trips and final equity 1,072,507.24 — are the same row, and the seq-11 column matches its artifact exactly, so the error is confined to the seq-10 pair. `grep -rn "1\.1178"` over the tree returns **only** that status line: no verdict, analysis artifact, config, or script produces either figure.
+
+Under §9.1 a published figure is a computed one, and under §11.3 a status claim must cite the verdict that grants it. A doc that prints a profit factor 5.9 % above the artifact's is a claim with no computation behind it, in the one document a reader uses to see what the round achieved. This is **N-195**, HIGH, OPEN; the doc is the implementer's (§11.4), so the correction is theirs and the probe that must fail closed is `python scripts/probe_audit_findings.py N-195`, added here to assert the defect while it is open and to fail the moment the row matches its artifact.
+
+### 99.8 Findings ledger after this section
+
+| | before §99 | after §99 |
+|---|---|---|
+| rows / ids | 78 / 46 | **79 / 47** |
+| latest per id | 44 CLOSED, 1 OPEN, 1 ACCEPTED | **44 CLOSED, 2 OPEN, 1 ACCEPTED** |
+| OPEN ids | `N-150` | **`N-150`, `N-195`** |
+
+No new CLOSED row is appended for N-191, N-193 or N-194: they already carry a CLOSED row from §98, and `validate_ledger` treats a repeated id at the same status as a duplicate (`ALLOWED_TRANSITIONS`, N-157). Their closure is re-verified here and cited by §99.2-99.4; the ledger keeps the §98 rows as the closure of record.
+
+### 99.9 Phase verdicts
+
+| Phase (`CURRENT_STAGE_OF_WORK.md` §99 row) | Verdict | Residual |
+|---|---|---|
+| Gap partition of the feature layer (§98.10 item 1) | **CLOSED** — 539 instruments / 58,941 sessions / 16,733 subsegments committed, 0 of 28,457,131 values across a gap, three attacks refused | holes remain absent records, not `UNEXPLAINED_MISSING_RECORD` rows; compliance is `None`, not an exception |
+| `demerger_restatement_problem` measurement vs replay (§98.10 item 2) | **CLOSED** — 7/9-beside-0/0 refused by name | probe's bare failure message |
+| Certificate on the gate (§98.10 item 3) | **CLOSED** — 10th verifier, exit 0, forged fingerprint refused | verifier inventory is an unpinned glob |
+| seq 11 candidate / G2A-6.7 / criteria `1.1.16` | **evaluated; NO-GO** — 1,101 trades, dd −0.20716, `CRIT-STAT-02` 1.2820 < 1.50, N=11/N_eval=6, live pin unmoved | the strategy's drawdown gain is not a pass; the floor is the binding constraint |
+| Status document (§11.3) | **FAIL** — N-195 OPEN | two cells have no computation behind them |
+| Phase 2D artifacts / holdout | **held** — 2024 fold untouched, `2025-01-01..2026-11-11` sealed and refused | none observed |
+
+### 99.10 Work order (feat-s100), ordered by what it unblocks
+
+1. **Correct the seq-10 profit-factor cells, or cite the artifact that produces them** (N-195). Required: `CURRENT_STAGE_OF_WORK.md` publishes `1.058319814…` / `1.062288461…`, or names a committed artifact that computes `1.1178…` / `1.1773…`; the row may not stand unsourced. The probe that must fail closed is `python scripts/probe_audit_findings.py N-195`, which today asserts the defect and must be replaced by a fix-assertion in the same commit. Phase: §9.1 / §11.3.
+2. **Pin the verifier inventory.** Measured: deleting one `verify_*.py` drops discovery from 10 to 9 with no diagnostic, so a check can leave the gate by deleting a file. Required: a committed expected set (or count) the gate compares against discovery, with the deletion refused by name. Phase: §12.3.
+3. **Carry the executed criteria fingerprint on the registry surface used by readers.** The evaluations sidecar now records it (seq 11's row carries `CRIT-FPR-V1-535e47f5…`, `eval_hash b1d90636…`), but `criteria_version` still labels three criteria sets and nothing a reader of the row sees distinguishes them without recomputation. Phase: §9.1 / §97.7 Ruling.
+4. Carried unchanged: §96.10 items 5 (superseded rows in `get_corporate_actions()`), 6 (the certificate reading the `NON_REPRODUCIBLE_AT` annotation) and 7 (the carried residuals, `N-150` included); plus the bare failure message in `probe N-194` (§99.4).
+
+### 99.11 What would falsify this verdict
+
+- **N-191**: any feature value whose lookback window contains an `UNEXPLAINED_MISSING_RECORD` boundary on a later corpus; or `partition_into_continuous_subsegments` returning fewer segments than a witness's contiguous holes + 1; or a `feature_values_across_gap` that stays 0 when the engine is unpartitioned — the opposite of what §99.2 measured.
+- **N-193**: a certificate passing while its stored `criteria_fingerprint` differs from the restatement's recorded executed hash; or a fourth re-seal moving the live hash with no appended restatement, yet `verify_seq10_certificate.py` exiting 0.
+- **N-194**: a restatement whose `measurement` differs from its own `replay` and still exits 0; or a replay that omits the pair and is accepted.
+- **G2A-6.7**: an artifact declaring today's ledger total (6) accepted for a trial that ran when the ledger held 5; or an erased ledger making `prior_evaluations` 0 and still being exempted.
+- **N-195**: a committed artifact, verdict or config computing `1.1178…` or `1.1773…` for seq 10 — which `probe N-195` now scans for on every gate run. If one exists, the finding is wrong and the status row is sourced.
+- **§99.1**: a gate run in a linked worktree that reports green — it cannot, and the four `.git/info/exclude` probes are the reason.
