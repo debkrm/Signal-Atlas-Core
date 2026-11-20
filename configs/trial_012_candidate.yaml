@@ -1,0 +1,133 @@
+# CANDIDATE seq 12 — PRE-REGISTRATION (AGENTS.md §8.2, §13.6, §9.2)
+#
+# Committed BEFORE the strategy class, the runner wiring, the QA pass and the run it describes. The
+# registry row `TRIAL-PHASE3B2-MEANREV-012` cites this file's sha256, so a reader can check that the
+# hypothesis executed is the one pre-registered here.
+#
+# This spec has no alternatives. It is a single closed-form mean-reversion rule, executed exactly once:
+# no variants, no parameter sweep, no threshold re-selection. A second run under a different parameter
+# value would be a second trial and would have to be registered as one (§8.2).
+#
+# The judgment thresholds are NOT touched: every field of `GoNoGoCriteria` stays byte-identical, so the
+# live criteria fingerprint stays `CRIT-FPR-V1-535e47f5…` under version 1.1.16 and the three seq-10
+# certificates remain attestable (§98.6 Ruling 1). A strategy hypothesis lives in this file, never in
+# `configs/go_no_go_criteria.yaml`.
+metadata:
+  trial_id: "TRIAL-PHASE3B2-MEANREV-012"
+  seq: 12
+  pre_registered: true
+  section: "§101 / §13.2 holding-period realism"
+  window_start: "2018-04-01"
+  window_end: "2023-12-31"
+  first_session: "2018-04-02"
+  last_session: "2023-12-29"
+  partition: "IN_SAMPLE"
+  criteria_version: "1.1.16"
+  criteria_fingerprint: "CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470"
+  frozen_validation_fold: "2024"
+  holdout: "2025-01-01..2026-11-11"
+  registry_trial_count_before_registration: 11
+  registry_evaluated_count_before_registration: 6
+
+strategy:
+  strategy_id: "SWING-MEAN-REV-EQ-V1"
+  # Signal at the close of session T: overbought-avoidance trend filter plus an oversold pullback.
+  entry_condition: "close_T > SMA(200)_T AND RSI(2)_T < 10"
+  rsi_method: "WILDER"
+  rsi_price_basis: "SPLIT_BONUS_ADJUSTED_CLOSE"
+  # Exit: signal at the close of any session T with close > SMA(5); fill at T+1 open, never at T close.
+  exit_condition: "close_T > SMA(5)_T"
+  exit_fill: "T+1_OPEN"
+  entry_fill: "T+1_OPEN"
+  protective_stop: "2.0xATR(14)"
+  max_hold_trading_sessions: 21
+
+controls:
+  # Unchanged from seq 10/11: these are not the hypothesis.
+  min_median_adtv_crore: "25.0"
+  adtv_lookback_sessions: 20
+  risk_per_trade_pct: "0.0075"
+  atr_stop_multiple: "2.0"
+  max_position_weight: "0.0800"
+  unbanded_session_fill_policy: "LOCKED_BAR_REFUSAL_ONLY"
+  min_entry_notional: "25000"
+  min_fill_notional: "5000"
+  cost_model: "signal_core.execution.costs.TransactionCostModel(committed criteria statutory schedule)"
+
+hypothesis: >-
+  A two-to-five session oversold bounce inside a long-term uptrend (close above its 200-session mean
+  with a two-session Wilder RSI below 10) earns positive net expectancy per round trip on NSE EQ
+  delivery swing over 2018-04-02..2023-12-29, after the full statutory cost schedule, a 2.0xATR(14)
+  protective stop, a 21-session hold bound, a ₹25 crore T-1 median-ADTV entry floor and 0.75% ATR risk
+  sizing — and its net round-trip profit factor is above the 95th percentile of a matched-count
+  random-entry null drawn from the same point-in-time liquidity-filtered universe.
+
+# --- PRE-REGISTERED DECISION RULE (§8.1, §9.1, §9.2) -------------------------------------------
+#
+# Every clause below is evaluated by `scripts/run_seq12_candidate.py` from computed values and the
+# verdict string is constructed from those booleans. Nothing in the verdict is typed.
+#
+# GO only if ALL FOUR hold. Otherwise KILL.
+#
+#   (a) net_trade_profit_factor > random_entry_null.p95(net_trade_profit_factor)
+#       — the round-trip ratio net of statutory costs, against a matched-count null of 200 seeded
+#         draws whose entries are drawn from the same point-in-time, liquidity-filtered universe,
+#         restricted to close > SMA(200) on the signal day with the RSI condition removed, and whose
+#         exits use the same dynamic exit rule, the same 2.0xATR stop and the same 21-session cap.
+#   (b) liquidated_profit_factor >= 1.50
+#       — necessary, not sufficient; the committed `min_profit_factor` in `configs/go_no_go_criteria.yaml`.
+#   (c) net_expectancy_in_R > 0
+#       — mean realized R over the closed round trips, net of costs and with dividends inside the hold.
+#   (d) calmar > niftybees_buy_and_hold.calmar
+#       — exposure-adjusted: CAGR / max session drawdown on the same window, same convention both arms.
+#
+# If KILL: the daily-bar long-only alpha search is closed. No variant of this family is proposed, and
+# the reason it is closed is that four pre-registered conditions were measured, not that a better
+# parameter might exist.
+decision_rule:
+  all_of:
+    - id: "net_pf_above_null_p95"
+      statement: "net trade profit factor > p95 of the random-entry null's net trade profit factor"
+    - id: "liquidated_pf_floor"
+      statement: "liquidated profit factor >= 1.50 (necessary, not sufficient)"
+    - id: "net_expectancy_positive"
+      statement: "mean net realized R per closed round trip > 0"
+    - id: "calmar_above_buy_and_hold"
+      statement: "Calmar (CAGR / max drawdown) > NIFTYBEES buy-and-hold Calmar over the same window"
+  on_kill: >-
+    The daily-bar long-only alpha search is closed. No variant, no re-parameterisation and no
+    re-entry of this family is proposed from this round.
+
+null:
+  harness: "scripts/compare_seq10_baselines.py (the §100 matched-count randomization), extended here with the dynamic exit"
+  seed: 101012012
+  draws: 200
+  entry_pool: "universe_by_date[T] ∩ EQ-active at T ∩ T-1 median 20-session ADTV >= ₹25 Cr"
+  entry_filter: "close_T > SMA(200)_T (RSI condition removed)"
+  entry_fill: "T+1_OPEN"
+  exit_rule: "same dynamic rule: close > SMA(5) at any session close, filled at the next open; 2.0xATR stop; 21-session cap"
+  matched_trade_count: true
+  volume_participation_cap: "0.025"
+  favours_the_null_disclosure: >-
+    no market impact, no slippage, no dividend income inside a hold, no competitive cash constraint
+    (every matched trade is assumed fundable). These are disclosed in the artifact, not adjusted for.
+
+inference:
+  date_block_bootstrap: >-
+    a seeded date-block bootstrap (blocks = calendar months of the entry date, resampled with
+    replacement) on net expectancy per round trip, because adjacent trades in one month share a market
+    state and a raw trade count overstates independence.
+
+success_criteria:
+  evaluated_by: "scripts/run_seq12_candidate.py"
+  one_run_only: true
+  no_parameter_sweep: true
+  no_variant_proposed: true
+
+falsifier: >-
+  Any one of the four decision-rule clauses failing at the pre-registered values KILLs the family.
+  A GO would be falsified by a null whose p95 net trade profit factor is at or above the strategy's, by
+  a liquidated profit factor below 1.50, by a non-positive mean net R, or by a Calmar at or below
+  NIFTYBEES buy-and-hold on the same window.
+
+not_audited: true
