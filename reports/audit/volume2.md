@@ -3990,3 +3990,239 @@ N-195, N-196, N-197, N-198, N-200 and N-202 gain `CLOSED` rows with `closed_in_s
 - **N-203**: a clone in which `compare_seq10_baselines.py --check` exits 0 with `seq10_artifact_sha256` still `4a729dbc…`. That would mean the digest is not CRLF-dependent, and the field I measured is coincidence; `sha256(LF-rendered CRLF)` reproducing it to 64 hex digits makes that implausible.
 - **N-204**: a reader who can reproduce `0fdc728a…` from `sha256(file bytes)` — measured impossible; the mutated-stream hash matches it exactly and the raw hash is `ea0b65a3…`.
 - **The overall verdict**: a P&L run on this tree, which would make the STOP's consequences measurable rather than prospective. None exists, and none may be read from the holdout.
+## §102 — Audit of `325bab8` (tag `feat-s103-325bab8`): the stored bytes' digest reproduces in a clone and in the writing checkout, the 86 excluded signals and the 9-instrument detail reach recompute to the digit, and the corpus boundary is marked where it is read rather than where §101 ordered it
+
+**Scope.** One code commit, `325bab8` (parent `38d22a6`), 11 paths, +427/−27. It executes §101.12 items 1, 2, 5 and 6, and takes a fifth thing the order did not ask for: an artifact-surface mark for item 4's corpus half. Tag `feat-s103-325bab8` resolves to `325bab853cce023ad7182b3461de62ed08ac9cd6`.
+
+**Verdicts:** **item 1 CLOSED** (N-203) · **item 2 CLOSED** (N-204) · **item 5 CLOSED** · **item 6 CLOSED** on the branch it names (the RIGHTS branch is stated, not exercised) · **item 4 (N-201) OPEN** — the artifact-surface mark is measured true but it is not the corpus header §101.12 item 4 named, and the corpus half is a sealed-surface change this round was not ordered to make · **no new finding**; **one Ruling** (§102.3).
+
+### 102.1 Baseline re-measured at `325bab8`
+
+`--force-full` in a fresh clone of this repository checked out at `325bab8`, `core.autocrlf=true`, working tree clean. A second clone with `core.autocrlf=false` and a forced re-checkout was used for the digest comparisons of §102.4.
+
+| Probe | Measured |
+|---|---|
+| `python scripts/verify_audit_append_only.py --force-full` | **exit 0** — `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| §11.1 append-only | working tree & index vs HEAD **0 deleted lines**; commits since `a3a40f1` **0 deleted lines** |
+| Discovered verifiers | **11, all exit 0** — `verify_audit_findings` 292.01 s, `cash_universe_coverage` 67.17 s, `historical_snapshot` 7.51 s, `phase2a_containment_and_trials` 1.70 s, `phase2b5_storage` 3.28 s, `phase2b_significance` 0.95 s, `phase2c_walkforward` 3.09 s, `phase2d_verdicts` 5.77 s, **`seq10_baseline_comparison` 39.57 s**, `seq10_certificate` 1.45 s, `wave1_thin_slice` 6.35 s |
+| Suite | **610 passed** parallel + **1 passed** isolated = **611 of 611 collected**, 0 skipped, 0 xfailed, 88.01 s |
+| Tags | **121** commit-bearing tags verified, including all four wave sign-offs |
+| Source tree | `90b534704ad55d42…` — forced; the gate appended **one** row (`gate_sha 325bab8`, 611, 11 exits 0) in the clone |
+| Criteria / pins | `1.1.16`, `CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470` — recomputed from my own canonicalisation |
+| Manifest | 1,971 rows / **1,009 current** / 962 superseded; `MAN-FPR-V1-be45b7e791d5d3cd683ee119ae4beeae8cba3aab7728ac194d6b19521a691045` — recomputed from the bytes |
+| Registry | **N = 11, N_eval = 6** read from `data/trials/` — unchanged |
+| Corpus | **75,390,706 B**, raw sha256 **`ea0b65a3…`**, `DATA-CTNT-V2-cb4832c0b43952c4a03d58ee65ff5b15` — recomputed bar by bar |
+| Ledger before this section | 94 rows / 56 ids; 50 CLOSED, 5 OPEN (`N-150`, `N-199`, `N-201`, `N-203`, `N-204`), 1 ACCEPTED |
+
+**The round has no committed green row, and that is a property of the round, not of this section.** `git show 325bab8:data/reference/source_tree_green.json` holds 42 rows whose last `gate_sha` is `672c9d0`; `325bab8` appears zero times. The implementer's working tree carried three pre-existing paths it may not commit (`AGENTS.md` modified, the two `.agents/skills/*/SKILL.md` untracked), so the gate refused to certify a working copy it did not measure and wrote no row (§80.3). **Consequence for the baseline: the green claim for this round cannot be checked by reuse; it can only be re-measured.** I re-measured it, above, on a clean checkout of the commit's own tree — and the run wrote the row the commit could not (§102.8).
+
+### 102.2 Process — the scope is clean, the protected surfaces did not move, and no trailer exists
+
+`git diff --name-status 38d22a6..325bab8` returns exactly 11 paths: `CURRENT_STAGE_OF_WORK.md`; `reports/analysis/s100/seq10_baseline_comparison.json`; `reports/analysis/s102/seq12_data_qa.json`; `scripts/compare_seq10_baselines.py`; `scripts/probe_audit_findings.py`; `scripts/run_seq12_candidate.py`; `scripts/verify_audit_append_only.py`; `scripts/verify_seq10_baseline_comparison.py` (new); and the three verifier-count tests. A `git diff --stat` restricted to `configs/go_no_go_criteria.yaml`, `configs/trial_012_candidate.yaml`, `reports/audit`, `AGENTS.md`, `.agents`, `data/trials`, the corpus, `data/reference/manifest.jsonl`, `configs/partition_spec.yaml` and `reports/verdicts` is **empty**. So: no criteria value, no pre-registration clause, no audit prose, no trial row, no corpus byte, no manifest row, no fold spec and no verdict artifact moved. The 2024 fold is untouched and no holdout session was read (nothing in the diff names `2025-01-01..2026-11-11`).
+
+No `Co-Authored-By`, `Generated with`, model-identity or co-author line exists in the commit message or body (§12.7). The commit is not an amendment; `38d22a6` is its parent and `feat-s103-325bab8` is a tag at it.
+
+One note, recorded not raised: the commit message says items 1, 2, 5 and 6, and also says "Items 3 and 4's corpus half stay untaken". The artifact-surface mark that *is* delivered for item 4 appears in no ordered item. It is measured in §102.6 and its true scope is stated there.
+
+### 102.3 Ruling 1 — a digest field's subject is the byte sequence it hashes, and the field must name it
+
+**Evidence.** At `325bab8`: the trial_010 verdict is 498,216 B with **0** CRLF in the stored blob, sha256 `75571da3…`, and 512,882 B with **14,666** CRLF in the writing checkout, sha256 `4a729dbc…`; the corpus gzip is 75,390,706 B, sha256 `ea0b65a3…`, and contains **1,089** `0D 0A` pairs, so `sha256(bytes.replace(b"\r\n", b"\n"))` is `0fdc728a…`. Both defects §101 raised were the same error: a field whose *name* says "the file" whose *value* is a re-rendering of it.
+
+**The single definition it changes.** A published digest of a tracked file is the sha256 of the sequence that file's reader will read from the repository: for a text path, the LF-normalised stored form; for a binary path, the stored bytes unmodified. A field carrying such a digest must carry a sibling `_of` naming which of the two it is. It changes nothing else: no threshold, window, fold, trial count or criterion; it does not authorise a digest of one file to stand for another; and it does not retroactively relabel a frozen round's record.
+
+**Why the normalisation is well defined here.** I hashed all **2,434** tracked blobs at `325bab8` and asked `git check-attr text` of each: **0** blobs under a `text` attribute contain a CR byte, and **2,164** blobs under `-text` do. So for every tracked text path "LF-normalised" is today identical to "the bytes git stores" (the AGENTS boundary holds), and for every binary path it is identity or corruption — which is exactly why the two paths must be separate functions.
+
+**The work it creates** is §102.13 item 5 (make a normalising digest function unable to receive a binary path by construction; `run_seq10_candidate._digest` and `run_seq11_candidate._digest` still normalise unconditionally). **The probe that must fail closed** is `probe N-203` plus `probe N-204`, both of which refuse the wrong rendering today (§102.8). **What would make this Ruling wrong:** a tracked text blob stored with a CR byte (then "LF-normalised" is not "the bytes git stores" and the text arm needs the blob, not the worktree), or a binary path for which normalisation is identity (then the split is ceremony). Phase: §10.5 / §9.1 / §12.3.
+
+### 102.4 Item 1 (N-203) — the committed digest is the stored bytes' digest, and both checkouts now recompute it
+
+`.gitattributes` exists at `325bab8` (1,619 B) and pins `* text=auto eol=lf`, `*.json text eol=lf`, `reports/audit/** text eol=lf`, and — after every text rule, last-match-wins — `*.json.gz -text`, `*.csv.zip -text`, `*.zip -text`, `*.gz -text`, `data/raw/circulars/*/** -text`.
+
+| Measurement | Value |
+|---|---|
+| `sha256(git cat-file blob 325bab8:reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json)` | **`75571da3ebff56531addc6afdecdac6f05cf5a0799327a3ac85a97177ae067ae`** |
+| `sha256` of that verdict with LF re-rendered as CRLF | `4a729dbc…` — the value §101 found committed, now gone |
+| Committed `seq10_artifact_sha256` | **`75571da3…`**, with `seq10_artifact_sha256_of` naming "stored text bytes with CRLF normalised to LF" |
+| `compare_seq10_baselines.py --check`, clean clone, `core.autocrlf=true` | **exit 0** |
+| `compare_seq10_baselines.py --check`, clean clone, `core.autocrlf=false` + forced re-checkout (498,216 B, 0 CRLF) | **exit 0** |
+| `compare_seq10_baselines.py --check`, writing checkout (512,882 B, 14,666 CRLF) | **exit 0** |
+| `python scripts/verify_seq10_baseline_comparison.py`, clone | **exit 0** |
+
+The digest is now checkout-independent **by construction**, and I measured it on both renderings rather than on the one the author had: the same 64 hex digits from a 14,666-CRLF worktree and from a 0-CRLF clone. `_sha256` normalises and is used for the verdict (text); the new `_sha256_bytes` is used for the corpus gzip (binary, §102.5). `probe N-203` additionally refuses the old shape: it asserts the field's own `_of` value as its message when the assertion fails, so the failure names the defect rather than the number.
+
+### 102.5 Item 2 (N-204) — one dataset, one fingerprint, and every other published digest inventoried
+
+| Measurement | Value |
+|---|---|
+| Corpus stored bytes | 75,390,706 B, sha256 **`ea0b65a3…`** |
+| `sha256(bytes with CRLF→LF)` | `0fdc728a…` — the value the s102 artifact published at `46a99ec`, now gone from it |
+| Manifest's current corpus row | exactly 1, `sha256 ea0b65a3…`, `byte_count 75,390,706` |
+| s100 `dataset_sha256` | `ea0b65a3…` **and it was already `ea0b65a3…` at `38d22a6`** — this field did not move in this commit; only its `_of` label was added |
+| s102 `corpus.sha256` | **`ea0b65a3…`**, with a `sha256_of` naming "the file's stored bytes, unnormalised" |
+
+**Every published digest in `reports/analysis/**`, with what it hashes** (29 digest-valued fields across 8 files; the two per-certificate pairs that repeat are collapsed into one row each):
+
+| File | Field | Hashes | Named? |
+|---|---|---|---|
+| s100 comparison | `criteria_fingerprint` | the typed criteria payload | by field name |
+| s100 comparison | `dataset_content_fingerprint` | the corpus's logical content (calendar + bars) | by field name |
+| s100 comparison | `dataset_sha256` | the corpus gzip's stored bytes | **yes** (`_of`) |
+| s100 comparison | `seq10_artifact_sha256` | the verdict's LF form | **yes** (`_of`) |
+| s101 QA | `corpus.sha256` | **the CRLF-mutated gzip stream** (`0fdc728a…`) | **no** — frozen record, see below |
+| s101 QA | `pre_registration.sha256` | the config **before** the clause-(d) amendment (`66a05b4a…`) | no |
+| s101 QA | `criteria.fingerprint` | the typed criteria payload | by field name |
+| s102 QA | `pre_registration.sha256` | the config's LF bytes (`5a7f7b8f…`, recomputed) | **yes** (`_of`) |
+| s102 QA | `restates.sha256` | the s101 artifact's LF bytes (`54c08bcb…`, recomputed) | **yes** (`_of`) |
+| s94 verdict | `criteria_fingerprint`, `calendar_fingerprint`, `returns_digest` | criteria, calendar, return series | by field name |
+| s98 criteria restatement | `live_criteria_fingerprint`, `live_manifest_fingerprint`, `pin_only_proof.executed_manifest_fingerprint`, `certificates.executed_{criteria,manifest}_fingerprint` | the live criteria and manifest, the manifest the pin-only proof executed against, and the executed pair per certificate | by field name |
+| s98 demerger / drawdown restatements | `replay.corpus_fingerprint`, `replay.criteria_fingerprint` | corpus content; criteria | by field name |
+| s99 feature partition | `derived_from.content_fingerprint`, `partition_fingerprint` | corpus content; the gap partition | by field name |
+
+**Remaining mutating hash paths — flagged, not raised.** Fifteen `read_bytes().replace(b"\r\n", b"\n")` sites remain in `scripts/`, `src/` and `tests/`. I read every call site: all fifteen are applied to text (config, `.jsonl`, a captured `.html`, the manifest, audit volumes, verdict artifacts). The two sites that had been applied to a binary were the two this commit split, and they are now `_digest_bytes` / `_sha256_bytes`. `run_seq10_candidate._digest` and `run_seq11_candidate._digest` are still unguarded normalisers applied to text only; a future `.gz` argument repeats N-204 exactly. That is §102.13 item 5, not a finding, because no current call hashes a binary.
+
+The s101 artifact's unlabelled `0fdc728a…` is **left as the §101 round's frozen record** (§10.1, §97.5): it is a statement of what that round published, it is superseded by the s102 artifact's labelled field, and relabelling it in place would be the overwrite §102.10 judges. Its presence is why the space of published corpus digests is not yet one value with one meaning.
+
+### 102.6 Item 5 — the two silent boundaries are published, and every count recomputes from my own code
+
+I wrote my own SMA(200) (simple, 6 dp, half-up), my own Wilder RSI(2) (2 dp), my own calendar-continuity segmentation, my own series resolution from `cash_equity_symbol_intervals.csv`, and my own step attestation (exact-date price-side ratio ≈ `1+move` within 0.5 %, or an exact-date DIVIDEND/RIGHTS cash amount reproducing close or open within 0.5 % of the previous close, with the TERP formula for rights). The library was used only as a cross-check, never to produce a count: **2,578,060 bars, 0 SMA mismatches, 0 RSI mismatches.**
+
+| Measurement | Artifact | Mine |
+|---|---|---|
+| eligible signals after the point-in-time universe filter | — | 108,990 |
+| executable entry signals | 93,463 | **93,463** |
+| signals on the final session, no T+1 to fill at | 86 | **86** |
+| … of those, EQ series | 62 | **62** |
+| … of those, not EQ (24) | — | **24** |
+| signals including the final session | 93,525 | **93,525** |
+| signals refused for a non-EQ series | 15,441 | **15,441** |
+| unattested ≥10 % level steps (corpus-wide) | (unchanged) | **6,731** |
+| instruments carrying one | (unchanged) | **1,668** |
+| signals with a step in their own 200-session window | 21,276 | **21,276** |
+| usable entry signals | 72,187 | **72,187** |
+| 200-row detail: distinct instruments | 9 | **9** |
+
+**Field-by-field diff of `reports/analysis/s102/seq12_data_qa.json`, `46a99ec` → `325bab8`:** 94 flattened fields become 117. Exactly **23 added and 1 value changed**, and every one traces to an ordered item:
+
+| Change | Ordered by |
+|---|---|
+| `corpus.sha256` `0fdc…`→`ea0b…`; `corpus.sha256_of` added | item 2 (N-204) |
+| `pre_registration.sha256_of`; `restates.sha256_of` added | item 2's definition applied to the other two text digests (labels only; no value moved) |
+| `signals_without_a_next_session` 86; `…_in_eq_series` 62; `entry_signals_including_the_final_session` 93,525; `entry_signal_scope` | item 5 |
+| `signal_level_steps_in_lookback_detail_distinct_instruments` 9; `…_detail_scope` | item 5 |
+| `rights_terp_branch.{records_in_the_table 4, records_on_a_candidate_step 0, limitation}` | item 6 |
+| `corpus_reconciliation.{detail_is_a_census, detail_scope, unattested_unit_break{…9 fields}}` | **not in an ordered item** — the artifact-surface half of item 4 (§102.7) |
+
+No field moved without a traceable origin. `status` stays `STOP` with the same `stop_reason`; `unattested_level_steps_feeding_a_signal` stays 4; `below_minus_20pct_level_step_at_open` stays 5; `blocked_by_adtv_floor`, the locked-session counters, `signals_in_non_eq_series`, `level_step_events`, `instruments_with_a_level_step` and the 200 detail rows are byte-identical.
+
+**The guard reordering is semantically neutral for every previously published count, and I checked that rather than reading it.** `run_seq12_candidate` now computes `fillable = position + 1 < len(sessions)` after the universe filter and after series resolution, and counts a non-fillable signal **before** the series filter instead of `continue`-ing before it. The old order skipped those rows before `other_series_filtered += 1`, so the 24 non-EQ final-session signals were never in 15,441; the new order counts them in the new field and still excludes them from 15,441. Measured: 15,441 unchanged, and the four blocked counters unchanged. The signal predicate, the fill rule, the cost path and the engine are untouched by the commit; this is instrumentation around an unchanged loop.
+
+### 102.7 Item 4 (N-201) — the mark is true, and it is not the header §101 asked for
+
+**The ratio, recomputed with exact decimals:** `130.20 / 1292.54 = 0.1007318922431800950067309328918253980534`; at 6 dp round-half-up that is **`0.100732`**; at 4 dp it is `0.1007`. So of the three values the repository shows, `0.100732` is the only defensible 6-dp rounding, `0.100731` (audit §101.4, §101.7's prose) is a truncation, and `0.100730` (`.continue/sec100b.md`, quoted into §100) is wrong at the sixth digit. The artifact publishes `0.100732` and I confirm it. **No number in the audit record is edited; the correction is stated here** (§10.1).
+
+**The band claim, recomputed:** `|0.100732 − 0.1| / 0.1 = 0.00732 > 0.005`, so the boundary is outside the ±0.5 % ratio band and is counted in `no_ratio_match`, not listed in `ratio_shaped_detail`. The artifact's `listed_in_ratio_shaped_detail: false` is measured true.
+
+**The `detail_is_a_census: false` claim, recomputed against the corpus.** The corpus header publishes `threshold 0.35`, `explained_by_applied_row 1`, `explained_by_archive_record 0`, `no_ratio_match 74`, `ratio_shaped_unattested 699`, `ex_date_mismatch 0`, `cross_gap_pairs 16,194`, `cross_gap_extreme_moves 58`, `ratio_shaped_detail` 699 rows. My own census of one-session moves beyond ±35 % between **adjacent calendar sessions** finds **774**, of which **699** are in the detail list; the other 75 are the 74 `no_ratio_match` rows plus the one applied-row explanation. So the detail list is 699 of 774: **not a census**, and the scope note's three filters are the right three.
+
+**The stamp claim.** The per-bar `adjustment_version` field exists on both boundary bars: `2019-12-18` at close 1292.54 and `2019-12-19` at open 129.2 / close 130.20 both carry `v2.0-attested-split-bonus-backadjust-2018-2023`. So the stamp is per bar, the bar's level is not adjusted across the transition, and `stamp_scope: SERIES_POLICY_NOT_A_PER_BAR_ATTESTATION` states exactly that. Measured true.
+
+**Is an artifact-only mark an adequate stand-in? No — it is adequate as what it is, and N-201 stays OPEN.** It is a faithful transcription of the corpus's own reconciliation arithmetic beside the reader of the QA artifact, and it removes the specific misreading §101.5 measured (a reader taking `ratio_shaped_detail` for a census). It does not satisfy §101.12 item 4, whose two permitted branches were (a) attest the 1:10 with a committed corporate-action row and back-adjust, or (b) **mark `reconciliation.ratio_shaped_detail` as not a census in the corpus header**. The mark delivered lives in `reports/analysis/s102/seq12_data_qa.json`, which no consumer reads (`gated_by.consumers: []`), not in the corpus a reader loads. The corpus header still invites the census reading, and the 2019-12-19 bar still carries a stamp that is false for its level.
+
+**What the corpus half requires, stated without touching a threshold.** Either branch changes the corpus file, which changes its gzip sha256, which appends a manifest row, which moves `MAN-FPR-V1`, which re-seals a criteria pin (`expected_manifest_fingerprint`). The pre-registration and the criteria are frozen post-hoc by §9.2 except for pin-only re-derivations, which this repository has done by precedent (§77–§79) but which no work order in this round authorised. So the corpus half is a **sealed-surface change requiring an explicit maintainer decision** — not a data-quality measurement, and not something this commit could take by editing the artifact that reads the corpus. The implementer's own statement of that reason is correct as far as it goes; what it does not establish is that the delivered mark closes the item.
+
+**Clause (d)'s real-return sentence remains untaken.** The two excluded benchmark sessions still carry no stated return (−0.042 % on the level-break session, +0.108 % on the ISIN-transition session); the clause names the sessions as unmeasured but not what they were worth. Named residual.
+
+### 102.8 Independence — which probes recompute, and which only agree with the producer
+
+Thirteen attacks, each on a tracked file in a clean clone at `325bab8`, each restored byte-identically (`git status` clean after every case).
+
+| Tamper | Probe / check | Result |
+|---|---|---|
+| hook file deleted | `N-203` | **FAIL** — names the missing file; inventory reports "pinned verifier(s) missing from discovery" |
+| hook removed from `EXPECTED_VERIFICATION_SCRIPTS` | `N-203`; pin test | **FAIL**; pin test exit 1 |
+| `seq10_artifact_sha256` → `0…0` | `N-203`; new verifier | **FAIL**; verifier exit 1 |
+| `signals_without_a_next_session` 86→0 | `N-197` | **FAIL** |
+| `entry_signals_including_the_final_session` 93,525→93,524 | `N-197` | **FAIL** |
+| detail reach 9→8 | `N-197` | **FAIL** |
+| source `LOOKBACK_SESSIONS` 200→20 | `N-197` | **FAIL** — the T−100 fixture step leaves the window |
+| `detail_is_a_census` false→true | `N-201` | **FAIL** |
+| `stamp_scope` rewritten | `N-201` | **FAIL** |
+| **ratio made wrong in the producer *and* published** (`0.000001`→`0.0001` quantise; artifact `0.1007`) | `N-201` | **PASS — the probe cannot see it** |
+| `corpus.sha256` → the mutated stream digest | `N-204` | **FAIL** |
+| `_digest_bytes` made to normalise (producer only) | `N-204` | **PASS — the probe never calls the producer** |
+| manifest's current corpus row → `0…0` | `N-204` | **FAIL** |
+
+| Probe / check | Recomputes independently | Detects | Blind to |
+|---|---|---|---|
+| `N-197` | arithmetic and the distinct-ISIN count, from the artifact's own fields; 25 detail rows against corpus positions | artifact drift; a lookback regression via its fixture | **the counts themselves** — nothing recomputes 93,463/21,276; and the step classifier |
+| `N-201` | the corpus ratio (own Decimal) and the detail-list absence | a corpus repair; artifact drift on the literal fields | **a wrong claim published with a wrong producer** (attack 10) — the equality is `published == producer(corpus)` |
+| `N-203` | the sha256 itself, from file bytes | drift, and a wrong `_digest_text` in the published artifact | a producer regression that is also republished |
+| `N-204` | the sha256 itself; the manifest row; the s100 field | drift and a republished mutated digest | a **source-only** regression (attack 12), because it never calls `_digest_bytes` |
+| `verify_seq10_baseline_comparison.py` | **no** — it calls `compare_seq10_baselines.main(["--check"])` | any drifted field the producer would recompute differently | a wrong producer: producer and check are one code path |
+
+The new verifier's shape is right and its independence is zero on purpose: a second implementation of the comparison would be the §14.4 two-paths defect. Its contribution is **discovery**, not corroboration, and the value it adds is measured — §101 found the check passing silently off every clone, and now deleting it fails both the probe and the gate inventory.
+
+**Registry inventory, recomputed with my own AST walk:** 68 top-level functions, 56 `probe_*` functions, **0 duplicate definitions**, 56 registry entries, **0** mapping to an undefined function, **0** unregistered `probe_*`, **0** without an `assert`. No dead or assertion-free probe.
+
+### 102.9 Gate and pins — 11/11, 611/611, and the three 10→11 edits did not weaken the pin
+
+The suite and the eleven verifiers are §102.1. The three tests that pinned the discovered sweep moved `10 → 11` with a comment naming the new file. **They were not weakened:** each still asserts `list(EXPECTED_VERIFICATION_SCRIPTS) == discovered_verification_scripts()` and `verification_inventory_problem(discovered) is None`, and `verification_inventory_problem` fails closed in **both** directions — a pinned name missing from discovery (attack 1: "pinned verifier(s) missing from discovery") and a discovered name absent from the pin ("verifier(s) not in the pinned inventory"). The integer assertion is a second witness of the exact-equality assertion, not a substitute for it; adding the hook to the pin and to discovery is what moved it.
+
+### 102.10 In-place regeneration — two overwrites, no consumer of either old digest
+
+`git log -- reports/analysis/s100/seq10_baseline_comparison.json` shows two commits: `eea1757` (created) and `325bab8` (rewritten). The rewrite changed three keys — `seq10_artifact_sha256` `4a729dbc…`→`75571da3…`, and two `_of` labels. `dataset_sha256` was **already** `ea0b65a3…` at `38d22a6` and did not move; §101's corpus-digest finding was about the s102 artifact, not this one.
+
+`git log -- reports/analysis/s102/seq12_data_qa.json` shows `46a99ec` and `325bab8`. The artifact's `restates` block points at **s101**, and its `changed_fields` are computed against s101's five `RESTATED_FIELDS`, so the 325bab8-vs-46a99ec delta it actually carries appears nowhere inside it. The s101 artifact is untouched, as §101.2 required.
+
+**Judgement: both are overwrites of a published artifact, recoverable only from git — not restatements by the §97.5 append convention.** The s100 overwrite was ordered by §101.12 item 1, which named that path. The s102 overwrite was not ordered in those words and skips its own predecessor in the restatement chain. Neither is a threshold move, neither deletes a record, and neither broke a reader:
+
+**Consumers of the old digests.** `4a729dbc…` appears nowhere at `325bab8` except git history. `0fdc728a…` appears in exactly four places: `reports/analysis/s101/seq12_data_qa.json` (the frozen §101 record, which is what it should say), `CURRENT_STAGE_OF_WORK.md` (prose quoting the defect), and two untracked `.continue/` scratch files. **No code, config, test or verifier reads either value.** So the overwrite is safe in the consumer sense and incomplete in the audit-trail sense; §102.13 item 6 asks the next round to publish the predecessor bytes by name.
+
+### 102.11 Item 6 (RIGHTS) and item 3 (N-199)
+
+**RIGHTS — 4 records, 0 on a candidate step, confirmed from the table, not the artifact.** `data/reference/corporate_actions.jsonl` holds 5,371 rows, of which **4** are `RIGHTS` and **0** superseded: `INE397D01024` 2022-08-01 (1:14 @ ₹535), `INE040H01021` 2022-10-14 (5:21 @ ₹5.00), `INE140A01024` 2023-05-12 (1:10 @ ₹750, description "PIRAMAL ENTERPRISES…" — the ISIN belongs to PEL), `INE683A01023` 2024-02-27 (1:4 @ ₹22, outside the corpus). All four are `CONTENT_IDENTIFIED_ONLY` with `UNATTESTED_NSE_CML_…` refs. Their ex-date opening gaps are **0.0 %**, **2.94 %**, **0.196 %**, and one has no bar in the window — so **0** sits on a ≥10 % step. The artifact's `4 / 0` is measured. The exercised-branch limitation it states is correct and is the point: the TERP path's first real use would attest a price level against an unattested record whose premium is a regex over prose, and that first use is not evidence.
+
+**N-199 — still blocked, and nothing was synthesised.** `data/silver/price_bands` is an empty directory (0 files); `data/raw/price_bands` does not exist; no tracked path under `data/` contains the string `price_band`; `data/reference/surveillance_intervals.jsonl` is a **3-row `SYNTHETIC_FIXTURE`** set dated 2024 (outside the evaluation window) and is not band data. The only writer of the partition, `ingest_daily_price_bands`, has no raw payload to promote. The three categorical counters are `"NOT RUN"` with `price_band_partition: {files: 0, populated: false}`, and `not_run.exit_freeze_round_trip` says why. I confirm both limitations: **the exit-freeze round trip is unmeasured**, and no value in the artifact was manufactured from prices.
+
+### 102.12 Findings ledger after this section
+
+| | before §102 | after §102 |
+|---|---|---|
+| rows / ids | 94 / 56 | **96 / 56** |
+| latest per id | 50 CLOSED, 5 OPEN, 1 ACCEPTED | **52 CLOSED, 3 OPEN, 1 ACCEPTED** |
+| OPEN ids | `N-150`, `N-199`, `N-201`, `N-203`, `N-204` | **`N-150`, `N-199`, `N-201`** |
+
+N-203 and N-204 gain `CLOSED` rows with `closed_in_section: 102` and the measurement that decided each. **N-201 stays OPEN**: its artifact surface is measured true and its corpus half is untouched, and the ledger has no PARTIAL state, so the partial measurement lives here rather than in a row that would misreport it (N-157). N-199 stays OPEN and BLOCKED. No finding is deleted, softened or re-scoped.
+
+### 102.13 Phase verdicts
+
+| Phase (§103's row in `CURRENT_STAGE_OF_WORK.md`) | Verdict | Residual |
+|---|---|---|
+| Digest provenance, text vs binary (§9.1, §12.3, §10.5) | **PASS** — stored-bytes digest `75571da3…` / `ea0b65a3…`; `--check` exit 0 in a CRLF checkout and in both clones; Ruling 1 stated | `run_seq10`/`run_seq11` still normalise unconditionally; the s101 artifact keeps an unlabelled mutated-stream digest as its frozen record |
+| Step 2 QA counts and boundaries (§6.3, §9.1) | **CLOSED** — 86/62/24, 93,525, 15,441, 9-of-1,668, 21,276, 72,187 all recomputed with own code; every moved field traces to an ordered item | the published counts are still attested by a prefix of 1,668 instruments, and 62 final-session signals carry no per-signal list |
+| Corpus continuity, clause (d) (§5.4, §9.2) | **PARTIAL** — the mark is measured true (699 of 774, ratio 0.100732, stamp scope); the corpus half and clause (d)'s real-return sentence are untaken | **corpus-header mark or attested 1:10**, both sealed-surface changes; the two dropped sessions' −0.042 %/+0.108 % still unstated in the clause |
+| RIGHTS/TERP branch (§5.4) | **CLOSED as ordered** — 4 records, 0 on a candidate step, limitation stated | the branch remains unexercised; its first use is not evidence |
+| Circuit freeze / band counters (§5.3, §13.2) | **BLOCKED, unchanged** — `NOT RUN`, empty partition, nothing synthesised | population and the exit-freeze round trip |
+| Verifier discovery and pins (§12.3, §12.4) | **PASS** — 11/11 exit 0 in a clean clone, 611/611, both inventory directions fail closed | the round's own green row did not exist; recorded in the commit that follows this section |
+| Artifact restatement discipline (§10.1) | **PARTIAL** — s101 untouched; both rewritten artifacts reproduce from their producers | two in-place overwrites with no `restates` entry naming their predecessor bytes |
+| Seq 10 / seq 11 / criteria / fold / holdout | **held** — `CRIT-FPR-V1-535e47f5…` `1.1.16`, corpus `ea0b65a3…` / `DATA-CTNT-V2-cb4832c0…`, `MAN-FPR-V1-be45b7e7…`, N = 11 / N_eval = 6, 2024 fold untouched, holdout unread | `1.1.16` still labels three criteria sets (§98.6) |
+
+### 102.14 Work order (feat-s104), ordered by what it unblocks
+
+1. **N-201, the corpus half — a maintainer decision, then one of two branches.** Either (a) a committed corporate-action row attesting the 1:10 across `INF732E01011`→`INF204KB14I2` and a back-adjusted 2019-12-19 bar, or (b) a corpus-header field marking `reconciliation.ratio_shaped_detail` as a filtered list. Both change the gzip and therefore append a manifest row, move `MAN-FPR-V1` and re-seal `expected_manifest_fingerprint`; the pin-only re-derivation is the §77–§79 precedent and must be recorded as such in the same commit. **The probe that must fail closed:** `probe N-201` as written plus the refusal, **and** — because §102.8 attack 10 passes — a new independent recomputation inside `probe N-201` that derives the published ratio from the corpus bars with its own Decimal arithmetic instead of importing `corpus_reconciliation_claim`. Phase: §5.4 / §9.2 / §10.5.
+2. **Clause (d)'s real-return sentence.** State −0.042 % and +0.108 % where the clause names the two unmeasured sessions, as a new commit after `325bab8`; no threshold, window or fold field moves. **Probe:** `probe N-201` must keep passing and a new assertion must require both figures in the clause beside the session dates. Phase: §5.4 / §9.2.
+3. **N-199 — populate the band partition or retire the counters.** A sourced per-session NSE price-band archive for `2018-04-01..2023-12-31` under `data/raw/price_bands/` with retrieval metadata, promoted one session per partition, and the exit-freeze round trip measured. **Probe:** the existing biconditional (`NOT RUN` iff the partition is empty). Phase: §5.3 / §13.2 / §13.3.
+4. **Ruling 1's enforcement.** Make a normalising digest function unable to receive a binary path by construction (suffix or attribute check that raises), starting with `run_seq10_candidate._digest` and `run_seq11_candidate._digest`; no published value changes. **Probe:** a unit test that passes a `.gz` to each normaliser and requires the refusal, plus `N-203`/`N-204` unchanged. Phase: §10.5 / §9.1.
+5. **Restatement discipline for in-place regenerations.** The s102 artifact should carry the predecessor it replaced (`reports/analysis/s102/seq12_data_qa.json` at `46a99ec`) with its bytes' digest and the fields that moved between the two s102 revisions, or the next round must append a new path rather than rewrite one. **Probe:** a new one requiring the artifact's `restates` block to name the immediately preceding revision of its own path and to reconcile the fields that moved. Phase: §10.1 / §9.1.
+6. Carried unchanged: `N-150`; §101.12 item 7 (the §98.5 restatement/replay asymmetry; the §98.6 label of three criteria sets); §99.10 items 2–3; §96.10 items 5–7.
+
+### 102.15 What would falsify this verdict
+
+- **N-203:** a clone in which `compare_seq10_baselines.py --check` exits 1, or a stored text blob containing a CR byte (which would make "LF-normalised" something other than "the bytes git stores", and Ruling 1's text arm wrong). I scanned all 2,434 blobs and found 0.
+- **N-204:** a reader who can reproduce the artifact's `corpus.sha256` from anything but the raw file — measured impossible: the raw digest is `ea0b65a3…` and the mutated one is `0fdc728a…`, and the artifact, the manifest and the s100 field now all say `ea0b65a3…`.
+- **The counts:** a signal set other than 93,463 under the runner's own EQ resolution and T+1 guard, or a final-session count other than 86/62, or an instruments-with-a-step count other than 1,668. My indicators matched the library on all 2,578,060 bars and my classifier reproduced 6,731 / 21,276 / 72,187; a mismatch would mean the corpus decides between us.
+- **The guard reordering:** any previously published count that moved — 15,441 and the blocked counters did not, and I diffed all 94 pre-existing fields.
+- **N-201's mark:** a corpus whose `ratio_shaped_detail` is a census (699 of 774 measured), or a boundary ratio inside ±0.5 % of 0.1 (0.00732 measured outside), or a stamp that is a per-bar attestation after all.
+- **The gate:** a `--force-full` run at `325bab8` that is not 11/11 and 611/611, or any tamper in §102.8 that passes besides the two I report as passing.
+- **The overall verdict:** a consumer of the QA artifact, which would make its `NOT RUN` counters gate something. There is none, and the STOP still gates no execution path.
+
