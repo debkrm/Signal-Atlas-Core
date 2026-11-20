@@ -41,6 +41,12 @@ strategy:
   entry_fill: "T+1_OPEN"
   protective_stop: "2.0xATR(14)"
   max_hold_trading_sessions: 21
+  # Pinned at §100.16 item 7 (N-202), before any execution. The two predicates above can both be true on
+  # one session, and this is the pre-registered resolution: the exit is emitted and the name is not
+  # entered until it closes back below its 5-session mean. The committed code already does this
+  # (`src/signal_core/strategy/mean_reversion.py` emits the exit and continues), so the line makes the
+  # behaviour the specification rather than an implementation detail.
+  entry_exit_interaction: "EXIT_SUPPRESSES_ENTRY_ON_THE_SAME_SESSION"
 
 controls:
   # Unchanged from seq 10/11: these are not the hypothesis.

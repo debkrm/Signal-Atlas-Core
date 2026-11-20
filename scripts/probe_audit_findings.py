@@ -3651,24 +3651,64 @@ def probe_n201() -> None:
 
 def probe_n202() -> None:
     """
-    The exit/entry interaction is unpinned (N-202). Asserts the code suppresses an entry on a name it
-    exits the same session while the pre-registration says nothing about the interaction.
+    The exit/entry interaction is pinned and the code agrees (N-202). Two measurements: the
+    pre-registration names the resolution (`EXIT_SUPPRESSES_ENTRY_ON_THE_SAME_SESSION`), and a session
+    whose features satisfy both predicates emits the exit and no entry for the same name.
     """
-    source = (REPO_ROOT / "src" / "signal_core" / "strategy" / "mean_reversion.py").read_text(
-        encoding="utf-8"
+    import datetime
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    import yaml
+
+    from signal_core.strategy.mean_reversion import MeanReversionSwingStrategy
+
+    config = yaml.safe_load(
+        (REPO_ROOT / "configs" / "trial_012_candidate.yaml").read_text(encoding="utf-8")
     )
-    exits_section = source.split("continue", 1)
-    assert len(exits_section) == 2, "mean_reversion.py no longer emits then continues; re-measure N-202"
-    config = (REPO_ROOT / "configs" / "trial_012_candidate.yaml").read_text(encoding="utf-8")
-    interaction = [
-        line
-        for line in config.splitlines()
-        if "same_" in line.lower() and ("exit" in line.lower() or "entry" in line.lower())
-    ]
-    assert not interaction, (
-        f"the pre-registration now pins the interaction ({interaction}); N-202 is closed and this "
-        "probe must become the assertion that the code and the spec agree"
+    interaction = config["strategy"].get("entry_exit_interaction")
+    assert interaction == "EXIT_SUPPRESSES_ENTRY_ON_THE_SAME_SESSION", (
+        f"the pre-registration pins {interaction!r}: a rule committed as closed-form may not leave the "
+        "entry/exit interaction for the code to decide (N-202, AGENTS.md §8.1)"
     )
+
+    # A session on which both predicates are true: exit needs close > SMA(5), entry needs
+    # close > SMA(200) and RSI(2) < 10. 110 > 108, 110 > 90 and RSI(2) = 4 satisfy all three.
+    isin = "INE002A01018"
+    features = {
+        isin: SimpleNamespace(
+            close=Decimal("110.00"),
+            sma_5=Decimal("108.00"),
+            sma_200=Decimal("90.00"),
+            rsi_2=Decimal("4.00"),
+        )
+    }
+    strategy = MeanReversionSwingStrategy(allocation_weight=Decimal("0.05"))
+    intents = strategy.generate_signals(
+        as_of=datetime.date(2021, 6, 15),
+        next_session=datetime.date(2021, 6, 16),
+        universe=[isin],
+        features=features,
+    )
+    sides = [intent.side.value for intent in intents]
+    assert sides == ["SELL"], (
+        f"a session satisfying both predicates emits {sides}, but the pre-registration pins "
+        f"{interaction} (N-202)"
+    )
+    # And the entry branch is still reachable, so the assertion above is not vacuous.
+    features[isin] = SimpleNamespace(
+        close=Decimal("100.00"),
+        sma_5=Decimal("101.00"),
+        sma_200=Decimal("90.00"),
+        rsi_2=Decimal("4.00"),
+    )
+    entry_intents = strategy.generate_signals(
+        as_of=datetime.date(2021, 6, 15),
+        next_session=datetime.date(2021, 6, 16),
+        universe=[isin],
+        features=features,
+    )
+    assert [intent.side.value for intent in entry_intents] == ["BUY"], entry_intents
 
 
 PROBES: Dict[str, Callable[[], None]] = {
