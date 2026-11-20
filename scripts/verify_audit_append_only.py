@@ -464,6 +464,24 @@ def compute_source_tree_hash(entries: Sequence[Tuple[str, str]]) -> str:
     return digest.hexdigest()
 
 
+# Audit §99.10 item 2 / §99.3 residual (a): the verifier set was an unpinned glob, so deleting a
+# `verify_*.py` dropped discovery from 10 to 9 with no diagnostic and a check could leave the gate by
+# deleting its own file. This is the committed inventory the gate compares discovery against; adding a
+# verifier means naming it here, and removing one fails closed by name (§12.3).
+EXPECTED_VERIFICATION_SCRIPTS: Tuple[str, ...] = (
+    "scripts/verify_audit_findings.py",
+    "scripts/verify_cash_universe_coverage.py",
+    "scripts/verify_historical_snapshot.py",
+    "scripts/verify_phase2a_containment_and_trials.py",
+    "scripts/verify_phase2b5_storage.py",
+    "scripts/verify_phase2b_significance.py",
+    "scripts/verify_phase2c_walkforward.py",
+    "scripts/verify_phase2d_verdicts.py",
+    "scripts/verify_seq10_certificate.py",
+    "scripts/verify_wave1_thin_slice.py",
+)
+
+
 def discovered_verification_scripts() -> List[str]:
     """Every `scripts/verify_*.py` the gate executes, excluding the gate itself (Note N-20)."""
     return sorted(
@@ -471,6 +489,31 @@ def discovered_verification_scripts() -> List[str]:
         for p in (REPO_ROOT / "scripts").glob("verify_*.py")
         if p.name != "verify_audit_append_only.py"
     )
+
+
+def verification_inventory_problem(discovered: Sequence[str]) -> Optional[str]:
+    """
+    Why this discovery set is not the committed one, or None when it is (Audit §99.10 item 2).
+
+    Both directions fail closed and name the file: a deleted verifier is `missing from the pinned
+    inventory`, and a newly added one is `not in the pinned inventory` until it is committed there. The
+    second arm is what keeps the pin from being a lower bound a new check can be slipped in under.
+    """
+    expected = set(EXPECTED_VERIFICATION_SCRIPTS)
+    found = set(map(str, discovered))
+    missing = sorted(expected - found)
+    if missing:
+        return (
+            f"pinned verifier(s) missing from discovery: {', '.join(missing)} — a check left the gate "
+            f"by deletion (§99.10 item 2, §12.4)"
+        )
+    unexpected = sorted(found - expected)
+    if unexpected:
+        return (
+            f"verifier(s) not in the pinned inventory: {', '.join(unexpected)} — name them in "
+            f"EXPECTED_VERIFICATION_SCRIPTS before they run on the gate (§99.10 item 2)"
+        )
+    return None
 
 
 def commit_oid(sha: str) -> Optional[str]:
@@ -625,6 +668,13 @@ def select_gate_plan(
     expected = list(
         verifier_scripts if verifier_scripts is not None else discovered_verification_scripts()
     )
+    # A pin that only the full run enforces would let a deleted verifier be reused as green (§14.4), so
+    # the pinned inventory is also a condition of reuse (§99.10 item 2). A caller that supplies its own
+    # verifier list is not describing the gate's discovery, so the pin is applied only to discovery.
+    if verifier_scripts is None:
+        inventory_problem = verification_inventory_problem(expected)
+        if inventory_problem:
+            return "full", None, inventory_problem
     resolver = resolve_commit or commit_oid
     head_oid = resolver(str(head_commit or ""))
     if not head_oid:
@@ -675,6 +725,11 @@ def check_verification_scripts() -> Tuple[bool, Dict[str, int]]:
     # Note N-20: Dynamic discovery of all scripts/verify_*.py instead of hardcoded list
     discovered_scripts = discovered_verification_scripts()
     print(f"[INFO] Discovered {len(discovered_scripts)} verification scripts: {', '.join(discovered_scripts)}")
+    inventory_problem = verification_inventory_problem(discovered_scripts)
+    if inventory_problem:
+        print(f"[FAIL] Gate W0.5-2: {inventory_problem}")
+        print("[FAIL] Gate W0.5-2: One or more verification scripts failed.\n")
+        return False, {}
     exits: Dict[str, int] = {}
 
     for script_rel in discovered_scripts:

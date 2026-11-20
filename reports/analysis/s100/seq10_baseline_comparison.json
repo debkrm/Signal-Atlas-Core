@@ -1,0 +1,104 @@
+{
+ "arms": {
+  "niftybees_buy_hold": {
+   "cost_model": "signal_core.execution.costs.TransactionCostModel(committed criteria)",
+   "entry_isin": "INF732E01011",
+   "exit_isin": "INF204KB14I2",
+   "final_equity": "2242471.296769572119162360919",
+   "isin_transitions_in_window": 1,
+   "max_drawdown": "0.3633661102218156871712782986",
+   "profit_factor": "1.196362450413855850461167996",
+   "sessions": 1422,
+   "sessions_without_a_bar": [],
+   "statutory_costs": "3523.704825638151280552644576",
+   "trade_profit_factor": null,
+   "trade_win_rate": null,
+   "trades": 1,
+   "unmeasured_sessions": [
+    {
+     "reason": "level break -0.899268107756819904993269067108174601946554845498011666950346 \u2014 unattested corporate action",
+     "session": "2019-12-19"
+    },
+    {
+     "reason": "ISIN transition; levels incomparable",
+     "session": "2019-12-20"
+    }
+   ],
+   "win_rate": "0.5534458509142053445850914205"
+  },
+  "random_entry": {
+   "convention": "trade_profit_factor / trade_win_rate are round-trip metrics over each draw's matched trade count; profit_factor / max_drawdown / win_rate are session-level metrics of the draw's daily marked-to-market equity curve",
+   "curve_profit_factor": {
+    "median": "1.102588967580222342897032642",
+    "p05": "1.014754693812818508903691091",
+    "p95": "1.187365673780626331566670463"
+   },
+   "draws": 200,
+   "gross_trade_profit_factor": {
+    "median": "1.387427080254940103298960172",
+    "p95": "1.716859077798344313209198169"
+   },
+   "matched_trades_per_draw": 781,
+   "max_drawdown": {
+    "median": "0.5133485053109480802412298532",
+    "p05": "0.3172819510979868406865103468",
+    "p95": "0.7076408156383820690864848234"
+   },
+   "rejected_over_volume_cap": 77191,
+   "seed": 100010010,
+   "trade_profit_factor": {
+    "median": "1.299237475788014382112156878",
+    "p05": "1.039159476987418140279935383",
+    "p95": "1.602716449962104565173379974"
+   },
+   "trade_win_rate": {
+    "median": "0.4647887323943661971830985915"
+   },
+   "untradeable_draws_per_trade": 48
+  },
+  "seq10": {
+   "final_equity": "1072507.23999999999999999999999667718204070741539689565585058",
+   "max_drawdown": "0.7264709014681672238018483779",
+   "profit_factor": "1.012107559901848719940410704",
+   "sessions": 1424,
+   "trade_profit_factor": "1.020542895182444646239721598",
+   "trade_profit_factor_gross": "1.058319814406791810331206697",
+   "trade_win_rate": "0.3854033290653008962868117798",
+   "trade_win_rate_gross": "0.3905249679897567221510883483",
+   "trades": 781,
+   "win_rate": "0.5105337078651685393258426966"
+  }
+ },
+ "artifact": "seq10_baseline_comparison",
+ "audit_section": "\u00a799.10 item 3 (implemented in \u00a7100)",
+ "criteria_fingerprint": "CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470",
+ "criteria_version": "1.1.16",
+ "dataset_content_fingerprint": "DATA-CTNT-V2-cb4832c0b43952c4a03d58ee65ff5b15",
+ "dataset_corpus": "data/reference/historical_dataset_2018_2023.json.gz",
+ "dataset_sha256": "ea0b65a32a89a7b497cc9dc40cbec3fdbdcb9b582c74105e1a9ea6959d4ab1c5",
+ "decision": {
+  "inputs": {
+   "basis": "round-trip profit factor net of statutory costs (each arm's own fill set)",
+   "niftybees_buy_hold_final_equity": "2242471.296769572119162360919",
+   "random_entry_trade_profit_factor_p95": "1.602716449962104565173379974",
+   "seq10_final_equity": "1072507.23999999999999999999999667718204070741539689565585058",
+   "seq10_trade_profit_factor": "1.020542895182444646239721598"
+  },
+  "investability_condition_met": false,
+  "rule": "GO iff seq10.trade_profit_factor > p95(random_entry.trade_profit_factor) AND seq10.final_equity > niftybees_buy_hold.final_equity; otherwise KILL",
+  "signal_condition_met": false,
+  "verdict": "KILL \u2014 the strategy family is not carried into seq 12"
+ },
+ "limitations": [
+  "the randomized arm prices statutory costs only: no market impact, no slippage and no dividend income inside a hold, so it is advantaged against seq10 on cost and disadvantaged on dividends",
+  "the randomized arm assumes every matched trade is fundable, i.e. it carries no cash-slot competition; seq 10's book is capital constrained",
+  "the NIFTYBEES series leaves the 2019-12-20 return unmeasured because the 10:1 unit change that accompanies its ISIN transition is not attested in the committed corporate-action table",
+  "this comparison is not a registered trial: it appends no registry row, moves neither N nor N_eval, and its draws explore no parameter"
+ ],
+ "mode": "READ_ONLY_BENCHMARK",
+ "seq10_artifact": "reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json",
+ "seq10_artifact_sha256": "4a729dbca70e5cb4071804119e701900ed8f6d6824acb1d70163d3dfc01a980b",
+ "sessions": 1425,
+ "universe_instrument_count": 2735,
+ "window": "2018-04-02..2023-12-29"
+}

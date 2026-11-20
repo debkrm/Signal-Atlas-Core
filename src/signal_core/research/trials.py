@@ -1113,6 +1113,26 @@ class TrialRegistry:
         """Returns the appended outcome for a trial, or None when it has not been scored."""
         return self._evaluations.get(trial_id)
 
+    def criteria_provenance(self, trial_id: str) -> Dict[str, Optional[str]]:
+        """
+        The criteria set a reader of this row is shown: version **and** executed fingerprint (§99.10 item 3).
+
+        `criteria_version` alone labels several criteria sets — the manifest pin and the registry-manifest
+        pin are inside `compute_criteria_fingerprint`, so a re-seal keeps the label and moves the hash. The
+        executed hash is recorded on the evaluation row (Audit §98.10 item 4) and is returned here as
+        `criteria_fingerprint`; `None` means the row carries no recorded hash, and a reader must say that
+        rather than let the version stand in for it. Rows are never rewritten to add one (§10.1).
+        """
+        record = next((r for r in self._records if r.trial_id == trial_id), None)
+        if record is None:
+            raise TrialRegistryError(f"No trial with id '{trial_id}' is registered.")
+        evaluation = self._evaluations.get(trial_id)
+        return {
+            "trial_id": trial_id,
+            "criteria_version": record.criteria_version,
+            "criteria_fingerprint": evaluation.criteria_fingerprint if evaluation is not None else None,
+        }
+
     def append_trial_evaluation(
         self,
         trial_id: str,

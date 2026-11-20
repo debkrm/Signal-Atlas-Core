@@ -352,9 +352,15 @@ def main() -> int:
 
     if registered:
         row = seq10_rows[0]
+        # Audit §99.10 item 3: a reader of this row is shown the executed criteria fingerprint, not only a
+        # version label that names several criteria sets. A row with no recorded hash says so.
+        provenance = registry.criteria_provenance(TRIAL_ID)
+        executed = provenance["criteria_fingerprint"] or (
+            "NOT RECORDED (no evaluation-sidecar hash for this row)"
+        )
         print(
-            f"[INFO] seq {row.get('seq')}: {TRIAL_ID}, criteria {row.get('criteria_version')}, "
-            f"partition {row.get('partition')}"
+            f"[INFO] seq {row.get('seq')}: {TRIAL_ID}, criteria {provenance['criteria_version']}, "
+            f"executed {executed}, partition {row.get('partition')}"
         )
         row_problem = registry_row_problem(row, criteria)
         if row_problem:

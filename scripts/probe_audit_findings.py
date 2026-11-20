@@ -3338,19 +3338,16 @@ def probe_n195() -> None:
     """
     A status row must publish the profit factor its artifact computes (N-195, AGENTS.md §9.1).
 
-    Measured at 3136783: `CURRENT_STAGE_OF_WORK.md` prints seq 10's profit factor as `1.1178…` and its
-    liquidated profit factor as `1.1773…`, while
-    `reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json` publishes
-    `closed_only_profit_factor` 1.058319814406791810331206697 and `liquidated_profit_factor`
-    1.062288461598504234259941013 over the same 781 closed round trips and final equity of
-    1,072,507.24. `grep -rn 1.1178` over the tree returns only that one status line, so neither figure
-    comes from a committed artifact, verdict or configuration.
-
-    This probe asserts the defect is present while the row is OPEN, the way N-150's does: it fails as
-    soon as the row matches its artifact, which is the moment the finding is closed by replacing this
-    body with the fix-assertion.
+    The fix-assertion for the closure of N-195. It no longer asserts that the defect is present: it
+    reads the two profitability fields out of
+    `reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json` and requires
+    `CURRENT_STAGE_OF_WORK.md`'s seq-10 column to carry those digits, so the document cannot drift
+    from the artifact it cites without this probe failing. `1.1178…` / `1.1773…` — the typed pair §99.7
+    opened the finding on — are refused by name, and the probe still checks that no committed artifact,
+    verdict or config produces either figure (a value that is sourced is not a defect).
     """
     import json
+    from decimal import Decimal
 
     artifact = json.loads(
         (
@@ -3361,22 +3358,35 @@ def probe_n195() -> None:
             / "phase3b2_swing_baseline_2022_2024_verdict.json"
         ).read_text(encoding="utf-8")
     )
-    closed = artifact["closed_only_profit_factor"]
-    liquidated = artifact["liquidated_profit_factor"]
-    assert closed.startswith("1.058319814"), closed
-    assert liquidated.startswith("1.062288461"), liquidated
-    assert len(artifact["closed_trades"]) == 781, len(artifact["closed_trades"])
+    closed = str(Decimal(artifact["closed_only_profit_factor"]))
+    liquidated = str(Decimal(artifact["liquidated_profit_factor"]))
+    closed_trades = len(artifact["closed_trades"])
+    # The artifact's own nine decimals are what the row must quote; nothing here is a typed literal.
+    closed_digits = closed[:11]
+    liquidated_digits = liquidated[:11]
+    assert closed_digits == "1.058319814", closed
+    assert liquidated_digits == "1.062288461", liquidated
 
-    status_rows = [
-        line
-        for line in (REPO_ROOT / "CURRENT_STAGE_OF_WORK.md").read_text(encoding="utf-8").splitlines()
-        if line.startswith("| Profit factor |")
-    ]
+    document = (REPO_ROOT / "CURRENT_STAGE_OF_WORK.md").read_text(encoding="utf-8")
+    status_rows = [line for line in document.splitlines() if line.startswith("| Profit factor |")]
     assert len(status_rows) == 1, status_rows
-    assert "1.1178" in status_rows[0], (
-        "the seq-10 status row no longer publishes 1.1178…; replace this probe with an assertion that "
-        "it publishes the artifact's 1.058319814… and close N-195"
+    row = status_rows[0]
+    assert closed_digits in row, (
+        f"the seq-10 status row publishes {row!r} but the artifact computes closed-only profit factor "
+        f"{closed} for its {closed_trades} closed round trips (N-195, AGENTS.md §9.1)"
     )
+    liquidated_rows = [
+        line for line in document.splitlines() if line.startswith("| Liquidated profit factor |")
+    ]
+    assert len(liquidated_rows) == 1, liquidated_rows
+    assert liquidated_digits in liquidated_rows[0], (
+        f"the liquidated profit-factor row publishes {liquidated_rows[0]!r} but the artifact computes "
+        f"{liquidated} (N-195, AGENTS.md §9.1)"
+    )
+    for stale in ("1.1178", "1.1773"):
+        assert stale not in row and stale not in liquidated_rows[0], (
+            f"the seq-10 status row still publishes {stale}, which no committed artifact computes"
+        )
 
     hits = [
         path.relative_to(REPO_ROOT).as_posix()

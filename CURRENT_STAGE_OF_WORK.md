@@ -2532,8 +2532,8 @@ nothing was thresholded after the run.
 |---|---|---|
 | Closed round trips | 781 | **1,101** |
 | Final equity (₹, 1,000,000 start) | 1,072,507.24 | **1,789,528.81** |
-| Profit factor | 1.1178… | **1.215059254…** |
-| Liquidated profit factor | 1.1773… | **1.281989670…** |
+| Profit factor | 1.058319814… | **1.215059254…** |
+| Liquidated profit factor | 1.062288461… | **1.281989670…** |
 | Max portfolio drawdown | 0.7264709014681672 | **0.5193109028986467** |
 
 The drawdown claim is met: **−0.2071599985695204731369764373 absolute, 28.5159% relative**, the pre-registered
@@ -2570,3 +2570,128 @@ measurement-vs-replay mutants, optional fingerprint). `probe_seq10_candidate.py`
 `verify_audit_append_only.py --force-full` is run on this commit's tree and the row that follows records its
 verdict. `N-191`…`N-194` stay `OPEN` pending the next audit; the 2024 validation fold is untouched
 (`validation_folds_count = 0`) and the holdout `2025-01-01..2026-11-11` unread.
+
+## §100 — work order §99.10 items 1-3 executed for N-195, the verifier inventory and the criteria-fingerprint surface, plus a read-only seq-10 benchmark comparison (Not audited)
+
+**Not audited.** Everything below is the implementer's measurement at parent `9d9c80a` (§99, tag
+`audit-s99-6177503`). No audit section reviews it yet, so no row here is signed off, verified or closed by a
+verdict: `N-195`'s fix has landed and the finding's ledger status remains the auditor's row to append (§11.1),
+and nothing below cites a §N verdict because none exists for this commit.
+
+### Item 1 — N-195: the seq-10 profitability cells now carry the artifact's own digits
+
+The `seq 10` column published `1.1178…` / `1.1773…`; no committed artifact, verdict, config or script computed
+either. `probe_n195` was rewritten first as the **fix-assertion** and run at `9d9c80a` before any edit:
+
+```
+FAIL N-195: the seq-10 status row publishes '| Profit factor | 1.1178… | **1.215059254…** |' but the artifact
+computes closed-only profit factor 1.058319814406791810331206697 for its 781 closed round trips (§9.1)
+```
+
+The probe reads `closed_only_profit_factor` and `liquidated_profit_factor` out of
+`reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json` and requires the document's two
+cells to carry those digits, so the row cannot drift from the artifact it cites without the probe failing. With
+the cells corrected to **`1.058319814…`** and **`1.062288461…`** the probe exits **0**; `1.1178` / `1.1773` are
+refused by name and no file under `reports/verdicts`, `reports/analysis` or `configs` contains `1.1178`.
+
+One basis detail found while doing it and worth recording, because it is a second two-bases-in-one-document
+fact: the artifact's `closed_only_profit_factor` (1.058319814…) is computed on **gross** round-trip P&L, while
+its `in_sample_metrics.win_rate` (0.385403329…) counts a win on **net** P&L — 305 gross winners, 301 net
+winners, over the same 781 trades. The status row quotes the fields on the basis each field actually uses; the
+new comparison artifact reports both bases for both arms.
+
+### Item 2 — the verifier inventory is pinned, so a deletion fails closed by name
+
+Discovery was a bare `glob("verify_*.py")`: §99.3 measured that deleting one verifier dropped the count
+from 10 to 9 with no complaint. `scripts/verify_audit_append_only.py` now carries
+`EXPECTED_VERIFICATION_SCRIPTS` (10 names) and `verification_inventory_problem()`, which fails in **both**
+directions — a pinned verifier missing from discovery, and a discovered verifier not in the pin — and names the
+file. It is enforced on the full run (before any verifier executes) and on the reuse decision, where a stale
+pin would otherwise let a shrunken set be reused as green (§14.4).
+
+Measured, with `scripts/verify_wave1_thin_slice.py` moved out of the tree:
+
+```
+[FAIL] Gate W0.5-2: pinned verifier(s) missing from discovery: scripts/verify_wave1_thin_slice.py — a check
+left the gate by deletion (§99.10 item 2, §12.4)
+OVERALL VERDICT: ONE OR MORE GATES FAILED          (exit 1)
+```
+
+Restored, the same command is green at 10 of 10. The file was moved back and `git status` shows no residue.
+
+### Item 3 — the registry reader surface shows the executed criteria fingerprint
+
+`TrialRegistry.criteria_provenance(trial_id)` returns the row's `criteria_version` **and** the executed
+`criteria_fingerprint` recorded on its evaluation sidecar, or `None` when the row carries no recorded hash —
+`criteria_version` alone now labels three criteria sets, so the surface says *not recorded* instead of letting
+the version stand in for the hash. The certificate's registry readout prints it:
+
+```
+[INFO] seq 10: TRIAL-PHASE3B2-EXPANDED-010, criteria 1.1.16, executed NOT RECORDED (no evaluation-sidecar hash
+for this row), partition IN_SAMPLE
+```
+
+Measured directly: `criteria_provenance("TRIAL-PHASE3B2-LIQUIDITY-ATR-011")` returns `CRIT-FPR-V1-535e47f5a4a9…`
+under `1.1.16`, and `…-EXPANDED-010` returns `None` under the same version. `verify_seq10_certificate.py` still
+exits **0 — CERTIFIED** with the new line.
+
+### Item 4 — the baseline comparison: KILL the strategy family, computed not typed
+
+`scripts/compare_seq10_baselines.py` is read-only: it writes no registry row, appends no evaluation, writes no
+verdict artifact and refuses any sealed session. Artifact:
+`reports/analysis/s100/seq10_baseline_comparison.json` (4,799 bytes, sha256
+`b5c14b9f5f7b5b2e239360b6ca3e1165532f20be1c47ae2e669e9b00e58a7528`), reproducible byte-for-byte with
+`--check`; window `2018-04-02..2023-12-29` (1,425 sessions), the corpus's **2,735** instruments, criteria
+`1.1.16` / `CRIT-FPR-V1-535e47f5a4a9…`, dataset `DATA-CTNT-V2-cb4832c0b43952c4a03d58ee65ff5b15`.
+
+| Arm | Profit factor (round trip, net of statutory costs) | Profit factor (session curve) | Max drawdown | Win rate | Final equity (₹ from 1,000,000) |
+|---|---|---|---|---|---|
+| seq 10 (781 round trips) | **1.020542895…** (gross 1.058319814…) | 1.012107560… | **0.7264709014681672238018483779** | **0.3854033290653008962868117798** round trips (0.5105337078 sessions) | **1,072,507.24** |
+| NIFTYBEES buy-and-hold (1 round trip) | n/a — one round trip has no ratio | 1.196362450… | 0.3633661102218156871712782986 | 0.5534458509142053445850914205 sessions | **2,242,471.30** |
+| Randomized entry (200 draws × 781 trades, seed 100010010) | median **1.299237476…**, p05 1.039159477…, p95 1.602716450… | median 1.102588968… | median 0.5133485053109480802412298532 | median 0.4647887323943661971830985915 | — |
+
+The strategy arm is attested, not quoted: the script recomputes final equity (1,072,507.24 to the paise),
+max drawdown (equal to the artifact's to 1e-24), the gross round-trip profit factor (exactly
+1.058319814406791810331206697) and the net round-trip win rate (exactly 0.3854033290653008962868117798) from
+the artifact's own `daily_returns` and `closed_trades`, and refuses to publish if any of the four fails.
+
+The pre-registered decision rule, recorded in the artifact before the run:
+
+> GO iff `seq10.trade_profit_factor > p95(random_entry.trade_profit_factor)` AND
+> `seq10.final_equity > niftybees_buy_hold.final_equity`; otherwise KILL.
+
+Computed: `signal_condition_met = false` (1.0205 < 1.6027 — and seq 10 is below the null **median** 1.2992,
+not merely below its tail), `investability_condition_met = false` (₹1.07 M against ₹2.24 M for a
+buy-and-hold ETF). Verdict from the rule: **KILL — the strategy family is not carried into seq 12.** The
+randomized-entry null beats the momentum signal on all three published metrics — higher profit factor, higher
+round-trip win rate, shallower drawdown — so the signal's selection and timing are not merely unproven against
+random entry on this window; they are worse than it.
+
+**What the comparison does not model, stated rather than implied.** The randomized arm pays statutory costs
+only (no market impact, no slippage, no dividend income inside a hold, no competitive cash constraint), so it
+is advantaged on cost and disadvantaged on dividends against seq 10; it draws from the full point-in-time
+universe including small caps, so it carries more beta than seq 10's ranked book; and it exits at a fixed
+horizon with no stop. 77,191 (49.4%) of its draws were refused by the 2.5%-of-traded-quantity cap and redrawn,
+and 48 matched trades exhausted 8 attempts and were dropped. None of these leans in the strategy's favour, so
+none can turn the KILL into a GO; they are the reasons the verdict is *conservative*, not reasons it is wrong.
+
+**The NIFTYBEES benchmark leaves two sessions unmeasured, by design.** The ETF trades under two ISINs in this
+window (`INF732E01011` → `INF204KB14I2` from 2019-12-20) and its price level steps ~10:1 inside the old ISIN's
+last bar. The committed corporate-action table records the transition with share ratio **1:1** and provenance
+`CONTENT_IDENTIFIED_ONLY`, i.e. the split ratio that would make the two halves comparable is **not attested**;
+chaining the levels would book a fabricated **−89.93%** session. The benchmark is therefore built from
+within-ISIN returns with 2019-12-19 (level break) and 2019-12-20 (identity change) named as unmeasured, 1,422
+of 1,424 session returns retained, and the sell leg priced on turnover because the split ratio needed to state
+an exit unit count is exactly the unattested fact. Final equity is net of ₹3,523.70 of statutory delivery
+costs for the single ₹10 lakh entry.
+
+**Not a trial, and it moves nothing.** The comparison appends no registry row, adds no evaluation, explores no
+parameter and selects no rule: `N = 11`, `N_eval = 6`, criteria `1.1.16` and its pin are unchanged, the 2024
+validation fold stays frozen (`validation_folds_count = 0`) and the holdout `2025-01-01..2026-11-11` is unread.
+
+**Gate state at this commit.** `tests/unit/test_phase3b2_audit_s100_items.py` **9 passed** (the N-195
+fix-assertion, the inventory pin in both directions plus the deletion attack through `check_verification_scripts`,
+the provenance surface on both a fingerprinted and an unfingerprinted row, and the comparison's curve convention
+rebuilding the artifact's drawdown). `verify_seq10_certificate.py` exit **0 — CERTIFIED**.
+The new comparison script's `--check` exits **0** against its committed bytes. `verify_audit_append_only.py` (`--force-full` and
+plain) is run on this commit's tree and the row that follows records its verdict.
