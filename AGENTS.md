@@ -272,3 +272,12 @@ A review round produces three things, in this order: a **verdict** on the commit
 6. **The implementer's documents are theirs.** `CURRENT_STAGE_OF_WORK.md` is not edited by the auditor. Disagreement goes in a separate note citing the finding ID and the measurement contradicting it (§11.2).
 7. **Say what would falsify the verdict.** End each verdict with the observation that would make it wrong, so the next round knows what to measure rather than what to believe.
 8. **Instructions to the implementer live in the audit report**, not in chat, not in this file. The report is the citation target; anything said only in a conversation is lost with it.
+NON-NEGOTIABLES (read first, full rules below)
+1. Never edit auditor-owned files; never amend/rebase main.
+2. Never load, inspect or log 2024-fold or holdout data. HOLDOUT_UNLOCK is human-only.
+3. Fill at T+1 open or later, never at the signal close.
+4. No float in accounting; no forward-fill; no silent gap bridging.
+5. Thresholds and pre-registrations are never edited after results.
+6. One trial = one pre-registered run. No variants, sweeps, or retries.
+7. Verdicts are computed by script; no status word without a cited audit verdict.
+8. Unsure? Stop and report. Never patch around a data or integrity problem.
