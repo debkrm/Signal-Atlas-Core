@@ -3399,6 +3399,205 @@ def probe_n195() -> None:
     assert hits == [], f"a committed artifact publishes 1.1178 for seq 10, so the status row is sourced: {hits}"
 
 
+def _seq12_source() -> str:
+    return (REPO_ROOT / "scripts" / "run_seq12_candidate.py").read_text(encoding="utf-8")
+
+
+def _seq12_artifact() -> dict:
+    import json
+
+    path = REPO_ROOT / "reports" / "analysis" / "s101" / "seq12_data_qa.json"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _seq12_constant(name: str):
+    """A module-level literal in the seq-12 QA script, read from the source, not imported."""
+    for node in ast.parse(_seq12_source()).body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == name:
+                    try:
+                        return ast.literal_eval(node.value)
+                    except ValueError:
+                        # `Decimal("-0.20")` is a call, not a literal: unwrap the single string argument.
+                        value = node.value
+                        if (
+                            isinstance(value, ast.Call)
+                            and isinstance(value.func, ast.Name)
+                            and len(value.args) == 1
+                            and isinstance(value.args[0], ast.Constant)
+                        ):
+                            return value.args[0].value
+                        raise
+    raise AssertionError(
+        f"`{name}` is no longer a module-level literal in run_seq12_candidate.py; re-measure N-196/N-197"
+    )
+
+
+def probe_n196() -> None:
+    """
+    An ex-dividend session reprices by the dividend, so `DIVIDEND` cannot be excluded from attestation
+    (N-196). Asserts the defect while it is open: the QA's own price-side set omits `DIVIDEND`, and
+    the stop count is the five §100.4 measured. Measured to refute it in that section: a Rs 140
+    special dividend on HEUBACHIND's 563.30 close of 2020-07-16 predicts 423.30 against an actual
+    423.55 close (0.044 %), and VARDHACRLC's Rs 25 interim is 117 % of its opening gap.
+    """
+    kinds = _seq12_constant("PRICE_SIDE_KINDS")
+    assert "DIVIDEND" not in kinds, (
+        "`PRICE_SIDE_KINDS` now contains DIVIDEND, so a cash-adjustment branch has landed; replace "
+        "this probe with the fix-assertion that the HEUBACHIND row leaves the stop list and the "
+        "ASTRAL / DTIL / MANINFRA rows stay in it"
+    )
+    artifact = _seq12_artifact()
+    assert artifact["unattested_level_steps_feeding_a_signal"] == 5, (
+        f"the stop count moved to {artifact['unattested_level_steps_feeding_a_signal']} without a "
+        "dividend-aware test; re-derive it rather than retuning the probe"
+    )
+
+
+def probe_n197() -> None:
+    """
+    The miss the QA exists to catch is tested on the signal day only, in one direction (N-197).
+    Asserts the defect: the trigger is a -20 % close-to-close drop on the signal session, and no key
+    in the artifact counts unattested level steps inside a signal's own lookback window.
+    """
+    threshold = Decimal(str(_seq12_constant("LARGE_DROP_THRESHOLD")))
+    assert threshold == Decimal("-0.20"), f"the large-drop threshold is now {threshold}"
+    artifact = _seq12_artifact()
+    windowed = [
+        k
+        for k in artifact
+        if "lookback" in k.lower()
+        or ("window" in k.lower() and ("gap" in k.lower() or "step" in k.lower()))
+    ]
+    assert not windowed, (
+        f"the artifact now publishes {windowed}; a window measurement has landed and N-197 must be "
+        "re-measured against it"
+    )
+
+
+def probe_n198() -> None:
+    """The STOP gates no code path (N-198). Asserts no committed consumer of the artifact exists."""
+    consumers = []
+    for path in sorted((REPO_ROOT / "scripts").glob("*.py")) + sorted(
+        (REPO_ROOT / "src").rglob("*.py")
+    ):
+        if path.name in ("run_seq12_candidate.py", "probe_audit_findings.py"):
+            continue
+        if "seq12_data_qa" in path.read_text(encoding="utf-8", errors="ignore"):
+            consumers.append(str(path.relative_to(REPO_ROOT)))
+    assert not consumers, (
+        f"the QA artifact now has consumers {consumers}; N-198 is closed and this probe must become "
+        "the assertion that a STOP status refuses execution by name"
+    )
+    constructed = []
+    for path in sorted((REPO_ROOT / "scripts").glob("*.py")) + sorted(
+        (REPO_ROOT / "src").rglob("*.py")
+    ):
+        if path.name in ("run_seq12_candidate.py", "probe_audit_findings.py"):
+            continue
+        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("class "):
+                continue
+            if "MeanReversionSwingStrategy(" in line:
+                constructed.append(str(path.relative_to(REPO_ROOT)))
+                break
+    assert not constructed, (
+        f"`MeanReversionSwingStrategy` is now constructed by {constructed}; re-measure whether the "
+        "stop is consulted before it runs"
+    )
+
+
+def probe_n199() -> None:
+    """
+    `at_lower_circuit: 0` is unreachable, not measured (N-199). Asserts that the band partition the
+    counter reads is empty while the artifact publishes the zero as a computed value.
+    """
+    band_dir = REPO_ROOT / "data" / "silver" / "price_bands"
+    files = [p for p in band_dir.rglob("*") if p.is_file()] if band_dir.is_dir() else []
+    assert not files, (
+        f"`data/silver/price_bands` now holds {len(files)} file(s); N-199 is closed and this probe "
+        "must become the assertion that an empty partition reports NOT RUN rather than 0"
+    )
+    locked = _seq12_artifact()["blocked_by_locked_session"]
+    assert locked["at_lower_circuit"] == 0 and locked["no_band_recorded"] == locked["total"], (
+        f"the locked-session counters changed: {locked}"
+    )
+
+
+def probe_n200() -> None:
+    """
+    `UNATTESTED_NO_RECORD` is read against a partial archive (N-200). Asserts the artifact publishes
+    no coverage figure for the corporate-action archive the verdict is derived from.
+    """
+    artifact = _seq12_artifact()
+    coverage = [k for k in artifact if "coverage" in k.lower() or "archive" in k.lower()]
+    assert not coverage, (
+        f"the artifact now publishes {coverage}; re-measure N-200 against the coverage it reports"
+    )
+    rights = 0
+    for line in (REPO_ROOT / "data" / "reference" / "corporate_actions.jsonl").read_text(
+        encoding="utf-8"
+    ).splitlines():
+        if line.strip() and '"RIGHTS"' in line:
+            rights += 1
+    assert rights <= 5, (
+        f"the reference table now holds {rights} RIGHTS rows; the incompleteness N-200 measured may "
+        "have been repaired and the finding must be re-derived"
+    )
+
+
+def probe_n201() -> None:
+    """
+    The NIFTYBEES benchmark is not continuous across 2019-12-19 (N-201). Asserts the corpus carries an
+    unadjusted 1:10 step while stamping the bar as back-adjusted, and that the reconciliation's own
+    detail omits it.
+    """
+    import gzip
+    import json
+
+    corpus = json.load(
+        gzip.open(
+            REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz",
+            "rt",
+            encoding="utf-8",
+        )
+    )
+    bars = {r["trade_date"]: r for r in corpus["prices_by_instrument"]["INF732E01011"]}
+    ratio = Decimal(bars["2019-12-19"]["close"]) / Decimal(bars["2019-12-18"]["close"])
+    assert ratio < Decimal("0.11"), (
+        f"the corpus ratio across the ISIN transition is now {ratio}; if the series is back-adjusted "
+        "the boundary N-201 measured is repaired and clause (d) may be evaluable"
+    )
+    detail = corpus["reconciliation"]["ratio_shaped_detail"]
+    assert not [r for r in detail if r["isin"] == "INF732E01011"], (
+        "the reconciliation now publishes the boundary it omitted; re-measure N-201"
+    )
+
+
+def probe_n202() -> None:
+    """
+    The exit/entry interaction is unpinned (N-202). Asserts the code suppresses an entry on a name it
+    exits the same session while the pre-registration says nothing about the interaction.
+    """
+    source = (REPO_ROOT / "src" / "signal_core" / "strategy" / "mean_reversion.py").read_text(
+        encoding="utf-8"
+    )
+    exits_section = source.split("continue", 1)
+    assert len(exits_section) == 2, "mean_reversion.py no longer emits then continues; re-measure N-202"
+    config = (REPO_ROOT / "configs" / "trial_012_candidate.yaml").read_text(encoding="utf-8")
+    interaction = [
+        line
+        for line in config.splitlines()
+        if "same_" in line.lower() and ("exit" in line.lower() or "entry" in line.lower())
+    ]
+    assert not interaction, (
+        f"the pre-registration now pins the interaction ({interaction}); N-202 is closed and this "
+        "probe must become the assertion that the code and the spec agree"
+    )
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -3447,6 +3646,13 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-193": probe_n193,
     "N-194": probe_n194,
     "N-195": probe_n195,
+    "N-196": probe_n196,
+    "N-197": probe_n197,
+    "N-198": probe_n198,
+    "N-199": probe_n199,
+    "N-200": probe_n200,
+    "N-201": probe_n201,
+    "N-202": probe_n202,
 }
 
 

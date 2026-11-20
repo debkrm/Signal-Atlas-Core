@@ -6,7 +6,7 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | Volume | Path | Sections | Lines | Frozen | SHA-256 |
 |---|---|---|---|---|---|
 | `signal_atlas_phase1c_audit_deepseek_review_.md` | `reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md` | 1-78 | 8442 | yes | `f4ca03d58466bebb…` |
-| `volume2.md` | `reports/audit/volume2.md` | 79+ | 3642 | no | `322b953a9d1568db…` |
+| `volume2.md` | `reports/audit/volume2.md` | 79+ | 3793 | no | `384a8b538acc2c27…` |
 
 | Section | Title | Volume | Lines | Finding ids |
 |---|---|---|---|---|
@@ -109,4 +109,5 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | §97 | Audit of `612e82a` (tag `feat-s97-612e82a`): the captured statutory payload survives a clone, the builder refuses the class it documents as fatal, a demerger refusal counts a held exit, and the gate is green three times running | `volume2.md` | 3182–3333 | N-150, N-152, N-160, N-163, N-186, N-187, N-188, N-189, N-190, N-191, N-192, N-193, N-194 |
 | §98 | Audit of `1b16d43` (tag `feat-s98-1b16d43`): the reconciliation stops reading a calendar gap as a return and an AGM stops exonerating a 2× move, while the feature layer still has no gap partition and one gate trusts a number it never compares | `volume2.md` | 3334–3518 | N-150, N-152, N-160, N-163, N-191, N-192, N-193, N-194 |
 | §99 | Audit of `3136783` (code commit under tag `feat-s99-b1e5fbd`): the gap now partitions the feature layer and a probe proves it, the certificate runs on the gate, and the implementer's own seq-10 column publishes two profit factors no artifact computes | `volume2.md` | 3519–3642 | N-139, N-150, N-157, N-165, N-167, N-168, N-169, N-191, N-193, N-194, N-195 |
+| §100 | Audit of `7c0957e` (tag `feat-s101-7c0957e`): the pre-registration is clean, the STOP is correct, and the QA that produced it tests the wrong thing — two of its five stops are attested ₹ dividends it excludes by rule, the miss it exists to catch is checked on the signal day only, and the artifact it writes gates no code | `volume2.md` | 3643–3793 | N-150, N-195, N-196, N-197, N-198, N-199, N-200, N-201, N-202 |
 

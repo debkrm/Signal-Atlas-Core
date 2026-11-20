@@ -3640,3 +3640,154 @@ No new CLOSED row is appended for N-191, N-193 or N-194: they already carry a CL
 - **G2A-6.7**: an artifact declaring today's ledger total (6) accepted for a trial that ran when the ledger held 5; or an erased ledger making `prior_evaluations` 0 and still being exempted.
 - **N-195**: a committed artifact, verdict or config computing `1.1178…` or `1.1773…` for seq 10 — which `probe N-195` now scans for on every gate run. If one exists, the finding is wrong and the status row is sourced.
 - **§99.1**: a gate run in a linked worktree that reports green — it cannot, and the four `.git/info/exclude` probes are the reason.
+## §100 — Audit of `7c0957e` (tag `feat-s101-7c0957e`): the pre-registration is clean, the STOP is correct, and the QA that produced it tests the wrong thing — two of its five stops are attested ₹ dividends it excludes by rule, the miss it exists to catch is checked on the signal day only, and the artifact it writes gates no code
+
+**Scope.** `f2133ef` adds `configs/trial_012_candidate.yaml` alone (sha256 `66a05b4a…`, 4-clause `all_of` decision rule, window `2018-04-01..2023-12-31`, holdout `2025-01-01..2026-11-11`). `7c0957e` adds `scripts/run_seq12_candidate.py` (558 lines), `reports/analysis/s101/seq12_data_qa.json` (7,363 B), `src/signal_core/strategy/mean_reversion.py`, `tests/unit/test_phase3b2_seq12_data_qa.py` and `tests/unit/test_phase3b2_seq12_mean_reversion.py` (7 + 7 tests), and edits `features/engine.py` (+3 fields), `strategy/__init__.py`, `strategy/swing.py` (signature widened to `Strategy`) and `scripts/run_phase3b2_walkforward.py` (the `strategy=` seam). `3f7691f` appends the green row only. The tag is lightweight and points at `7c0957e459f7de5abd4870c1b6f70f8741380496`.
+
+**Verdicts:** **the STOP is justified — on 3 of its 5 rows, not 5** · **its stated reason is false for 2 of the 5** (N-196) · **the trigger it protects is tested too narrowly to be the protection it claims** (N-197) · **the QA gates no code path** (N-198) · **the exit/hold side of a delivery-swing rule is unmeasured, and `at_lower_circuit: 0` is unmeasured rather than zero** (N-199) · **the "no record" evidence rests on archives covering two-thirds of the corpus** (N-200) · **the NIFTYBEES boundary the decision rule compares against is unadjusted in the corpus** (N-201) · **pre-registration leaves one interaction unpinned** (N-202).
+
+### 100.1 Baseline re-measured at `3f7691f`
+
+`HEAD = 3f7691f`, working tree clean at audit time (`git status --porcelain` empty).
+
+| Probe | Measured |
+|---|---|
+| `python -m pytest -q` | **600 passed**, 0 failed, 0 skipped, 0 xfailed, exit **0** (276.03 s) |
+| `scripts/verify_*.py`, each run individually | **11 scripts, 11 exit 0** — `audit_append_only` (post-commit mode), `audit_findings`, `cash_universe_coverage`, `historical_snapshot`, `phase2a_containment_and_trials`, `phase2b_significance`, `phase2b5_storage`, `phase2c_walkforward`, `phase2d_verdicts`, `seq10_certificate`, `wave1_thin_slice` |
+| gate verdict line | `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| source-tree row | `Source tree d67eb8fab2855854… is already recorded; not appending a duplicate row` |
+| registry | `N = 11`, `N_eval = 6`; no `TRIAL-PHASE3B2-MEANREV-012` row |
+| criteria | `1.1.16`, `CRIT-FPR-V1-535e47f5…` |
+
+The commit message's "600 passed, 0 skipped, 0 xfailed" reproduces exactly. Its "10 of 10 verifiers" does not match a bare glob of 11 — the natural reading is that `verify_audit_append_only.py` is the gate and ten is the count beside it, and both readings are consistent with the tree, so this is recorded as **ambiguous, not wrong**.
+
+### 100.2 Item 1 — the pre-registration preceded the code, and it did not move (clean)
+
+`git merge-base --is-ancestor f2133ef 7c0957e` → exit 0. `git diff f2133ef..7c0957e -- configs/trial_012_candidate.yaml` → **empty**, so the spec executed is the spec committed before the code, which is what §8.2 asks. A degrees-of-freedom grep (`e.g.`, `or`, `TBD`, `approximately`, `~`, `around`, `about`, `roughly`) returns two hits, both inside the `falsifier` prose at lines 129-130 and neither a parameter. No run artifact other than `seq12_data_qa.json` exists at `7c0957e` (`git ls-tree`), so no result was produced before its QA. **Clean.**
+
+### 100.3 Item 2 — protected paths untouched (clean)
+
+`7c0957e` touches no path under `reports/audit/**`, no `AGENTS.md`, no `configs/go_no_go_criteria.yaml`, no `data/trials/**`, and no fold or holdout path. `CURRENT_STAGE_OF_WORK.md` gains **115 lines and removes 0** in both `7c0957e` and `3f7691f`, and 0 across `f2133ef..7c0957e` — append-only confirmed by line diff, not by intent. **Clean.**
+
+### 100.4 Item 3 — reproduced from raw Bronze, and the reason for two of the five stops is refuted (N-196)
+
+Reproduced independently of the artifact, from `data/raw/**/cmDDMONYYYYbhav.csv.zip`. For all eight rows `PREVCLOSE(T) == CLOSE(T-1)`, so the exchange did not rebase its own reference price on any of them; the level change is in the traded series. A control over 362 known SPLIT/BONUS ex-dates shows that marker is not a rebasing detector — only **3 of 362** have `PREVCLOSE != CLOSE(T-1)`, and MARATHON's 10:5 split (ex 2018-04-05) prints `2018-04-04 C=426.3` → `2018-04-05 PREVC=426.3, O=220.05`, i.e. an unadjusted `PREVCLOSE`. That refuted hypothesis is recorded so the next round does not re-derive it.
+
+What the Bronze payloads do carry is decisive for two rows. The QA's docstring states the exclusion explicitly — *"a dividend that cannot reprice anything"* — and `PRICE_SIDE_KINDS = {SPLIT, BONUS, CONSOLIDATION}`. **An ex-dividend session reprices the stock by the dividend, permanently.** Measured against the reference row on the exact ex-date:
+
+| Instrument | Ex-date | Prev close | Dividend (Bronze + reference) | Predicted close | Actual close | \|close − (prev − div)\| / prev | Dividend ÷ opening gap |
+|---|---|---|---|---|---|---|---|
+| HEUBACHIND `INE492A01029` | 2020-07-16 | 563.30 | **₹140** special | **423.30** | **423.55** | **0.0444 %** | **87.34 %** |
+| VARDHACRLC `INE116G01013` | 2021-10-28 | 72.35 | **₹25** interim | 47.35 | 56.60 | 12.79 % | **117.10 %** |
+
+HEUBACHIND is not a coincidence: a ₹140 dividend on a ₹563.30 close predicts 423.30 and the session closed 423.55. The "opening gap of −28.46 % with no price-side corporate action attested" is an attested cash dividend, and under §13.2 an ex-dividend gap is a cash inflow, never a loss. VARDHACRLC is weaker evidence — the dividend is 117 % of the gap but the close does not land on the predicted level — and is registered as corroborating, not decisive.
+
+So the count is **5 → 3**: ASTRAL (`INE006I01046`, 2021-03-18), DTIL (`INE341R01014`, 2021-08-05) and MANINFRA (`INE949H01023`, 2021-11-17) carry no record on that date in Bronze or in the reference table, and ASTRAL carries **no Bronze corporate-action row at all** across the whole archive. Those three are genuinely unattested; the fail-closed §6.3 response to them is correct, and **the STOP therefore stands**. What does not stand is the reason and the number: a reader of `seq12_data_qa.json` is told five price levels are fabricated when two of them are explained to 0.04 % by a dividend the same table contains. This is **N-196**, HIGH, OPEN.
+
+### 100.5 Item 4 — the trigger is real, and it is tested on the wrong day (N-197)
+
+The stop's justification is the one the implementer states: *"the trigger is `RSI(2) < 10`, and an opening gap of −22 % to −37 % manufactures that condition."* That reasoning is sound, and it is exactly why the test must be wider than the test that exists. Measured over the corpus, independently of `entry_signals`: the census below applies the same price-side-ratio attestation the QA uses, with a **₹5 previous-close floor** (at a ₹0.05 prev close the 5-paise tick is a 100 % "gap"; the ₹25 Cr ADTV floor excludes every such name anyway), and treats a gap as unattested when neither the opening gap nor the close-to-close move is attested.
+
+| Measurement | Value |
+|---|---|
+| unattested \|open gap\| ≥ 10 %, either direction, corpus-wide | **6,612** (isin, date) events |
+| … on a session where the pre-registered rule fires | **129** |
+| … of those, gap ≤ −20 % — the QA's own class | **6** (the artifact publishes 5) |
+| … inside the 200-session lookback of at least one signal | **5,387** events |
+| signals whose lookback holds ≥ 1 such day | **22,740 of ≈100,310** |
+| instruments with ≥ 1 in a lookback | **1,309** |
+| distinct (isin, session) lookback cells carrying one | **44,237** |
+
+The scan reproduces a signal set of **100,310** against the artifact's **93,463** — 7.3 % larger, because the scan resolves `EQ` from `data/reference/cash_equity_symbol_intervals.csv` while the runner uses `build_production_security_master()`. The difference is in EQ resolution, not in the feature arithmetic, and it can only make the in-lookback share an over-estimate, so the direction of every number above survives it. It is reported rather than smoothed.
+
+Two things follow. The rule tests a −20 % **close-to-close drop**, so a −10 % to −20 % level step on a signal day is invisible — 129 events pass through a signal session and 6 are counted. And it tests **the signal day only**, so a level step anywhere in the 199 sessions feeding `SMA(200)` or `RSI(2)` is invisible — 5,387 events sit in such a window, and a `SMA(200)` or Wilder `RSI(2)` computed across an unattested level step is the §6.3 violation the QA exists to prevent, one step removed from the day it looks at. The floor is not the defect; the ceiling is 20 % on one day in one direction. **N-197**, HIGH, OPEN.
+
+### 100.6 Item 5 — the wording is honest about what it measured and overstated in what it concluded (N-196, N-197)
+
+The `stop_reason` string reads: *"5 entry-signal day(s) open more than 20 % below the previous close — a change of price level between two sessions, not a session's trading — with no price-side corporate action attested on that date; 5 of them are ratio-shaped"*.
+
+Two of those three clauses are computed and one is not. "No price-side corporate action attested" is true **under the code's definition** and false under the language a reader brings to it, because a ₹140 dividend matching the close to 0.04 % is a corporate action that repriced that session (§100.4). "5 of them are ratio-shaped" is near-tautological: `ratio_shapes` enumerates **271 distinct ratios over [0.0417, 24]**, and a uniformly random target is caught by that enumeration **62.50 %** of the time in `[0.60, 0.90]`, **65.56 %** in `[0.30, 0.60]` and **62.17 %** in `[1.05, 1.60]` — a −20 % move (target 0.80) is *always* ratio-shaped. The implementer's own Limitations note says as much ("A non-empty list means a split or bonus of that shape would print exactly this return, not that one happened"), and the artifact's `ratio_shapes` field is nonetheless the third clause of the verdict sentence. §9.1 asks for verdicts computed from values; this clause is computed and uninformative, which reads to a user as corroboration.
+
+The three surviving rows keep the STOP. The wording is the implementer's to change; the finding is that the reason must be re-derived after N-196, not reworded around.
+
+### 100.7 Item 6 — no regression, and the seam is single-engine but has no client (N-198)
+
+**No regression to seq 10 / seq 11.** `git diff 7c0957e~1 7c0957e -- src/signal_core/features/engine.py` is **purely additive**: three fields (`sma_5`, `sma_200`, `rsi_2`), three `_run_subsegment_indicator` maps, three keyword arguments, two docstring lines. No existing computation is touched, and there is no feature-fingerprint function in `features/engine.py` at all (`grep` for `sha256|hashlib|fingerprint|digest` returns nothing there), so the added fields cannot move a committed digest. The one line that could have changed prior rows, `trial_params["entry_rank_indicator"] = str(strategy.parameters.get(...))` at `scripts/run_phase3b2_walkforward.py:1643`, is byte-identical in effect: `DeliverySwingTrendStrategy` is constructed at line 1208 with `entry_rank_indicator=committed_rank_indicator`, and the committed `canonical_params` of `TRIAL-PHASE3B2-EXPANDED-010` and `-011` both already read `{'entry_rank_indicator': 'mom_63'}`. Feature-layer and registry parity hold; 600 tests pass.
+
+**The seam is single-engine.** `execute_swing_strategy_session(strategy=strategy, ...)` is called from exactly one site (`scripts/run_phase3b2_walkforward.py:1417`), and `swing.py` reaches the rule only through `strategy.generate_signals(...)` at line 400 — no `isinstance` branch, no second fill or cost path. §7.4 and §13.5 hold at the seam.
+
+**But nothing calls it.** `scripts/run_seq12_candidate.py` imports `scripts.run_phase3b2_walkforward as walkforward` for exactly one attribute, `load_go_no_go_criteria()` at line 502. It contains no call to `run_phase3b2_walkforward`, no call to `execute_swing_strategy_session`, and no `DailyTPlus1OrderRunner`. `MeanReversionSwingStrategy` is constructed **nowhere outside `tests/`**. So Step 3 is not "blocked by Step 2" — it does not exist, and the STOP is not wired to any consumer. That is the §14.4 shape in advance: a later round can add execution beside this artifact without its exit status ever being consulted, and nothing would fail. **N-198**, MEDIUM, OPEN.
+
+### 100.8 Item 7 — the fail-closed probes pass (clean)
+
+- Deleting `reports/analysis/s101/seq12_data_qa.json` and running `--check` → `FAIL: no committed QA evidence at …`, exit **1**. Restored; `git status --porcelain` empty.
+- The default no-flag path → exit **1**, printing `OVERALL: STOP — …` and `Step 3 is NOT RUN: no session was simulated, no P&L was read, no registry row and no verdict artifact was written.` The refusal is real and it is on the default path.
+- Byte reproduction of the artifact is claimed by `--check` and reproduces (exit 0 at `3f7691f`, consistent with the committed sha256).
+
+The probes pass. Their value is bounded by N-198: they prove the artifact refuses, not that anything depends on the refusal.
+
+### 100.9 Item 8 — the exit side is not measured, and one published zero is not a measurement (N-199)
+
+`blocked_by_locked_session` publishes `total: 431` with `no_band_recorded: 431` — **100 %** — and `at_lower_circuit: 0`, `at_upper_circuit: 0`, `banded_but_not_at_a_limit: 0`. The zero is not evidence that no locked session sat at a limit: `data/silver/price_bands` holds **0 files** (`git ls-tree -r --name-only HEAD | grep -c silver/price_bands` → 0), so `master.get_price_band()` returns `None` for every session and the three categorical counters are unreachable by construction. `data/reference/surveillance_intervals.jsonl` is `SYNTHETIC_FIXTURE`. Under §5.3 and §13.2 the lower-circuit freeze is the unbounded exit delay a delivery-swing rule cannot ignore, and it is precisely the case this QA cannot see.
+
+Separately, no field in the artifact mentions exits, holds, positions or round trips: `[k for k in artifact if any(t in k.lower() for t in ('exit','hold','position','round_trip'))]` → **[]**. For an intraday rule an entry-side QA could be sufficient; for a 2-to-21-session hold it is not, and §13.3 puts the cost test on the round trip. **N-199**, HIGH, OPEN.
+### 100.10 Item 9 — tag, trailers, and status claims (clean)
+
+`feat-s101-7c0957e` is a lightweight tag resolving to `7c0957e459f7de5abd4870c1b6f70f8741380496`; no `--amend`, no rewrite. No `Co-Authored-By`, "Generated with" or model-identity trailer across `f2133ef^..3f7691f` (§12.7). The §101 status block opens with *"**Not audited.** Nothing below is reviewed by an audit section, so nothing below is signed off, verified or closed by a verdict"*, labels its own table `NOT RUN` where Step 3 did not run, states *"This section states a refusal, not a finding"*, and cites no § because none exists. §11.3 is satisfied: it claims nothing a verdict must grant. **Clean.**
+
+### 100.11 Item 10 — NIFTYBEES is not continuous across 2019-12-19, and the corpus says it is adjusted (N-201)
+
+`INF732E01011` has 424 corpus bars ending 2019-12-19. The corpus stores `2019-12-18 close 1292.54` and `2019-12-19 open 129.2, close 130.20` — ratio **0.100730**, **−89.93 %** — and stamps both bars `adjustment_version: v2.0-attested-split-bonus-backadjust-2018-2023`. `INF204KB14I2` begins 2019-12-20 at 134.95. This is an ISIN transition carrying a 1:10 unit re-denomination, **unadjusted in the corpus**, and `INF732E01011` is in `universe_by_date` on 2019-12-18. The opening gap at the boundary is **−0.900042**.
+
+Two consequences. Decision clause (d) compares Calmar against NIFTYBEES buy-and-hold over `2018-04-02..2023-12-29`; a benchmark series carrying a −89.93 % step inside that window makes whatever it produces meaningless, and clause (d) cannot be evaluated as currently specified. And `reconciliation.ratio_shaped_detail` publishes **0** rows for either ISIN while `ratio_shaped_unattested` is 699 and the threshold is 0.35 — so a −89.93 % close-to-close move in an in-universe instrument is absent from the reconciliation's own detail. That makes the 699 not a census, and the `adjustment_version` stamp on those two bars a claim the data does not support.
+
+### 100.12 Item 3, residual — the "no record" evidence covers two-thirds of the corpus (N-200)
+
+The attestation test's negative claim is only as strong as the archive behind it. Measured: the Bronze corporate-action payloads cover **2,200 distinct ISINs** against **2,735** corpus instruments, so **910 corpus ISINs (33.3 %) have no Bronze corporate-action record of any kind**. The reference table holds **5,288** `(isin, ex_date)` keys against Bronze's **13,349**; among corpus ISINs, **6,886** Bronze keys have no reference row, of which **102** carry a price-side subject — sample after sample a **rights issue** (`Rights 49:100 @ Premium Rs 9/-`, `Rights 87:38 @ Premium Of Rs 2.50 Per Share`, …), and the reference table carries only **4** `RIGHTS` rows in 5,371. Rights repricing is a §5.4 adjustment like any other.
+
+So `UNATTESTED_NO_RECORD` conflates "no corporate action occurred" with "the archive we hold does not cover this instrument on this date", and the reference table is demonstrably incomplete on the class that matters most after N-196 — cash and rights adjustments that move price without a share ratio. ASTRAL, DTIL and MANINFRA stay unattested, so the STOP survives this too; the finding is that the evidence class is weaker than the verdict sentence implies. **N-200**, HIGH, OPEN.
+
+### 100.13 One interaction is unpinned (N-202)
+
+`MeanReversionSwingStrategy.generate_signals` emits the sell for a name whose `close > SMA(5)` and then `continue`s (`src/signal_core/strategy/mean_reversion.py:114`), so a name satisfying both the exit and the entry condition on the same session cannot be entered that day. The pre-registration pins `entry_condition` (line 36) and `exit_condition` (lines 38-39) as separate predicates and says nothing about their interaction. That is a degree of freedom the code resolves and the spec does not, in a rule committed as *"a single closed-form mean-reversion rule, executed exactly once"* (§8.1, §2.1). It does not affect this round — nothing executed — but it is unpinned now and will be pinned by whoever runs it. **N-202**, MEDIUM, OPEN.
+
+### 100.14 Findings ledger after this section
+
+| | before §100 | after §100 |
+|---|---|---|
+| rows / ids | 79 / 47 | **86 / 54** |
+| latest per id | 45 CLOSED, 2 OPEN, 1 ACCEPTED | **45 CLOSED, 9 OPEN, 1 ACCEPTED** |
+| OPEN ids | `N-150`, `N-195` | `N-150`, `N-195`, **`N-196`…`N-202`** |
+
+### 100.15 Phase verdicts
+
+| Phase (§101 row) | Verdict | Residual |
+|---|---|---|
+| Pre-registration (`f2133ef`, §8.2) | **PASS** — committed before code, unchanged at `7c0957e`, no alternates, no sweep | N-202: exit/entry interaction unpinned |
+| Step 1 implementation (§7.4, §13.5) | **PASS at the seam, NOT WIRED** — one `strategy=` call site, no second fill or cost path, 600 tests green, engine diff additive | N-198: nothing outside `tests/` constructs the rule |
+| Step 2 data QA (§6.1, §6.3, §5.4) | **FAIL** — 2 of 5 stops refuted by an attested dividend (N-196); trigger tested on one day in one direction (N-197); evidence class covers 2,200 of 2,735 instruments (N-200); exit side absent (N-199) | the STOP itself stands on 3 genuine rows |
+| Step 3 execution | **NOT RUN** — reported as not run, no artifact, no registry row, N/N_eval unchanged | nothing to verify |
+| Decision clause (d), Calmar vs NIFTYBEES | **BLOCKED** — benchmark series carries an unadjusted −89.93 % step (N-201) | clause cannot be evaluated as specified |
+| Status document (§11.3) | **PASS** — "Not audited" opening, `NOT RUN` rows, no uncited claim | none observed |
+| Holdout / 2024 fold | **held** — `2025-01-01..2026-11-11` sealed, 2024 fold untouched | none observed |
+
+### 100.16 Work order (feat-s102), ordered by what it unblocks
+
+1. **Add a cash-adjustment branch to the attestation test and re-derive the count** (N-196). Required: `_classify_drop` treats a `DIVIDEND` or `RIGHTS` row on the exact ex-date as attested when the cash amount reproduces the opening gap or the close within a recorded tolerance, and `seq12_data_qa.json` republishes `unattested_level_steps_feeding_a_signal` from the widened test. The probe that must fail closed: a fixture whose ex-date dividend predicts the close to < 0.5 % must classify as an attested cash adjustment; the HEUBACHIND row must leave the stop list while ASTRAL, DTIL and MANINFRA stay in it. The stop must still trip — a fix that empties the list is a failure, not a pass. Phase: §6.1 / §5.4.
+2. **Test the gap over the window, not only the signal day, and in both directions** (N-197). Required: a committed measurement of unattested \|gap\| ≥ 10 % events inside the 200-session lookback of each signal, published beside the existing count, plus a stated policy for a lookback that contains one. The probe: a fixture with a clean signal day and an unattested −15 % step at T−100 must not yield a usable `SMA(200)`, and the artifact must say so. Phase: §6.3.
+3. **Make the artifact gate something, or say it gates nothing** (N-198). Required: either the seq-12 execution path exists and refuses to start when the artifact's status is `STOP` (the refusal named in the probe), or §101 states that no code consumes the artifact. Phase: §14.4 / §7.4.
+4. **Populate `data/silver/price_bands` or retire the three band counters** (N-199). Required: `at_lower_circuit`, `at_upper_circuit` and `banded_but_not_at_a_limit` report `NOT RUN` while the partition is empty, rather than 0; and the round-trip exit-freeze case is measured before any swing verdict is computed. The probe: an empty band partition must not yield `at_lower_circuit: 0` as a computed value. Phase: §5.3 / §13.2.
+5. **Resolve the NIFTYBEES boundary or drop clause (d)** (N-201). Required: either the corpus back-adjusts `INF732E01011` across 2019-12-19 with a committed corporate-action row, or clause (d) names a benchmark that is continuous, with the reason committed. The probe: a benchmark series carrying a > 50 % unattested step inside the evaluation window must be refused by name. Phase: §5.4 / §9.2.
+6. **Publish the archive's coverage beside the "no record" verdict** (N-200). Required: the artifact reports how many instruments in the scanned set have no Bronze corporate-action coverage, so `UNATTESTED_NO_RECORD` is read as "no record in a partial archive". Phase: §10.5 / §9.1.
+7. **Pin the exit/entry interaction in the pre-registration** (N-202), or record it as an explicit parameter. Phase: §8.1.
+8. Carried unchanged: §99.10 items 1 (`N-195`), 2 (verifier inventory — measured again here at 11, all exit 0) and 3, and §96.10 items 5-7.
+
+### 100.17 What would falsify this verdict
+
+- **N-196**: a dividend-aware repricing test under which HEUBACHIND 2020-07-16 does *not* match — a committed source showing the ₹140 on that date is not an ex-date dividend, or a session-level record showing the stock traded at 423 for reasons other than the dividend. Falsified also if a re-derived count that includes dividends still returns five unattested rows.
+- **N-197**: a measurement showing that unattested gaps between 10 % and 20 %, or inside lookback windows, are absent or immaterial — for instance a scan restricted to the ₹25 Cr ADTV universe where the in-lookback count collapses to O(1). My scan's signal set is 7.3 % larger than the artifact's, so a scan on the artifact's own EQ resolution that finds materially fewer in-window events would weaken the finding, not its direction.
+- **N-198**: a code path anywhere in the tree that reads `seq12_data_qa.json` or invokes the seq-12 rule before executing. `grep -rn 'seq12_data_qa' --include=*.py` returning a non-test consumer would falsify it.
+- **N-199**: a non-empty `data/silver/price_bands` partition for 2018-2023, or a session where `get_price_band` returns a band — either would make `at_lower_circuit: 0` a measurement.
+- **N-200**: a census showing the 910 uncovered ISINs are all non-tradeable, or that no unattested stop row belongs to one of them. ASTRAL, DTIL and MANINFRA are the three that matter, and none of them is covered.
+- **N-201**: a corpus in which `INF732E01011`'s 2019-12-19 bar is back-adjusted, or a committed corporate-action row attesting the 1:10 transition — which is what the `adjustment_version` stamp already asserts and the data does not show.
+- **The STOP verdict itself**: a session-simulation run whose P&L is unchanged when ASTRAL, DTIL and MANINFRA are excluded. That would make the three genuine rows immaterial rather than disqualifying, and the stop over-cautious rather than wrong.
