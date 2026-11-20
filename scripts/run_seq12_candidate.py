@@ -32,12 +32,20 @@ An ex-dividend or ex-rights session reprices the stock by the cash it removes, p
 §13.2), so a cash record that reproduces the level attests the step. A cash record that does not
 reproduce it is published as `UNATTESTED_CASH_MISMATCH` naming its residual, not disposed of.
 
+**The window, not only the day (N-197, §100.16 item 2).** The signal day is not the only session whose
+price level the rule reads: `SMA(200)` and `RSI(2)` at T are computed over the 199 sessions before it.
+So the same attestation test is applied to every pair of consecutive sessions in the corpus, in both
+directions, and a signal whose own continuous 200-session window contains an unattested step of 10% or
+more is counted and excluded from the usable set — it does not extend the STOP class, which remains the
+signal day's −20% step.
+
 So this script has two jobs and no third one:
 
 1. `--qa-only` prints the Step 2 counts and lists (no return, no P&L) and exits 1 when the QA is not
    CLEAR, so the refusal is the command's own exit status;
-2. `--write` commits the QA evidence `reports/analysis/s101/seq12_data_qa.json`; `--check` recomputes it
-   and compares the bytes, so the STOP is reproducible from committed inputs.
+2. `--write` commits the QA evidence `reports/analysis/s102/seq12_data_qa.json`, which cites the §101
+   artifact it supersedes by hash; `--check` recomputes it and compares the bytes, so the STOP is
+   reproducible from committed inputs.
 
 The one execution (Step 3), its matched-count random-entry null and the four-clause decision rule are
 **NOT RUN** on this tree: the QA stopped the round before the first signal was priced. `N` and `N_eval`
@@ -60,7 +68,7 @@ import json
 from pathlib import Path
 import re
 import sys
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import yaml
 
@@ -76,9 +84,22 @@ from signal_core.features.indicators import compute_atr, compute_rsi, compute_sm
 from signal_core.research.pit_universe import median_turnover_as_of  # noqa: E402
 
 CONFIG_PATH = REPO_ROOT / "configs" / "trial_012_candidate.yaml"
-OUTPUT = REPO_ROOT / "reports" / "analysis" / "s101" / "seq12_data_qa.json"
+# §102 re-derives the Step 2 counts under the widened attestation test; the §101 artifact is left
+# unedited as that round's record and is cited here by hash (AGENTS.md §10.1, §97.5 N-194).
+OUTPUT = REPO_ROOT / "reports" / "analysis" / "s102" / "seq12_data_qa.json"
+RESTATED_ARTIFACT = REPO_ROOT / "reports" / "analysis" / "s101" / "seq12_data_qa.json"
+RESTATED_FIELDS = (
+    "status",
+    "stop_reason",
+    "unattested_level_steps_feeding_a_signal",
+    "below_minus_20pct_level_step_at_open",
+    "blocked_by_locked_session",
+)
 CA_PATH = REPO_ROOT / "data" / "reference" / "corporate_actions.jsonl"
+BRONZE_CA_DIR = REPO_ROOT / "data" / "raw" / "corporate_actions"
 CORPUS_PATH = REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz"
+PRICE_BAND_DIR = REPO_ROOT / "data" / "silver" / "price_bands"
+NOT_RUN = "NOT RUN"
 
 WINDOW_START = datetime.date(2018, 4, 1)
 WINDOW_END = datetime.date(2023, 12, 31)
@@ -100,6 +121,13 @@ CASH_ADJUSTMENT_TOLERANCE = Decimal("0.005")
 RIGHTS_PREMIUM_PATTERN = re.compile(r"@\s*(?:Premium\s+(?:[Oo]f\s+)?)?(?:INR|Rs\.?)\s*([0-9]+(?:\.[0-9]+)?)")
 TRANSITION_KINDS = ("ISIN_TRANSITION", "MERGER", "DELISTING")
 NEAR_MISMATCH_SESSIONS = 5
+# N-197: the trigger is manufactured by a level step anywhere in the 200-session window that feeds
+# SMA(200) and RSI(2), not only on the signal day, and not only downward. A step of 10% or more on a
+# previous close under ₹5 is a tick artefact rather than a change of level.
+LOOKBACK_SESSIONS = TREND_SMA_PERIOD
+UNATTESTED_STEP_GAP = Decimal("0.10")
+GAP_TEST_MIN_PREVIOUS_CLOSE = Decimal("5")
+SIGNAL_LEVEL_STEP_DETAIL_LIMIT = 200
 LARGE_DROP_THRESHOLD = Decimal("-0.20")
 RATIO_TOLERANCE = Decimal("0.005")
 # The corpus's own reconciliation publishes moves beyond this threshold; below it, a ratio-shaped step
@@ -148,19 +176,25 @@ def _bars_by_isin(corpus: dict) -> Dict[str, List[PriceBar]]:
 class InstrumentSeries:
     """Per-ISIN session map of the levels the rule reads, partitioned exactly as the engine does."""
 
-    __slots__ = ("rows",)
+    __slots__ = ("rows", "segment_of", "segment_position")
 
     def __init__(self, bars: Sequence[PriceBar], sessions: Sequence[datetime.date]) -> None:
         self.rows: Dict[datetime.date, dict] = {}
+        self.segment_of: Dict[datetime.date, int] = {}
+        self.segment_position: Dict[datetime.date, int] = {}
         segments = PriceSeriesContinuityValidator.partition_into_continuous_subsegments(
             expected_calendar_sessions=sessions, actual_price_bars=bars
         )
-        for segment in segments:
+        for ordinal, segment in enumerate(segments):
             sma5 = compute_sma(segment, EXIT_SMA_PERIOD)
             sma200 = compute_sma(segment, TREND_SMA_PERIOD)
             rsi2 = compute_rsi(segment, 2)
             atr14 = compute_atr(segment, ATR_PERIOD)
-            for bar, s5, s200, r2, atr in zip(segment, sma5, sma200, rsi2, atr14):
+            for position, (bar, s5, s200, r2, atr) in enumerate(
+                zip(segment, sma5, sma200, rsi2, atr14)
+            ):
+                self.segment_of[bar.trade_date] = ordinal
+                self.segment_position[bar.trade_date] = position
                 self.rows[bar.trade_date] = {
                     "open": bar.open,
                     "high": bar.high,
@@ -171,6 +205,27 @@ class InstrumentSeries:
                     "rsi2": r2,
                     "atr14": atr,
                 }
+
+    def steps_in_lookback(
+        self,
+        steps: Sequence[tuple],
+        session: datetime.date,
+        window: int = LOOKBACK_SESSIONS,
+    ) -> List[tuple]:
+        """
+        The level steps inside this session's own continuous feature window, `[T-window+1, T]`.
+
+        The window is the one `SMA(200)` and `RSI(2)` at T are computed over, so a step in a previous
+        continuous subsegment is not in it: the engine already refused that lookback (§6.3, N-197).
+        """
+        segment = self.segment_of[session]
+        position = self.segment_position[session]
+        return [
+            step
+            for step in steps
+            if self.segment_of.get(step[0]) == segment
+            and 0 <= position - self.segment_position[step[0]] < window
+        ]
 
 
 def _load_corporate_actions() -> Dict[str, List[dict]]:
@@ -184,6 +239,78 @@ def _load_corporate_actions() -> Dict[str, List[dict]]:
                 continue
             by_isin.setdefault(str(row["isin"]), []).append(row)
     return by_isin
+
+
+def artifact_consumers() -> List[str]:
+    """
+    Committed code that reads this artifact. Empty means the STOP gates nothing (§14.4, N-198).
+
+    The producer itself and the audit probe are excluded by name and the exclusion is published beside
+    the result, so "no consumer" is a scan with a stated boundary rather than an assumption.
+    """
+    consumers: List[str] = []
+    for path in sorted((REPO_ROOT / "scripts").glob("*.py")) + sorted(
+        (REPO_ROOT / "src").rglob("*.py")
+    ):
+        if path.resolve() == Path(__file__).resolve() or path.name == "probe_audit_findings.py":
+            continue
+        if OUTPUT.stem in path.read_text(encoding="utf-8", errors="ignore"):
+            consumers.append(path.relative_to(REPO_ROOT).as_posix())
+    return consumers
+
+
+def _price_band_partition_files() -> List[Path]:
+    return [path for path in PRICE_BAND_DIR.rglob("*") if path.is_file()] if PRICE_BAND_DIR.is_dir() else []
+
+
+def band_counter(value: int, bands_recorded: bool):
+    """
+    A categorical band counter is a measurement only where bands are recorded (N-199, §100.16 item 4).
+
+    While `data/silver/price_bands` is empty `get_price_band()` returns None for every session, so 0
+    would report the reader's blindness as the market's quiet.
+    """
+    return value if bands_recorded else NOT_RUN
+
+
+def corporate_action_archive_coverage(scanned_isins: Sequence[str]) -> Tuple[dict, Dict[str, int]]:
+    """
+    How much of the scanned set the Bronze corporate-action archive covers (N-200, §10.5).
+
+    `UNATTESTED_NO_RECORD` is only evidence of `no corporate action` where the archive covers the
+    instrument, so the coverage travels with the verdict instead of behind it.
+    """
+    per_isin: Dict[str, int] = {}
+    rows = 0
+    payloads = sorted(BRONZE_CA_DIR.glob("*.json"))
+    for path in payloads:
+        for row in json.loads(path.read_text(encoding="utf-8")):
+            isin = str(row.get("isin") or "").strip()
+            if not isin or isin == "-":
+                continue
+            rows += 1
+            per_isin[isin] = per_isin.get(isin, 0) + 1
+    uncovered = [isin for isin in scanned_isins if isin not in per_isin]
+    return {
+        "bronze_payloads": len(payloads),
+        "bronze_rows": rows,
+        "bronze_distinct_isins": len(per_isin),
+        "instruments_scanned": len(scanned_isins),
+        "instruments_with_no_bronze_record": len(uncovered),
+        "share_of_scanned_set_with_no_bronze_record": (
+            format(
+                (Decimal(len(uncovered)) / Decimal(len(scanned_isins)) * 100).quantize(Decimal("0.1")),
+                "f",
+            )
+            + "%"
+            if scanned_isins
+            else "0.0%"
+        ),
+        "reading": (
+            "UNATTESTED_NO_RECORD means 'no record in this archive', not 'no corporate action': an "
+            "instrument the archive does not cover at all cannot be exonerated by it (§10.5, N-200)"
+        ),
+    }, per_isin
 
 
 def ratio_shapes(move: Decimal) -> List[str]:
@@ -378,6 +505,40 @@ def _ratio_matches(move: Decimal, record: dict) -> bool:
     return abs(factor - target) / target <= RATIO_TOLERANCE
 
 
+def restatement_of_previous(qa: dict) -> dict:
+    """
+    The §101 artifact this one supersedes, pinned by hash, with every field that moved named (N-194).
+
+    The correction is an append: the superseded file is untouched, and the fields that changed are
+    published as `published_there` / `published_here` pairs so a reader can diff the two rounds without
+    trusting either summary.
+    """
+    path = RESTATED_ARTIFACT.relative_to(REPO_ROOT).as_posix()
+    if not RESTATED_ARTIFACT.is_file():
+        return {"path": path, "available": False, "sha256": None, "changed_fields": {}}
+    raw = RESTATED_ARTIFACT.read_bytes()
+    previous = json.loads(raw.decode("utf-8"))
+    return {
+        "path": path,
+        "available": True,
+        "sha256": hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest(),
+        "superseded_artifact_left_unedited": True,
+        "changed_fields": {
+            field: {"published_there": previous.get(field), "published_here": qa.get(field)}
+            for field in RESTATED_FIELDS
+            if previous.get(field) != qa.get(field)
+        },
+        "reason": (
+            "N-196: a DIVIDEND or RIGHTS record on the exact ex-date is now an attestation test when its "
+            "cash amount reproduces the close or the opening price within 0.5% of the previous close. "
+            "N-197: unattested level steps inside the 200-session feature window are counted and excluded "
+            "from the usable set. N-199: the three categorical band counters report NOT RUN while "
+            "data/silver/price_bands is empty. N-200: the archive's coverage travels with the no-record "
+            "verdict. The window, the rule, the criteria and the corpus are unchanged."
+        ),
+    }
+
+
 def data_qa(criteria) -> dict:
     """
     Step 2: counts and lists only. No return, no P&L (§9.3, §6.3).
@@ -397,6 +558,10 @@ def data_qa(criteria) -> dict:
     actions = _load_corporate_actions()
     master = build_production_security_master()
     floor_inr = MIN_MEDIAN_ADTV_CRORE * Decimal("10000000")
+    coverage, bronze_records_by_isin = corporate_action_archive_coverage(list(series))
+    band_files = _price_band_partition_files()
+    bands_recorded = bool(band_files)
+    consumers = artifact_consumers()
 
     entry_signals = 0
     first_signal_session: Optional[datetime.date] = None
@@ -409,10 +574,45 @@ def data_qa(criteria) -> dict:
     no_previous_session = 0
     large_drops: List[dict] = []
     other_series_filtered = 0
+    level_step_events = 0
+    level_step_events_on_a_signal_day = 0
+    instruments_with_a_level_step = 0
+    signals_with_a_level_step_in_lookback = 0
+    signal_level_steps: List[dict] = []
 
     universe_days = set(universe.keys())
     for isin, instrument in series.items():
         rows = instrument.rows
+        # (0) every unattested change of price level inside this instrument's continuous segments: an
+        # opening gap of 10% or more in either direction that no corporate-action record at that date
+        # predicts. A feature window containing one is not a window the rule may be priced on (§6.3).
+        steps: List[tuple] = []
+        previous_by_segment: Dict[int, datetime.date] = {}
+        for step_session in sorted(rows):
+            segment = instrument.segment_of[step_session]
+            previous_session = previous_by_segment.get(segment)
+            previous_by_segment[segment] = step_session
+            if previous_session is None:
+                continue
+            step_previous_close = rows[previous_session]["close"]
+            if step_previous_close < GAP_TEST_MIN_PREVIOUS_CLOSE:
+                continue
+            step_gap = (rows[step_session]["open"] - step_previous_close) / step_previous_close
+            if abs(step_gap) < UNATTESTED_STEP_GAP:
+                continue
+            step_move = (rows[step_session]["close"] - step_previous_close) / step_previous_close
+            classified = _classify_drop(
+                isin, step_session, step_move, step_gap, step_previous_close, actions
+            )
+            if classified["attested"]:
+                continue
+            steps.append(
+                (step_session, step_gap.quantize(Decimal("0.0001")), classified["disposition"])
+            )
+        level_step_events += len(steps)
+        instruments_with_a_level_step += 1 if steps else 0
+        step_days = {step[0] for step in steps}
+
         for session, row in rows.items():
             position = index.get(session)
             if position is None or position + 1 >= len(sessions):
@@ -432,6 +632,28 @@ def data_qa(criteria) -> dict:
             entry_signals += 1
             if first_signal_session is None or session < first_signal_session:
                 first_signal_session = session
+
+            # (iv) the same level step, over the lookback window instead of the signal day only.
+            if session in step_days:
+                level_step_events_on_a_signal_day += 1
+            steps_in_window = instrument.steps_in_lookback(steps, session)
+            if steps_in_window:
+                signals_with_a_level_step_in_lookback += 1
+                if len(signal_level_steps) < SIGNAL_LEVEL_STEP_DETAIL_LIMIT:
+                    signal_level_steps.append(
+                        {
+                            "isin": isin,
+                            "signal_session": session.isoformat(),
+                            "level_steps_in_lookback": [
+                                {
+                                    "session": step[0].isoformat(),
+                                    "opening_gap": format(step[1], "f"),
+                                    "disposition": step[2],
+                                }
+                                for step in steps_in_window
+                            ],
+                        }
+                    )
 
             # (i) the liquidity floor, read exactly as the engine reads it: the 20 sessions before T.
             median = median_turnover_as_of(
@@ -477,9 +699,11 @@ def data_qa(criteria) -> dict:
             if move >= LARGE_DROP_THRESHOLD:
                 continue
             opening_gap = (row["open"] - previous_row["close"]) / previous_row["close"]
-            large_drops.append(
-                _classify_drop(isin, session, move, opening_gap, previous_row["close"], actions)
+            drop = _classify_drop(
+                isin, session, move, opening_gap, previous_row["close"], actions
             )
+            drop["bronze_records_for_isin"] = bronze_records_by_isin.get(isin, 0)
+            large_drops.append(drop)
 
     unattested_steps = [
         row for row in large_drops if row["shape"] == "LEVEL_STEP_AT_OPEN" and not row["attested"]
@@ -494,7 +718,7 @@ def data_qa(criteria) -> dict:
         if first_sma200 is None or earliest < first_sma200:
             first_sma200 = earliest
 
-    return {
+    qa = {
         "artifact": "seq12_data_qa",
         "section": "§101 Step 2 (AGENTS.md §5.4, §6.3, §9.3)",
         "not_audited": True,
@@ -533,12 +757,59 @@ def data_qa(criteria) -> dict:
         "blocked_by_adtv_floor": blocked_adtv,
         "blocked_by_locked_session": {
             "total": blocked_locked,
-            "at_lower_circuit": locked_at_lower,
-            "at_upper_circuit": locked_at_upper,
-            "banded_but_not_at_a_limit": locked_other,
+            # The three categorical counters read a price-band record. While the partition is empty
+            # `master.get_price_band()` returns None for every session, so 0 would be a property of the
+            # reader rather than of the market: they are NOT RUN (N-199, §100.16 item 4).
+            "at_lower_circuit": band_counter(locked_at_lower, bands_recorded),
+            "at_upper_circuit": band_counter(locked_at_upper, bands_recorded),
+            "banded_but_not_at_a_limit": band_counter(locked_other, bands_recorded),
             "no_band_recorded": locked_unbanded,
+            "price_band_partition": {
+                "path": PRICE_BAND_DIR.relative_to(REPO_ROOT).as_posix(),
+                "files": len(band_files),
+                "populated": bands_recorded,
+                "needs": (
+                    None
+                    if bands_recorded
+                    else (
+                        "a sourced per-session NSE price-band payload (data/silver/price_bands is "
+                        "empty and data/raw holds no price-band archive either); the bands are not "
+                        "derived from prices, which would make the counter a restatement of the bar "
+                        "it tests"
+                    )
+                ),
+            },
         },
         "signals_without_a_calendar_previous_session": no_previous_session,
+        "feature_window_policy": {
+            "window_sessions": LOOKBACK_SESSIONS,
+            "unattested_step_gap_threshold": format(UNATTESTED_STEP_GAP, "f"),
+            "previous_close_floor_inr": format(GAP_TEST_MIN_PREVIOUS_CLOSE, "f"),
+            "attestation": (
+                "the same test the stop uses: a price-side ratio on the exact ex-date, or a cash amount "
+                "on the exact ex-date within 0.5% of the previous close"
+            ),
+            "rule": (
+                "a signal whose own continuous 200-session feature window contains an unattested price "
+                "level step of 10% or more, in either direction, does not count as a usable entry "
+                "signal: SMA(200) and RSI(2) at that T are computed across a step the committed "
+                "corporate-action archive cannot attest, which is the assumption §6.3 forbids one step "
+                "removed from the day the stop inspects"
+            ),
+            "consequence": (
+                "such signals are counted below and excluded from the usable-feature-window set; they "
+                "do not extend the STOP class, which remains the signal-day −20% level-step test"
+            ),
+        },
+        "unattested_level_step_events_corpus_wide": level_step_events,
+        "unattested_level_step_events_on_a_signal_day": level_step_events_on_a_signal_day,
+        "instruments_with_an_unattested_level_step": instruments_with_a_level_step,
+        "signals_with_an_unattested_level_step_in_lookback": signals_with_a_level_step_in_lookback,
+        "entry_signals_in_a_usable_feature_window": entry_signals - signals_with_a_level_step_in_lookback,
+        "signal_level_steps_in_lookback": signal_level_steps,
+        "signal_level_steps_in_lookback_truncated": (
+            signals_with_a_level_step_in_lookback > len(signal_level_steps)
+        ),
         "below_minus_20pct_one_day": large_drops,
         "below_minus_20pct_count": len(large_drops),
         "below_minus_20pct_level_step_at_open": sum(
@@ -558,8 +829,42 @@ def data_qa(criteria) -> dict:
                 f"{sum(1 for row in unattested_steps if row['ratio_shapes'])} of them are ratio-shaped"
             )
         ),
+        "corporate_action_archive_coverage": {
+            **coverage,
+            "unattested_stop_rows_on_uncovered_instruments": sorted(
+                {
+                    row["isin"]
+                    for row in unattested_steps
+                    if bronze_records_by_isin.get(row["isin"], 0) == 0
+                }
+            ),
+        },
+        "gated_by": {
+            "consumers": consumers,
+            "gates_execution": bool(consumers),
+            "excluded_from_the_scan": [
+                "scripts/run_seq12_candidate.py (this producer)",
+                "scripts/probe_audit_findings.py (the audit probe)",
+            ],
+            "statement": (
+                "no committed code outside this producer and the audit probe reads this artifact, so its"
+                " STOP is a record of a refusal and not a gate: no execution path exists for it to "
+                "refuse"
+                if not consumers
+                else f"{len(consumers)} committed reader(s) of this artifact: {consumers}"
+            ),
+        },
         "not_run": {
-            "one_execution_seq12": "NOT RUN — Step 2 did not clear",
+            "one_execution_seq12": (
+                "NOT RUN — Step 2 did not clear" if unattested_steps else "NOT RUN — Step 3 is not wired"
+            ),
+            "exit_freeze_round_trip": (
+                "NOT RUN — data/silver/price_bands holds 0 files, so no session carries a band and a "
+                "lower-freeze exit delay cannot be measured; the exit side of a 2-to-21-session hold is "
+                "unmeasured until that partition is populated (N-199)"
+                if not bands_recorded
+                else "NOT RUN — no position was simulated, so no round trip crossed a band"
+            ),
             "random_entry_null": "NOT RUN — no strategy arm to match",
             "decision_rule": "NOT RUN — no metrics to decide on",
             "registry_trial_count": "UNCHANGED at 11",
@@ -581,8 +886,14 @@ def data_qa(criteria) -> dict:
             "threshold is a level step, and only an unattested level step stops the round",
             "the opening-gap test uses the corpus's own adjusted open against the previous adjusted "
             "close, so an adjustment applied at the wrong date would show as a level step here",
+            "the lookback count is per signal: a name is counted once per signal day whose own 200-session "
+            "window holds an unattested step, so it is not a trade count; the 10% threshold, the ₹5 "
+            "previous-close floor and the 200-session window are recorded in `feature_window_policy`, not "
+            "pre-registered values",
         ],
     }
+    qa["restates"] = restatement_of_previous(qa)
+    return qa
 
 
 def qa_gate(qa: dict) -> Optional[str]:

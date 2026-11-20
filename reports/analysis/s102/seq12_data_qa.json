@@ -1,0 +1,3368 @@
+{
+ "artifact": "seq12_data_qa",
+ "below_minus_20pct_count": 8,
+ "below_minus_20pct_level_step_at_open": 5,
+ "below_minus_20pct_one_day": [
+  {
+   "attested": false,
+   "below_corpus_reconciliation_threshold": true,
+   "bronze_records_for_isin": 0,
+   "cash_adjustment": {
+    "tested": [],
+    "tolerance_of_previous_close": "0.005"
+   },
+   "disposition": "UNATTESTED_NO_RECORD",
+   "isin": "INE006I01046",
+   "one_day_return": "-0.3011",
+   "opening_gap": "-0.2972",
+   "ratio_shapes": [
+    "10/7",
+    "7/10"
+   ],
+   "records_near_date": [],
+   "records_on_date": [],
+   "shape": "LEVEL_STEP_AT_OPEN",
+   "signal_session": "2021-03-18"
+  },
+  {
+   "attested": false,
+   "below_corpus_reconciliation_threshold": true,
+   "bronze_records_for_isin": 7,
+   "cash_adjustment": {
+    "tested": [
+     {
+      "action_type": "DIVIDEND",
+      "amount": "25.0000",
+      "basis": "DIVIDEND_AMOUNT",
+      "close_residual": "0.1279",
+      "matched": false,
+      "opening_residual": "0.0504",
+      "predicted_level": "47.3500"
+     }
+    ],
+    "tolerance_of_previous_close": "0.005"
+   },
+   "disposition": "UNATTESTED_CASH_MISMATCH",
+   "isin": "INE116G01013",
+   "one_day_return": "-0.2177",
+   "opening_gap": "-0.2951",
+   "ratio_shapes": [
+    "14/11"
+   ],
+   "records_near_date": [],
+   "records_on_date": [
+    {
+     "action_type": "DIVIDEND",
+     "circular_ref": "ATTESTED_NSE_CA_2021-10-01_VARDHACRLC_20211028",
+     "dividend_amount": "25.00",
+     "ex_date": "2021-10-28",
+     "provenance": "CONTENT_IDENTIFIED_ONLY",
+     "ratio": "1:1"
+    }
+   ],
+   "shape": "LEVEL_STEP_AT_OPEN",
+   "signal_session": "2021-10-28"
+  },
+  {
+   "attested": false,
+   "below_corpus_reconciliation_threshold": true,
+   "bronze_records_for_isin": 2,
+   "cash_adjustment": {
+    "tested": [],
+    "tolerance_of_previous_close": "0.005"
+   },
+   "disposition": "UNATTESTED_NO_RECORD",
+   "isin": "INE292A01023",
+   "one_day_return": "-0.3333",
+   "opening_gap": "0.0000",
+   "ratio_shapes": [
+    "3/2",
+    "2/3",
+    "6/4",
+    "4/6",
+    "9/6",
+    "12/8",
+    "6/9",
+    "15/10",
+    "8/12",
+    "18/12"
+   ],
+   "records_near_date": [],
+   "records_on_date": [],
+   "shape": "SESSION_MOVE",
+   "signal_session": "2019-12-18"
+  },
+  {
+   "attested": false,
+   "below_corpus_reconciliation_threshold": true,
+   "bronze_records_for_isin": 2,
+   "cash_adjustment": {
+    "tested": [],
+    "tolerance_of_previous_close": "0.005"
+   },
+   "disposition": "UNATTESTED_NO_RECORD",
+   "isin": "INE292A01023",
+   "one_day_return": "-0.3333",
+   "opening_gap": "0.0000",
+   "ratio_shapes": [
+    "3/2",
+    "2/3",
+    "6/4",
+    "4/6",
+    "9/6",
+    "12/8",
+    "6/9",
+    "15/10",
+    "8/12",
+    "18/12"
+   ],
+   "records_near_date": [],
+   "records_on_date": [],
+   "shape": "SESSION_MOVE",
+   "signal_session": "2019-12-30"
+  },
+  {
+   "attested": false,
+   "below_corpus_reconciliation_threshold": true,
+   "bronze_records_for_isin": 0,
+   "cash_adjustment": {
+    "tested": [],
+    "tolerance_of_previous_close": "0.005"
+   },
+   "disposition": "UNATTESTED_NO_RECORD",
+   "isin": "INE341R01014",
+   "one_day_return": "-0.3348",
+   "opening_gap": "-0.3668",
+   "ratio_shapes": [
+    "3/2",
+    "2/3",
+    "6/4",
+    "4/6",
+    "9/6",
+    "12/8",
+    "6/9",
+    "15/10",
+    "8/12",
+    "18/12"
+   ],
+   "records_near_date": [],
+   "records_on_date": [],
+   "shape": "LEVEL_STEP_AT_OPEN",
+   "signal_session": "2021-08-05"
+  },
+  {
+   "attested": true,
+   "below_corpus_reconciliation_threshold": true,
+   "bronze_records_for_isin": 9,
+   "cash_adjustment": {
+    "tested": [
+     {
+      "action_type": "DIVIDEND",
+      "amount": "140.0000",
+      "basis": "DIVIDEND_AMOUNT",
+      "close_residual": "0.0004",
+      "matched": true,
+      "opening_residual": "0.0360",
+      "predicted_level": "423.3000"
+     }
+    ],
+    "tolerance_of_previous_close": "0.005"
+   },
+   "disposition": "ATTESTED_CASH_ADJUSTMENT",
+   "isin": "INE492A01029",
+   "one_day_return": "-0.2481",
+   "opening_gap": "-0.2846",
+   "ratio_shapes": [
+    "4/3",
+    "3/4",
+    "8/6",
+    "6/8",
+    "12/9",
+    "9/12",
+    "16/12"
+   ],
+   "records_near_date": [],
+   "records_on_date": [
+    {
+     "action_type": "DIVIDEND",
+     "circular_ref": "ATTESTED_NSE_CA_2020-07-01_SUDARCOLOR_20200716",
+     "dividend_amount": "140.00",
+     "ex_date": "2020-07-16",
+     "provenance": "CONTENT_IDENTIFIED_ONLY",
+     "ratio": "1:1"
+    }
+   ],
+   "shape": "LEVEL_STEP_AT_OPEN",
+   "signal_session": "2020-07-16"
+  },
+  {
+   "attested": false,
+   "below_corpus_reconciliation_threshold": true,
+   "bronze_records_for_isin": 7,
+   "cash_adjustment": {
+    "tested": [],
+    "tolerance_of_previous_close": "0.005"
+   },
+   "disposition": "UNATTESTED_NO_RECORD",
+   "isin": "INE669E01016",
+   "one_day_return": "-0.2054",
+   "opening_gap": "-0.0976",
+   "ratio_shapes": [],
+   "records_near_date": [],
+   "records_on_date": [],
+   "shape": "SESSION_MOVE",
+   "signal_session": "2022-01-11"
+  },
+  {
+   "attested": false,
+   "below_corpus_reconciliation_threshold": true,
+   "bronze_records_for_isin": 0,
+   "cash_adjustment": {
+    "tested": [],
+    "tolerance_of_previous_close": "0.005"
+   },
+   "disposition": "UNATTESTED_NO_RECORD",
+   "isin": "INE949H01023",
+   "one_day_return": "-0.2233",
+   "opening_gap": "-0.2802",
+   "ratio_shapes": [
+    "9/7",
+    "7/9"
+   ],
+   "records_near_date": [],
+   "records_on_date": [],
+   "shape": "LEVEL_STEP_AT_OPEN",
+   "signal_session": "2021-11-17"
+  }
+ ],
+ "below_minus_20pct_session_move": 3,
+ "blocked_by_adtv_floor": 75496,
+ "blocked_by_locked_session": {
+  "at_lower_circuit": "NOT RUN",
+  "at_upper_circuit": "NOT RUN",
+  "banded_but_not_at_a_limit": "NOT RUN",
+  "no_band_recorded": 431,
+  "price_band_partition": {
+   "files": 0,
+   "needs": "a sourced per-session NSE price-band payload (data/silver/price_bands is empty and data/raw holds no price-band archive either); the bands are not derived from prices, which would make the counter a restatement of the bar it tests",
+   "path": "data/silver/price_bands",
+   "populated": false
+  },
+  "total": 431
+ },
+ "corporate_action_archive_coverage": {
+  "bronze_distinct_isins": 2200,
+  "bronze_payloads": 23,
+  "bronze_rows": 13568,
+  "instruments_scanned": 2735,
+  "instruments_with_no_bronze_record": 910,
+  "reading": "UNATTESTED_NO_RECORD means 'no record in this archive', not 'no corporate action': an instrument the archive does not cover at all cannot be exonerated by it (\u00a710.5, N-200)",
+  "share_of_scanned_set_with_no_bronze_record": "33.3%",
+  "unattested_stop_rows_on_uncovered_instruments": [
+   "INE006I01046",
+   "INE341R01014",
+   "INE949H01023"
+  ]
+ },
+ "corpus": {
+  "first_session": "2018-04-02",
+  "last_session": "2023-12-29",
+  "path": "data/reference/historical_dataset_2018_2023.json.gz",
+  "sessions": 1425,
+  "sha256": "0fdc728a81acbb396f626fb54e4f28862c93cec836db3b502814f850a056a984"
+ },
+ "criteria": {
+  "fingerprint": "CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470",
+  "version": "1.1.16"
+ },
+ "entry_signals": 93463,
+ "entry_signals_in_a_usable_feature_window": 72187,
+ "feature_window_policy": {
+  "attestation": "the same test the stop uses: a price-side ratio on the exact ex-date, or a cash amount on the exact ex-date within 0.5% of the previous close",
+  "consequence": "such signals are counted below and excluded from the usable-feature-window set; they do not extend the STOP class, which remains the signal-day \u221220% level-step test",
+  "previous_close_floor_inr": "5",
+  "rule": "a signal whose own continuous 200-session feature window contains an unattested price level step of 10% or more, in either direction, does not count as a usable entry signal: SMA(200) and RSI(2) at that T are computed across a step the committed corporate-action archive cannot attest, which is the assumption \u00a76.3 forbids one step removed from the day the stop inspects",
+  "unattested_step_gap_threshold": "0.10",
+  "window_sessions": 200
+ },
+ "first_signal_is_window_open": false,
+ "first_signal_session": "2019-01-18",
+ "gated_by": {
+  "consumers": [],
+  "excluded_from_the_scan": [
+   "scripts/run_seq12_candidate.py (this producer)",
+   "scripts/probe_audit_findings.py (the audit probe)"
+  ],
+  "gates_execution": false,
+  "statement": "no committed code outside this producer and the audit probe reads this artifact, so its STOP is a record of a refusal and not a gate: no execution path exists for it to refuse"
+ },
+ "instruments_scanned": 2735,
+ "instruments_with_an_unattested_level_step": 1668,
+ "limitations": [
+  "the QA enumerates ratio shapes the way the corpus reconciliation does (1..12 over 1..24, \u00b10.5%); a non-empty list means a split or bonus of that shape would print exactly this return, not that one happened",
+  "the corpus's reconciliation publishes moves beyond \u00b135%, so a smaller unattested step is absent from `reconciliation.ratio_shaped_detail` and that absence is not an exoneration",
+  "the ADTV count is a per-signal counter: a name can be counted once per signal day it was excluded on, not once per name",
+  "the locked-session count reads the T+1 bar's high == low and the security master's band at T+1; it is the fill-blocking condition, not a claim about queue position",
+  "a move that happens inside a session whose opening price is continuous with the previous close is classified SESSION_MOVE and is not a corporate-action step: the exchange traded it, and the rule is pre-registered to buy that pullback. Only an opening gap beyond the threshold is a level step, and only an unattested level step stops the round",
+  "the opening-gap test uses the corpus's own adjusted open against the previous adjusted close, so an adjustment applied at the wrong date would show as a level step here",
+  "the lookback count is per signal: a name is counted once per signal day whose own 200-session window holds an unattested step, so it is not a trade count; the 10% threshold, the \u20b95 previous-close floor and the 200-session window are recorded in `feature_window_policy`, not pre-registered values"
+ ],
+ "method": "the pre-registered entry condition (close > SMA(200) and RSI(2) < 10, Wilder, on split/bonus-adjusted closes) over the point-in-time universe, restricted to identities the exchange master resolves to EQ on that session; features partitioned into continuous subsegments exactly as the engine partitions them; counts and lists computed before any P&L is read",
+ "mode": "COUNTS_AND_LISTS_ONLY_NO_PNL",
+ "not_audited": true,
+ "not_run": {
+  "decision_rule": "NOT RUN \u2014 no metrics to decide on",
+  "exit_freeze_round_trip": "NOT RUN \u2014 data/silver/price_bands holds 0 files, so no session carries a band and a lower-freeze exit delay cannot be measured; the exit side of a 2-to-21-session hold is unmeasured until that partition is populated (N-199)",
+  "one_execution_seq12": "NOT RUN \u2014 Step 2 did not clear",
+  "random_entry_null": "NOT RUN \u2014 no strategy arm to match",
+  "registry_evaluated_count": "UNCHANGED at 6",
+  "registry_trial_count": "UNCHANGED at 11"
+ },
+ "pre_registration": {
+  "path": "configs/trial_012_candidate.yaml",
+  "sha256": "5a7f7b8f3f7afeaf526622050e3f8814b16a76682a30f0b7c576b88ac1cca90c",
+  "trial_id": "TRIAL-PHASE3B2-MEANREV-012"
+ },
+ "restates": {
+  "available": true,
+  "changed_fields": {
+   "blocked_by_locked_session": {
+    "published_here": {
+     "at_lower_circuit": "NOT RUN",
+     "at_upper_circuit": "NOT RUN",
+     "banded_but_not_at_a_limit": "NOT RUN",
+     "no_band_recorded": 431,
+     "price_band_partition": {
+      "files": 0,
+      "needs": "a sourced per-session NSE price-band payload (data/silver/price_bands is empty and data/raw holds no price-band archive either); the bands are not derived from prices, which would make the counter a restatement of the bar it tests",
+      "path": "data/silver/price_bands",
+      "populated": false
+     },
+     "total": 431
+    },
+    "published_there": {
+     "at_lower_circuit": 0,
+     "at_upper_circuit": 0,
+     "banded_but_not_at_a_limit": 0,
+     "no_band_recorded": 431,
+     "total": 431
+    }
+   },
+   "stop_reason": {
+    "published_here": "4 entry-signal day(s) open more than 20% below the previous close \u2014 a change of price level between two sessions, not a session's trading \u2014 with no corporate action (share ratio or cash amount) attested on that date; 4 of them are ratio-shaped",
+    "published_there": "5 entry-signal day(s) open more than 20% below the previous close \u2014 a change of price level between two sessions, not a session's trading \u2014 with no price-side corporate action attested on that date; 5 of them are ratio-shaped"
+   },
+   "unattested_level_steps_feeding_a_signal": {
+    "published_here": 4,
+    "published_there": 5
+   }
+  },
+  "path": "reports/analysis/s101/seq12_data_qa.json",
+  "reason": "N-196: a DIVIDEND or RIGHTS record on the exact ex-date is now an attestation test when its cash amount reproduces the close or the opening price within 0.5% of the previous close. N-197: unattested level steps inside the 200-session feature window are counted and excluded from the usable set. N-199: the three categorical band counters report NOT RUN while data/silver/price_bands is empty. N-200: the archive's coverage travels with the no-record verdict. The window, the rule, the criteria and the corpus are unchanged.",
+  "sha256": "54c08bcbe7b76b43130be0335c7366dfacf03e843f863cc2ffb6f68e13f784d7",
+  "superseded_artifact_left_unedited": true
+ },
+ "section": "\u00a7101 Step 2 (AGENTS.md \u00a75.4, \u00a76.3, \u00a79.3)",
+ "signal_level_steps_in_lookback": [
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1000",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1461",
+     "session": "2020-04-30"
+    }
+   ],
+   "signal_session": "2020-09-22"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1000",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1461",
+     "session": "2020-04-30"
+    }
+   ],
+   "signal_session": "2020-10-12"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1000",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1461",
+     "session": "2020-04-30"
+    }
+   ],
+   "signal_session": "2020-10-13"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1000",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1461",
+     "session": "2020-04-30"
+    }
+   ],
+   "signal_session": "2020-10-14"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1000",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1461",
+     "session": "2020-04-30"
+    }
+   ],
+   "signal_session": "2020-10-15"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1000",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1461",
+     "session": "2020-04-30"
+    }
+   ],
+   "signal_session": "2020-12-07"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1000",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1461",
+     "session": "2020-04-30"
+    }
+   ],
+   "signal_session": "2020-12-08"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1000",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1461",
+     "session": "2020-04-30"
+    }
+   ],
+   "signal_session": "2020-12-21"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1000",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1461",
+     "session": "2020-04-30"
+    }
+   ],
+   "signal_session": "2020-12-22"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1799",
+     "session": "2021-10-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1158",
+     "session": "2021-10-14"
+    }
+   ],
+   "signal_session": "2021-11-22"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1799",
+     "session": "2021-10-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1158",
+     "session": "2021-10-14"
+    }
+   ],
+   "signal_session": "2021-11-26"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1799",
+     "session": "2021-10-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1158",
+     "session": "2021-10-14"
+    }
+   ],
+   "signal_session": "2021-12-06"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1799",
+     "session": "2021-10-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1158",
+     "session": "2021-10-14"
+    }
+   ],
+   "signal_session": "2021-12-16"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1799",
+     "session": "2021-10-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1158",
+     "session": "2021-10-14"
+    }
+   ],
+   "signal_session": "2021-12-17"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1799",
+     "session": "2021-10-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1158",
+     "session": "2021-10-14"
+    }
+   ],
+   "signal_session": "2021-12-20"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1799",
+     "session": "2021-10-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1158",
+     "session": "2021-10-14"
+    }
+   ],
+   "signal_session": "2022-01-24"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1799",
+     "session": "2021-10-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1158",
+     "session": "2021-10-14"
+    }
+   ],
+   "signal_session": "2022-02-04"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1799",
+     "session": "2021-10-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1158",
+     "session": "2021-10-14"
+    }
+   ],
+   "signal_session": "2022-02-07"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1799",
+     "session": "2021-10-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1158",
+     "session": "2021-10-14"
+    }
+   ],
+   "signal_session": "2022-02-08"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1799",
+     "session": "2021-10-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1158",
+     "session": "2021-10-14"
+    }
+   ],
+   "signal_session": "2022-02-14"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1799",
+     "session": "2021-10-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1158",
+     "session": "2021-10-14"
+    }
+   ],
+   "signal_session": "2022-02-22"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1799",
+     "session": "2021-10-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1158",
+     "session": "2021-10-14"
+    }
+   ],
+   "signal_session": "2022-02-24"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1799",
+     "session": "2021-10-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1158",
+     "session": "2021-10-14"
+    }
+   ],
+   "signal_session": "2022-03-04"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1799",
+     "session": "2021-10-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1158",
+     "session": "2021-10-14"
+    }
+   ],
+   "signal_session": "2022-04-19"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1619",
+     "session": "2023-07-26"
+    }
+   ],
+   "signal_session": "2023-08-08"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1619",
+     "session": "2023-07-26"
+    }
+   ],
+   "signal_session": "2023-08-25"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1619",
+     "session": "2023-07-26"
+    }
+   ],
+   "signal_session": "2023-09-22"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1619",
+     "session": "2023-07-26"
+    }
+   ],
+   "signal_session": "2023-09-26"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1619",
+     "session": "2023-07-26"
+    }
+   ],
+   "signal_session": "2023-10-23"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1619",
+     "session": "2023-07-26"
+    }
+   ],
+   "signal_session": "2023-10-25"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1619",
+     "session": "2023-07-26"
+    }
+   ],
+   "signal_session": "2023-10-26"
+  },
+  {
+   "isin": "IN9155A01020",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1619",
+     "session": "2023-07-26"
+    }
+   ],
+   "signal_session": "2023-12-20"
+  },
+  {
+   "isin": "IN9175A01010",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1000",
+     "session": "2020-11-23"
+    }
+   ],
+   "signal_session": "2020-12-21"
+  },
+  {
+   "isin": "IN9175A01010",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1000",
+     "session": "2020-11-23"
+    }
+   ],
+   "signal_session": "2021-07-23"
+  },
+  {
+   "isin": "IN9175A01010",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1000",
+     "session": "2020-11-23"
+    }
+   ],
+   "signal_session": "2021-07-28"
+  },
+  {
+   "isin": "IN9175A01010",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1000",
+     "session": "2020-11-23"
+    }
+   ],
+   "signal_session": "2021-08-06"
+  },
+  {
+   "isin": "IN9175A01010",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1000",
+     "session": "2020-11-23"
+    }
+   ],
+   "signal_session": "2021-08-09"
+  },
+  {
+   "isin": "IN9175A01010",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1000",
+     "session": "2020-11-23"
+    }
+   ],
+   "signal_session": "2021-08-10"
+  },
+  {
+   "isin": "IN9175A01010",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1000",
+     "session": "2020-11-23"
+    }
+   ],
+   "signal_session": "2021-08-11"
+  },
+  {
+   "isin": "IN9175A01010",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1000",
+     "session": "2020-11-23"
+    }
+   ],
+   "signal_session": "2021-08-17"
+  },
+  {
+   "isin": "IN9175A01010",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1000",
+     "session": "2020-11-23"
+    }
+   ],
+   "signal_session": "2021-08-18"
+  },
+  {
+   "isin": "IN9175A01010",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1000",
+     "session": "2020-11-23"
+    }
+   ],
+   "signal_session": "2021-08-20"
+  },
+  {
+   "isin": "IN9175A01010",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1000",
+     "session": "2020-11-23"
+    }
+   ],
+   "signal_session": "2021-08-23"
+  },
+  {
+   "isin": "IN9623B01058",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1191",
+     "session": "2020-01-10"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1267",
+     "session": "2020-03-13"
+    }
+   ],
+   "signal_session": "2020-09-04"
+  },
+  {
+   "isin": "IN9623B01058",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1191",
+     "session": "2020-01-10"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1267",
+     "session": "2020-03-13"
+    }
+   ],
+   "signal_session": "2020-09-07"
+  },
+  {
+   "isin": "IN9623B01058",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1267",
+     "session": "2020-03-13"
+    }
+   ],
+   "signal_session": "2020-12-18"
+  },
+  {
+   "isin": "IN9623B01058",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1983",
+     "session": "2021-12-20"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2021-12-21"
+    }
+   ],
+   "signal_session": "2022-01-19"
+  },
+  {
+   "isin": "INE001B01026",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1313",
+     "session": "2019-07-08"
+    }
+   ],
+   "signal_session": "2020-02-24"
+  },
+  {
+   "isin": "INE001B01026",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1313",
+     "session": "2019-07-08"
+    }
+   ],
+   "signal_session": "2020-02-26"
+  },
+  {
+   "isin": "INE001B01026",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1356",
+     "session": "2021-02-01"
+    }
+   ],
+   "signal_session": "2021-06-30"
+  },
+  {
+   "isin": "INE001B01026",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1356",
+     "session": "2021-02-01"
+    }
+   ],
+   "signal_session": "2021-07-20"
+  },
+  {
+   "isin": "INE001B01026",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1356",
+     "session": "2021-02-01"
+    }
+   ],
+   "signal_session": "2021-07-28"
+  },
+  {
+   "isin": "INE001B01026",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1356",
+     "session": "2021-02-01"
+    }
+   ],
+   "signal_session": "2021-08-10"
+  },
+  {
+   "isin": "INE001B01026",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1356",
+     "session": "2021-02-01"
+    }
+   ],
+   "signal_session": "2021-08-11"
+  },
+  {
+   "isin": "INE001B01026",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1356",
+     "session": "2021-02-01"
+    }
+   ],
+   "signal_session": "2021-08-20"
+  },
+  {
+   "isin": "INE001B01026",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1356",
+     "session": "2021-02-01"
+    }
+   ],
+   "signal_session": "2021-10-20"
+  },
+  {
+   "isin": "INE001B01026",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1356",
+     "session": "2021-02-01"
+    }
+   ],
+   "signal_session": "2021-10-22"
+  },
+  {
+   "isin": "INE001B01026",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1356",
+     "session": "2021-02-01"
+    }
+   ],
+   "signal_session": "2021-10-25"
+  },
+  {
+   "isin": "INE001B01026",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1356",
+     "session": "2021-02-01"
+    }
+   ],
+   "signal_session": "2021-11-11"
+  },
+  {
+   "isin": "INE001B01026",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1356",
+     "session": "2021-02-01"
+    }
+   ],
+   "signal_session": "2021-11-12"
+  },
+  {
+   "isin": "INE001B01026",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1356",
+     "session": "2021-02-01"
+    }
+   ],
+   "signal_session": "2021-11-18"
+  },
+  {
+   "isin": "INE001B01026",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1356",
+     "session": "2021-02-01"
+    }
+   ],
+   "signal_session": "2021-11-22"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1116",
+     "session": "2019-11-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1570",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1320",
+     "session": "2020-03-19"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1667",
+     "session": "2020-03-20"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2020-07-06"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1570",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1320",
+     "session": "2020-03-19"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1667",
+     "session": "2020-03-20"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2020-08-31"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1570",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1320",
+     "session": "2020-03-19"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1667",
+     "session": "2020-03-20"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2020-09-09"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1570",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1320",
+     "session": "2020-03-19"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1667",
+     "session": "2020-03-20"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2020-09-21"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1570",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1320",
+     "session": "2020-03-19"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1667",
+     "session": "2020-03-20"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2020-09-22"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1570",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1320",
+     "session": "2020-03-19"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1667",
+     "session": "2020-03-20"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2020-10-12"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1570",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1320",
+     "session": "2020-03-19"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1667",
+     "session": "2020-03-20"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2020-10-13"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1570",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1320",
+     "session": "2020-03-19"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1667",
+     "session": "2020-03-20"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2020-10-19"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1570",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1320",
+     "session": "2020-03-19"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1667",
+     "session": "2020-03-20"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2020-11-12"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1570",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1320",
+     "session": "2020-03-19"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1667",
+     "session": "2020-03-20"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2020-11-13"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2021-01-11"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2021-01-12"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2021-01-13"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2021-01-27"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2021-01-28"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2021-02-05"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2021-02-08"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2021-02-09"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2021-02-10"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2021-02-15"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1268",
+     "session": "2020-05-28"
+    }
+   ],
+   "signal_session": "2021-02-16"
+  },
+  {
+   "isin": "INE005I01014",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1321",
+     "session": "2022-08-11"
+    }
+   ],
+   "signal_session": "2022-08-30"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1001",
+     "session": "2020-03-13"
+    }
+   ],
+   "signal_session": "2020-09-17"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1001",
+     "session": "2020-03-13"
+    }
+   ],
+   "signal_session": "2020-09-18"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1001",
+     "session": "2020-03-13"
+    }
+   ],
+   "signal_session": "2020-09-21"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1001",
+     "session": "2020-03-13"
+    }
+   ],
+   "signal_session": "2020-09-22"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1001",
+     "session": "2020-03-13"
+    }
+   ],
+   "signal_session": "2020-10-08"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1001",
+     "session": "2020-03-13"
+    }
+   ],
+   "signal_session": "2020-10-09"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1001",
+     "session": "2020-03-13"
+    }
+   ],
+   "signal_session": "2020-10-19"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1001",
+     "session": "2020-03-13"
+    }
+   ],
+   "signal_session": "2020-10-28"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-03-18"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-03-19"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-03-24"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-03-25"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-04-12"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-04-13"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-04-29"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-04-30"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-06-24"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-06-25"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-07-20"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-08-11"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-08-24"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-09-09"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-09-20"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-10-21"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-11-24"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-11-26"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-11-29"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2972",
+     "session": "2021-03-18"
+    }
+   ],
+   "signal_session": "2021-12-20"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2440",
+     "session": "2023-03-14"
+    }
+   ],
+   "signal_session": "2023-07-04"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2440",
+     "session": "2023-03-14"
+    }
+   ],
+   "signal_session": "2023-09-01"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2440",
+     "session": "2023-03-14"
+    }
+   ],
+   "signal_session": "2023-09-04"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2440",
+     "session": "2023-03-14"
+    }
+   ],
+   "signal_session": "2023-09-22"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2440",
+     "session": "2023-03-14"
+    }
+   ],
+   "signal_session": "2023-10-05"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2440",
+     "session": "2023-03-14"
+    }
+   ],
+   "signal_session": "2023-10-19"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2440",
+     "session": "2023-03-14"
+    }
+   ],
+   "signal_session": "2023-10-20"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2440",
+     "session": "2023-03-14"
+    }
+   ],
+   "signal_session": "2023-10-23"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2440",
+     "session": "2023-03-14"
+    }
+   ],
+   "signal_session": "2023-12-08"
+  },
+  {
+   "isin": "INE006I01046",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.2440",
+     "session": "2023-03-14"
+    }
+   ],
+   "signal_session": "2023-12-20"
+  },
+  {
+   "isin": "INE007A01025",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1423",
+     "session": "2020-03-23"
+    }
+   ],
+   "signal_session": "2020-07-21"
+  },
+  {
+   "isin": "INE007A01025",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1423",
+     "session": "2020-03-23"
+    }
+   ],
+   "signal_session": "2020-07-28"
+  },
+  {
+   "isin": "INE007A01025",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1423",
+     "session": "2020-03-23"
+    }
+   ],
+   "signal_session": "2020-07-29"
+  },
+  {
+   "isin": "INE007A01025",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1423",
+     "session": "2020-03-23"
+    }
+   ],
+   "signal_session": "2020-07-30"
+  },
+  {
+   "isin": "INE007A01025",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1423",
+     "session": "2020-03-23"
+    }
+   ],
+   "signal_session": "2020-09-18"
+  },
+  {
+   "isin": "INE007A01025",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1423",
+     "session": "2020-03-23"
+    }
+   ],
+   "signal_session": "2020-11-04"
+  },
+  {
+   "isin": "INE007A01025",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1423",
+     "session": "2020-03-23"
+    }
+   ],
+   "signal_session": "2020-11-11"
+  },
+  {
+   "isin": "INE007A01025",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1423",
+     "session": "2020-03-23"
+    }
+   ],
+   "signal_session": "2020-11-27"
+  },
+  {
+   "isin": "INE007A01025",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1423",
+     "session": "2020-03-23"
+    }
+   ],
+   "signal_session": "2020-12-04"
+  },
+  {
+   "isin": "INE007A01025",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1423",
+     "session": "2020-03-23"
+    }
+   ],
+   "signal_session": "2020-12-14"
+  },
+  {
+   "isin": "INE007A01025",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1423",
+     "session": "2020-03-23"
+    }
+   ],
+   "signal_session": "2020-12-15"
+  },
+  {
+   "isin": "INE007A01025",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1423",
+     "session": "2020-03-23"
+    }
+   ],
+   "signal_session": "2020-12-22"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1236",
+     "session": "2020-02-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1413",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1051",
+     "session": "2020-03-24"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    }
+   ],
+   "signal_session": "2020-07-27"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1236",
+     "session": "2020-02-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1413",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1051",
+     "session": "2020-03-24"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    }
+   ],
+   "signal_session": "2020-08-31"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1236",
+     "session": "2020-02-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1413",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1051",
+     "session": "2020-03-24"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    }
+   ],
+   "signal_session": "2020-09-07"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1236",
+     "session": "2020-02-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1413",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1051",
+     "session": "2020-03-24"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    }
+   ],
+   "signal_session": "2020-09-08"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1236",
+     "session": "2020-02-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1413",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1051",
+     "session": "2020-03-24"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    }
+   ],
+   "signal_session": "2020-09-09"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1236",
+     "session": "2020-02-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1413",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1051",
+     "session": "2020-03-24"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    }
+   ],
+   "signal_session": "2020-10-05"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1236",
+     "session": "2020-02-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1413",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1051",
+     "session": "2020-03-24"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    }
+   ],
+   "signal_session": "2020-10-07"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1236",
+     "session": "2020-02-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1413",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1051",
+     "session": "2020-03-24"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    }
+   ],
+   "signal_session": "2020-10-08"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1236",
+     "session": "2020-02-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1413",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1051",
+     "session": "2020-03-24"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    }
+   ],
+   "signal_session": "2020-10-09"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1236",
+     "session": "2020-02-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1413",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1051",
+     "session": "2020-03-24"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    }
+   ],
+   "signal_session": "2020-10-12"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1236",
+     "session": "2020-02-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1413",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1051",
+     "session": "2020-03-24"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    }
+   ],
+   "signal_session": "2020-10-13"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1236",
+     "session": "2020-02-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1413",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1051",
+     "session": "2020-03-24"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    }
+   ],
+   "signal_session": "2020-11-13"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1236",
+     "session": "2020-02-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1413",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1051",
+     "session": "2020-03-24"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    }
+   ],
+   "signal_session": "2020-11-25"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1413",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1051",
+     "session": "2020-03-24"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    }
+   ],
+   "signal_session": "2020-12-18"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1413",
+     "session": "2020-03-23"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1051",
+     "session": "2020-03-24"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    }
+   ],
+   "signal_session": "2020-12-21"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    }
+   ],
+   "signal_session": "2021-01-11"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    }
+   ],
+   "signal_session": "2021-01-12"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    }
+   ],
+   "signal_session": "2021-01-13"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    }
+   ],
+   "signal_session": "2021-01-15"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    }
+   ],
+   "signal_session": "2021-01-18"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    }
+   ],
+   "signal_session": "2021-02-10"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    }
+   ],
+   "signal_session": "2021-02-22"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    }
+   ],
+   "signal_session": "2021-03-17"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    }
+   ],
+   "signal_session": "2021-03-18"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1212",
+     "session": "2020-06-15"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    }
+   ],
+   "signal_session": "2021-03-25"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    }
+   ],
+   "signal_session": "2021-04-12"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    }
+   ],
+   "signal_session": "2021-05-31"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    }
+   ],
+   "signal_session": "2021-06-01"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1024",
+     "session": "2021-06-07"
+    }
+   ],
+   "signal_session": "2021-07-30"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1024",
+     "session": "2021-06-07"
+    }
+   ],
+   "signal_session": "2021-08-09"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1024",
+     "session": "2021-06-07"
+    }
+   ],
+   "signal_session": "2021-08-10"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1024",
+     "session": "2021-06-07"
+    }
+   ],
+   "signal_session": "2021-08-20"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1024",
+     "session": "2021-06-07"
+    }
+   ],
+   "signal_session": "2021-08-23"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1024",
+     "session": "2021-06-07"
+    }
+   ],
+   "signal_session": "2021-09-21"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1775",
+     "session": "2020-12-07"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1024",
+     "session": "2021-06-07"
+    }
+   ],
+   "signal_session": "2021-09-22"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1024",
+     "session": "2021-06-07"
+    }
+   ],
+   "signal_session": "2021-10-19"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1024",
+     "session": "2021-06-07"
+    }
+   ],
+   "signal_session": "2021-10-20"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1024",
+     "session": "2021-06-07"
+    }
+   ],
+   "signal_session": "2021-11-15"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1024",
+     "session": "2021-06-07"
+    }
+   ],
+   "signal_session": "2021-11-18"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1024",
+     "session": "2021-06-07"
+    }
+   ],
+   "signal_session": "2021-11-22"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1024",
+     "session": "2021-06-07"
+    }
+   ],
+   "signal_session": "2022-01-24"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1772",
+     "session": "2023-03-20"
+    }
+   ],
+   "signal_session": "2023-07-07"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1772",
+     "session": "2023-03-20"
+    }
+   ],
+   "signal_session": "2023-07-10"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1772",
+     "session": "2023-03-20"
+    }
+   ],
+   "signal_session": "2023-08-16"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1772",
+     "session": "2023-03-20"
+    }
+   ],
+   "signal_session": "2023-09-12"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1772",
+     "session": "2023-03-20"
+    }
+   ],
+   "signal_session": "2023-09-21"
+  },
+  {
+   "isin": "INE007B01023",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1772",
+     "session": "2023-03-20"
+    }
+   ],
+   "signal_session": "2023-10-23"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-06-12"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-07-10"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-07-13"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-07-14"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-07-16"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-07-17"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-07-27"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-08-14"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-08-17"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-08-31"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-09-01"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-09-08"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-09-09"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-09-18"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-09-21"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-09-22"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-09-23"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-09-24"
+  },
+  {
+   "isin": "INE008A01015",
+   "level_steps_in_lookback": [
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1003",
+     "session": "2020-03-06"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "-0.1462",
+     "session": "2020-03-13"
+    },
+    {
+     "disposition": "UNATTESTED_NO_RECORD",
+     "opening_gap": "0.1961",
+     "session": "2020-06-01"
+    }
+   ],
+   "signal_session": "2020-10-29"
+  }
+ ],
+ "signal_level_steps_in_lookback_truncated": true,
+ "signals_in_non_eq_series": 15441,
+ "signals_with_an_unattested_level_step_in_lookback": 21276,
+ "signals_without_a_calendar_previous_session": 0,
+ "sma200_available_from_session": "2019-01-18",
+ "status": "STOP",
+ "stop_reason": "4 entry-signal day(s) open more than 20% below the previous close \u2014 a change of price level between two sessions, not a session's trading \u2014 with no corporate action (share ratio or cash amount) attested on that date; 4 of them are ratio-shaped",
+ "unattested_level_step_events_corpus_wide": 6731,
+ "unattested_level_step_events_on_a_signal_day": 128,
+ "unattested_level_steps_feeding_a_signal": 4
+}

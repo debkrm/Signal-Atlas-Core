@@ -2810,3 +2810,190 @@ would have to invent its strategy arm.
   computable book.
 - This section states a refusal, not a finding. Whether the five level steps are a data defect the auditor
   should register is the auditor's decision (§11.1, §14.8).
+## §102 — §100's work order items 1-7: the cash-adjustment test re-derives the count to 4, the window is measured, and the band counters become NOT RUN (Not audited)
+
+**Not audited.** Nothing below is reviewed by an audit section, so nothing below is signed off, verified or
+closed by a verdict. The contract is `reports/audit/volume2.md` §100 (the audit of `7c0957e` at `3f7691f`) and
+its work order §100.16; the findings `N-196`…`N-202` keep whatever ledger status the auditor last appended, and
+this round appends no row to that ledger. The audit report is untouched (§11.1): where a measurement below
+disagrees with §100, it is recorded here as new evidence and not as an edit there (§11.2).
+
+Commits in this round, in the order the work order asks for them: `20bb6ff` (item 1's test, stated before any
+count was re-derived), `11a366b` (item 5), `468b2e0` (item 7), and the commit carrying this section (items 2, 3,
+4, 6 and the re-derivation itself: `reports/analysis/s102/seq12_data_qa.json`). No strategy ran: seq 12's Step 3
+does not exist, no session was simulated, no P&L was read, the registry stands at **N = 11, N_eval = 6**, the
+2024 fold is untouched (`validation_folds_count = 0`) and the holdout `2025-01-01..2026-11-11` was not read.
+
+### Item 1 (N-196) — the cash-adjustment test was committed before the count, and the count is 4, not 3
+
+The test is stated in `scripts/run_seq12_candidate.py`'s module docstring and in code constants, committed at
+`20bb6ff` before the artifact was regenerated: a move is attested by a cash record when the record predicts the
+session's close **or** its opening price within `CASH_ADJUSTMENT_TOLERANCE = 0.005` (0.5 % of the previous
+close). A dividend predicts `previous_close − dividend_amount`; a rights entitlement predicts the theoretical
+ex-rights price `(previous_close·denominator + premium·numerator) / (denominator + numerator)`, with the premium
+parsed from the archive's own `description` text. A record that reproduces neither is published as
+`UNATTESTED_CASH_MISMATCH` **naming its residuals** rather than being disposed of. Two attacks were run at
+`20bb6ff`: emptying the cash-attestation kinds (the pre-fix behaviour) makes probe `N-196` exit 1 naming
+HEUBACHIND, and widening the tolerance to 0.20 makes it exit 1 on the tolerance itself.
+
+Re-derived from the corpus, one row at a time, with the archive's own numbers:
+
+| ISIN | Symbol | Ex-date | Previous close | Cash record | Predicted level | Actual close | Close residual | Opening residual | Disposition |
+|---|---|---|---|---|---|---|---|---|---|
+| `INE492A01029` | HEUBACHIND | 2020-07-16 | 563.30 | ₹140.00 special dividend | **423.30** | **423.55** | **0.0004** | 0.0360 | **ATTESTED_CASH_ADJUSTMENT** |
+| `INE116G01013` | VARDHACRLC | 2021-10-28 | 72.35 | ₹25.00 interim dividend | 47.35 | 56.60 | **0.1279** | 0.0504 | UNATTESTED_CASH_MISMATCH |
+| `INE006I01046` | ASTRAL | 2021-03-18 | — | none in either archive | — | — | — | — | UNATTESTED_NO_RECORD |
+| `INE341R01014` | DTIL | 2021-08-05 | — | none in either archive | — | — | — | — | UNATTESTED_NO_RECORD |
+| `INE949H01023` | MANINFRA | 2021-11-17 | — | none in either archive | — | — | — | — | UNATTESTED_NO_RECORD |
+
+**`unattested_level_steps_feeding_a_signal`: 5 → 4.** HEUBACHIND leaves the stop list because a ₹140 dividend
+on a 563.30 close predicts 423.30 and the session closed 423.55 — 0.04 % of the previous close.
+
+**VARDHACRLC does not leave it, and this is where the round disagrees with §100.4's arithmetic.** §100.4
+anticipates 3, treating VARDHACRLC as corroborating: "the Rs 25 dividend is 117 % of the opening gap". A
+dividend ÷ gap ratio is not a level reproduction, and the test this round committed is a level reproduction. At
+0.5 % of the previous close the ₹25 dividend predicts 47.35 (the opening price was 51.00, 5.04 % away) and the
+session closed 56.60 (12.79 % away) — the stock traded 19.5 % up from the dividend-adjusted level after the
+dividend was removed. Reproducing *that* level would need a 25.6× wider tolerance, which is exactly the
+"widen until the list empties" failure §100.16 item 1 forbids. So the row is published with its residuals and
+stays unattested: the STOP stands on **four** rows, not three. The auditor is invited to contest this with a
+measurement (§11.2); the count is not tuned either way.
+
+**The three no-record rows are also the three with no archive coverage at all** (item 6, below): ASTRAL, DTIL and
+MANINFRA carry **0** Bronze corporate-action rows for their ISIN across 23 payloads, so their fail-closed
+verdict rests on an archive that does not mention them — correct by the §6.3 default, not by exoneration.
+
+### Item 2 (N-197) — the level step is measured over the window, in both directions
+
+The same attestation test is applied to every pair of consecutive sessions inside each continuous segment, with
+a ₹5 previous-close floor (at a ₹0.05 prev close the 5-paise tick is a 100 % "gap") and a 10 % threshold in
+either direction. A signal whose own 200-session continuous feature window (the exact window `SMA(200)` and
+`RSI(2)` at T are computed over) holds one is counted and **excluded from the usable set**; the policy, the
+threshold, the floor and the consequence are published in the artifact's `feature_window_policy`. It does not
+extend the STOP class, which remains the signal day's −20 % step.
+
+| Measurement (committed artifact) | Value |
+|---|---|
+| unattested \|opening gap\| ≥ 10 % events, corpus-wide | **6,731** |
+| … on a session where the rule fires for that instrument | **128** |
+| instruments with at least one such event | **1,668** |
+| signals whose own 200-session window holds one — of **93,463** | **21,276** |
+| entry signals in a usable feature window | **72,187** |
+
+The scan is the artifact's own EQ resolution (93,463 signals), not §100.5's (100,310), and its attestation now
+includes cash records, which removes events rather than adding them; §100.5's 6,612 / 129 / 22,740 are therefore
+not reproduced to the digit, and the direction of every figure is unchanged. The published detail list is capped
+at 200 rows (`signal_level_steps_in_lookback_truncated: true`); probe `N-197` recomputes 25 of them from the
+corpus — window offset, gap magnitude and the 4-dp published gap — rather than trusting the list. Zeroing the
+count in the artifact makes the probe exit 1; a fixture whose signal day is clean and whose T−100 bar opens 15 %
+lower is refused as an unusable window.
+
+### Item 3 (N-198) — the artifact now says it gates nothing, and the statement is the scan
+
+`gated_by.consumers` is computed at build time by scanning `scripts/*.py` and `src/**/*.py` for the artifact's
+name, excluding the producer and the audit probe (both named in `excluded_from_the_scan`). It is empty, so the
+published statement is "no committed code outside this producer and the audit probe reads this artifact, so its
+STOP is a record of a refusal and not a gate: no execution path exists for it to refuse". Probe `N-198`
+recomputes the scan, requires the published list to equal it, and requires no committed code outside `tests/` to
+construct `MeanReversionSwingStrategy`. Adding a one-line consumer under `scripts/` makes it exit 1 ("the
+artifact publishes consumers [] and the scan finds ['scripts/_tmp_seq12_consumer.py']"). **The STOP still gates
+no code path; the difference is that the artifact now says so where a reader looks.**
+
+### Item 4 (N-199) — the three band counters are NOT RUN; the partition is BLOCKED, not synthesised
+
+Implemented: `at_lower_circuit`, `at_upper_circuit` and `banded_but_not_at_a_limit` are `NOT RUN` exactly while
+`data/silver/price_bands` holds no file, and integers exactly when it does (`band_counter(value, bands_recorded)`,
+tested both ways). The artifact publishes `price_band_partition: {files: 0, populated: false}` beside them and
+`not_run.exit_freeze_round_trip`: *"NOT RUN — data/silver/price_bands holds 0 files, so no session carries a
+band and a lower-freeze exit delay cannot be measured"*. Probe `N-199` is the biconditional, so a populated
+partition forces the counters to become measurements and re-measurement.
+
+**Blocked, and reported rather than patched around:** the round-trip exit-freeze case — the case §13.2 says a
+2-to-21-session hold cannot ignore — remains **NOT RUN**. No sourced band payload exists in this repository:
+`data/silver/price_bands` holds 0 files and `data/raw/price_bands` does not exist at all, so no Bronze payload is
+waiting to be promoted. Deriving a band from the bar it is meant to test would make the counter a restatement of
+its own input. **What is needed:** a sourced per-session NSE price-band archive for `2018-04-01..2023-12-31`
+(the security-wise price-band file, or the daily band circulars) dropped under `data/raw/price_bands/` as
+byte-exact payloads with retrieval metadata, plus the Silver ingest that promotes it one partition per session.
+
+### Item 5 (N-201) — clause (d) names a continuous benchmark; the corpus boundary is *not* repaired
+
+Taken the clause half of §100.16 item 5, not the corpus half, and said why. `decision_rule.all_of[3]` now
+carries a `benchmark` block naming `scripts/compare_seq10_baselines.py:buy_and_hold_arm`, its within-ISIN
+construction, the two unmeasured sessions (2019-12-19 level break, 2019-12-20 ISIN transition) and the refusal.
+`buy_and_hold_arm` now calls `refuse_unattested_level_break(returns, 0.5)`, so a retained one-session step of
+50 % or more exits by name instead of being carried into a Calmar. Attacks: the fixture list refuses naming
+`2019-12-19`; and with `LEVEL_BREAK_THRESHOLD` raised so the exclusion stops firing, the real arm refuses naming
+`2019-12-19` — the exclusion is no longer the only thing between the corpus and a decision clause.
+
+The corpus was **not** changed. A 1:10 re-denomination for `INF732E01011` is not attested in the committed table
+(the row there says "share ratio not established"), Bronze holds no NIFTYBEES corporate-action row, and
+back-adjusting would move the corpus fingerprint and every artifact that cites it — including the seq-10 pair
+that may not be re-run this round. The residual is named: the corpus bar at 2019-12-19 is still unadjusted and
+`reconciliation.ratio_shaped_detail` still omits that boundary from a 699-row list, so that list is not a
+census. Nothing in this round moves a fingerprint: the artifact's `corpus.sha256` is
+`0fdc728a81acbb396f626fb54e4f28862c93cec836db3b502814f850a056a984`, the same one §101 published;
+`compare_seq10_baselines.py --check` reproduces its artifact byte for byte with the refusal in place, and
+`verify_seq10_certificate.py` exits 0 — the seq-10 and seq-11 artifacts are untouched.
+
+### Item 6 (N-200) — the no-record verdict travels with the archive's coverage
+
+| Measurement | Value |
+|---|---|
+| Bronze corporate-action payloads / rows | 23 / 13,568 |
+| Bronze distinct ISINs | **2,200** |
+| corpus instruments scanned | **2,735** |
+| instruments with no Bronze corporate-action record of any kind | **910 (33.3 %)** |
+| unattested stop rows whose instrument the archive never mentions | **INE006I01046, INE341R01014, INE949H01023** |
+
+Each published drop row also carries `bronze_records_for_isin`, so "no record" is readable against how much
+archive exists for that instrument (HEUBACHIND 9, VARDHACRLC 7, the three no-record rows 0). Probe `N-200`
+recomputes the coverage and fails if the published figures or the uncovered-stop list disagree (forging 2,735
+covered ISINs makes it exit 1).
+
+### Item 7 (N-202) — the interaction is pinned in the pre-registration
+
+`configs/trial_012_candidate.yaml` now carries `strategy.entry_exit_interaction:
+"EXIT_SUPPRESSES_ENTRY_ON_THE_SAME_SESSION"`, committed at `468b2e0` as an amendment citing `f2133ef`, before
+any execution. No rule, threshold, window, clause or cost field moved; the file's sha256 changed (it is
+published in the new artifact's `pre_registration` block) and the §101 parenthetical still quotes the original
+one, which is history and is left unedited. Probe `N-202` reads the pin and then drives the strategy on a
+session satisfying both predicates (close 110 > SMA(5) 108, > SMA(200) 90, RSI(2) 4 < 10): it must emit the
+exit alone, with a non-vacuous entry control. Removing the pin, and removing the `continue` that suppresses the
+entry, each make the probe exit 1.
+
+### The re-derived artifact, and what it restates
+
+`reports/analysis/s102/seq12_data_qa.json` (77,387 B) supersedes the §101 artifact, which is **left unedited**
+(§10.1, and the §97.5 / N-194 precedent). It is pinned by `restates.sha256` and carries every field that moved
+as a `published_there` / `published_here` pair: `status` (STOP → STOP), `unattested_level_steps_feeding_a_signal`
+(5 → 4), `stop_reason`, `below_minus_20pct_level_step_at_open` (5 → 5) and `blocked_by_locked_session` (three
+zeros → three `NOT RUN`). `python scripts/run_seq12_candidate.py --check` recomputes it and compares the bytes:
+**exit 0, 129.8 s**, QA status STOP. The `stop_reason` now reads "…with no corporate action (share ratio or cash
+amount) attested on that date; 4 of them are ratio-shaped".
+
+### What is not done, and the residuals
+
+- **N-199's populate half is BLOCKED** on a sourced NSE price-band archive (above). The exit-freeze round trip is
+  therefore **NOT RUN**, and no swing verdict may be computed before it is measured.
+- **N-201's corpus half is not taken**: the `INF732E01011` 2019-12-19 bar is still unadjusted in the validated
+  layer, by the reason committed above. Clause (d) is evaluable against a continuous benchmark; the corpus is
+  not continuous, and `ratio_shaped_detail` is still not a census.
+- **N-196's number differs from §100.4's** (4 against 3) on VARDHACRLC, measured above; the row is not attested
+  by the recorded tolerance and is not retuned to match a verdict.
+- The published lookback detail is truncated at 200 of 21,276 signals; the counts are complete.
+- No execution, so nothing about trade impact is measured: how much the 128 signal-day events or the 21,276
+  in-window signals would change a book remains unmeasured.
+- `N-195` (carried, §99.10 item 1) was re-measured, not re-fixed: the seq-10 status row carries
+  `1.058319814…` / `1.062288461…`, the artifact's own digits, and probe `N-195` exits 0.
+
+### Gate state at this commit
+
+- `pytest`: **610 passed** in the parallel invocation (65.22 s) + **1 passed** isolated (2.03 s) = **611 of 611
+  collected**, 0 skipped, 0 xfailed. The new files are `tests/unit/test_phase3b2_audit_s102_items.py` (7 passed)
+  and the expanded `tests/unit/test_phase3b2_seq12_data_qa.py` (11 passed).
+- `scripts/verify_*.py`: **10 of 10 exit 0** (`verify_audit_findings.py` 215.15 s, 54 probes passed).
+- Gate verdict line: `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)`, exit 0, run with
+  `--force-full` on this commit's tree; the green row is recorded by the commit that follows it (N-160).
+- Protected paths: `reports/audit/**`, `AGENTS.md`, `configs/go_no_go_criteria.yaml` and `data/trials/**` are
+  untouched; no fold or holdout session was read; the registry is unchanged at N = 11, N_eval = 6.

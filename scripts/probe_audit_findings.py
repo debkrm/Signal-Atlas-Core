@@ -3406,7 +3406,7 @@ def _seq12_source() -> str:
 def _seq12_artifact() -> dict:
     import json
 
-    path = REPO_ROOT / "reports" / "analysis" / "s101" / "seq12_data_qa.json"
+    path = REPO_ROOT / "reports" / "analysis" / "s102" / "seq12_data_qa.json"
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -3527,42 +3527,134 @@ def probe_n196() -> None:
     ]
     assert unattested, "every row attested: a fix that empties the stop list is a failure, not a pass"
 
+    # And the published count is the recomputed one, not a number typed beside it (§9.1).
+    artifact = _seq12_artifact()
+    published = [
+        row
+        for row in artifact["below_minus_20pct_one_day"]
+        if row["shape"] == "LEVEL_STEP_AT_OPEN"
+    ]
+    asserted = [row for row in published if row["attested"] is False]
+    assert artifact["unattested_level_steps_feeding_a_signal"] == len(unattested), (
+        f"the artifact publishes {artifact['unattested_level_steps_feeding_a_signal']} unattested level "
+        f"steps while the corpus recomputes {len(unattested)} (N-196, AGENTS.md §9.1)"
+    )
+    assert len(asserted) == len(unattested), (len(asserted), len(unattested))
+    by_isin = {row["isin"]: row for row in published}
+    for isin, recomputed in rows.items():
+        if isin not in by_isin:
+            continue
+        assert by_isin[isin]["disposition"] == recomputed["disposition"], (
+            f"{isin} is published as {by_isin[isin]['disposition']} and recomputes as "
+            f"{recomputed['disposition']} (N-196)"
+        )
+
 
 def probe_n197() -> None:
     """
-    The miss the QA exists to catch is tested on the signal day only, in one direction (N-197).
-    Asserts the defect: the trigger is a -20 % close-to-close drop on the signal session, and no key
-    in the artifact counts unattested level steps inside a signal's own lookback window.
+    The level step is now tested over the feature window, not only on the signal day (N-197).
+
+    Three measurements: a fixture whose signal day is clean but whose T−100 bar is an unattested −15 %
+    step yields no usable window; the artifact publishes the window count beside the signal-day count
+    with a stated policy; and the published detail rows really do hold a step inside 200 sessions, with
+    the gap recomputed from the corpus rather than trusted.
     """
-    threshold = Decimal(str(_seq12_constant("LARGE_DROP_THRESHOLD")))
-    assert threshold == Decimal("-0.20"), f"the large-drop threshold is now {threshold}"
-    artifact = _seq12_artifact()
-    windowed = [
-        k
-        for k in artifact
-        if "lookback" in k.lower()
-        or ("window" in k.lower() and ("gap" in k.lower() or "step" in k.lower()))
+    import datetime
+    import gzip
+    import json
+
+    from run_seq12_candidate import InstrumentSeries
+
+    from signal_core.contracts.price_bar import PriceBar
+
+    # The fixture: 300 flat sessions with the open 15 % lower at T−100, and a clean signal day at T.
+    calendar = [datetime.date(2020, 1, 1) + datetime.timedelta(days=offset) for offset in range(300)]
+    bars = [
+        PriceBar(
+            instrument_id="INE000000001",
+            trade_date=day,
+            open=Decimal("100.00"),
+            high=Decimal("101.00"),
+            low=Decimal("99.00"),
+            close=Decimal("100.00"),
+            volume=1000,
+            traded_value=Decimal("100000"),
+        )
+        for day in calendar
     ]
-    assert not windowed, (
-        f"the artifact now publishes {windowed}; a window measurement has landed and N-197 must be "
-        "re-measured against it"
+    step = bars[199]
+    bars[199] = PriceBar(
+        instrument_id=step.instrument_id,
+        trade_date=step.trade_date,
+        open=Decimal("85.00"),
+        high=Decimal("100.00"),
+        low=Decimal("84.00"),
+        close=Decimal("100.00"),
+        volume=1000,
+        traded_value=Decimal("100000"),
     )
+    series = InstrumentSeries(bars, calendar)
+    graded = (bars[199].trade_date, Decimal("-0.1500"), "UNATTESTED_NO_RECORD")
+    assert series.steps_in_lookback([graded], bars[299].trade_date), (
+        "a 15 % unattested step at T−100 is outside the window the rule reads, so the QA would call that "
+        "SMA(200) usable (N-197)"
+    )
+
+    artifact = _seq12_artifact()
+    policy = artifact["feature_window_policy"]
+    assert policy["window_sessions"] == 200 and policy["unattested_step_gap_threshold"] == "0.10", policy
+    assert policy["consequence"] and policy["rule"], policy
+    published = artifact["signals_with_an_unattested_level_step_in_lookback"]
+    assert published > 0, "the window measurement is empty; re-measure it rather than publishing 0"
+    assert (
+        artifact["entry_signals_in_a_usable_feature_window"]
+        == artifact["entry_signals"] - published
+    ), "the usable set does not subtract the published window count"
+
+    with gzip.open(
+        REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz",
+        "rt",
+        encoding="utf-8",
+    ) as handle:
+        corpus = json.load(handle)
+    checked = 0
+    for row in artifact["signal_level_steps_in_lookback"][:25]:
+        corpus_bars = corpus["prices_by_instrument"][row["isin"]]
+        positions = {bar["trade_date"]: at for at, bar in enumerate(corpus_bars)}
+        signal_at = positions[row["signal_session"]]
+        for step_row in row["level_steps_in_lookback"]:
+            step_at = positions[step_row["session"]]
+            assert 0 <= signal_at - step_at < 200, (row["isin"], row["signal_session"], step_row)
+            previous = Decimal(corpus_bars[step_at - 1]["close"])
+            recomputed = (Decimal(corpus_bars[step_at]["open"]) - previous) / previous
+            assert abs(recomputed) >= Decimal("0.10"), (row["isin"], step_row, recomputed)
+            assert abs(recomputed - Decimal(step_row["opening_gap"])) < Decimal("0.0001"), (
+                step_row,
+                recomputed,
+            )
+            checked += 1
+    assert checked, "no detail row was checked, so the published list is unverified"
 
 
 def probe_n198() -> None:
-    """The STOP gates no code path (N-198). Asserts no committed consumer of the artifact exists."""
-    consumers = []
-    for path in sorted((REPO_ROOT / "scripts").glob("*.py")) + sorted(
-        (REPO_ROOT / "src").rglob("*.py")
-    ):
-        if path.name in ("run_seq12_candidate.py", "probe_audit_findings.py"):
-            continue
-        if "seq12_data_qa" in path.read_text(encoding="utf-8", errors="ignore"):
-            consumers.append(str(path.relative_to(REPO_ROOT)))
-    assert not consumers, (
-        f"the QA artifact now has consumers {consumers}; N-198 is closed and this probe must become "
-        "the assertion that a STOP status refuses execution by name"
+    """
+    The STOP is published as gating nothing, and that statement is the scan (N-198).
+
+    The artifact names the code that reads it; there is none, it says so, and nothing outside `tests/`
+    constructs the rule, so no execution path exists for the status to refuse. A reader added later
+    makes the published list disagree with the recomputed one and this probe fails.
+    """
+    from run_seq12_candidate import artifact_consumers
+
+    recomputed = artifact_consumers()
+    artifact = _seq12_artifact()
+    gated_by = artifact["gated_by"]
+    assert gated_by["consumers"] == recomputed, (
+        f"the artifact publishes consumers {gated_by['consumers']} and the scan finds {recomputed}"
     )
+    assert gated_by["gates_execution"] is bool(recomputed), gated_by
+    if not recomputed:
+        assert "not a gate" in gated_by["statement"], gated_by["statement"]
     constructed = []
     for path in sorted((REPO_ROOT / "scripts").glob("*.py")) + sorted(
         (REPO_ROOT / "src").rglob("*.py")
@@ -3570,54 +3662,89 @@ def probe_n198() -> None:
         if path.name in ("run_seq12_candidate.py", "probe_audit_findings.py"):
             continue
         for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-            stripped = line.strip()
-            if stripped.startswith("class "):
+            if line.strip().startswith("class "):
                 continue
             if "MeanReversionSwingStrategy(" in line:
                 constructed.append(str(path.relative_to(REPO_ROOT)))
                 break
     assert not constructed, (
-        f"`MeanReversionSwingStrategy` is now constructed by {constructed}; re-measure whether the "
-        "stop is consulted before it runs"
+        f"`MeanReversionSwingStrategy` is now constructed by {constructed}; if an execution path exists "
+        "it must refuse on the artifact's STOP by name and this probe must assert that refusal (N-198)"
     )
 
 
 def probe_n199() -> None:
     """
-    `at_lower_circuit: 0` is unreachable, not measured (N-199). Asserts that the band partition the
-    counter reads is empty while the artifact publishes the zero as a computed value.
+    An empty band partition reports NOT RUN, never 0 (N-199). The three categorical counters are
+    `NOT RUN` exactly while no band is recorded and integers exactly when one is, so the biconditional
+    holds in both directions.
     """
     band_dir = REPO_ROOT / "data" / "silver" / "price_bands"
     files = [p for p in band_dir.rglob("*") if p.is_file()] if band_dir.is_dir() else []
-    assert not files, (
-        f"`data/silver/price_bands` now holds {len(files)} file(s); N-199 is closed and this probe "
-        "must become the assertion that an empty partition reports NOT RUN rather than 0"
-    )
     locked = _seq12_artifact()["blocked_by_locked_session"]
-    assert locked["at_lower_circuit"] == 0 and locked["no_band_recorded"] == locked["total"], (
-        f"the locked-session counters changed: {locked}"
-    )
+    counters = ("at_lower_circuit", "at_upper_circuit", "banded_but_not_at_a_limit")
+    if not files:
+        for name in counters:
+            assert locked[name] == "NOT RUN", (
+                f"`{name}` publishes {locked[name]!r} while data/silver/price_bands holds 0 files: an "
+                "empty partition makes that zero a property of the reader, not of the market (N-199)"
+            )
+        assert locked["price_band_partition"]["populated"] is False, locked["price_band_partition"]
+        assert "NOT RUN" in _seq12_artifact()["not_run"]["exit_freeze_round_trip"], (
+            "the exit freezes side is not reported as NOT RUN while no band exists"
+        )
+    else:
+        for name in counters:
+            assert isinstance(locked[name], int), (
+                f"`data/silver/price_bands` holds {len(files)} file(s) but `{name}` is "
+                f"{locked[name]!r}; re-measure the band counters against the populated partition"
+            )
 
 
 def probe_n200() -> None:
     """
-    `UNATTESTED_NO_RECORD` is read against a partial archive (N-200). Asserts the artifact publishes
-    no coverage figure for the corporate-action archive the verdict is derived from.
+    The "no record" verdict travels with the archive's coverage (N-200). The artifact publishes how
+    much of the scanned set the Bronze archive covers, and the recomputation of that coverage is what
+    the published figure must equal.
     """
+    from run_seq12_candidate import corporate_action_archive_coverage
+
     artifact = _seq12_artifact()
-    coverage = [k for k in artifact if "coverage" in k.lower() or "archive" in k.lower()]
-    assert not coverage, (
-        f"the artifact now publishes {coverage}; re-measure N-200 against the coverage it reports"
+    coverage = artifact["corporate_action_archive_coverage"]
+    scanned = artifact["instruments_scanned"]
+    import gzip
+    import json
+
+    with gzip.open(
+        REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz",
+        "rt",
+        encoding="utf-8",
+    ) as handle:
+        corpus = json.load(handle)
+    recomputed, per_isin = corporate_action_archive_coverage(list(corpus["prices_by_instrument"]))
+    assert coverage["instruments_scanned"] == scanned == recomputed["instruments_scanned"], (
+        coverage,
+        scanned,
+        recomputed,
     )
-    rights = 0
-    for line in (REPO_ROOT / "data" / "reference" / "corporate_actions.jsonl").read_text(
-        encoding="utf-8"
-    ).splitlines():
-        if line.strip() and '"RIGHTS"' in line:
-            rights += 1
-    assert rights <= 5, (
-        f"the reference table now holds {rights} RIGHTS rows; the incompleteness N-200 measured may "
-        "have been repaired and the finding must be re-derived"
+    assert coverage["bronze_distinct_isins"] == recomputed["bronze_distinct_isins"], (
+        f"the artifact publishes {coverage['bronze_distinct_isins']} covered ISINs and the archive holds "
+        f"{recomputed['bronze_distinct_isins']} (N-200)"
+    )
+    assert (
+        coverage["instruments_with_no_bronze_record"]
+        == recomputed["instruments_with_no_bronze_record"]
+    ), (coverage, recomputed)
+    uncovered_rows = sorted(
+        row["isin"]
+        for row in artifact["below_minus_20pct_one_day"]
+        if row["shape"] == "LEVEL_STEP_AT_OPEN"
+        and not row["attested"]
+        and per_isin.get(row["isin"], 0) == 0
+    )
+    assert coverage["unattested_stop_rows_on_uncovered_instruments"] == uncovered_rows, (
+        coverage["unattested_stop_rows_on_uncovered_instruments"],
+        uncovered_rows,
     )
 
 
