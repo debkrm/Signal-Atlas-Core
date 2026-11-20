@@ -3434,25 +3434,98 @@ def _seq12_constant(name: str):
     )
 
 
+# The five rows §100.4 measured as level steps on a signal day, recomputed here from the corpus and
+# the committed reference table rather than read out of the artifact.
+SEQ12_LEVEL_STEP_ROWS = (
+    ("INE006I01046", "2021-03-18", "ASTRAL"),
+    ("INE116G01013", "2021-10-28", "VARDHACRLC"),
+    ("INE341R01014", "2021-08-05", "DTIL"),
+    ("INE492A01029", "2020-07-16", "HEUBACHIND"),
+    ("INE949H01023", "2021-11-17", "MANINFRA"),
+)
+
+
+def seq12_level_step_rows() -> Dict[str, dict]:
+    """Recompute the five level steps from the corpus and the committed corporate-action table."""
+    import datetime
+    import gzip
+    import json
+    from decimal import Decimal
+
+    from run_seq12_candidate import _classify_drop, _load_corporate_actions
+
+    with gzip.open(
+        REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz",
+        "rt",
+        encoding="utf-8",
+    ) as handle:
+        corpus = json.load(handle)
+    sessions = [datetime.date.fromisoformat(value) for value in corpus["trading_dates"]]
+    index = {session: position for position, session in enumerate(sessions)}
+    actions = _load_corporate_actions()
+    out: Dict[str, dict] = {}
+    for isin, session_iso, _symbol in SEQ12_LEVEL_STEP_ROWS:
+        bars = {row["trade_date"]: row for row in corpus["prices_by_instrument"][isin]}
+        session = datetime.date.fromisoformat(session_iso)
+        position = index[session]
+        previous = bars.get(sessions[position - 1].isoformat())
+        assert previous is not None, f"{isin} {session_iso} has no calendar-previous bar"
+        current = bars[session_iso]
+        previous_close = Decimal(previous["close"])
+        move = (Decimal(current["close"]) - previous_close) / previous_close
+        opening_gap = (Decimal(current["open"]) - previous_close) / previous_close
+        out[isin] = _classify_drop(isin, session, move, opening_gap, previous_close, actions)
+    return out
+
+
 def probe_n196() -> None:
     """
-    An ex-dividend session reprices by the dividend, so `DIVIDEND` cannot be excluded from attestation
-    (N-196). Asserts the defect while it is open: the QA's own price-side set omits `DIVIDEND`, and
-    the stop count is the five §100.4 measured. Measured to refute it in that section: a Rs 140
-    special dividend on HEUBACHIND's 563.30 close of 2020-07-16 predicts 423.30 against an actual
-    423.55 close (0.044 %), and VARDHACRLC's Rs 25 interim is 117 % of its opening gap.
+    An ex-dividend session reprices by the dividend, so a cash record on the exact ex-date is an
+    attestation test (N-196). The fix-assertion: the test is the one stated in the script's docstring
+    (0.5 % of the previous close, on the close or the opening price), HEUBACHIND's Rs 140 special
+    dividend explains its 2020-07-16 level step, the three rows with no record anywhere stay
+    unattested, and the stop list does not empty — §100.16 item 1 names that trap.
     """
-    kinds = _seq12_constant("PRICE_SIDE_KINDS")
-    assert "DIVIDEND" not in kinds, (
-        "`PRICE_SIDE_KINDS` now contains DIVIDEND, so a cash-adjustment branch has landed; replace "
-        "this probe with the fix-assertion that the HEUBACHIND row leaves the stop list and the "
-        "ASTRAL / DTIL / MANINFRA rows stay in it"
+    from decimal import Decimal
+
+    from run_seq12_candidate import CASH_ADJUSTMENT_TOLERANCE
+
+    assert CASH_ADJUSTMENT_TOLERANCE == Decimal("0.005"), (
+        f"the cash-adjustment tolerance is {CASH_ADJUSTMENT_TOLERANCE}, not the 0.5 % the test states; "
+        "widening it until the stop list empties is a failure, not a fix (N-196)"
     )
-    artifact = _seq12_artifact()
-    assert artifact["unattested_level_steps_feeding_a_signal"] == 5, (
-        f"the stop count moved to {artifact['unattested_level_steps_feeding_a_signal']} without a "
-        "dividend-aware test; re-derive it rather than retuning the probe"
+    rows = seq12_level_step_rows()
+
+    heubachind = rows["INE492A01029"]
+    assert heubachind["disposition"] == "ATTESTED_CASH_ADJUSTMENT", (
+        f"HEUBACHIND 2020-07-16 is {heubachind['disposition']}: a Rs 140 dividend on a 563.30 close "
+        "predicts 423.30 and the session closed 423.55 (N-196)"
     )
+    tested = heubachind["cash_adjustment"]["tested"]
+    assert tested and Decimal(tested[0]["close_residual"]) <= CASH_ADJUSTMENT_TOLERANCE, (
+        f"the attested row publishes no reproducing residual: {tested}"
+    )
+
+    for isin in ("INE006I01046", "INE341R01014", "INE949H01023"):
+        row = rows[isin]
+        assert row["attested"] is False and row["shape"] == "LEVEL_STEP_AT_OPEN", (
+            f"{isin} {row['signal_session']} is now {row['disposition']} / {row['shape']} with no "
+            "corporate-action record in either archive; it may not be attested by a test that finds "
+            "nothing (N-196)"
+        )
+        assert row["records_on_date"] == [] and row["records_near_date"] == [], row
+
+    vardhacrlc = rows["INE116G01013"]
+    assert vardhacrlc["attested"] is False and vardhacrlc["disposition"] == "UNATTESTED_CASH_MISMATCH", (
+        f"VARDHACRLC 2021-10-28 is {vardhacrlc['disposition']}: its Rs 25 interim dividend predicts "
+        "47.35 against a 56.60 close, 12.8 % away, so it does not reproduce the level at 0.5 % (N-196)"
+    )
+    unattested = [
+        isin
+        for isin, row in rows.items()
+        if row["shape"] == "LEVEL_STEP_AT_OPEN" and row["attested"] is False
+    ]
+    assert unattested, "every row attested: a fix that empties the stop list is a failure, not a pass"
 
 
 def probe_n197() -> None:

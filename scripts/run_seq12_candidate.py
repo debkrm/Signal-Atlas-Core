@@ -18,6 +18,20 @@ move the committed corporate-action table cannot attest is not run around: it st
 §6.3, §6.1), because a pullback manufactured by an unattested split/bonus step is a fabricated signal
 and every R-multiple computed after it would rest on it.
 
+**What "attested" means (stated before any count is re-derived, N-196, §100.16 item 1).** A move is
+attested when a corporate-action record on that exact ex-date predicts the session's level, either
+
+- a price-side record (SPLIT / BONUS / CONSOLIDATION) whose share ratio reproduces the move within
+  `RATIO_TOLERANCE` = 0.5 %, or
+- a cash record (DIVIDEND / RIGHTS) whose cash amount reproduces the session's close **or** its opening
+  price within `CASH_ADJUSTMENT_TOLERANCE` = **0.5 % of the previous close**: a dividend predicts
+  `previous_close - amount`, a rights entitlement predicts the theoretical ex-rights price
+  `(previous_close*denominator + premium*numerator) / (denominator + numerator)`.
+
+An ex-dividend or ex-rights session reprices the stock by the cash it removes, permanently (§5.4,
+§13.2), so a cash record that reproduces the level attests the step. A cash record that does not
+reproduce it is published as `UNATTESTED_CASH_MISMATCH` naming its residual, not disposed of.
+
 So this script has two jobs and no third one:
 
 1. `--qa-only` prints the Step 2 counts and lists (no return, no P&L) and exits 1 when the QA is not
@@ -44,6 +58,7 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Dict, List, Optional, Sequence
 
@@ -77,6 +92,12 @@ ATR_PERIOD = 14
 MIN_MEDIAN_ADTV_CRORE = Decimal("25.0")
 ADTV_LOOKBACK_SESSIONS = 20
 PRICE_SIDE_KINDS = ("SPLIT", "BONUS", "CONSOLIDATION")
+# N-196: an ex-dividend or ex-rights session reprices by the cash it removes, so a cash record on the
+# exact ex-date is an attestation test like a share-ratio record is. Tolerance is on the previous close.
+CASH_ADJUSTMENT_KINDS = ("DIVIDEND", "RIGHTS")
+CASH_ADJUSTMENT_TOLERANCE = Decimal("0.005")
+# "Rights Entitlement 1:14 @ INR 535" / "Rights 49:100 @ Premium Rs 9/-": the premium is prose.
+RIGHTS_PREMIUM_PATTERN = re.compile(r"@\s*(?:Premium\s+(?:[Oo]f\s+)?)?(?:INR|Rs\.?)\s*([0-9]+(?:\.[0-9]+)?)")
 TRANSITION_KINDS = ("ISIN_TRANSITION", "MERGER", "DELISTING")
 NEAR_MISMATCH_SESSIONS = 5
 LARGE_DROP_THRESHOLD = Decimal("-0.20")
@@ -189,20 +210,83 @@ def ratio_shapes(move: Decimal) -> List[str]:
     return hits
 
 
+def _level(value: Decimal) -> str:
+    return format(value.quantize(Decimal("0.0001")), "f")
+
+
+def _cash_adjustment_prediction(previous_close: Decimal, record: dict) -> Optional[dict]:
+    """
+    The post-adjustment level an exact-date cash record predicts, or None when it carries no cash.
+
+    A dividend removes its amount from the previous close. A rights entitlement removes the gap between
+    the cum-rights price and the theoretical ex-rights price, `(prev*den + premium*num) / (den + num)`;
+    its premium is prose in the archive's `description` ("Rights Entitlement 1:14 @ INR 535"), so it is
+    parsed, and a rights row whose description carries no premium has no cash test.
+    """
+    kind = str(record.get("action_type"))
+    try:
+        numerator = Decimal(str(record.get("ratio_numerator")))
+        denominator = Decimal(str(record.get("ratio_denominator")))
+    except (ArithmeticError, TypeError, ValueError):
+        return None
+    if previous_close <= 0:
+        return None
+    if kind == "DIVIDEND":
+        try:
+            amount = Decimal(str(record.get("dividend_amount")))
+        except (ArithmeticError, TypeError, ValueError):
+            return None
+        if amount <= 0:
+            return None
+        return {"amount": amount, "predicted": previous_close - amount, "basis": "DIVIDEND_AMOUNT"}
+    if kind == "RIGHTS":
+        match = RIGHTS_PREMIUM_PATTERN.search(str(record.get("description") or ""))
+        if match is None or numerator <= 0 or denominator <= 0:
+            return None
+        premium = Decimal(match.group(1))
+        total = numerator + denominator
+        predicted = (previous_close * denominator + premium * numerator) / total
+        return {"amount": premium, "predicted": predicted, "basis": "RIGHTS_TERP"}
+    return None
+
+
+def _cash_adjustment_test(previous_close: Decimal, move: Decimal, opening_gap: Decimal, record: dict) -> Optional[dict]:
+    """One exact-date cash record against the session's close and opening price (§100.16 item 1)."""
+    prediction = _cash_adjustment_prediction(previous_close, record)
+    if prediction is None:
+        return None
+    close = previous_close * (Decimal(1) + move)
+    opening = previous_close * (Decimal(1) + opening_gap)
+    close_residual = abs(close - prediction["predicted"]) / previous_close
+    opening_residual = abs(opening - prediction["predicted"]) / previous_close
+    return {
+        "action_type": str(record.get("action_type")),
+        "basis": prediction["basis"],
+        "amount": _level(prediction["amount"]),
+        "predicted_level": _level(prediction["predicted"]),
+        "close_residual": _level(close_residual),
+        "opening_residual": _level(opening_residual),
+        "matched": min(close_residual, opening_residual) <= CASH_ADJUSTMENT_TOLERANCE,
+    }
+
+
 def _classify_drop(
     isin: str,
     session: datetime.date,
     move: Decimal,
     opening_gap: Decimal,
+    previous_close: Decimal,
     actions: Dict[str, List[dict]],
 ) -> dict:
     """
     The corporate-action evidence for one signal day's one-session move, and its shape.
 
-    Attested = a price-side record (SPLIT/BONUS/CONSOLIDATION) on the exact ex-date whose share ratio
-    reproduces the move within 0.5%. Anything else — a ratio-bearing action on a nearby but different
-    date, an ISIN transition, a dividend that cannot reprice anything, or nothing at all — is
-    unattested and stops the round (§5.4, §6.3).
+    Attested = a record on the exact ex-date that predicts the session's level: a price-side record
+    (SPLIT/BONUS/CONSOLIDATION) whose share ratio reproduces the move within `RATIO_TOLERANCE`, or a
+    cash record (DIVIDEND/RIGHTS) whose cash amount reproduces the close or the opening price within
+    `CASH_ADJUSTMENT_TOLERANCE` of the previous close. Anything else — a cash record that does not
+    reproduce the level, a ratio-bearing action on a nearby but different date, an ISIN transition, or
+    nothing at all — is unattested and stops the round (§5.4, §6.3).
     """
     records = actions.get(isin, [])
     ex_dates = {id(r): datetime.date.fromisoformat(str(r["ex_date"])[:10]) for r in records}
@@ -219,14 +303,27 @@ def _classify_drop(
         for r in price_side_exact
         if _ratio_matches(move, r)
     ]
+    cash_exact = [r for r in exact if str(r["action_type"]) in CASH_ADJUSTMENT_KINDS]
+    cash_tests = [
+        test
+        for test in (
+            _cash_adjustment_test(previous_close, move, opening_gap, record) for record in cash_exact
+        )
+        if test is not None
+    ]
+    cash_matched = [test for test in cash_tests if test["matched"]]
     near_price_side = [r for r in near if str(r["action_type"]) in PRICE_SIDE_KINDS]
     transitions = [r for r in exact + near if str(r["action_type"]) in TRANSITION_KINDS]
     if matched:
         disposition = "ATTESTED_RATIO_MATCH"
+    elif cash_matched:
+        disposition = "ATTESTED_CASH_ADJUSTMENT"
     elif price_side_exact:
         disposition = "UNATTESTED_RATIO_MISMATCH"
     elif near_price_side:
         disposition = "UNATTESTED_EX_DATE_MISMATCH"
+    elif cash_exact:
+        disposition = "UNATTESTED_CASH_MISMATCH"
     elif transitions:
         disposition = "UNATTESTED_TRANSITION"
     else:
@@ -237,6 +334,7 @@ def _classify_drop(
             "ex_date": str(row["ex_date"])[:10],
             "action_type": row["action_type"],
             "ratio": f"{row.get('ratio_numerator')}:{row.get('ratio_denominator')}",
+            "dividend_amount": row.get("dividend_amount"),
             "circular_ref": row.get("circular_ref"),
             "provenance": row.get("provenance"),
         }
@@ -255,6 +353,10 @@ def _classify_drop(
         "ratio_shapes": ratio_shapes(move),
         "disposition": disposition,
         "attested": disposition.startswith("ATTESTED"),
+        "cash_adjustment": {
+            "tolerance_of_previous_close": format(CASH_ADJUSTMENT_TOLERANCE, "f"),
+            "tested": cash_tests,
+        },
         "records_on_date": [_record(r) for r in exact],
         "records_near_date": [_record(r) for r in near],
         "below_corpus_reconciliation_threshold": abs(move) <= CORPUS_RECONCILIATION_THRESHOLD,
@@ -375,7 +477,9 @@ def data_qa(criteria) -> dict:
             if move >= LARGE_DROP_THRESHOLD:
                 continue
             opening_gap = (row["open"] - previous_row["close"]) / previous_row["close"]
-            large_drops.append(_classify_drop(isin, session, move, opening_gap, actions))
+            large_drops.append(
+                _classify_drop(isin, session, move, opening_gap, previous_row["close"], actions)
+            )
 
     unattested_steps = [
         row for row in large_drops if row["shape"] == "LEVEL_STEP_AT_OPEN" and not row["attested"]
@@ -449,8 +553,8 @@ def data_qa(criteria) -> dict:
             else (
                 f"{len(unattested_steps)} entry-signal day(s) open more than "
                 f"{abs(LARGE_DROP_THRESHOLD) * 100:.0f}% below the previous close — a change of price "
-                f"level between two sessions, not a session's trading — with no price-side corporate "
-                f"action attested on that date; "
+                f"level between two sessions, not a session's trading — with no corporate action "
+                f"(share ratio or cash amount) attested on that date; "
                 f"{sum(1 for row in unattested_steps if row['ratio_shapes'])} of them are ratio-shaped"
             )
         ),
