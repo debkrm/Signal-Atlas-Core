@@ -28,7 +28,6 @@ from __future__ import annotations
 import datetime
 from decimal import Decimal
 import gzip
-import hashlib
 import json
 from pathlib import Path
 import sys
@@ -44,6 +43,7 @@ import scripts.run_seq10_candidate as seq10  # noqa: E402
 from signal_core.contracts.criteria import compute_criteria_fingerprint  # noqa: E402
 from signal_core.contracts.price_bar import PriceBar  # noqa: E402
 from signal_core.research.pit_universe import median_turnover_as_of  # noqa: E402
+from signal_core.storage.artifact_digest import text_digest  # noqa: E402
 
 CONFIG_PATH = REPO_ROOT / "configs" / "trial_011_candidate.yaml"
 VERDICT_DIR = REPO_ROOT / "reports" / "verdicts" / "trial_011"
@@ -59,8 +59,8 @@ WINDOW_LAST_SESSION = datetime.date(2023, 12, 29)
 METRICS = ("closed_trades", "end_equity", "profit_factor", "win_rate", "max_drawdown")
 
 
-def _digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+# §102.3 Ruling 1: one guarded implementation, so this normaliser cannot be handed a binary path.
+_digest = text_digest
 
 
 def _metric(artifact: dict, name: str):

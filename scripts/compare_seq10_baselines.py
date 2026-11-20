@@ -52,7 +52,6 @@ import argparse
 import datetime
 from decimal import Decimal, localcontext
 import gzip
-import hashlib
 import json
 from pathlib import Path
 import random
@@ -60,20 +59,26 @@ import sys
 from typing import Dict, List, Optional, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from scripts.artifact_restatement import predecessor_pointer  # noqa: E402
 from signal_core.contracts.criteria import (  # noqa: E402
     compute_criteria_fingerprint,
     load_go_no_go_criteria,
 )
 from signal_core.execution.costs import TransactionCostModel  # noqa: E402
 from signal_core.execution.types import OrderProduct, OrderSide  # noqa: E402
+from signal_core.storage.artifact_digest import binary_digest, text_digest  # noqa: E402
 
 DATASET_PATH = REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz"
 SEQ10_ARTIFACT = (
     REPO_ROOT / "reports" / "verdicts" / "trial_010" / "phase3b2_swing_baseline_2022_2024_verdict.json"
 )
 OUTPUT_PATH = REPO_ROOT / "reports" / "analysis" / "s100" / "seq10_baseline_comparison.json"
+# The revision of this path the artifact replaced: `git log -- <path>` shows eea1757 (created) and
+# 325bab8 (rewritten in place). Pinned rather than taken from HEAD, so the artifact reproduces (§102.10).
+PREDECESSOR_COMMIT = "eea1757f15ed1daf202eb36df7f2aa3151188a2e"
 
 WINDOW_START = "2018-04-02"
 WINDOW_END = "2023-12-29"
@@ -121,20 +126,10 @@ DECISION_RULE = (
 )
 
 
-def _sha256(path: Path) -> str:
-    """
-    sha256 of a tracked text artifact's git-stored form: CRLF normalised to LF (N-203, §9.1).
-
-    `.gitattributes` pins `*.json` to `eol=lf`, so a clone stores the LF rendering while the writing
-    checkout may hold CRLF. Hashing the working copy made the published digest a digest of the author's
-    line endings and `--check` unreachable outside that checkout.
-    """
-    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
-
-
-def _sha256_bytes(path: Path) -> str:
-    """sha256 of a binary payload's stored bytes, unnormalised (`.json.gz` is `-text`, N-204)."""
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+# §102.3 Ruling 1: a text digest is the LF-normalised stored form and a binary digest the stored bytes;
+# each arm refuses the other's path, so neither can be handed a path it would hash wrongly (N-203, N-204).
+_sha256 = text_digest
+_sha256_bytes = binary_digest
 
 
 def _load_dataset() -> dict:
@@ -544,7 +539,7 @@ def build_artifact() -> dict:
         "KILL — the strategy family is not carried into seq 12"
     )
 
-    return {
+    payload = {
         "artifact": "seq10_baseline_comparison",
         "audit_section": "§99.10 item 3 (implemented in §100)",
         "mode": "READ_ONLY_BENCHMARK",
@@ -592,6 +587,12 @@ def build_artifact() -> dict:
             "N_eval, and its draws explore no parameter",
         ],
     }
+    # §102.10 / §102.14 item 5: this path was rewritten in place, so the revision it replaced is named
+    # here, with the digest of that revision's stored bytes and the fields that moved.
+    payload["predecessor"] = predecessor_pointer(
+        OUTPUT_PATH.relative_to(REPO_ROOT).as_posix(), PREDECESSOR_COMMIT, payload
+    )
+    return payload
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

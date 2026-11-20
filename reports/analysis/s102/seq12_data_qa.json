@@ -342,6 +342,28 @@
   "sha256_of": "the config's stored text bytes with CRLF normalised to LF",
   "trial_id": "TRIAL-PHASE3B2-MEANREV-012"
  },
+ "predecessor": {
+  "commit": "46a99eccb8af5b4ba2ccd6bef003842eaa3ce17f",
+  "fields_added": [
+   "corpus_reconciliation",
+   "entry_signal_scope",
+   "entry_signals_including_the_final_session",
+   "rights_terp_branch",
+   "signal_level_steps_in_lookback_detail_distinct_instruments",
+   "signal_level_steps_in_lookback_detail_scope",
+   "signals_without_a_next_session",
+   "signals_without_a_next_session_in_eq_series"
+  ],
+  "fields_changed": [
+   "corpus",
+   "pre_registration",
+   "restates"
+  ],
+  "fields_removed": [],
+  "path": "reports/analysis/s102/seq12_data_qa.json",
+  "sha256": "0dffff1540744f4f7e2b32e9a7ac93235721efa85cfb02d6ff6be7804f8c24b3",
+  "sha256_of": "the predecessor blob's stored bytes exactly as `git cat-file blob <commit>:<path>` returns them; this path is `eol=lf` in .gitattributes, so they are also the LF-normalised form every clone reads (Audit \u00a7102.3 Ruling 1)"
+ },
  "restates": {
   "available": true,
   "changed_fields": {

@@ -64,6 +64,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import scripts.run_phase3b2_walkforward as walkforward  # noqa: E402
 from signal_core.contracts.criteria import compute_criteria_fingerprint  # noqa: E402
+from signal_core.storage.artifact_digest import text_digest  # noqa: E402
 
 REGISTRY_PATH = REPO_ROOT / "data" / "trials" / "trial_registry.jsonl"
 REGISTRY_SIDECARS = (".manifest", ".evaluations", ".evaluations.manifest")
@@ -104,8 +105,8 @@ RATIONALE = (
 )
 
 
-def _digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+# §102.3 Ruling 1: one guarded implementation, so this normaliser cannot be handed a binary path.
+_digest = text_digest
 
 
 def _snapshot_header(path: Path) -> dict:

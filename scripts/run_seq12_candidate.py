@@ -63,7 +63,6 @@ import argparse
 import datetime
 from decimal import Decimal
 import gzip
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -82,11 +81,16 @@ from signal_core.contracts.exchange_series import PriceSeriesContinuityValidator
 from signal_core.contracts.price_bar import PriceBar  # noqa: E402
 from signal_core.features.indicators import compute_atr, compute_rsi, compute_sma  # noqa: E402
 from signal_core.research.pit_universe import median_turnover_as_of  # noqa: E402
+from signal_core.storage.artifact_digest import binary_digest, text_digest  # noqa: E402
+from scripts.artifact_restatement import predecessor_pointer  # noqa: E402
 
 CONFIG_PATH = REPO_ROOT / "configs" / "trial_012_candidate.yaml"
 # §102 re-derives the Step 2 counts under the widened attestation test; the §101 artifact is left
 # unedited as that round's record and is cited here by hash (AGENTS.md §10.1, §97.5 N-194).
 OUTPUT = REPO_ROOT / "reports" / "analysis" / "s102" / "seq12_data_qa.json"
+# The revision of this path the artifact replaced: `git log -- <path>` shows 46a99ec (created) and
+# 325bab8 (rewritten in place). Pinned rather than taken from HEAD, so the artifact reproduces (§102.10).
+PREDECESSOR_COMMIT = "46a99eccb8af5b4ba2ccd6bef003842eaa3ce17f"
 RESTATED_ARTIFACT = REPO_ROOT / "reports" / "analysis" / "s101" / "seq12_data_qa.json"
 RESTATED_FIELDS = (
     "status",
@@ -135,24 +139,10 @@ RATIO_TOLERANCE = Decimal("0.005")
 CORPUS_RECONCILIATION_THRESHOLD = Decimal("0.35")
 
 
-def _digest_text(path: Path) -> str:
-    """
-    sha256 of a tracked **text** artifact's git-stored form: CRLF normalised to LF (N-203, §9.1).
-
-    `.gitattributes` pins `*.json` to `eol=lf`, so the bytes a clone stores are the LF rendering; a
-    digest of the writing checkout's CRLF rendering is a digest no clone can reproduce.
-    """
-    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
-
-
-def _digest_bytes(path: Path) -> str:
-    """
-    sha256 of a **binary** payload's stored bytes, unnormalised (N-204, §10.5).
-
-    A gzip stream is `-text` in `.gitattributes` and has no LF form: replacing `\r\n` inside it hashes
-    a stream no file contains, so the raw bytes are the only digest a reader can reproduce.
-    """
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+# §102.3 Ruling 1: a text digest is the LF-normalised stored form and a binary digest the stored bytes;
+# each arm refuses the other's path, so neither can be handed a path it would hash wrongly (N-203, N-204).
+_digest_text = text_digest
+_digest_bytes = binary_digest
 
 
 def rights_branch_exercise(actions: Dict[str, List[dict]], bars_by_isin: Dict[str, List[PriceBar]], sessions):
@@ -1043,6 +1033,9 @@ def data_qa(criteria) -> dict:
         ],
     }
     qa["restates"] = restatement_of_previous(qa)
+    # §102.10 / §102.14 item 5: this path was rewritten in place at 325bab8, so the revision it replaced
+    # is named beside the artifact it is no longer.
+    qa["predecessor"] = predecessor_pointer(OUTPUT.relative_to(REPO_ROOT).as_posix(), PREDECESSOR_COMMIT, qa)
     return qa
 
 

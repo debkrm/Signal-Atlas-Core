@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import datetime
 import dataclasses
-import hashlib
 import json
 from pathlib import Path
 import sys
@@ -46,6 +45,7 @@ from signal_core.contracts.criteria import (  # noqa: E402
     compute_criteria_fingerprint,
     load_go_no_go_criteria,
 )
+from signal_core.storage.artifact_digest import text_digest  # noqa: E402
 
 REGISTRY_PATH = REPO_ROOT / "data" / "trials" / "trial_registry.jsonl"
 REGISTRY_MANIFEST = REPO_ROOT / "data" / "trials" / "trial_registry.jsonl.manifest"
@@ -80,8 +80,8 @@ EXPECTED_EVALUATION_COUNT = 6
 SUPERSEDED_CRITERIA_VERSIONS = ("1.1.5",)
 
 
-def _digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+# §102.3 Ruling 1: one guarded implementation, so this normaliser cannot be handed a binary path.
+_digest = text_digest
 
 
 def baseline_problem(block) -> Optional[str]:

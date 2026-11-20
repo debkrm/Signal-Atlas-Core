@@ -3775,9 +3775,16 @@ def probe_n201() -> None:
     The NIFTYBEES benchmark is not continuous across 2019-12-19 (N-201). Asserts the corpus carries an
     unadjusted 1:10 step while stamping the bar as back-adjusted, and that the reconciliation's own
     detail omits it.
+
+    Every published figure is recomputed here from the corpus bars with this probe's own Decimal
+    arithmetic — the ratio to 6 dp, its distance from 1:10, the list membership that distance decides and
+    the counter division that makes the detail a filtered list. The claim is not compared to its own
+    producer: §102.8 attack 10 passes a wrong ratio published beside a producer that computes it the
+    same wrong way, because the equality is `published == producer(corpus)` (N-201, §102.14 item 1).
     """
     import gzip
     import json
+    from decimal import ROUND_HALF_UP
 
     corpus = json.load(
         gzip.open(
@@ -3787,31 +3794,90 @@ def probe_n201() -> None:
         )
     )
     bars = {r["trade_date"]: r for r in corpus["prices_by_instrument"]["INF732E01011"]}
-    ratio = Decimal(bars["2019-12-19"]["close"]) / Decimal(bars["2019-12-18"]["close"])
+    previous_close = Decimal(bars["2019-12-18"]["close"])
+    close = Decimal(bars["2019-12-19"]["close"])
+    ratio = close / previous_close
     assert ratio < Decimal("0.11"), (
         f"the corpus ratio across the ISIN transition is now {ratio}; if the series is back-adjusted "
         "the boundary N-201 measured is repaired and clause (d) may be evaluable"
     )
-    detail = corpus["reconciliation"]["ratio_shaped_detail"]
-    assert not [r for r in detail if r["isin"] == "INF732E01011"], (
+    reconciliation = corpus["reconciliation"]
+    detail = reconciliation["ratio_shaped_detail"]
+    listed = [row for row in detail if row["isin"] == "INF732E01011"]
+    assert not listed, (
         "the reconciliation now publishes the boundary it omitted; re-measure N-201"
     )
     # The claim the stamp makes, and the census claim the detail list invites, are published where the
     # QA artifact states what it read — the corpus bytes are frozen this round (N-201, §101.12 item 4).
-    from run_seq12_candidate import corpus_reconciliation_claim
-
     published = _seq12_artifact()["corpus_reconciliation"]
-    assert published["detail_is_a_census"] is False, (
-        f"the QA artifact publishes detail_is_a_census={published['detail_is_a_census']!r}; the corpus's "
-        "ratio_shaped_detail is a filtered list (N-201)"
-    )
-    assert published == corpus_reconciliation_claim(corpus), (
-        "the published claim is not what the corpus and the committed reconciliation produce (N-201)"
-    )
+    assert set(published) == {"detail_is_a_census", "detail_scope", "unattested_unit_break"}, sorted(published)
     break_at = published["unattested_unit_break"]
     assert break_at["isin"] == "INF732E01011" and break_at["session"] == "2019-12-19", break_at
-    assert break_at["listed_in_ratio_shaped_detail"] is False, break_at
+
+    # 1. The ratio, and both prices it is taken from, from the corpus bars at the published precision.
+    six_dp = ratio.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+    assert break_at["previous_close"] == format(previous_close, "f"), (
+        break_at["previous_close"],
+        format(previous_close, "f"),
+    )
+    assert break_at["close"] == format(close, "f"), (break_at["close"], format(close, "f"))
+    assert break_at["ratio"] == format(six_dp, "f"), (
+        f"the artifact publishes ratio {break_at['ratio']}, and {close} / {previous_close} = {ratio} is "
+        f"{format(six_dp, 'f')} at 6 dp; a wrong claim published beside a producer that computes it the "
+        "same way agrees with itself (§102.8 attack 10, N-201)"
+    )
+
+    # 2. The band the detail list filters on: the distance from 1:10 against ±0.5 %, and the membership
+    #    that distance decides, recomputed rather than read.
+    distance = abs(six_dp / Decimal("0.1") - Decimal(1))
+    assert distance > Decimal("0.005"), (
+        f"the boundary ratio {format(six_dp, 'f')} is {distance} from 1:10 and so inside the ±0.5 % band "
+        "`ratio_shaped_detail` filters on; the list should have held it and the artifact's `false` is "
+        "wrong (N-201, §101.4)"
+    )
+    assert break_at["listed_in_ratio_shaped_detail"] is False, (
+        f"the artifact publishes listed_in_ratio_shaped_detail="
+        f"{break_at['listed_in_ratio_shaped_detail']!r}, the corpus detail holds {len(listed)} row(s) for "
+        f"this pair, and the ratio sits {distance} outside the band (N-201)"
+    )
+
+    # 3. The stamp is the series policy, not a per-bar attestation — and the bar is unattested.
+    assert break_at["adjustment_stamp"] == corpus["adjustment_version"], (
+        break_at["adjustment_stamp"],
+        corpus["adjustment_version"],
+    )
     assert break_at["stamp_scope"] == "SERIES_POLICY_NOT_A_PER_BAR_ATTESTATION", break_at
+    assert break_at["attested"] is False, break_at
+
+    # 4. The detail list is not a census, derived from the corpus's own counter division: the list holds
+    #    the ratio-shaped unattested rows, and the moves beyond the threshold are more than that.
+    assert len(detail) == reconciliation["ratio_shaped_unattested"], (
+        len(detail),
+        reconciliation["ratio_shaped_unattested"],
+    )
+    beyond_threshold = (
+        reconciliation["explained_by_applied_row"]
+        + reconciliation["explained_by_archive_record"]
+        + reconciliation["no_ratio_match"]
+        + reconciliation["ratio_shaped_unattested"]
+    )
+    assert beyond_threshold > len(detail), (beyond_threshold, len(detail))
+    assert published["detail_is_a_census"] is False, (
+        f"the QA artifact publishes detail_is_a_census={published['detail_is_a_census']!r}; the corpus's "
+        f"ratio_shaped_detail holds {len(detail)} of the {beyond_threshold} moves beyond "
+        f"±{reconciliation['threshold']} (N-201)"
+    )
+    scope = published["detail_scope"]
+    for figure in (
+        f"{len(detail)} moves",
+        f"±{reconciliation['threshold']}",
+        f"({reconciliation['no_ratio_match']} rows)",
+        f"({reconciliation['cross_gap_pairs']} pairs)",
+    ):
+        assert figure in scope, (
+            f"the published detail_scope does not carry {figure!r}, so it does not state what the "
+            f"corpus's own reconciliation reports (N-201): {scope}"
+        )
 
 
 def probe_n202() -> None:
@@ -3953,6 +4019,20 @@ def probe_n204() -> None:
         + (f" — it is the CRLF-mutated stream digest {mutated}" if committed == mutated else "")
         + ": a reader cannot reproduce a digest no reader can compute from the file (N-204, §10.5, "
         "§6.5)"
+    )
+    # The value is the producer's, so the probe calls the producer: a regression that makes the binary
+    # digest normalise republishes nothing and would otherwise pass on the artifact and the file alone
+    # (§102.8 attack 12, §102.14 item 4).
+    from run_seq12_candidate import CORPUS_PATH, _digest_bytes
+
+    assert CORPUS_PATH == (
+        REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz"
+    ), CORPUS_PATH
+    produced = _digest_bytes(CORPUS_PATH)
+    assert produced == stored, (
+        f"`run_seq12_candidate._digest_bytes` returns {produced} for the corpus whose stored bytes hash "
+        f"{stored}: a normalising digest has been applied to a binary path, which is the defect N-204 "
+        "measured and §102.3 Ruling 1 forbids"
     )
     # One dataset, one fingerprint: the manifest's current row names the same bytes.
     import json as _json

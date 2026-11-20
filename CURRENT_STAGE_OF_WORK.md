@@ -3094,3 +3094,105 @@ manifest row, criteria value, trial-registry row, fold or holdout session moved*
   untracked). The gate refuses to certify a tree whose working copy it did not measure (§80.3), and that is
   the correct outcome rather than a usable one.
 - Nothing here is signed off. The next round is the auditor's.
+
+## §104 — §102's items 4, 1's probe half and 5 executed: Ruling 1 is enforced at every digest producer, the boundary ratio is recomputed independently, and both regenerated artifacts name the revision they replaced (Not audited)
+
+This log reviews commit `325bab8` under audit **§102** (`reports/audit/volume2.md`, tag `audit-s102-1e3c836`)
+and executes three of its ordered items, in §102's order: **item 4**, **item 1's probe half**, **item 5**.
+**The work is not audited**: no finding is marked CLOSED here, no verdict word is claimed, and the ledger
+stays as §102 left it — `N-150`, `N-199`, `N-201` OPEN.
+
+**Where this round's brief and §102 differ, §102 wins, and on the one point they differ it does not bite.**
+§102.14 item 5 names only the s102 artifact; a predecessor pointer is published for the s100 comparison as
+well, because §102.10 judged both rewrites in place and the brief asked for regenerated artifacts (plural).
+That adds a pointer §102 did not order; it relaxes no §102 condition.
+
+### Item 4 — Ruling 1 by construction, not by a guard beside the old path
+
+One module now defines both arms: `src/signal_core/storage/artifact_digest.py`. `text_digest` hashes a text
+path's stored form (CRLF normalised to LF) and raises `ValueError` for a binary path; `binary_digest` hashes
+the stored bytes and raises for a text path. `BINARY_SUFFIXES = (".gz", ".zip")` mirrors the `-text` rules in
+`.gitattributes`, so "which arm applies" is a property of the path and not of the caller's intent.
+
+Every normalising digest function in `scripts/` was **replaced** by a delegation to it, not left beside a
+guarded copy (§14.4): `run_seq10_candidate._digest`, `run_seq11_candidate._digest`,
+`compare_seq10_baselines._sha256` / `._sha256_bytes`, `run_seq12_candidate._digest_text` / `._digest_bytes`,
+`probe_seq10_candidate._digest`, `diagnose_seq10_drawdown._digest`. The old bodies are gone; `hashlib` imports
+made unused by the change are removed. The nine `read_bytes().replace(b"\r\n", b"\n")` sites that remain in
+`scripts/verify_*`, `src/signal_core/contracts/criteria.py` and `src/signal_core/storage/circulars.py` are not
+digest functions (they normalise bytes for parsing) and were not touched; all are applied to text today
+(§102.5).
+
+Measured: nine tests in `tests/unit/test_phase3b2_audit_s104_items.py` were written first and **all nine
+failed** on the pre-change tree — seven because no normaliser refused a binary path and neither binary
+function refused a text path, two because no artifact carried a predecessor. All nine pass after.
+
+**No published value moved.** `compare_seq10_baselines.py --check` and `run_seq12_candidate.py --check` exited
+0 both before the digest edits and after them. Reverting one producer (`_digest_bytes = _digest_text`, the
+§102.8 attack-12 shape) now fails `probe N-204` with the guard's own refusal — "is a binary payload: …
+has no LF form and a normalising digest of it hashes a stream no file contains" — rather than with a wrong
+number, so the source-only regression §102.8 could not see is now caught at the producer.
+
+### Item 1's probe half (N-201) — the ratio recomputed, not compared to its producer
+
+`probe N-201` no longer imports `corpus_reconciliation_claim`. It recomputes, from the corpus bars with its
+own Decimal arithmetic: `previous_close` (1292.54) and `close` (130.20); the ratio at 6 dp `ROUND_HALF_UP`
+(`0.100732`); its distance from 1:10 (`0.00732`, outside the ±0.5 % band the detail list filters on); the
+detail list's absence of the pair; and the corpus's own counter division (699 listed of 774 beyond the
+threshold, so the list is not a census). It also requires the published `detail_scope` to quote the four
+figures the corpus reports (699 moves, ±0.35, 74 `no_ratio_match` rows, 16,194 gap pairs).
+
+Measured against §102.8 attack 10 — the producer quantising at `0.0001` **and** the artifact publishing
+`0.1007`: the old probe printed `PASS N-201`; the new probe exits 1 with "the artifact publishes ratio 0.1007,
+and 130.2 / 1292.54 = 0.1007318922431800950067309329 is 0.100732 at 6 dp". **The corpus half is not taken**:
+no corpus byte changed, and the header mark §101.12 item 4 asked for is still owed to a maintainer decision.
+
+### Item 5 — the predecessor each regenerated artifact replaced
+
+`scripts/artifact_restatement.py` publishes `predecessor {path, commit, sha256, sha256_of, fields_added,
+fields_removed, fields_changed}`. The commit is **pinned**, not taken from `HEAD` (a predecessor derived from
+`HEAD` names a different revision after every commit, so the artifact would stop reproducing), and the fields
+that moved are **computed from the blob**, so a pointer cannot claim a movement the bytes do not show.
+
+| Artifact | Predecessor commit | sha256 of its stored bytes | Moved |
+|---|---|---|---|
+| `reports/analysis/s100/seq10_baseline_comparison.json` | `eea1757f15ed1daf202eb36df7f2aa3151188a2e` | `b5c14b9f5f7b5b2e239360b6ca3e1165532f20be1c47ae2e669e9b00e58a7528` | +2 added, 1 changed (`seq10_artifact_sha256` → `75571da3…`) |
+| `reports/analysis/s102/seq12_data_qa.json` | `46a99eccb8af5b4ba2ccd6bef003842eaa3ce17f` | `0dffff1540744f4f7e2b32e9a7ac93235721efa85cfb02d6ff6be7804f8c24b3` | +8 added, 3 changed (`corpus`, `pre_registration`, `restates`), 0 removed |
+
+Both artifacts were regenerated **by their own producers** (`--write`), each gained only the pointer (s100
++14 lines, s102 +22 lines, nothing else), and `--check` exits 0 for both afterwards. The two new tests
+recompute each digest with `git cat-file blob <commit>:<path>` and each field list from the blob and the
+committed artifact, so the pointer is not a claim about itself; a future rewrite of either path breaks its
+own test until the pin or the path changes.
+
+### Not taken, and why
+
+- **§102.14 item 1, the corpus half** — a sealed-surface change (gzip bytes → manifest row → `MAN-FPR-V1` →
+  a criteria re-seal) and a maintainer decision. No corpus byte changed.
+- **§102.14 item 2, clause (d)'s real-return sentence** — §102 orders it as needing no re-seal, but the clause
+  lives in `configs/trial_012_candidate.yaml`, which this round may not edit. Untaken; named so the next round
+  can take it.
+- **§102.14 item 3 (N-199)** — stays BLOCKED: no sourced NSE per-session band archive was supplied,
+  `data/silver/price_bands` is still empty, the counters stay `NOT RUN`, nothing was synthesised.
+- **§102.14 item 6** — carried unchanged.
+
+### What moved, and what did not
+
+Two regenerated artifacts (pointer only), eight scripts, one new `scripts/` module, one new `src/` module, one
+new test file. **No corpus byte, content fingerprint, manifest row, criteria value, criteria pin,
+pre-registration, trial-registry row, fold spec or verdict artifact moved**: corpus 75,390,706 B /
+`ea0b65a3…`, `DATA-CTNT-V2-cb4832c0…`, criteria `1.1.16` / `CRIT-FPR-V1-535e47f5…`, manifest `1,009 current`,
+registry `N = 11` / `N_eval = 6`, 2024 fold untouched, holdout `2025-01-01..2026-11-11` unread. The s102 QA's
+status is still `STOP` for the same reason (4 unattested level steps feeding a signal).
+
+### Gate state at this commit
+
+- The pre-commit `--force-full` run exits **0**: `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED
+  (100%)`, **11 of 11** verifiers exit 0 (`verify_audit_findings.py` 243.30 s,
+  `verify_seq10_baseline_comparison.py` 29.48 s), **620 of 620** collected — 619 passed in the parallel
+  invocation + 1 isolated — 0 skipped, 0 xfailed.
+- It recorded **no green row**: the working copy differed from `HEAD` in 12 source paths, so the gate refused
+  to certify a tree it did not measure (§80.3, N-160). The row is recorded by the commit that follows this one.
+- `probe_audit_findings.py N-201`, `N-203`, `N-204` all `PASS` on this tree; the two §102.8 attacks this round
+  attacks (10 and 12) both exit 1.
+- Nothing here is signed off. The next round is the auditor's.

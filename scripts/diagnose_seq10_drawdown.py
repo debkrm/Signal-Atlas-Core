@@ -23,7 +23,6 @@ Usage:
 from __future__ import annotations
 
 import datetime
-import hashlib
 import json
 from decimal import Decimal
 from pathlib import Path
@@ -37,6 +36,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import scripts.run_phase3b2_walkforward as walkforward  # noqa: E402
 import scripts.run_seq10_candidate as candidate_runner  # noqa: E402
 from signal_core.contracts.criteria import compute_criteria_fingerprint  # noqa: E402
+from signal_core.storage.artifact_digest import text_digest  # noqa: E402
 
 ANALYSIS_DIR = REPO_ROOT / "reports" / "analysis" / "s98"
 DECOMPOSITION_ARTIFACT = ANALYSIS_DIR / "seq10_drawdown_decomposition.json"
@@ -67,7 +67,8 @@ ADTV_LOOKBACK = 20
 
 
 def _digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest() if path.is_file() else "ABSENT"
+    # §102.3 Ruling 1: delegates to the guarded normaliser, which refuses a binary path.
+    return text_digest(path) if path.is_file() else "ABSENT"
 
 
 def _period_of(day: datetime.date) -> str:
