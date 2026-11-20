@@ -3838,6 +3838,81 @@ def probe_n202() -> None:
     assert [intent.side.value for intent in entry_intents] == ["BUY"], entry_intents
 
 
+def probe_n203() -> None:
+    """
+    A committed digest of a tracked artifact must reproduce from the bytes the repository stores
+    (N-203, AGENTS.md §9.1, §12.3).
+
+    `reports/analysis/s100/seq10_baseline_comparison.json` publishes the sha256 of the trial_010
+    verdict as hashed from the author's working copy. The file is stored LF; the published digest is
+    the CRLF rendering of the same bytes, so `compare_seq10_baselines.py --check` recomputes another
+    value on any clone and exits 1. Both hashes are computed here from the file, so the measurement
+    does not depend on this checkout's line endings.
+    """
+    import hashlib
+    import json
+
+    comparison = json.loads(
+        (REPO_ROOT / "reports" / "analysis" / "s100" / "seq10_baseline_comparison.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    committed = str(comparison["seq10_artifact_sha256"])
+    artifact = (
+        REPO_ROOT
+        / "reports"
+        / "verdicts"
+        / "trial_010"
+        / "phase3b2_swing_baseline_2022_2024_verdict.json"
+    ).read_bytes()
+    lf = artifact.replace(b"\r\n", b"\n")
+    stored = hashlib.sha256(lf).hexdigest()
+    rendered = hashlib.sha256(lf.replace(b"\n", b"\r\n")).hexdigest()
+    assert committed == rendered, (
+        f"the committed seq-10 digest is {committed}, not the CRLF rendering {rendered}; if it is now "
+        "the stored bytes' digest, the clone failure N-203 measured is repaired"
+    )
+    assert committed != stored, (
+        f"the committed digest is the stored bytes' own sha256 {stored}; N-203 is repaired and "
+        "`compare_seq10_baselines.py --check` should exit 0 in a clean clone"
+    )
+
+
+def probe_n204() -> None:
+    """
+    A published dataset digest must be the digest of the stored file (N-204, AGENTS.md §10.5, §6.5).
+
+    The seq-12 QA artifact publishes `corpus.sha256` computed by `_digest`, which replaces b"\\r\\n"
+    with b"\\n" on every path it is given. Applied to the gzip corpus that hashes a mutated stream:
+    the value is reproducible only by re-doing the mutation, and it disagrees with the manifest's own
+    sha256 for the same bytes.
+    """
+    import hashlib
+    import json
+
+    qa = _seq12_artifact()
+    committed = str(qa["corpus"]["sha256"])
+    raw = (REPO_ROOT / "data" / "reference" / "historical_dataset_2018_2023.json.gz").read_bytes()
+    stored = hashlib.sha256(raw).hexdigest()
+    mutated = hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
+    assert committed == mutated, (
+        f"the artifact publishes {committed} for the corpus, which is not the CRLF-mutated digest "
+        f"{mutated}; if it now equals {stored} the field is repaired and N-204 closes"
+    )
+    assert committed != stored, (
+        f"the artifact publishes the file's own sha256 {stored}; N-204 is repaired"
+    )
+    comparison = json.loads(
+        (REPO_ROOT / "reports" / "analysis" / "s100" / "seq10_baseline_comparison.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert str(comparison["dataset_sha256"]) == stored, (
+        "the s100 comparison no longer cites the corpus's stored bytes, so the disagreement N-204 "
+        "measured is gone; re-measure both digests"
+    )
+
+
 PROBES: Dict[str, Callable[[], None]] = {
     "N-148": probe_n148,
     "N-149": probe_n149,
@@ -3893,6 +3968,8 @@ PROBES: Dict[str, Callable[[], None]] = {
     "N-200": probe_n200,
     "N-201": probe_n201,
     "N-202": probe_n202,
+    "N-203": probe_n203,
+    "N-204": probe_n204,
 }
 
 

@@ -3791,3 +3791,202 @@ So `UNATTESTED_NO_RECORD` conflates "no corporate action occurred" with "the arc
 - **N-200**: a census showing the 910 uncovered ISINs are all non-tradeable, or that no unattested stop row belongs to one of them. ASTRAL, DTIL and MANINFRA are the three that matter, and none of them is covered.
 - **N-201**: a corpus in which `INF732E01011`'s 2019-12-19 bar is back-adjusted, or a committed corporate-action row attesting the 1:10 transition — which is what the `adjustment_version` stamp already asserts and the data does not show.
 - **The STOP verdict itself**: a session-simulation run whose P&L is unchanged when ASTRAL, DTIL and MANINFRA are excluded. That would make the three genuine rows immaterial rather than disqualifying, and the stop over-cautious rather than wrong.
+## §101 — Audit of `46a99ec` (tag `feat-s102-46a99ec`): the cash test is stated before the count and the count is 4, the window census reproduces to the digit, and the benchmark refusal fires — while the corpus boundary, the band partition and one committed digest stay open
+
+**Scope.** `20bb6ff` states the cash-adjustment test and its 0.5 % tolerance and re-derives nothing; `11a366b` names a continuous benchmark for clause (d) and adds the refusal; `468b2e0` pins the entry/exit interaction; `46a99ec` carries the re-derived artifact (`reports/analysis/s102/seq12_data_qa.json`, 77,387 B), the wider census, the `NOT RUN` band counters, the archive coverage and the consumer scan; `739e64b` appends the green row only. `f2133ef` is an ancestor of all five and of `739e64b`. The tag is lightweight and resolves to `46a99eccb8af5b4ba2ccd6bef003842eaa3ce17f`.
+
+**Verdicts:** **§100.16 item 1 CLOSED** (N-196) · **item 2 CLOSED** (N-197) · **item 3 CLOSED** on the branch the order permits — the artifact now says it gates nothing (N-198) · **item 4 PARTIAL** — counters fixed, population BLOCKED (N-199) · **item 5 PARTIAL** — clause half closed, corpus half untouched (N-201) · **item 6 CLOSED** (N-200) · **item 7 CLOSED** (N-202) · **N-195 CLOSED** (`eea1757`) · **two new findings: N-203** (the comparison artifact's digest is a CRLF working copy's, so `--check` fails on a clean clone) and **N-204** (the QA artifact's corpus digest is the sha256 of a CRLF-mutated gzip stream, not of the file).
+
+### 101.1 Baseline re-measured at `46a99ec`
+
+`739e64b` touches only `data/reference/source_tree_green.json`, which is inside the gate's own excluded set, so the tree measured here is `46a99ec`'s. `git status --porcelain` empty at audit time.
+
+| Probe | Measured |
+|---|---|
+| `python scripts/verify_audit_append_only.py --force-full` | **exit 0** — `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| §11.1 append-only | working tree & index vs HEAD **0 deleted lines**; commits since `a3a40f1` **0 deleted lines** |
+| Discovered verifiers | **10, all exit 0** — `verify_audit_findings` 205.92 s, `cash_universe_coverage` 34.76 s, `historical_snapshot` 5.29 s, `phase2a_containment_and_trials` 1.15 s, `phase2b5_storage` 2.69 s, `phase2b_significance` 0.82 s, `phase2c_walkforward` 2.68 s, `phase2d_verdicts` 3.91 s, `seq10_certificate` 1.00 s, `wave1_thin_slice` 4.27 s. `verify_audit_append_only.py` is the 11th file on disk and the gate itself (exit 0) |
+| Suite | **611 passed, 0 skipped, 0 xfailed**, exit 0, 241.16 s in one invocation |
+| Manifest / tags | 1,009 current artifacts match byte count and sha256, 962 superseded; every commit-bearing tag verified |
+| Source tree | `255bc803f7a387be…` — `already recorded; not appending a duplicate row`. The green row records `gate_sha 46a99ec`, 611, and ten verifier exits 0 |
+| Criteria / pins | `1.1.16`, `CRIT-FPR-V1-535e47f5…`; `probe_seq10_candidate.py` **CERTIFIED**, `N = 11`, `N_eval = 6`, baseline `f5fe3af5…`, sealed-era window refused |
+| Registry | **11** trials / **6** evaluations, read from `data/trials/` — unchanged |
+| Ledger before this section | 86 rows / 54 ids; 9 OPEN (`N-150`, `N-195`…`N-202`); 54 probes, all exit 0 |
+| Corpus | 75,390,706 B, raw sha256 `ea0b65a3…`, 1,425 sessions, 2,735 instruments, `DATA-CTNT-V2-cb4832c0…` |
+| Trailers | no `Co-Authored-By`, "Generated with" or model-identity line in `84643ae..739e64b` (§12.7) |
+
+### 101.2 Item 1 — the process holds, with one citation missing (clean, one note)
+
+`git merge-base --is-ancestor f2133ef <c>` exits 0 for `20bb6ff`, `11a366b`, `468b2e0`, `46a99ec` and `739e64b`; the parents chain `84643ae → 20bb6ff → 11a366b → 468b2e0 → 46a99ec → 739e64b`, so both amendments are new commits, not rewrites, and both precede the only commit that writes a result.
+
+`468b2e0` cites `f2133ef` by SHA in its message and pins `entry_exit_interaction` in the spec. `11a366b` cites **§100.16 item 5** and says "before any execution", but it does **not** name `f2133ef` — a small deviation from the order's wording, and not a process defect: the amendment is a commit after the pre-registration and before `46a99ec`, which is what the citation is for. Recorded, not raised.
+
+The four implementer commits touch `scripts/probe_audit_findings.py`, `scripts/run_seq12_candidate.py`, `scripts/compare_seq10_baselines.py`, `tests/unit/test_phase3b2_seq12_data_qa.py`, `tests/unit/test_phase3b2_audit_s102_items.py`, `configs/trial_012_candidate.yaml`, `src/signal_core/strategy/mean_reversion.py`, the `s102` artifact and `CURRENT_STAGE_OF_WORK.md`. Measured by `git diff --name-status 84643ae..46a99ec`: no path under `configs/go_no_go_criteria.yaml`, `reports/audit/**`, `AGENTS.md`, `data/trials/**`, `configs/partition_spec.yaml`, the 2024 fold or the holdout. No P&L exists: the artifact's `mode` is `COUNTS_AND_LISTS_ONLY_NO_PNL`, there is no seq-12 verdict artifact, and the registry is unchanged at 11/6. **`reports/analysis/s101/seq12_data_qa.json` is unedited** — its bytes are the §101 round's record, restated by hash in the new artifact.
+
+### 101.3 Item 2 (N-196) — the test preceded the count, the count is 4, and the stop census is invariant across a 0.25 %–2 % sweep
+
+`20bb6ff` (12:08:43) commits the docstring, `CASH_ADJUSTMENT_KINDS`, `CASH_ADJUSTMENT_TOLERANCE = 0.005`, `_cash_adjustment_prediction`, `_cash_adjustment_test`, the `_classify_drop` cash branch and the test file, and writes no artifact. `46a99ec` (12:38:19) writes the artifact. The count was therefore re-derived under a test that existed first.
+
+I recomputed the census from the corpus and the committed action table with my own partition, my own ratio test, my own dividend/rights arithmetic and a `tolerance` parameter — no `run_seq12_candidate` function called. Corpus-wide, 6,736 consecutive-session steps open 10 % or more away from the previous close (₹5 floor, inside a continuous subsegment); the committed test attests **5** and publishes **6,731** unattested — the artifact's number exactly.
+
+| Tolerance | Attested | Unattested corpus-wide | Instruments with one | Stop census (unattested level steps) | Rows first admitted at this tolerance |
+|---|---|---|---|---|---|
+| 0.25 % | 2 | 6,734 | 1,668 | **4** | HEUBACHIND 0.0444 %, AURUM 0.0558 % |
+| **0.5 % (committed)** | **5** | **6,731** | **1,668** | **4** | MANAKSIA 0.3021 %, HAL 0.3716 %, UFO 0.3929 % |
+| 1 % | 8 | 6,728 | 1,667 | **4** | PFC 0.979 %, PGHL 0.857 %, POLYPLEX 0.966 % |
+| 2 % | 10 | 6,726 | 1,667 | **4** | BANCOINDIA 1.971 %, NLCINDIA 1.975 % |
+
+**No false attestation at any of the four tolerances.** Each attested row's record is a cash amount that is 9.5 %–98.8 % of the previous close and whose predicted level the session trades to within the tolerance: AURUM `INE898S01029` 2020-12-23 pays ₹974.00 on a ₹985.65 close and opens at ₹12.20 against a predicted ₹11.65 (0.0558 %); MANAKSIA pays ₹7.50 on ₹49.65; HAL ₹33.25 on ₹282.575; UFO ₹15.00 on ₹127.25, where the *open* is the leg that reproduces (0.3929 %) and the close falls a further 8.5 % during the session — which is the level-step/trading distinction the test is built on; POLYPLEX ₹100 on ₹911.20. What widening buys is not a false explanation but a **looser one**: at 2 % the two last rows are admitted with 1.97 % of the previous close unexplained, i.e. an ordinary market gap of that size is absorbed into the corporate-action story. The committed 0.5 % is the last tolerance at which every attestation is a level reproduction to a few tenths of a percent, and the stop count does not move at all.
+
+**The four rows, re-derived independently:**
+
+| ISIN | Session | Previous close | Opening gap | Move | Record on the date | Predicted level | Residual (close / open) | Disposition |
+|---|---|---|---|---|---|---|---|---|
+| `INE006I01046` ASTRAL | 2021-03-18 | 300.95 | −29.72 % | −30.11 % | none | — | — | `UNATTESTED_NO_RECORD` |
+| `INE341R01014` DTIL | 2021-08-05 | 187.20 | −36.68 % | −33.48 % | none | — | — | `UNATTESTED_NO_RECORD` |
+| `INE949H01023` MANINFRA | 2021-11-17 | 66.10 | −28.02 % | −22.33 % | none | — | — | `UNATTESTED_NO_RECORD` |
+| `INE116G01013` VARDHACRLC | 2021-10-28 | 72.35 | −29.51 % | −21.77 % | ₹25.00 interim | 47.35 | 12.79 % / 5.04 % | `UNATTESTED_CASH_MISMATCH` |
+
+So **4 is right**, and **I agree with the implementer's disagreement with §100.4**, on §100.4's own numbers: the test §100.16 item 1 ordered is a *level reproduction* at 0.5 % of the previous close. VARDHACRLC's ₹25 is 117 % of the opening gap, but a dividend-to-gap ratio is not a level reproduction, and the session closes 12.79 % away from the level that dividend predicts. §100.4 called the row "corroborating, not decisive" and then counted 3; those two statements cannot both hold under the test the work order named. The implementer's 4 is the count the committed test produces, and it was published with the residuals rather than disposed of. **§100.4's "5 → 3" was wrong; the correction is appended here and §100 is not edited** (§10.1).
+
+**RIGHTS.** The code does **not** apply a cash-amount test to a rights record: `_cash_adjustment_prediction` returns `(prev·denominator + premium·numerator)/(denominator + numerator)`, the theoretical ex-rights price, which is the valid repricing — a rights issue's ex-date move depends on the ratio and the issue price, so `prev − premium` would be wrong, and the implementer did not use it. The prose around it ("a cash record … whose cash amount reproduces the session's close") conflates the two, but the arithmetic does not. The branch is **unexercised on this corpus**: the reference table holds 4 `RIGHTS` rows and none sits on a ≥10 % step, so 0 of the 6,736 candidates is attested by TERP at any tolerance. All four carry `UNATTESTED_NSE_CML_…` circular refs, and the premium is parsed out of a free-text `description`, so the branch's first real use will attest a price level against an unattested record with a regex-extracted number. Named as a residual; it changes nothing this round.
+
+### 101.4 Item 3 (N-201, clause half) — the definition moved, the window did not, and the gate got stricter
+
+The `configs/trial_012_candidate.yaml` diff adds a `benchmark` block under clause (d) naming `scripts/compare_seq10_baselines.py:buy_and_hold_arm`, the within-ISIN construction, the two unmeasured sessions and the refusal, and moves no clause id, threshold, window, fold or cost field. Under a Ruling, that is a **definition** change and permitted; I checked it does not smuggle a threshold or a window:
+
+- **What is measured** changes: the benchmark is a chained within-ISIN daily return series, 1,422 measured returns across 2018-04-02..2023-12-29, not a price series spliced at 2019-12-19.
+- **The window does not change.** Both arms span the same calendar, 2018-04-02..2023-12-29. The strategy arm measures 1,424 returns; the benchmark measures **1,422** — the two dropped sessions are the only asymmetry, and they are named in the clause.
+- **The gate gets stricter, not looser.** Chaining the boundary would leave the benchmark at ₹225,888 from ₹1,000,000 (−77.4 %) with a ≥89.93 % drawdown, i.e. a negative Calmar that any strategy beats. Excluding it makes the benchmark ₹2,242,471 (+124.25 %) with a 0.3634 drawdown — the harder comparator.
+- **The two dropped sessions carry real return.** `INF732E01011` 2019-12-19 opens at 129.20 against a 1,292.54 close: the implied unit ratio is 0.099958, so the *economic* return on the level-break session is **−0.042 %**, not −89.93 %. And 2019-12-19 closes 130.20 while `INF204KB14I2` closes 130.34 on 2019-12-20 — the same unit, so that session's **+0.108 %** return is comparable and is also dropped. Together the benchmark is understated by ≈0.065 %. Immaterial, measurable, and now named rather than implied.
+- **Strategy window still equals benchmark window** in calendar terms; it does **not** equal it in measured-return count (1,424 vs 1,422). That asymmetry is the residual, not a moved goalpost.
+
+**Refusal, fed a retained step of its own.** `refuse_unattested_level_break([("2020-01-02", −0.60)], 0.5)` raises `SystemExit` naming the session and N-201. The arm itself: with its drop in place, a 4-session fixture with a −60 % step measures 2 returns and records `2020-01-02` as unmeasured; with `LEVEL_BREAK_THRESHOLD` raised to 2 so the drop stops firing, `buy_and_hold_arm` **refuses by name** ("a one-session step of -0.6 at 2020-01-02"). Both thresholds are `0.5`, so the refusal is unreachable while the drop works — it is a belt for exactly the regression it exists to catch, and it fires.
+
+**The corpus half is untouched, and no fingerprint moved.** `INF732E01011` still carries 2019-12-18 close 1292.54 against 2019-12-19 open 129.2 / close 130.20 (ratio 0.100731), both bars still stamped `v2.0-attested-split-bonus-backadjust-2018-2023`, and `reconciliation.ratio_shaped_detail` still publishes 0 rows for either ISIN while 699 ratio-shaped moves are unexposed. Corpus bytes and raw sha are unchanged (`ea0b65a3…`, 75,390,706 B), as are `DATA-CTNT-V2-cb4832c0…`, `CRIT-FPR-V1-535e47f5…` and the manifest pin. `git diff f2133ef..46a99ec -- reports/verdicts data/reference` is empty.
+
+**The +124 % figure traced.** `reports/analysis/s100/seq10_baseline_comparison.json` publishes `niftybees_buy_hold.final_equity 2242471.2967…` with `sessions 1422` and `unmeasured_sessions [2019-12-19 (level break), 2019-12-20 (ISIN transition)]`; entry ISIN `INF732E01011`, exit ISIN `INF204KB14I2`. It is the compounded product of 1,422 within-ISIN daily returns starting from ₹1,000,000 — a series that *spans* the boundary with the boundary's two sessions removed, not a splice across it. `compare_seq10_baselines.py --check` exits 0 **in the primary checkout**; on a clean clone it does not (§101.11, N-203).
+
+### 101.5 Item 4 (N-197) — every published count reproduces from my own code, and the 200-row list is a nine-instrument prefix
+
+| Measurement | Artifact | Mine, independently |
+|---|---|---|
+| entry signals (EQ, universe, `close > SMA(200)`, `RSI(2) < 10`) | 93,463 | **93,463** |
+| unattested ≥10 % steps, corpus-wide (both directions) | 6,731 | **6,731** |
+| … on a session where the rule fires | 128 | **128** |
+| instruments with at least one | 1,668 | **1,668** |
+| signals with one in their own 200-session window | 21,276 | **21,276** |
+| usable entry signals | 72,187 | **72,187** |
+
+My indicators were first checked against the library on all 2,578,060 bars (0 SMA mismatches, 0 RSI mismatches), then the counts were produced by my own segment partition and my own step classifier. One number explains the first attempt's 93,525: the runner's signal loop skips any session with `position + 1 >= len(sessions)`, so the **62 signals on the final session, 2023-12-29, are excluded** and never published. Excluding them is right for an *executable* signal (there is no T+1 open to fill at, §7.1) and the count is that of executable signals — but the artifact calls the field `entry_signals` and publishes no count of the 62. Named as a residual, not a finding: the exclusion is correct, the label is incomplete.
+
+**Forty published detail rows, 64 step entries, checked against the corpus bars: 0 problems.** Every step is in the same continuous subsegment as its signal, at an offset of 0–199 sessions, opens at least 10 % away from the previous close, and its published 4-dp `opening_gap` equals my recomputation. But the 200-row list covers **9 distinct ISINs** (`IN9155A01020` … `INE008A01015`) of the **1,668** instruments that carry an event: it is a prefix in corpus insertion order, not a sample. So the list can hide an instrument-specific bias perfectly — a defect in the classifier for any of the other 1,659 instruments leaves the 200 rows clean, and probe N-197 checks the first 25 rows, which are drawn from roughly the same nine. The counts are complete; the evidence for them is one half of one percent of the affected instruments.
+
+### 101.6 Item 5 — the consumer scan, the bands and the coverage
+
+**N-198, consumer scan.** My own scan of `scripts/*.py` and `src/**/*.py` for the artifact's name returns the producer and the probe, nothing else; `gated_by.consumers` is `[]`, `gates_execution` is `false`, and the statement says the STOP is a record of a refusal, not a gate. I created `scripts/_audit_tmp_consumer.py` containing the artifact path: `probe N-198` exits 1 naming it, and removing it restores exit 0. No code outside `tests/` constructs `MeanReversionSwingStrategy`. The work order permitted exactly this branch ("or §101 states that no code consumes the artifact"), so the item is met; the STOP still gates nothing, and the residual is that a future execution path must be made to read it.
+
+**N-199, band counters.** `data/silver/price_bands` is an empty directory, 0 files tracked, `data/raw/price_bands` does not exist, and `data/reference/surveillance_intervals.jsonl` is still `SYNTHETIC_FIXTURE`. The three categorical counters publish `"NOT RUN"` with `price_band_partition: {files: 0, populated: false}`, and `not_run.exit_freeze_round_trip` names the archive the measurement needs. No band datum is synthesised anywhere: the only writers of the partition are `ingest_daily_price_bands` (raw→silver) and no raw payload exists to promote. `band_counter(0, False) == "NOT RUN"` and `band_counter(7, False) == "NOT RUN"`, both tested. **PARTIAL**: the counters are a property of the reader no longer, but the population half is BLOCKED on a sourced per-session NSE band archive, and the exit-freeze round trip — the case §13.2 says a 2-to-21-session hold cannot ignore — remains **NOT RUN**.
+
+**N-200, coverage.** Recomputed from the 23 Bronze payloads: 13,568 rows, **2,200** distinct ISINs, **2,735** scanned, **910 (33.3 %)** with no record, and the three uncovered stop rows are ASTRAL, DTIL and MANINFRA. CLOSED as ordered. Resident residual: coverage is counted per **ISIN**, not per `(ISIN, date)`, so VARDHACRLC counts as "covered" on the strength of seven rows none of which is near 2021-10-28, and the reference table still carries only 4 `RIGHTS` rows against the 102 unreferenced price-side Bronze keys §100.12 measured. `UNATTESTED_NO_RECORD` now means "no record in this archive" for the 910; for the other 1,825 it still means "no record on this date in an archive that mentions the instrument".
+
+### 101.7 Item 6 — probe ownership: every rewritten probe refuses a tamper, but four of them recompute with the producer's own functions
+
+Twelve attacks, each applied to a tracked file, each restored byte-identically, tree clean after every one. A refusal is exit 1.
+
+| Tamper | Probe | Result |
+|---|---|---|
+| artifact: `unattested_level_steps_feeding_a_signal` 4→3 | N-196 | **FAIL** — "publishes 3 … the corpus recomputes 4" |
+| source: `CASH_ADJUSTMENT_TOLERANCE` 0.005→0.5 | N-196 | **FAIL** — "the tolerance is 0.5, not the 0.5 % the test states" |
+| artifact: `signals_with_an_unattested_level_step_in_lookback` 21276→21275 | N-197 | **FAIL** — "the usable set does not subtract the published window count" |
+| source: `LOOKBACK_SESSIONS` 200→20 | N-197 | **FAIL** — the T−100 fixture step leaves the window |
+| artifact: `gates_execution` false→true | N-198 | **FAIL** |
+| source: a committed consumer exists | N-198 | **FAIL** — names `scripts/_audit_tmp_consumer.py` |
+| artifact: `at_lower_circuit` `"NOT RUN"`→0 | N-199 | **FAIL** — "an empty partition makes that zero a property of the reader" |
+| source: `band_counter` always returns a value | N-199 **unit test** | **FAIL** — the probe reads only the artifact and does not see it |
+| artifact: `bronze_distinct_isins` 2200→2199 | N-200 | **FAIL** |
+| source: only the first Bronze payload | N-200 | **FAIL** — "the archive holds 156" |
+| config: `entry_exit_interaction` removed | N-202 | **FAIL** |
+| source: exit branch never fires | N-202 | **FAIL** — the both-true session emits `['BUY']` |
+| corpus: `INF732E01011` 2019-12-19 repaired to the same unit (temp tree) | N-201 | **FAIL** — "the corpus ratio … is now 1.0073189224" |
+
+**N-201 has no artifact to tamper** — its probe reads the corpus and the reconciliation, so the "artifact half" of the order is vacuous for it, and the attack that can fail it is a repaired corpus. That was run against a copy outside the repository with `REPO_ROOT` redirected, and it refuses.
+
+**Registry inventory:** 66 function definitions, **0 duplicate definitions**, 54 registered probes, **0** mapping to an undefined function, **0** with no assertion, **0** consisting only of `pass`, **0** unregistered `probe_*` functions, and every OPEN finding has a probe. `--list` ends at `N-202` on this tree. So the specific failure the order names — duplicate definitions, dead probes, probes that assert nothing — is not present.
+
+**What is present is circularity.** N-196, N-197, N-198 and N-200 "recompute" by importing `_classify_drop`, `InstrumentSeries`, `artifact_consumers` and `corporate_action_archive_coverage` from the producer. They therefore catch artifact drift and a regression in the *call path*, which is what their tamper results show, but they cannot detect a wrong classifier: probe and producer would agree on the same error. The only independent evidence for the census is a recomputation that writes its own arithmetic — §101.3 and §101.5 above. This is not a defect the order asked about, but it bounds what "54 probes pass" certifies, and it is why N-199's producer tamper is invisible to its probe (the unit test catches it) and N-201's probe is the only one that measures the corpus rather than the artifact.
+
+**N-195, verified and closed.** `CURRENT_STAGE_OF_WORK.md:2535` publishes `1.058319814…` and `:2536` publishes `1.062288461…`, which are the artifact's `closed_only_profit_factor` and `liquidated_profit_factor` for its 781 closed round trips; neither `1.1178…` nor `1.1773…` remains in the row, `grep` finds no committed artifact producing them, and `probe N-195` exits 0. The fixing commit is **`eea1757`** (§99.10 item 1); `46a99ec` also appears in a `git log -S` because the §102 log quotes the digits. **CLOSED at §101.**
+
+### 101.8 Item 7 — a clean clone reproduces the new artifact and the certificates, and fails the old comparison
+
+Clone of `main` at `739e64b` into a fresh directory outside the repository, `core.autocrlf=true`, `.gitattributes` in force (`*.json text eol=lf`, `*.json.gz -text`):
+
+| Check | Primary checkout | Clean clone |
+|---|---|---|
+| `run_seq12_candidate.py --check` | exit 0 | **exit 0** — "reproduces the committed bytes (QA status STOP)" |
+| `compare_seq10_baselines.py --check` | exit 0 | **exit 1** — "the recomputed comparison is not the committed one" |
+| `probe_seq10_candidate.py` | — | **exit 0 — CERTIFIED**, N=11, N_eval=6, pin agrees, sealed-era window refused |
+| `python -m pytest` | 611 passed | — (not re-run there; the clone is the same commit) |
+
+The clone's recomputation differs from the committed artifact in **one field**:
+
+```
+- "seq10_artifact_sha256": "4a729dbca70e5cb4071804119e701900ed8f6d6824acb1d70163d3dfc01a980b",
++ "seq10_artifact_sha256": "75571da3ebff56531addc6afdecdac6f05cf5a0799327a3ac85a97177ae067ae",
+```
+
+Measured cause: the trial_010 verdict is 498,216 B / LF in the blob and 512,882 B / **14,666 CRLF** in the primary working copy. `sha256(blob)` is `75571da3…`; `sha256(blob with LF re-rendered as CRLF)` is **`4a729dbc…`** — exactly the committed field. `compare_seq10_baselines.py` hashes the working copy with raw `read_bytes()` and no normalisation, so the digest it publishes is a digest of *the author's line endings*, and `--check` can never pass on a checkout that stores the blob's own LF. The new `seq12_data_qa.json` is CRLF in the primary (3,368) and LF in the blob, and `--check` passes in both — because `_render` is compared through universal-newline `read_text` — so the §102 artifact is clone-stable and this is a §100 artifact's problem, surfaced by the check the order asked for. **N-203**, MEDIUM.
+
+**seq 10 / seq 11 byte reproduction.** `probe_seq10_candidate.py` certifies both in the clone; `git diff f2133ef..46a99ec -- reports/verdicts reports/analysis/s94` is empty; the corpus and criteria digests are unchanged. The certificate's three stored fingerprints (`9ee0a88c…`) still reconcile through the §98 pin-only restatements, and the seq-11 evaluation row is untouched.
+
+### 101.9 A second digest that is not the file's — N-204
+
+The new artifact publishes `corpus.sha256 = 0fdc728a81acbb39…`. That is **not** the corpus file's sha256. Measured: the file is 75,390,706 B with raw sha256 **`ea0b65a3…`** — the value the manifest and `reports/analysis/s100/seq10_baseline_comparison.json` publish — and the gzip stream happens to contain **1,089** `0D 0A` byte pairs. `run_seq12_candidate._digest` does `read_bytes().replace(b"\r\n", b"\n")` on every path it is given; applied to a `.gz` it hashes a **mutated stream**, and `sha256(raw.replace(b"\r\n", b"\n"))` is exactly `0fdc728a…`. So the artifact carries a deterministic digest that no reader can reproduce from the file, the manifest and the artifact disagree about the same 75 MB, and the CRLF normalisation that makes a text digest clone-stable is incoherent for a binary one (`.gitattributes` already marks `*.json.gz -text` for precisely this reason). Nothing in the data is wrong; the provenance field is. **N-204**, MEDIUM.
+
+### 101.10 Findings ledger after this section
+
+| | before §101 | after §101 |
+|---|---|---|
+| rows / ids | 86 / 54 | **94 / 56** |
+| latest per id | 45 CLOSED, 9 OPEN, 1 ACCEPTED | **50 CLOSED**, **5 OPEN**, 1 ACCEPTED |
+| OPEN ids | `N-150`, `N-195`…`N-202` | **`N-150`, `N-199`, `N-201`, `N-203`, `N-204`** |
+
+N-195, N-196, N-197, N-198, N-200 and N-202 gain `CLOSED` rows with `closed_in_section: 101` and the measurement that decided each. N-199 and N-201 stay `OPEN` — their closure is PARTIAL and the ledger has no PARTIAL state; a repeated `OPEN` row would be a duplicate (N-157), so the partial measurement lives here rather than in a row that would misreport it. N-203 and N-204 are new, with executable probes added in this commit that pass while the defects are live (§96's convention). No finding is deleted or re-scoped.
+
+### 101.11 Phase verdicts
+
+| Phase (§102's row in `CURRENT_STAGE_OF_WORK.md`) | Verdict | Residual |
+|---|---|---|
+| Pre-registration amendments (§8.1) | **PASS** — two new commits after `f2133ef`, before any result; N-202 cites the SHA, the clause-(d) amendment cites only §100.16 item 5 | the clause-(d) commit names the work-order item, not the parent SHA |
+| Step 2 data QA, cash attestation (§6.1, §5.4) | **CLOSED** — test committed first, count 5→4, HEUBACHIND attested to 0.0444 %, the three no-record rows kept, stop still trips, no false attestation at 0.25–2 % | the RIGHTS/TERP branch is unexercised and prose-parsed; the corpus-wide count is tolerance-sensitive (6,734→6,726) |
+| Step 2 data QA, window (§6.3) | **CLOSED** — 128 / 21,276 of 93,463 / 72,187 reproduced independently; policy published; probe refuses a 20-session window | the detail list is a 9-instrument prefix of 1,668; 62 final-session signals are excluded and unpublished |
+| Artifact consumer (§14.4, §7.4) | **CLOSED as ordered** — the artifact states it gates nothing and the statement is the scan; a new consumer fails the probe | the STOP still gates no execution path |
+| Circuit freeze / band counters (§5.3, §13.2) | **PARTIAL** — three counters are `NOT RUN` with the empty partition named; nothing synthesised | **population BLOCKED**, exit-freeze round trip **NOT RUN** |
+| Benchmark continuity, clause (d) (§5.4, §9.2) | **PARTIAL** — construction named before execution, refusal fires on a retained −60 % step, window unmoved, +124.25 % traced | **corpus half open**: bar unadjusted, stamp false, `ratio_shaped_detail` still not a census; clone digest fails (N-203) |
+| Archive coverage (§10.5, §9.1) | **CLOSED** — 910 of 2,735 published beside the verdict, the three uncovered stop rows named | coverage is per-ISIN, not per-date |
+| Status document (§11.3) | **PASS** — "Not audited" opening, `NOT RUN` where nothing ran, no signed-off/verified/closed claim without a verdict, registry and holdout stated correctly | the §102 log's "reproduces byte for byte" is true only of the author's checkout (N-203) |
+| Seq 10 / seq 11 / criteria / fold / holdout | **held** — `CERTIFIED`, N=11 / N_eval=6, `1.1.16` / `535e47f5…`, corpus `ea0b65a3…`, 2024 fold untouched, holdout `2025-01-01..2026-11-11` unread | `1.1.16` still labels three criteria sets (§98.6) |
+
+### 101.12 Work order (feat-s103), ordered by what it unblocks
+
+1. **N-203 — a committed digest must be the stored bytes' digest.** `seq10_artifact_sha256` is the sha256 of a CRLF rendering, so `compare_seq10_baselines.py --check` exits 1 on every clone that stores LF. Required: hash the LF-normalised bytes (or the blob), regenerate `reports/analysis/s100/seq10_baseline_comparison.json`, and put the check on a discovery path so a clone-failing comparison fails the gate instead of passing silently. The probe that must fail closed is a new one asserting the committed digest equals `sha256(LF bytes)` and refusing the CRLF rendering; `python scripts/compare_seq10_baselines.py --check` must exit 0 in a clone. Phase: §9.1 / §12.3.
+2. **N-204 — one dataset, one fingerprint.** The artifact's `corpus.sha256` hashes a CRLF-mutated gzip stream. Required: publish the raw sha256 (`ea0b65a3…`, the manifest's) for binary payloads, or state the normalisation in the field name, and make the probe compare the field with `sha256(file bytes)`. Phase: §10.5 / §6.5.
+3. **N-199 — populate the band partition or retire the counters.** The exit-freeze round trip is **NOT RUN** and no swing verdict may be computed before it is measured. Required: a sourced per-session NSE price-band archive for `2018-04-01..2023-12-31` under `data/raw/price_bands/` with retrieval metadata, promoted one session per partition, and the round-trip exit delay measured; the probe is the existing biconditional. Phase: §5.3 / §13.2 / §13.3.
+4. **N-201 — the corpus half.** Either attest the 1:10 across `INF732E01011`→`INF204KB14I2` with a committed corporate-action row and back-adjust, or keep the boundary excluded and mark `reconciliation.ratio_shaped_detail` as not a census in the corpus header. The two dropped sessions carry −0.042 % and +0.108 % of real return; say so where the clause names them, or keep them. The probe is N-201 as written plus the refusal. Phase: §5.4 / §9.2.
+5. **Publish the two silent boundaries in the QA artifact.** The 62 signals on 2023-12-29 excluded by the `position + 1` guard, and the 9-instrument reach of the 200-row detail list, are both measured here and neither is published. Required: a field for the excluded final-session signals and one for the distinct-instrument count behind the detail list (or a sampled list), so a reader can see the coverage the counts rest on. Phase: §9.1 / §6.3.
+6. **Exercise or retire the RIGHTS branch.** No `RIGHTS` row sits on a ≥10 % step, so the TERP path has never run in anger; its premium is a regex over prose and its four records are `UNATTESTED_`. Required: a sourced rights record with a verified ratio and issue price, or a stated limitation that the branch is unexercised and why its first use is not evidence. Phase: §5.4.
+7. Carried unchanged: `N-150`; §99.10 items 2–3 (verifier inventory, criteria fingerprint on the registry surface); §96.10 items 5–7; the §98.5 asymmetry between a restatement's `measurement` and its `replay`.
+
+### 101.13 What would falsify this verdict
+
+- **N-196 / the count of 4**: a tolerance at or below 0.5 % under which VARDHACRLC's ₹25 dividend reproduces the 2021-10-28 close (56.60) or open (51.00) to within the tolerance — measured impossible: 12.79 % and 5.04 %. Or a dividend record for ASTRAL, DTIL or MANINFRA that the archive holds and this scan missed.
+- **N-197**: a signal set other than 93,463 under the runner's own EQ resolution and its `position + 1` guard; or a detail row whose gap, window offset or subsegment contradicts the corpus. My counts came from my own indicators and classifier and matched to the digit; a mismatch would mean one of us is wrong and the corpus decides which.
+- **N-198**: any committed path outside `tests/` that reads `seq12_data_qa.json` or constructs `MeanReversionSwingStrategy`; the probe and the scan both currently return none.
+- **N-199**: a non-empty `data/silver/price_bands`, or a session for which `get_price_band` returns a band — either would make `NOT RUN` wrong and the counters measurable.
+- **N-200**: a census showing the 910 uncovered ISINs are non-tradeable, or that no stop row belongs to one. The three that matter are uncovered and named.
+- **N-201**: a committed corporate-action row attesting the 1:10 for `INF732E01011`, or a corpus in which the 2019-12-19 bar is back-adjusted — either makes the corpus half closable and the refusal's object disappear. Or a benchmark whose `sessions` equals the strategy's 1,424 after the boundary exclusion; today it is 1,422.
+- **N-202**: a config without `entry_exit_interaction`, or a strategy emitting both intents on a both-true session; both attacked and both refused.
+- **N-203**: a clone in which `compare_seq10_baselines.py --check` exits 0 with `seq10_artifact_sha256` still `4a729dbc…`. That would mean the digest is not CRLF-dependent, and the field I measured is coincidence; `sha256(LF-rendered CRLF)` reproducing it to 64 hex digits makes that implausible.
+- **N-204**: a reader who can reproduce `0fdc728a…` from `sha256(file bytes)` — measured impossible; the mutated-stream hash matches it exactly and the raw hash is `ea0b65a3…`.
+- **The overall verdict**: a P&L run on this tree, which would make the STOP's consequences measurable rather than prospective. None exists, and none may be read from the holdout.
