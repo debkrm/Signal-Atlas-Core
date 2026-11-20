@@ -9,6 +9,7 @@ from signal_core.strategy.base import (
     Strategy,
     TechnicalCrossStrategy,
 )
+from signal_core.strategy.mean_reversion import MeanReversionSwingStrategy
 from signal_core.strategy.swing import (
     DeliverySwingTrendStrategy,
     SwingSessionExecutionSummary,
@@ -18,6 +19,7 @@ from signal_core.strategy.swing import (
 __all__ = [
     "DeliverySwingTrendStrategy",
     "LookaheadIntentError",
+    "MeanReversionSwingStrategy",
     "OrderIntent",
     "OrderIntentValidationError",
     "Strategy",

@@ -120,6 +120,7 @@ from signal_core.storage.security_master import (
     SecurityMaster,
     build_production_security_master,
 )
+from signal_core.strategy.base import Strategy
 from signal_core.strategy.swing import (
     DeliverySwingTrendStrategy,
     SwingSessionExecutionSummary,
@@ -843,6 +844,7 @@ def run_phase3b2_walkforward(
     risk_per_trade_pct: Decimal = Decimal("0.01"),
     min_median_adtv_crore: Optional[Decimal] = None,
     adtv_lookback_sessions: int = 20,
+    strategy: Optional[Strategy] = None,
 ) -> Phase3B2WalkForwardRunResult:
     """
     Executes the Phase 3B-2b walk-forward backtest and returns Phase3B2WalkForwardRunResult.
@@ -1200,15 +1202,18 @@ def run_phase3b2_walkforward(
         band_policy=committed_band_policy,
         risk_per_trade_pct=risk_per_trade_pct,
     )
-    strategy = DeliverySwingTrendStrategy(
-        strategy_id=strategy_id,
-        fast_indicator=fast_indicator,
-        slow_indicator=slow_indicator,
-        allocation_weight=allocation_weight,
-        atr_stop_multiple=atr_stop_multiple,
-        max_position_weight_trim_threshold=max_position_weight_trim_threshold,
-        entry_rank_indicator=committed_rank_indicator,
-    )
+    # §101: the strategy is a parameter of the one engine, not a second engine (§7.4, §13.5). A caller
+    # may hand in a pre-registered rule set; the default remains the trend book every prior trial used.
+    if strategy is None:
+        strategy = DeliverySwingTrendStrategy(
+            strategy_id=strategy_id,
+            fast_indicator=fast_indicator,
+            slow_indicator=slow_indicator,
+            allocation_weight=allocation_weight,
+            atr_stop_multiple=atr_stop_multiple,
+            max_position_weight_trim_threshold=max_position_weight_trim_threshold,
+            entry_rank_indicator=committed_rank_indicator,
+        )
 
     # 9. Session-by-Session Walk-Forward Simulation Loop
     session_summaries: List[SwingSessionExecutionSummary] = []
@@ -1635,7 +1640,9 @@ def run_phase3b2_walkforward(
     # Audit §75.7 N-135: the band policy and the entry rank change what a trade is, so a reader
     # comparing two rows must see them in the row, not infer them from `criteria_version`.
     trial_params["unbanded_session_fill_policy"] = runner.band_policy.value
-    trial_params["entry_rank_indicator"] = committed_rank_indicator
+    trial_params["entry_rank_indicator"] = str(
+        strategy.parameters.get("entry_rank_indicator", committed_rank_indicator)
+    )
     trial_params["min_entry_notional"] = str(criteria.min_entry_notional)
     trial_params["min_fill_notional"] = str(criteria.min_fill_notional)
     # Audit §98.10 item 3: a run's risk budget and its T-1 liquidity floor decide which trades exist,

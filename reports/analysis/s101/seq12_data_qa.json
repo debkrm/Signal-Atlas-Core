@@ -1,0 +1,230 @@
+{
+ "artifact": "seq12_data_qa",
+ "below_minus_20pct_count": 8,
+ "below_minus_20pct_level_step_at_open": 5,
+ "below_minus_20pct_one_day": [
+  {
+   "attested": false,
+   "below_corpus_reconciliation_threshold": true,
+   "disposition": "UNATTESTED_NO_RECORD",
+   "isin": "INE006I01046",
+   "one_day_return": "-0.3011",
+   "opening_gap": "-0.2972",
+   "ratio_shapes": [
+    "10/7",
+    "7/10"
+   ],
+   "records_near_date": [],
+   "records_on_date": [],
+   "shape": "LEVEL_STEP_AT_OPEN",
+   "signal_session": "2021-03-18"
+  },
+  {
+   "attested": false,
+   "below_corpus_reconciliation_threshold": true,
+   "disposition": "UNATTESTED_NO_RECORD",
+   "isin": "INE116G01013",
+   "one_day_return": "-0.2177",
+   "opening_gap": "-0.2951",
+   "ratio_shapes": [
+    "14/11"
+   ],
+   "records_near_date": [],
+   "records_on_date": [
+    {
+     "action_type": "DIVIDEND",
+     "circular_ref": "ATTESTED_NSE_CA_2021-10-01_VARDHACRLC_20211028",
+     "ex_date": "2021-10-28",
+     "provenance": "CONTENT_IDENTIFIED_ONLY",
+     "ratio": "1:1"
+    }
+   ],
+   "shape": "LEVEL_STEP_AT_OPEN",
+   "signal_session": "2021-10-28"
+  },
+  {
+   "attested": false,
+   "below_corpus_reconciliation_threshold": true,
+   "disposition": "UNATTESTED_NO_RECORD",
+   "isin": "INE292A01023",
+   "one_day_return": "-0.3333",
+   "opening_gap": "0.0000",
+   "ratio_shapes": [
+    "3/2",
+    "2/3",
+    "6/4",
+    "4/6",
+    "9/6",
+    "12/8",
+    "6/9",
+    "15/10",
+    "8/12",
+    "18/12"
+   ],
+   "records_near_date": [],
+   "records_on_date": [],
+   "shape": "SESSION_MOVE",
+   "signal_session": "2019-12-18"
+  },
+  {
+   "attested": false,
+   "below_corpus_reconciliation_threshold": true,
+   "disposition": "UNATTESTED_NO_RECORD",
+   "isin": "INE292A01023",
+   "one_day_return": "-0.3333",
+   "opening_gap": "0.0000",
+   "ratio_shapes": [
+    "3/2",
+    "2/3",
+    "6/4",
+    "4/6",
+    "9/6",
+    "12/8",
+    "6/9",
+    "15/10",
+    "8/12",
+    "18/12"
+   ],
+   "records_near_date": [],
+   "records_on_date": [],
+   "shape": "SESSION_MOVE",
+   "signal_session": "2019-12-30"
+  },
+  {
+   "attested": false,
+   "below_corpus_reconciliation_threshold": true,
+   "disposition": "UNATTESTED_NO_RECORD",
+   "isin": "INE341R01014",
+   "one_day_return": "-0.3348",
+   "opening_gap": "-0.3668",
+   "ratio_shapes": [
+    "3/2",
+    "2/3",
+    "6/4",
+    "4/6",
+    "9/6",
+    "12/8",
+    "6/9",
+    "15/10",
+    "8/12",
+    "18/12"
+   ],
+   "records_near_date": [],
+   "records_on_date": [],
+   "shape": "LEVEL_STEP_AT_OPEN",
+   "signal_session": "2021-08-05"
+  },
+  {
+   "attested": false,
+   "below_corpus_reconciliation_threshold": true,
+   "disposition": "UNATTESTED_NO_RECORD",
+   "isin": "INE492A01029",
+   "one_day_return": "-0.2481",
+   "opening_gap": "-0.2846",
+   "ratio_shapes": [
+    "4/3",
+    "3/4",
+    "8/6",
+    "6/8",
+    "12/9",
+    "9/12",
+    "16/12"
+   ],
+   "records_near_date": [],
+   "records_on_date": [
+    {
+     "action_type": "DIVIDEND",
+     "circular_ref": "ATTESTED_NSE_CA_2020-07-01_SUDARCOLOR_20200716",
+     "ex_date": "2020-07-16",
+     "provenance": "CONTENT_IDENTIFIED_ONLY",
+     "ratio": "1:1"
+    }
+   ],
+   "shape": "LEVEL_STEP_AT_OPEN",
+   "signal_session": "2020-07-16"
+  },
+  {
+   "attested": false,
+   "below_corpus_reconciliation_threshold": true,
+   "disposition": "UNATTESTED_NO_RECORD",
+   "isin": "INE669E01016",
+   "one_day_return": "-0.2054",
+   "opening_gap": "-0.0976",
+   "ratio_shapes": [],
+   "records_near_date": [],
+   "records_on_date": [],
+   "shape": "SESSION_MOVE",
+   "signal_session": "2022-01-11"
+  },
+  {
+   "attested": false,
+   "below_corpus_reconciliation_threshold": true,
+   "disposition": "UNATTESTED_NO_RECORD",
+   "isin": "INE949H01023",
+   "one_day_return": "-0.2233",
+   "opening_gap": "-0.2802",
+   "ratio_shapes": [
+    "9/7",
+    "7/9"
+   ],
+   "records_near_date": [],
+   "records_on_date": [],
+   "shape": "LEVEL_STEP_AT_OPEN",
+   "signal_session": "2021-11-17"
+  }
+ ],
+ "below_minus_20pct_session_move": 3,
+ "blocked_by_adtv_floor": 75496,
+ "blocked_by_locked_session": {
+  "at_lower_circuit": 0,
+  "at_upper_circuit": 0,
+  "banded_but_not_at_a_limit": 0,
+  "no_band_recorded": 431,
+  "total": 431
+ },
+ "corpus": {
+  "first_session": "2018-04-02",
+  "last_session": "2023-12-29",
+  "path": "data/reference/historical_dataset_2018_2023.json.gz",
+  "sessions": 1425,
+  "sha256": "0fdc728a81acbb396f626fb54e4f28862c93cec836db3b502814f850a056a984"
+ },
+ "criteria": {
+  "fingerprint": "CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470",
+  "version": "1.1.16"
+ },
+ "entry_signals": 93463,
+ "first_signal_is_window_open": false,
+ "first_signal_session": "2019-01-18",
+ "instruments_scanned": 2735,
+ "limitations": [
+  "the QA enumerates ratio shapes the way the corpus reconciliation does (1..12 over 1..24, \u00b10.5%); a non-empty list means a split or bonus of that shape would print exactly this return, not that one happened",
+  "the corpus's reconciliation publishes moves beyond \u00b135%, so a smaller unattested step is absent from `reconciliation.ratio_shaped_detail` and that absence is not an exoneration",
+  "the ADTV count is a per-signal counter: a name can be counted once per signal day it was excluded on, not once per name",
+  "the locked-session count reads the T+1 bar's high == low and the security master's band at T+1; it is the fill-blocking condition, not a claim about queue position",
+  "a move that happens inside a session whose opening price is continuous with the previous close is classified SESSION_MOVE and is not a corporate-action step: the exchange traded it, and the rule is pre-registered to buy that pullback. Only an opening gap beyond the threshold is a level step, and only an unattested level step stops the round",
+  "the opening-gap test uses the corpus's own adjusted open against the previous adjusted close, so an adjustment applied at the wrong date would show as a level step here"
+ ],
+ "method": "the pre-registered entry condition (close > SMA(200) and RSI(2) < 10, Wilder, on split/bonus-adjusted closes) over the point-in-time universe, restricted to identities the exchange master resolves to EQ on that session; features partitioned into continuous subsegments exactly as the engine partitions them; counts and lists computed before any P&L is read",
+ "mode": "COUNTS_AND_LISTS_ONLY_NO_PNL",
+ "not_audited": true,
+ "not_run": {
+  "decision_rule": "NOT RUN \u2014 no metrics to decide on",
+  "one_execution_seq12": "NOT RUN \u2014 Step 2 did not clear",
+  "random_entry_null": "NOT RUN \u2014 no strategy arm to match",
+  "registry_evaluated_count": "UNCHANGED at 6",
+  "registry_trial_count": "UNCHANGED at 11"
+ },
+ "pre_registration": {
+  "path": "configs/trial_012_candidate.yaml",
+  "sha256": "66a05b4a0c6562fe10579ec0e8369577b02b1f49437aa2d37475dee903a3bfa6",
+  "trial_id": "TRIAL-PHASE3B2-MEANREV-012"
+ },
+ "section": "\u00a7101 Step 2 (AGENTS.md \u00a75.4, \u00a76.3, \u00a79.3)",
+ "signals_in_non_eq_series": 15441,
+ "signals_without_a_calendar_previous_session": 0,
+ "sma200_available_from_session": "2019-01-18",
+ "status": "STOP",
+ "stop_reason": "5 entry-signal day(s) open more than 20% below the previous close \u2014 a change of price level between two sessions, not a session's trading \u2014 with no price-side corporate action attested on that date; 5 of them are ratio-shaped",
+ "unattested_level_steps_feeding_a_signal": 5
+}

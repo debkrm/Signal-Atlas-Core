@@ -2695,3 +2695,118 @@ the provenance surface on both a fingerprinted and an unfingerprinted row, and t
 rebuilding the artifact's drawdown). `verify_seq10_certificate.py` exit **0 — CERTIFIED**.
 The new comparison script's `--check` exits **0** against its committed bytes. `verify_audit_append_only.py` (`--force-full` and
 plain) is run on this commit's tree and the row that follows records its verdict.
+## §101 — seq 12 pre-registered and implemented, then stopped by its own Step 2 data QA (Not audited)
+
+**Not audited.** Nothing below is reviewed by an audit section, so nothing below is signed off, verified or
+closed by a verdict: there is no `§N` for this commit and the findings ledger holds whatever the auditor last
+appended. What is written here is what was measured, and what was deliberately not measured.
+
+### Pre-registration (committed before any code ran)
+
+`configs/trial_012_candidate.yaml` was committed alone at **`f2133ef`**, sha256
+`66a05b4a0c6562fe10579ec0e8369577b02b1f49437aa2d37475dee903a3bfa6`, before the strategy class, the runner
+wiring, the QA pass or the run existed. It carries the whole specification — one rule, no alternative, no
+variant — the four-clause decision rule and the null's construction. The registry stood at **N = 11**,
+**N_eval = 6** before registration and stands at **N = 11**, **N_eval = 6** after this round: **no trial row
+was appended**, because the QA below stopped the round before any session was simulated.
+
+**The window's first signal is not its first session.** The pre-registered window opens 2018-04-02 and the
+corpus begins there, so the 200-session trend filter cannot exist before the corpus's own first 199 sessions
+have passed. Measured: `sma_200` first exists on **2019-01-18**, and the first entry signal is on that same
+session. `first_signal_is_window_open = false` is published in the artifact rather than assumed.
+
+### Step 1 — implementation (constraints, not results)
+
+- `InstrumentTechnicalFeatures` gains `sma_5`, `sma_200` and `rsi_2`, computed through the same
+  `compute_standard_features_for_instrument` subsegment partition as every other field, so a lookback still
+  cannot cross an unexplained missing session (§6.3).
+- `MeanReversionSwingStrategy` (`src/signal_core/strategy/mean_reversion.py`) is the pre-registered rule and
+  nothing else: entry `close > SMA(200) and RSI(2) < 10`, exit `close > SMA(5)`, both stamped
+  `signal_date = T` / `target_date = T+1`.
+- `run_phase3b2_walkforward` takes an optional `strategy=`: the rule is a parameter of the single engine
+  (§7.4, §13.5), so sizing, the protective stop, the hold bound, fills, costs and the ledger are shared with
+  seq 10 and seq 11. No second fill or cost path exists.
+- `tests/unit/test_phase3b2_seq12_mean_reversion.py` — **7 passed**: RSI(2) on a hand-computed Wilder series
+  (100.00 / 50.00 / 25.00), features at T unchanged when every bar after T is rewritten, no entry before 200
+  sessions with the same session and the filter present as a non-vacuous control, entry and exit both
+  targeting T+1 with the contract refusing a same-session fill, the stop filling at its own price inside the
+  bound, and at the bound one open exit with the stop retired rather than a second sell.
+- `tests/unit/test_phase3b2_seq12_data_qa.py` — **7 passed** over the QA classifier and its gate.
+
+### Step 2 — the data QA stopped the round (this is the round's outcome)
+
+`reports/analysis/s101/seq12_data_qa.json`, 7,363 bytes, sha256
+`54c08bcbe7b76b43130be0335c7366dfacf03e843f863cc2ffb6f68e13f784d7`, reproducible byte-for-byte with
+`python scripts/run_seq12_candidate.py --check` (exit 0). Counts and lists only; no return and no P&L was read
+to produce it.
+
+| QA measurement | Value |
+|---|---|
+| sessions / instruments scanned | 1,425 / 2,735 |
+| entry signals (pre-registered condition, EQ-active, in the PIT universe) | **93,463** |
+| signals in a series the master does not resolve to `EQ` (not entry signals) | 15,441 |
+| signals blocked by the ₹25 Cr T-1 median-20-session ADTV floor | **75,496** |
+| signals blocked by a locked T+1 session (`high == low`) | **431**, all 431 with **no band record** at T+1; 0 at a lower limit, 0 at an upper limit |
+| signal days whose one-session adjusted return is below −20% | **8** |
+| … of those, a **change of price level at the open** (opening gap ≤ −20%) | **5** |
+| … of those, a session that traded down after a continuous open | 3 |
+| **unattested level steps feeding a signal** | **5 — the STOP** |
+
+The five unattested level steps, each an opening gap on a signal day with no price-side corporate action on
+that date (`records_on_date` empty, `records_near_date` empty):
+
+| Symbol | ISIN | Signal session | One-session return | Opening gap | Ratio shapes that would print it |
+|---|---|---|---|---|---|
+| ASTRAL | `INE006I01046` | 2021-03-18 | −0.3011 | **−0.2972** | 10/7 |
+| VARDHACRLC | `INE116G01013` | 2021-10-28 | −0.2177 | **−0.2951** | 14/11 (a `DIVIDEND` row on the date cannot reprice anything) |
+| DTIL | `INE341R01014` | 2021-08-05 | −0.3348 | **−0.3668** | 3/2 |
+| HEUBACHIND | `INE492A01029` | 2020-07-16 | −0.2481 | **−0.2846** | 4/3 (a `DIVIDEND` row on the date, same reason) |
+| MANINFRA | `INE949H01023` | 2021-11-17 | −0.2233 | **−0.2802** | 9/7 |
+
+The three signals below −20% that are **not** level steps are published and do not stop the round:
+`INE292A01023` 2019-12-18 and 2019-12-30 (opening gap 0.0000 on a ₹0.15 scrip whose close fell one ₹0.05
+tick) and `INE669E01016` 2022-01-11 (opening gap −0.0976, the fall inside the session). The exchange traded
+those sessions, the pre-registered rule is written to buy exactly that pullback, and nothing about them is
+unattested. Raw Bronze agrees: `cm18DEC2019` prints UVSL opening at its previous close of 0.15, while
+`cm05AUG2021` prints DTIL opening at 330 against a 521.15 previous close.
+
+Why this stops the round rather than being disclosed beside it: the trigger is `RSI(2) < 10`, and an opening
+gap of −22% to −37% manufactures that condition. A signal produced by a price-level change the committed
+corporate-action table cannot attest is a fabricated observation (§5.4, §6.1, §6.3), and every R-multiple
+computed after it would rest on it. Patching around the five names — dropping them, shifting their dates, or
+reading a ratio out of the price — would be the silent bridging §6.3 forbids.
+
+### Step 3 — NOT RUN (reported as not run, never as passed)
+
+| Pre-registered item | Status |
+|---|---|
+| seq 12 execution on 2018-04-02..2023-12-29 | **NOT RUN** — Step 2 did not clear |
+| net trade profit factor / gross / liquidated | **NOT RUN** |
+| net expectancy in R, max drawdown, Calmar vs NIFTYBEES buy-and-hold | **NOT RUN** |
+| matched-count random-entry null (200 draws, seed 101012012) | **NOT RUN** — no strategy arm to match |
+| date-block bootstrap CI on net expectancy | **NOT RUN** |
+| four-clause decision rule (GO / KILL) | **NOT RUN** — there are no metrics to decide on |
+| registry N / N_eval | **11 / 6, unchanged**; no evaluation appended |
+
+`reports/analysis/s101/seq12_vs_null.json` was **not written**: a comparison artifact built without a run
+would have to invent its strategy arm.
+
+### Limitations
+
+- The level-step test reads the corpus's own adjusted open against the previous adjusted close, so an
+  adjustment applied at the wrong date shows up as a level step here. That is the intended failure, but it
+  means the test cannot say whether these five are unrecorded corporate actions or band revisions.
+- `ratio_shapes` enumerates ratios the way the corpus reconciliation does (1..12 over 1..24, ±0.5%). A
+  non-empty list means a split or bonus of that shape would print exactly this return, not that one happened.
+  `14/11` and `9/7` are not plausible share ratios, which is why the disposition rests on the missing record,
+  not on the shape.
+- The corpus reconciliation publishes moves beyond ±35%, so all eight of these are **absent** from
+  `reconciliation.ratio_shaped_detail`; that absence is not an exoneration, and each row publishes
+  `below_corpus_reconciliation_threshold: true`.
+- 93,463 is a signal-day count, not a trade count: the book is capital-constrained, so how many entries a run
+  would have taken is unmeasured.
+- The strategy, its feature fields and the runner's `strategy=` seam are tested on synthetic fixtures only.
+  They have never priced a session on this corpus, and this round does not claim they would produce a
+  computable book.
+- This section states a refusal, not a finding. Whether the five level steps are a data defect the auditor
+  should register is the auditor's decision (§11.1, §14.8).

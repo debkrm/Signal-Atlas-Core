@@ -343,7 +343,7 @@ def tabulate_rejections(tickets: Sequence[Any]) -> Mapping[str, Mapping[str, int
 
 
 def execute_swing_strategy_session(
-    strategy: DeliverySwingTrendStrategy,
+    strategy: Strategy,
     runner: DailyTPlus1OrderRunner,
     as_of: datetime.date,
     next_session: datetime.date,

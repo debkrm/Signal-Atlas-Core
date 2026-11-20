@@ -142,12 +142,15 @@ class InstrumentTechnicalFeatures:
     raw_series_code: Optional[str] = None
     series_classification: Optional[ExchangeSeries] = None
     isin: Optional[str] = None
+    sma_5: Optional[Decimal] = None
     sma_20: Optional[Decimal] = None
     sma_50: Optional[Decimal] = None
+    sma_200: Optional[Decimal] = None
     ema_20: Optional[Decimal] = None
     ema_50: Optional[Decimal] = None
     ema_200: Optional[Decimal] = None
     atr_14: Optional[Decimal] = None
+    rsi_2: Optional[Decimal] = None
     rsi_14: Optional[Decimal] = None
     rolling_high_20: Optional[Decimal] = None
     rolling_low_20: Optional[Decimal] = None
@@ -238,10 +241,10 @@ class SubsegmentIndicatorEngine:
     ) -> List[InstrumentTechnicalFeatures]:
         """
         Computes the standard suite of institutional indicators:
-        - SMA: 20, 50
+        - SMA: 5, 20, 50, 200
         - EMA: 20, 50, 200
         - ATR: 14
-        - RSI: 14
+        - RSI: 2, 14
         - Rolling High / Low: 20, 50
         - Relative Strength vs Benchmark (lookback 50)
         Returns a sorted list of InstrumentTechnicalFeatures, one per available price bar.
@@ -288,12 +291,15 @@ class SubsegmentIndicatorEngine:
                     res[b.trade_date] = v
             return res
 
+        sma_5_map = _run_subsegment_indicator(lambda s: compute_sma(s, 5))
         sma_20_map = _run_subsegment_indicator(lambda s: compute_sma(s, 20))
         sma_50_map = _run_subsegment_indicator(lambda s: compute_sma(s, 50))
+        sma_200_map = _run_subsegment_indicator(lambda s: compute_sma(s, 200))
         ema_20_map = _run_subsegment_indicator(lambda s: compute_ema(s, 20))
         ema_50_map = _run_subsegment_indicator(lambda s: compute_ema(s, 50))
         ema_200_map = _run_subsegment_indicator(lambda s: compute_ema(s, 200))
         atr_14_map = _run_subsegment_indicator(lambda s: compute_atr(s, 14))
+        rsi_2_map = _run_subsegment_indicator(lambda s: compute_rsi(s, 2))
         rsi_14_map = _run_subsegment_indicator(lambda s: compute_rsi(s, 14))
         hi_20_map = _run_subsegment_indicator(lambda s: compute_rolling_high(s, 20))
         lo_20_map = _run_subsegment_indicator(lambda s: compute_rolling_low(s, 20))
@@ -329,12 +335,15 @@ class SubsegmentIndicatorEngine:
                     raw_series_code=raw_code,
                     series_classification=series_cls,
                     isin=isin,
+                    sma_5=sma_5_map.get(dt),
                     sma_20=sma_20_map.get(dt),
                     sma_50=sma_50_map.get(dt),
+                    sma_200=sma_200_map.get(dt),
                     ema_20=ema_20_map.get(dt),
                     ema_50=ema_50_map.get(dt),
                     ema_200=ema_200_map.get(dt),
                     atr_14=atr_14_map.get(dt),
+                    rsi_2=rsi_2_map.get(dt),
                     rsi_14=rsi_14_map.get(dt),
                     rolling_high_20=hi_20_map.get(dt),
                     rolling_low_20=lo_20_map.get(dt),
