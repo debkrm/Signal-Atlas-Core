@@ -44,7 +44,6 @@ from __future__ import annotations
 import dataclasses
 import datetime
 from decimal import Decimal
-import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -56,6 +55,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import scripts.run_phase3b2_walkforward as walkforward  # noqa: E402
+from signal_core.storage.artifact_digest import text_digest  # noqa: E402
 
 REGISTRY_PATH = REPO_ROOT / "data" / "trials" / "trial_registry.jsonl"
 REGISTRY_SIDECARS = (".manifest", ".evaluations", ".evaluations.manifest")
@@ -79,7 +79,8 @@ VERIFICATION_PARAMS = dict(
 
 
 def _digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+    """The registry fingerprint's per-file digest, from `artifact_digest` (§102.3 Ruling 1)."""
+    return text_digest(path)
 
 
 def _registry_fingerprint() -> dict:

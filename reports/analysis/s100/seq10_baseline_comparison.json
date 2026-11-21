@@ -109,7 +109,8 @@
   "fields_removed": [],
   "path": "reports/analysis/s100/seq10_baseline_comparison.json",
   "sha256": "b5c14b9f5f7b5b2e239360b6ca3e1165532f20be1c47ae2e669e9b00e58a7528",
-  "sha256_of": "the predecessor blob's stored bytes exactly as `git cat-file blob <commit>:<path>` returns them; this path is `eol=lf` in .gitattributes, so they are also the LF-normalised form every clone reads (Audit \u00a7102.3 Ruling 1)"
+  "sha256_of": "the predecessor blob's stored bytes exactly as `git cat-file blob <commit>:<path>` returns them; this path is `eol=lf` in .gitattributes, so they are also the LF-normalised form every clone reads (Audit \u00a7102.3 Ruling 1)",
+  "verification_requires": "full git history: the pointer is verified by reading `git cat-file blob <commit>:<path>` for the pinned commit, so a shallow clone that fetched only the tip, or a `git archive` export with no repository, cannot verify it and the producer's `--check` refuses by name rather than publishing a pointer it cannot substantiate (Audit \u00a7103.5, \u00a7103.12 item 4)"
  },
  "seq10_artifact": "reports/verdicts/trial_010/phase3b2_swing_baseline_2022_2024_verdict.json",
  "seq10_artifact_sha256": "75571da3ebff56531addc6afdecdac6f05cf5a0799327a3ac85a97177ae067ae",

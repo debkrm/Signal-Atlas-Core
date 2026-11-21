@@ -41,6 +41,12 @@ session in the sealed holdout era. It moves neither N nor N_eval and is not a re
 randomized draws explore no parameter and select no rule, so they add nothing to the multiple-testing
 budget (§8.2).
 
+The artifact names the revision of its own path it replaced in a `predecessor` pointer. **Verifying that
+pointer needs full git history**: the check reads the predecessor's stored bytes with
+`git cat-file blob <commit>:<path>`, so a shallow clone whose fetch did not bring the object, or a
+`git archive` export with no repository at all, exits 1 by name instead of publishing a pointer it cannot
+substantiate (Audit §103.5, §103.12 item 4).
+
 Usage:
     python scripts/compare_seq10_baselines.py            # compute and write the committed artifact
     python scripts/compare_seq10_baselines.py --check    # recompute and compare with the committed bytes
@@ -597,7 +603,14 @@ def build_artifact() -> dict:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true", help="reproduce the committed artifact")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "reproduce the committed artifact; requires full git history, because the artifact's "
+            "predecessor pointer is verified with `git cat-file blob <commit>:<path>` (Audit §103.12 item 4)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     payload = build_artifact()

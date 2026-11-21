@@ -51,6 +51,12 @@ The one execution (Step 3), its matched-count random-entry null and the four-cla
 **NOT RUN** on this tree: the QA stopped the round before the first signal was priced. `N` and `N_eval`
 are therefore unchanged, and no registry row or verdict artifact is written.
 
+The artifact names the revision of its own path it replaced in a `predecessor` pointer. **Verifying that
+pointer needs full git history**: the check reads the predecessor's stored bytes with
+`git cat-file blob <commit>:<path>`, so a shallow clone whose fetch did not bring the object, or a
+`git archive` export with no repository at all, exits 1 by name instead of publishing a pointer it cannot
+substantiate (Audit §103.5, §103.12 item 4).
+
 Usage:
     python scripts/run_seq12_candidate.py --qa-only   # Step 2, exit 1 when not CLEAR
     python scripts/run_seq12_candidate.py --write     # write the committed QA evidence
@@ -1054,7 +1060,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--qa-only", action="store_true", help="Step 2 counts and lists only")
     parser.add_argument("--write", action="store_true", help="write the committed QA evidence")
-    parser.add_argument("--check", action="store_true", help="reproduce the committed QA evidence")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "reproduce the committed QA evidence; requires full git history, because the artifact's "
+            "predecessor pointer is verified with `git cat-file blob <commit>:<path>` (Audit §103.12 item 4)"
+        ),
+    )
     args = parser.parse_args()
 
     criteria = walkforward.load_go_no_go_criteria()

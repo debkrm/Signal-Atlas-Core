@@ -11,8 +11,10 @@ This script performs, in one process and one dataset:
 
 1. **Baseline** (run A) — the committed engine and criteria, 2018-04-01..2023-12-31, hold bound live,
    recording into a *copy* of the trial registry so the registry of record stays at N = 9 until the
-   candidate is registered. Its verdict artifact is copied to
-   `reports/analysis/s94/seq10_baseline_2018_2023_verdict.json`.
+   candidate is registered. Its verdict artifact is published at
+   `reports/analysis/s94/seq10_baseline_2018_2023_verdict.json`; when it differs from the committed
+   artifact only in `timestamp_utc` the committed bytes are kept, so a run leaves the tree unchanged
+   (Audit §103.12 item 3).
 2. **Bound-disabled counterfactual** (run B) — the same configuration with
    `max_hold_trading_sessions` raised out of reach in the loaded criteria only, which is what the
    engine did before §92 had a consumer. Not a verdict, never registered.
@@ -107,6 +109,31 @@ RATIONALE = (
 
 # §102.3 Ruling 1: one guarded implementation, so this normaliser cannot be handed a binary path.
 _digest = text_digest
+
+
+def _without_timestamp(payload: dict) -> dict:
+    """A verdict artifact's content without the field that moves on every execution."""
+    return {key: value for key, value in payload.items() if key != "timestamp_utc"}
+
+
+def publish_baseline_artifact(fresh: Path, destination: Path = BASELINE_ARTIFACT) -> bool:
+    """Place run A's verdict artifact at the tracked baseline path; returns whether it wrote (§103.12 item 3).
+
+    The baseline is a reference, not a verdict, and `timestamp_utc` moved on every execution, so the
+    committed file's digest was reproducible only until the script had been run once and a run turned
+    `compare_seq10_baselines.py --check` red until the artifact was restored. A run whose payload is
+    otherwise identical therefore leaves the committed bytes alone — the timestamp records when the
+    content was first published, not when it was last re-derived — so two consecutive runs leave the
+    tree unchanged and the digest the s100 comparison records still names the file.
+    """
+    payload = json.loads(fresh.read_text(encoding="utf-8"))
+    if destination.is_file():
+        committed = json.loads(destination.read_text(encoding="utf-8"))
+        if _without_timestamp(committed) == _without_timestamp(payload):
+            return False
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(fresh, destination)
+    return True
 
 
 def _snapshot_header(path: Path) -> dict:
@@ -452,11 +479,14 @@ def main() -> int:
         )
 
         # The baseline artifact is a reference, not a verdict: the candidate owns reports/verdicts/.
-        BASELINE_DIR.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(root / "run_a" / "verdicts" / ARTIFACT_NAME, BASELINE_ARTIFACT)
+        wrote = publish_baseline_artifact(root / "run_a" / "verdicts" / ARTIFACT_NAME)
         with open(BASELINE_ARTIFACT, encoding="utf-8") as handle:
             baseline = json.load(handle)
-        print(f"[INFO] Baseline artifact: {BASELINE_ARTIFACT.relative_to(REPO_ROOT).as_posix()} sha256 {_digest(BASELINE_ARTIFACT)[:16]}…")
+        print(
+            f"[INFO] Baseline artifact: {BASELINE_ARTIFACT.relative_to(REPO_ROOT).as_posix()} sha256 "
+            f"{_digest(BASELINE_ARTIFACT)[:16]}… "
+            + ("written" if wrote else "kept: identical to the committed artifact apart from timestamp_utc")
+        )
 
         # §93.5: the registry moves N 9 -> 10 with evaluation_count still 5, so the row is registered
         # and the run is its re-render — the evaluation ledger is not touched (§93.4 containment).

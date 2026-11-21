@@ -8,14 +8,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 import datetime
 from enum import Enum
-import hashlib
 import json
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+from signal_core.storage.artifact_digest import text_bytes, text_digest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 DEFAULT_CIRCULARS_DIR = REPO_ROOT / "data" / "raw" / "circulars"
 DEFAULT_MANIFEST_PATH = REPO_ROOT / "data" / "reference" / "manifest.jsonl"
+
+
+def circular_payload_digest(path: Path) -> Tuple[str, bytes]:
+    """A circular payload's digest and the stored form it hashes (Audit §102.3 Ruling 1).
+
+    Both come from `artifact_digest`: the manifest records this digest against this byte count, so a
+    normaliser here would be a second definition of the bytes the two of them name (§103.12 item 2).
+    """
+    return text_digest(path), text_bytes(path)
 
 
 class CircularError(ValueError):
@@ -173,8 +183,7 @@ def load_all_bronze_circulars(
     circular_digests: Dict[str, str] = {}
 
     for c_path in circular_files:
-        raw_bytes = c_path.read_bytes().replace(b"\r\n", b"\n")
-        sha256 = hashlib.sha256(raw_bytes).hexdigest()
+        sha256, raw_bytes = circular_payload_digest(c_path)
         byte_count = len(raw_bytes)
 
         # Check manifest registration - MANDATORY per Finding H-57 (refuse unregistered files fail-closed)

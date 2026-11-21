@@ -49,6 +49,7 @@ for _p in (str(REPO_ROOT), str(REPO_ROOT / "src")):
 
 from signal_core.contracts.legacy_compat import compute_legacy_dataset_content_fingerprint  # noqa: E402
 from signal_core.contracts.price_bar import PriceBar  # noqa: E402
+from signal_core.storage.artifact_digest import text_digest  # noqa: E402
 from signal_core.storage.security_master import (  # noqa: E402
     CorporateActionType,
     load_corporate_actions,
@@ -83,6 +84,16 @@ MISMATCH_WINDOW_SESSIONS = 10
 # demerger record states no share ratio, so it cannot be one of these (§96.4, §97).
 PRICE_SIDE_KINDS = tuple(action.value for action in PRICE_SIDE_ACTIONS)
 BUILT_AT_UTC = "2026-11-19T00:00:00+00:00"
+
+
+def corporate_actions_fingerprint(path: Path = CORPORATE_ACTIONS_PATH) -> str:
+    """The corpus header's `corporate_actions_fingerprint`, from `artifact_digest` (§102.3 Ruling 1).
+
+    A consumer (`run_seq10_candidate`) matches this value against the committed table before it will
+    load the corpus, so a normaliser here would be a second definition of the bytes both name
+    (§103.12 item 2).
+    """
+    return text_digest(path)
 
 
 def calendar_sessions() -> List[datetime.date]:
@@ -373,9 +384,7 @@ def build_corpus(require_reconciled: bool = True):
         prices_by_instrument=prices_by_isin,
     )
     total_instrument_records = sum(len(bars) for bars in prices_by_isin.values())
-    corporate_actions_digest = hashlib.sha256(
-        CORPORATE_ACTIONS_PATH.read_bytes().replace(b"\r\n", b"\n")
-    ).hexdigest()
+    corporate_actions_digest = corporate_actions_fingerprint(CORPORATE_ACTIONS_PATH)
     members_by_date = {
         session: sorted(isin for isin, rows in observations.items() if session in rows)
         for session in trading_dates

@@ -16,18 +16,24 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import yaml
 
+from signal_core.storage.artifact_digest import text_digest
+
 DEFAULT_CRITERIA_PATH = Path(__file__).resolve().parent.parent.parent.parent / "configs" / "go_no_go_criteria.yaml"
 CRITERIA_FINGERPRINT_PREFIX = "CRIT-FPR-V1-"
 MANIFEST_FINGERPRINT_PREFIX = "MAN-FPR-V1-"
 
 
 def compute_manifest_fingerprint(manifest_path: Union[str, Path]) -> str:
-    """Computes SHA-256 fingerprint of the authoritative reference manifest (Finding H-72)."""
+    """Computes SHA-256 fingerprint of the authoritative reference manifest (Finding H-72).
+
+    The digest is `artifact_digest.text_digest`'s, not this module's: a fingerprint every criteria pin
+    copies must name the bytes a clone stores, and a normaliser here would be a second definition of
+    that byte sequence (Audit §102.3 Ruling 1, §103.12 item 2).
+    """
     p = Path(manifest_path)
     if not p.is_file():
         raise FileNotFoundError(f"Manifest file not found: {p}")
-    content = p.read_bytes().replace(b"\r\n", b"\n")
-    return MANIFEST_FINGERPRINT_PREFIX + hashlib.sha256(content).hexdigest()
+    return MANIFEST_FINGERPRINT_PREFIX + text_digest(p)
 
 
 class CriteriaValidationError(ValueError):

@@ -362,7 +362,8 @@
   "fields_removed": [],
   "path": "reports/analysis/s102/seq12_data_qa.json",
   "sha256": "0dffff1540744f4f7e2b32e9a7ac93235721efa85cfb02d6ff6be7804f8c24b3",
-  "sha256_of": "the predecessor blob's stored bytes exactly as `git cat-file blob <commit>:<path>` returns them; this path is `eol=lf` in .gitattributes, so they are also the LF-normalised form every clone reads (Audit \u00a7102.3 Ruling 1)"
+  "sha256_of": "the predecessor blob's stored bytes exactly as `git cat-file blob <commit>:<path>` returns them; this path is `eol=lf` in .gitattributes, so they are also the LF-normalised form every clone reads (Audit \u00a7102.3 Ruling 1)",
+  "verification_requires": "full git history: the pointer is verified by reading `git cat-file blob <commit>:<path>` for the pinned commit, so a shallow clone that fetched only the tip, or a `git archive` export with no repository, cannot verify it and the producer's `--check` refuses by name rather than publishing a pointer it cannot substantiate (Audit \u00a7103.5, \u00a7103.12 item 4)"
  },
  "restates": {
   "available": true,

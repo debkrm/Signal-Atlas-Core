@@ -14,6 +14,11 @@ Two properties are deliberate. The commit is **pinned**, not derived from `HEAD`
 that stores it. And the movement is **computed from the blob**, not typed into the artifact, so a pointer
 cannot claim a change the bytes do not show — `tests/unit/test_phase3b2_audit_s104_items.py` recomputes
 both from `git cat-file blob` and refuses a digest or a field list that disagrees.
+
+The cost, published in the pointer itself: verifying it needs the predecessor **object**, so the reading
+checkout must carry full git history. A shallow clone that fetched only the tip, or a `git archive` export
+with no repository at all, cannot resolve `<commit>:<path>` and the producers' `--check` exits 1 by name
+rather than publishing a pointer it cannot verify (Audit §103.5, §103.12 item 4).
 """
 
 from __future__ import annotations
@@ -60,6 +65,12 @@ def predecessor_pointer(path: str, commit: str, payload: Dict, repo_root: Path =
             "the predecessor blob's stored bytes exactly as `git cat-file blob <commit>:<path>` returns "
             "them; this path is `eol=lf` in .gitattributes, so they are also the LF-normalised form every "
             "clone reads (Audit §102.3 Ruling 1)"
+        ),
+        "verification_requires": (
+            "full git history: the pointer is verified by reading `git cat-file blob <commit>:<path>` for "
+            "the pinned commit, so a shallow clone that fetched only the tip, or a `git archive` export "
+            "with no repository, cannot verify it and the producer's `--check` refuses by name rather "
+            "than publishing a pointer it cannot substantiate (Audit §103.5, §103.12 item 4)"
         ),
         "fields_added": sorted(set(current) - set(previous)),
         "fields_removed": sorted(set(previous) - set(current)),

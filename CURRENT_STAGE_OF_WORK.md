@@ -3196,3 +3196,121 @@ status is still `STOP` for the same reason (4 unattested level steps feeding a s
 - `probe_audit_findings.py N-201`, `N-203`, `N-204` all `PASS` on this tree; the two §102.8 attacks this round
   attacks (10 and 12) both exit 1.
 - Nothing here is signed off. The next round is the auditor's.
+## §105 — §103.12's items 2, 3 and 4, restricted to A/B/C/D: four more digest producers route through one module, the binary key gains the payload and the circulars glob, the seq-10 consumer stops rewriting the s94 artifact, and the history requirement is published where it is met (Not audited)
+
+This log reviews commit `2d88468` under audit **§103** (`reports/audit/volume2.md`, tag
+`audit-s103-9e94336`) and executes **only** its work-order items 2, 3 and 4 — the four items the maintainer
+brief labels A, B, C and D. **The work is not audited**: no finding is marked CLOSED here, no verdict word
+is claimed, and the ledger stays as §103 left it — `N-150`, `N-199`, `N-201` OPEN, one ACCEPTED residual.
+
+### A (§103.12 item 2, first half) — the four producers now call `artifact_digest` — **taken**
+
+| Producer | Was | Is |
+|---|---|---|
+| `src/signal_core/contracts/criteria.py` `compute_manifest_fingerprint` | local `read_bytes().replace(CRLF, LF)` + sha256 | `MANIFEST_FINGERPRINT_PREFIX + text_digest(path)` |
+| `src/signal_core/storage/circulars.py` per-file digest | inline normalise + sha256 in the loop | `circular_payload_digest(path)` → `text_digest` + `text_bytes`; the loop has no second path |
+| `scripts/derive_2018_2023_corpus.py` `corporate_actions_digest` | inline normalise + sha256 inside the build | `corporate_actions_fingerprint(path)` → `text_digest`, called by the build |
+| `scripts/probe_hold_bound_invariance.py` `_digest` | local normaliser | `text_digest`; the unused `hashlib` import removed |
+
+**No published value moved**, measured on this tree against the values §103 recorded:
+
+- `MAN-FPR-V1-be45b7e791d5d3cd683ee119ae4beeae8cba3aab7728ac194d6b19521a691045` — unchanged, and equal to
+  the loaded criteria' `expected_manifest_fingerprint`.
+- `CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470` — unchanged.
+- The corpus header's `corporate_actions_fingerprint` was
+  `d7b425e5f444c8c06735dc27fe01fc247b4a62d9f55c9728c2badaf1495c591b`; the routed producer returns the same
+  64 hex characters.
+- The circular producer returns `d4810c84bab623f9e68968ac007d2d18f5492ae01f84a82bbc8614d4005ef85b` /
+  2,749 B for `data/raw/circulars/NSE_CMTR_36475.json`, which is the manifest's current row for it.
+- Corpus `ea0b65a32a89a7b497cc9dc40cbec3fdbdcb9b582c74105e1a9ea6959d4ab1c5`, 75,390,706 B — no corpus byte
+  written.
+
+### B (§103.12 item 2, second half) — the binary key is the payload and the glob, not only the suffix — **taken**
+
+`artifact_digest.is_binary_path` now answers from three measurements rather than one: the `-text` suffixes;
+the `data/raw/circulars/*/**` `.gitattributes` rule, mirrored by `is_captured_circular_path` on the path's
+components (one directory below `circulars/`, then the payload — the top-level `*.json` calendar circulars are
+not matched and stay text, which `git check-attr` confirms: `text: set` there, `text: unset` under
+`data/raw/circulars/MAHARASHTRA_STAMP_DUTY_2019/`); and the payload's own magic (`1f 8b`, `PK\x03\x04`,
+`PK\x05\x06`, `PK\x07\x08`). Gzip bytes named `.json` are now refused by the text arm instead of being
+normalised, and the binary arm accepts them — the arm follows the payload, not the caller's intent.
+`text_bytes` is the single definition of the stored text form and `text_digest` hashes it, so `circulars` gets
+its bytes and its digest from one place. The module docstring's claim that the circular payloads "are digested
+as text" was false and is corrected rather than left beside the new behaviour.
+### C (§103.12 item 3) — the seq-10 consumer no longer rewrites the tracked s94 artifact — **taken**
+
+`run_seq10_candidate.publish_baseline_artifact(fresh, destination)` replaces the unconditional
+`shutil.copyfile` into `reports/analysis/s94/seq10_baseline_2018_2023_verdict.json`. When the fresh run's
+payload equals the committed artifact apart from `timestamp_utc`, the committed bytes are **kept** — the
+timestamp records when the content was first published, not when it was last re-derived — and the call site
+is a single one, with the old unconditional copy gone rather than left beside a guard.
+
+Measured at the committed path: a fresh payload built from the committed artifact with only `timestamp_utc`
+changed (`{k for k in committed if committed[k] != payload[k]} == {"timestamp_utc"}` → `True`) was published
+twice; both calls returned `False` (no write), the digest stayed
+`f5fe3af5a1e2de836472d5d3bdbec658fd98f9cd81c33576d48004a83188072c`, `git status` showed no change under
+`reports/analysis/s94/`, and `compare_seq10_baselines.py --check` exited **0** after them. A payload whose
+content genuinely differs still writes, covered by its own test.
+
+**NOT RUN: the consumer's own execution runs end to end.** Two consecutive executions of
+`python scripts/run_seq10_candidate.py` exceed this host's 10-minute command bound (the single attempt was
+killed before its publish step and wrote nothing), so the two-run probe is measured at the publish step the
+consumer calls, not by re-running the strategy. The second clause of §103.12 item 3 — "`--check` exits 0 after
+a run" — is measured above, at the artifact the run publishes.
+
+### D (§103.12 item 4) — the history requirement is stated where it is met — **taken**
+
+- `compare_seq10_baselines.py` and `run_seq12_candidate.py` now say in their docstrings and in the `--check`
+  help text that the artifact's `predecessor` pointer is verified with `git cat-file blob <commit>:<path>`,
+  so a shallow clone whose fetch did not bring the object, or a `git archive` export with no repository,
+  exits 1 by name (Audit §103.5, §103.12 item 4).
+- `artifact_restatement.predecessor_pointer` publishes the same requirement inside the artifact, as
+  `predecessor.verification_requires`. Both artifacts were regenerated **by their own producers**
+  (`compare_seq10_baselines.py`, `run_seq12_candidate.py --write`); the diff against `2d88468` is exactly
+  **one added key in each** and nothing else, and `--check` exits 0 for both afterwards.
+
+### Tests — 14 of 17 fail at the base commit, 17 of 17 pass here
+
+`tests/unit/test_phase3b2_audit_s105_items.py`, 17 cases: one `.gz` refusal per producer (4), the
+manifest-fingerprint and circular-manifest value parity (2), gzip-bytes-named-`.json` refused by the text arm
+and accepted by the binary arm (2), the captured-circulars glob binary while the top-level calendar circulars
+stay text (2), two consecutive publishes leaving the committed bytes and a genuine content change writing (2),
+the s94 digest the trial_010 comparison publishes (1), both artifacts' `predecessor.verification_requires` (2),
+both `--check` help texts (2).
+
+Measured at `2d88468` in a worktree with `PYTHONPATH` pinned to the base `src`: **14 failed, 3 passed**. The
+three that pass at base do so deliberately — they assert that a published value did **not** move (manifest
+fingerprint, calendar circulars staying text, the recorded s94 digest), which is the property this round must
+preserve, not introduce. At this tree: **17 passed**.
+### Not taken
+
+- **§103.12 item 1 (N-201, the corpus half)** — a maintainer decision and a sealed-surface change
+  (corpus gzip → manifest row → `MAN-FPR-V1` → criteria re-seal). No corpus byte changed.
+- **§103.12 item 5 (the audit instrument)** — an auditor-side convention for closure-mode assertions; not in
+  this round's scope.
+- **§103.12 item 6 (N-199)** — still BLOCKED: no sourced NSE per-session band archive supplied,
+  `data/silver/price_bands` still empty, the band counters still `NOT RUN`, nothing synthesised.
+- **§103.12 item 7** — `N-150`, clause (d)'s real-return sentence, §101.12 item 7, §99.10 items 2-3 and
+  §96.10 items 5-7 all carried unchanged.
+- Out of scope per the brief and untouched: `reports/audit/**`, rule files, skill files, `configs/`, any
+  strategy, any threshold, any trial-registry row.
+
+### What moved, and what did not
+
+Eleven modified paths (two regenerated artifacts — one added pointer key each — and nine source files), one
+new test file. **No corpus byte, content fingerprint, manifest row, criteria value, criteria pin,
+pre-registration, trial-registry row, fold count, verdict artifact or s94 artifact moved**: corpus
+`ea0b65a3…` / 75,390,706 B, `DATA-CTNT-V2-cb4832c0…`, criteria `1.1.16` / `CRIT-FPR-V1-535e47f5…`, manifest
+1,009 current rows, registry `N = 11` / `N_eval = 6`, 2024 fold `validation_folds_count = 0`, holdout
+`2025-01-01..2026-11-11` unread, trial ledger row count unchanged.
+
+### Gate state at this commit
+
+- The pre-commit `--force-full` run exits **0**: `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED
+  (100%)`, **11 of 11** verifiers exit 0, **637 of 637** collected (636 in the parallel invocation + 1
+  isolated), 0 skipped, 0 xfailed, 1,009 current manifest artifacts matching their byte count and sha256.
+- It recorded **no green row**: the working copy differed from `HEAD` in 12 source paths, so the gate declined
+  to certify a tree it did not measure (N-160). The row is recorded by the commit that follows this one.
+- `python scripts/probe_audit_findings.py --list` exits 0 (56 probes); `python scripts/verify_audit_findings.py`
+  exits 0 with `OVERALL VERDICT: ALL 56 FINDING PROBE(S) PASSED`.
+- Nothing here is signed off. The next round is the auditor's.
