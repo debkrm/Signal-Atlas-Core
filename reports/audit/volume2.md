@@ -4593,3 +4593,173 @@ The defect is **not** the one the item ordered fixed, and the ordering is what m
 - `python scripts/generate_audit_index.py --check` before the commit: exit **0**, 104 section rows.
 - `python scripts/verify_audit_append_only.py` at `14df21b` (plain, no `--force-full`): exit **0**, `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)`, 636 in the parallel invocation + 1 isolated = **637 of 637**, and `[INFO] Source tree a1b2d297… is already recorded; not appending a duplicate row`. This is the legal outcome in which a docs-only audit commit projects to the source tree the green row `d39c519` already names, so there is no row to commit after this section and `git status --porcelain` is clean.
 - The tag is `audit-s104-14df21b`. This addendum changes `volume2.md`, so the index is regenerated and committed in the commit that follows — the same order §103.14 recorded, and the reason that run's first attempt caught a stale index rather than a text change.
+## §105 — Audit of `084abc9` (tag `feat-s106-084abc9`): the publish refuses the producer's own payload by name at all thirteen paths and the duplicate is decided before the corpus check — while a number re-typed `560.0` is still declared identical, and item 2's registering-tree half cannot be run until §104.12 item 3 is decided
+
+**Date:** 21 November 2026
+**Commit under review:** `084abc9` — **5 paths, +15,021/−9** (parent `52d4679`)
+**Green row:** `199c925` — `data/reference/source_tree_green.json` only (+21) · **later docs commit** `7696b34` (+20, one path)
+**Baseline:** `52d4679` (§104, tag `audit-s104-14df21b`)
+**Verdicts:** item 1 **PASS**, one residual · item 2 **PASS on its reachable half** (§105.9 Ruling 1), its registering-tree half **NOT RUN** · N-194 re-measured **PASS** · N-199 **OPEN, still BLOCKED** · N-201 **OPEN, untouched** · N-150 **carried** · §104.12 items 4–5 residuals untouched · **no new ledger row** (§103.10, §104.10), one defect opened in prose with its closure-mode assertion in 105.12
+
+### 105.1 Baseline re-measured at `084abc9`
+
+Every number below was executed on this host in a clean clone at the SHA (log files written outside the tree), except where a row says "recomputed independently". The implementer's `§106` was not opened until items 1–4 and 6–8 of this round's brief had been measured; the in-situ run of item 5 was still executing at that point and was concluded afterwards.
+
+| Measurement | Result |
+|---|---|
+| `verify_audit_append_only.py --force-full`, clean clone at `084abc9` | exit **0**, `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Verifiers discovered / executed | **11 / 11**, every one exit 0 (`verify_audit_findings` 261.4 s, `verify_seq10_baseline_comparison` 38.6 s) |
+| Test suite | **641 of 641** — 640 in the parallel invocation + 1 isolated — **0 skipped, 0 xfailed** |
+| Source-tree identity | `8bf304a2bb07c593…`, **recomputed independently** from `git ls-tree -r HEAD` (2,433 blobs, `path\0oid\n` over the sorted set, `reports/audit/`, `docs/`, `CURRENT_STAGE_OF_WORK.md` and the cache excluded) = the green row `199c925`'s `source_tree_hash` |
+| Manifest pins | 1,009 current artifacts match byte count and sha256; 962 superseded rows skipped as history |
+| Audit volumes / index | frozen volume 8,442 lines at its pin; `volume2.md` an unchanged 4,595-line prefix; **104** index section rows |
+| `verify_audit_findings.py` | exit 0 (in the 11): **96 rows / 56 ids**, latest per id **52 CLOSED, 3 OPEN (`N-150`, `N-199`, `N-201`), 1 ACCEPTED (`N-152`)** — unchanged from §104 |
+| Trial registry | N = **11**, N_eval = **6**, head `e76c249f04084594a8f38dcb5280f1c003082e4d58ae2174a58758fe701bbc11`, last row `TRIAL-PHASE3B2-LIQUIDITY-ATR-011`, `evaluation_count` 6 |
+| Criteria | **1.1.16**; `CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470` recomputed and equal to `configs/trial_011_candidate.yaml`'s and `trial_012_candidate.yaml`'s pin |
+| `MAN-FPR-V1` | `MAN-FPR-V1-be45b7e791d5d3cd683ee119ae4beeae8cba3aab7728ac194d6b19521a691045` **recomputed** through `compute_manifest_fingerprint` and equal to `expected_manifest_fingerprint`; manifest 1,877,557 B / 1,971 rows |
+| Corpus | `data/reference/historical_dataset_2018_2023.json.gz` **75,390,706 B**, binary digest `ea0b65a32a89a7b497cc9dc40cbec3fdbdcb9b582c74105e1a9ea6959d4ab1c5`; `text_digest` on it **raises** (`… is a binary payload … Call binary_digest`), which is Ruling 1 holding at the arm a corpus reader reaches |
+| s94 artifact | `reports/analysis/s94/seq10_baseline_2018_2023_verdict.json` 498,219 B, `text_digest` `f5fe3af5a1e2de836472d5d3bdbec658fd98f9cd81c33576d48004a83188072c` |
+| Commit shape (`52d4679..7696b34`, 6 paths) | `CURRENT_STAGE_OF_WORK.md`, `data/reference/source_tree_green.json`, `scripts/run_seq10_candidate.py`, `tests/fixtures/s94_run_a_payload_capture.json`, `tests/unit/test_phase3b2_audit_s105_items.py` (modified), `tests/unit/test_phase3b2_audit_s106_items.py` (added). **0** paths under `AGENTS.md`, `.agents/`, `configs/`, `reports/audit/`, `reports/verdicts/`, `reports/analysis/`, `data/trials/`, the corpus, `data/reference/manifest.jsonl`, `docs/`, `src/`; `pyproject.toml` untouched; no `skip`/`xfail` added; no AI or co-author trailer on any of the four commits |
+| 2024 fold / holdout | no path in the range contains `2024`, `2025`, `fold` or `holdout`; `validation_folds_count` still 0, `positive_is_fold_ratio` 0; the sealed window `2025-01-01..2026-11-11` was not read by anything this round ran |
+
+### 105.2 Item 1 — the publish refuses by name, measured on the producer's own payload and on twenty-six more
+
+`publish_baseline_artifact` (`scripts/run_seq10_candidate.py:146`) now has three outcomes and writes only in the third: equal apart from `timestamp_utc` → keeps the committed bytes and returns `False`; differs in any other cell → raises `BaselinePublishRefused`, built from `_differing_paths` (`:124`) on paths with `timestamp_utc` stripped; no committed artifact at `destination` → copies. The refusal is raised **before** `destination.parent.mkdir` (`:175`) and before `shutil.copyfile`, so a refusal neither creates a directory nor a file. `main()` catches `BaselinePublishRefused`, prints `OVERALL: NOT PUBLISHED — …` and returns 1 (`:552-565`), so a refusal is not a traceback.
+
+Twenty-seven payloads were fed to the function at `084abc9`, each against a staged copy of the committed artifact, with the destination's SHA-256 taken before and after: **twenty were refused by name**, seven were declared identical apart from `timestamp_utc` — three legitimately, four of them the type-equivalence class below — and **every one of the twenty-seven left the destination byte-identical**. A twenty-eighth call, with no committed artifact at `destination`, wrote, as the first-publish branch must.
+
+| Input | Outcome | Named | Bytes |
+|---|---|---|---|
+| committed payload, `timestamp_utc` moved | **kept** (`False`) | — | unchanged |
+| **`tests/fixtures/s94_run_a_payload_capture.json`** — the bytes a real run writes | **refused** | **13 paths**: `adtv_excluded_isin_sessions`, `adtv_lookback_sessions`, `criteria_fingerprint`, `demerger_forced_refusals`, `evaluated_trial_count`, `evaluated_trial_count_prior`, `evaluations[CRIT-OVERFIT-01].computed_value`, `evaluations[CRIT-OVERFIT-01].evidence`, `evaluations[CRIT-OVERFIT-02].computed_value`, `evaluations[CRIT-OVERFIT-02].evidence`, `evaluations[CRIT-OVERFIT-04].evidence`, `min_median_adtv_crore`, `risk_per_trade_pct` | unchanged |
+| `summary_counts.PASS` 14→15 | refused | `summary_counts.PASS` | unchanged |
+| `evaluations[0].computed_value`; `evaluations[9].status` | refused | `evaluations[CRIT-WINDOW-01].computed_value`, `evaluations[CRIT-EXEC-04].status` | unchanged |
+| `is_folds[0].closed_trade_count` 560→561; `daily_returns['2018-04-03']` `'0'`→`'0.0001'`; `evaluated_trial_count` 6→7; `demerger_forced_refusals` 66→65 | refused | the changed leaf, named by `criterion_id` or index | unchanged |
+| key added / removed at root (`extra_key`, `metadata`) | refused | `extra_key` / `metadata` | unchanged |
+| key added / removed in a nested dict (`summary_counts.UNKNOWN`, `summary_counts.NOT_RUN`) | refused | the nested path | unchanged |
+| `str`→`int`, `int`→`str`, `str`→`null`, `list`→`dict` | refused | the leaf or the container | unchanged |
+| `is_folds` reversed; `evaluations` rows 0↔1 swapped; `evaluations` row appended | refused | 24 leaves / 14 leaves / `evaluations (length 28 -> 29)` | unchanged |
+| `recorded` True→False | refused | `recorded` | unchanged |
+| reformatted only (`indent=2`, timestamp moved) | kept | — | unchanged |
+| `timestamp_utc` key deleted | kept | — | unchanged |
+| no committed artifact at `destination` | **wrote** | — | new file |
+| **`is_folds[0].closed_trade_count` 560→`560.0`; `evaluated_trial_count` 6→`6.0`; `observation_count` 1424→`1424.0`; `recorded` `True`→`1`** | **kept — wrongly declared identical** | — | unchanged |
+
+**Verdict: PASS.** The write that §104.4 measured is closed: the exact payload two runs published on `52d4679` is now refused, the refusal names every moved path in a form a maintainer can act on, and nothing is written on any refusal.
+
+**Residual, measured.** The equality that decides "identical apart from `timestamp_utc`" is Python `==` on the parsed payloads, and `6 == 6.0` and `True == 1` are `True`. A payload whose only change is that a JSON number was re-typed float, or a boolean became `1`, is therefore **not** refused by name: it takes the `return False` branch and the log line then says "kept: identical to the committed artifact apart from timestamp_utc", which is false as a statement about the bytes even though it is true as a statement about the values. Zero bytes are at risk — the committed artifact is not overwritten, its digest stays `f5fe3af5…`, and the comparison artifact records the committed file's digest — so this is a naming/reporting gap against item 1's wording, not an edit of published history. It is also unreachable from today's producer: the artifact holds **0** float cells, 873 ints and one boolean (`recorded`), so a real run cannot emit the class. Closure-mode assertion in 105.12 item 1.
+
+### 105.3 Item 2 — the duplicate is decided before the corpus check, the dataset build and the publish, and the old inline copy is gone
+
+At `084abc9` there is **one** definition of "already registered" — `duplicate_registration_problem()` (`:180`) — and two callers: `main()` at `:457`, and `_register` at `:418` as the last-line assertion. The call order in `main()` is measured, not asserted: `:457` duplicate → `:468` corpus check → `:492` `resolve_or_build_historical_dataset` → `:552-565` publish → `:576` `_register`. The old inline `if any(record.trial_id == TRIAL_ID …)` in `_register` was **replaced** by a call to the same function, not left beside it, so this is not the additive-fix shape §14.4 describes. `publish_baseline_artifact` has exactly **one** call site in the repository (grep over `scripts/`, `src/`: `:554`), so there is no second publisher to guard.
+
+**The guard is load-bearing, demonstrated by a controlled pair on one tree.** Same clone, same command, same registry: with the committed code, both runs print `OVERALL: NOT STARTED — TRIAL-PHASE3B2-EXPANDED-010 is already registered (N = 11, N_eval = 6) …` and exit 1 before any `[INFO] Corpus` line appears (105.5). With **only** `duplicate_registration_problem` replaced by `None` in memory, the same `main()` proceeds past the banner and builds the corpus and dataset (105.4). Nothing else differed, so the early exit is that function's.
+
+**Bypass hunt, no path found.** (a) One publish call site; (b) the check precedes every writer in `main()` — the first thing that can write is the publish at `:554`, 97 lines after it; (c) a registry that fails verification raises out of `TrialRegistry.__init__` (`RegistryTamperedError`) before any write, so a tampered ledger fails closed; (d) `TRIAL_ID` is a module constant written by `append_trial` under the same string, so the check and the append test the same key.
+
+**Residual, named and not promoted.** The publish still precedes `_register`, so a registration refusal for a reason **other than** a duplicate — the §A-5/A-7 on-disk tail re-verification, a non-monotonic `timestamp_utc` from a clock that moved backwards, an invalid `partition` in the template row — would leave a published artifact behind before exiting 1. Item 2 asked for the duplicate decision to move, and it moved; the broader "decide every registration refusal before the publish" ordering was not ordered and is not this commit's defect. It is not reachable on `main` today because the publish refuses first (105.2), and it becomes live again the moment §104.12 item 3 lets a payload match.
+
+**Verdict: PASS**, with that ordering residual carried to 105.12 item 4.
+### 105.4 The refusal measured in situ, reproduced independently
+
+The brief asks how the implementer reached the publish with the duplicate precondition in force, and whether a tracked edit was left. Both, measured:
+
+- **How.** `§106` says "with only the duplicate precondition of item 2 stood down for the probe (`duplicate_registration_problem` returning `None`)". That is a module-attribute substitution in the probing process, and this round reproduced it by the same route at `084abc9`: a harness that prints the real verdict (`TRIAL-PHASE3B2-EXPANDED-010 is already registered (N = 11, N_eval = 6) …`) and then sets `r.duplicate_registration_problem = lambda: None` before calling `r.main()`. The unmodified `main()` ran to its publish step on a clean tree.
+- **No tracked edit survived.** `grep` over `scripts/` and `src/` for `lambda: None`, `duplicate_registration_problem = ` and `monkeypatch` returns nothing; the committed `main()` calls the real function, and both unpatched end-to-end runs (105.5) exit at it. The range touches no path outside 105.1's six.
+- **Reproduced.** Dataset build 97.6 s — 1,425 sessions, 2,735 instruments, 2,578,060 bars, fingerprint `DATA-CTNT-V2-cb4832c0b43952c4a03d58ee65ff5b15`; run A 548.7 s with `hold_bound_forced_exits=422` / `hold_bound_refusals=7309`, the pair §104.4 and §98.5 recorded; run B bound-disabled 489.9 s with 0 forced exits and 0 refusals; then:
+
+```
+OVERALL: NOT PUBLISHED — the fresh baseline payload differs from the committed artifact
+reports/analysis/s94/seq10_baseline_2018_2023_verdict.json in 13 key path(s) other than timestamp_utc:
+adtv_excluded_isin_sessions, adtv_lookback_sessions, criteria_fingerprint, demerger_forced_refusals,
+evaluated_trial_count, evaluated_trial_count_prior, evaluations[CRIT-OVERFIT-01].computed_value,
+evaluations[CRIT-OVERFIT-01].evidence, evaluations[CRIT-OVERFIT-02].computed_value,
+evaluations[CRIT-OVERFIT-02].evidence, evaluations[CRIT-OVERFIT-04].evidence, min_median_adtv_crore,
+risk_per_trade_pct. A published artifact is restated by append, never overwritten by a re-run
+(§10.1, §104.12 item 1), so nothing was written
+```
+
+Exit **1**; `git status --porcelain` empty; the artifact `f5fe3af5…` / 498,219 B before and after; `probe N-194` still `PASS`. The thirteen paths are the same thirteen the committed fixture produces (105.2), computed from two independent payloads — the capture, and a fresh 548.7 s run — which is what makes the list a property of the producer rather than of one file. **This is not item 1's probe**, which needs two unpatched runs; that is 105.5.
+
+### 105.5 Two end-to-end runs, probe N-194 and `--check`
+
+Two consecutive `python scripts/run_seq10_candidate.py` in a clean clone at `084abc9`:
+
+| Run | Exit | Cause printed | `git status --porcelain` after | s94 |
+|---|---|---|---|---|
+| 1 | **1** | `OVERALL: NOT STARTED — TRIAL-PHASE3B2-EXPANDED-010 is already registered (N = 11, N_eval = 6); seq 10 is registered once (§8.2, §93.5), so this run evaluates nothing, publishes nothing and appends nothing` | **empty** | 498,219 B, `f5fe3af5a1e2de836472d5d3bdbec658fd98f9cd81c33576d48004a83188072c` |
+| 2 | **1** | identical line | **empty** | unchanged |
+
+Registry after both: N = **11**, N_eval = **6** — no row appended, no evaluation row. `probe_audit_findings.py N-194` exits **0** (`PASS N-194`) with the two artifacts still reading `(0, 66)`; `compare_seq10_baselines.py --check` exits **0** (`PASS: the comparison reproduces the committed artifact`), read as §104.4 taught — it exits 0 on a dirty tree too, so it is reported and not relied on. **Item 1's probe is met**: two runs exit non-zero, the tree is clean, the digest is `f5fe3af5…`, and a payload differing only in `timestamp_utc` still returns `False` (105.2). The runs exit before the publish rather than at it because item 2 now comes first; the refusal the probe asks for is measured at the publish in 105.4 and at the function in 105.2.
+
+### 105.6 The tests at both commits, the rewritten case, and whether the fixture is the producer's
+
+The two files were run with the base `src` first on the path and the path printed, not assumed: `signal_core.__file__` = `…\sac_s105_base\src\signal_core\__init__.py` at `52d4679` and `…\sac_s105_head\src\signal_core\__init__.py` at `084abc9`.
+
+- At `52d4679`, with `084abc9`'s test file, fixture and updated s105 file copied in: **4 failed, 17 passed**. The four are new cases 1, 2 and 4 plus the rewritten s105 case; case 3 (`timestamp_utc`-only still returns `False`) passes at base because that behaviour is what this round keeps, not what it adds.
+- At `084abc9`: **21 passed, 0 skipped, 0 xfailed** (4 new + 17 s105). A one-line path probe added to each run accounts for the 22nd case in my counts.
+- **The rewritten s105 case is strengthened, not weakened.** `test_a_publish_that_changes_content_does_write` asserted that a changed payload *overwrites* the tracked artifact — the fail-open behaviour item 1 forbids. `…_is_refused_by_name` now asserts the refusal, that `summary_counts.closed_trades` is named in the message, and that the destination's bytes are unchanged (it captures `committed = destination.read_bytes()` first). It gives up an assertion that the code must no longer satisfy; it gains two that it must. Its payload is still hand-built, which is the shape §104.4 criticised, and that is answered by the new file rather than by this case.
+- **The fixture is non-vacuous, and its provenance is proven, not asserted.** `tests/fixtures/s94_run_a_payload_capture.json` is 498,351 B, SHA-256 `85f0555f14ded9ade14c6fa375a63f5476cd821231369d7a9ce94d2f053957db`. Its `closed_trades` (781 rows), `daily_returns` (1,424) and `is_folds` blocks are **identical** to the committed artifact's, and it moves exactly the 13 cells of 105.2. That combination is not hand-buildable in practice, and there is a harder proof: the same bytes encoded CRLF are 513,021 B / `cc4099eecba987d2…`, and `85f0555f…` is the digest the base run printed at its publish line — so the committed fixture **is** the file that run wrote, normalised by `.gitattributes`' `*.json text eol=lf`.
+- **But it is not pinned.** No row in `data/reference/manifest.jsonl` names it, no test pins its digest, and no committed script regenerates it; the file's provenance rests on the two equivalences above and on the shape assertions in `test_the_capture_is_the_producers_output_and_not_a_timestamp_copy`. Those assertions do refuse the degenerate replacement (a fixture equal to the artifact apart from `timestamp_utc` fails `assert differing`), so the test cannot be made vacuous by editing the fixture into a timestamp copy — only by hand-building a payload that moves the same 13 paths, which is the harder direction. Carried as a residual, not a defect.
+- **No other existing test was weakened**: `tests/` differs by one added file and one modified file, `pyproject.toml` is untouched, and the range adds no `skip`/`xfail`/exclusion.
+
+### 105.7 The gate and the green row
+
+My own `--force-full` in a clean clone at `084abc9`: exit **0**, **641 of 641** (640 parallel + 1 isolated), 0 skipped, 0 xfailed, **11 of 11** verifiers exit 0, 1,009 current manifest artifacts, 104 index rows, and it appended **one** row naming `084abc9`.
+
+That row and `199c925`'s agree on every load-bearing field — `source_tree_hash 8bf304a2bb07c593…`, `source_tree_scheme git-blob-oid-v1`, `suite_count 641`, and all eleven `verify_exits` 0 — and differ only in `utc` and `pytest_seconds` (63.65 vs 74.92). The row count goes 45 → 46 at `199c925`, exactly one row, in its own commit, naming the commit it tested. The tree hash was then recomputed from `git ls-tree -r HEAD` without the gate's code (2,433 blobs) and reproduced `8bf304a2…`, so the green row names a tree this repository contains, not a working copy.
+
+### 105.8 A CRLF checkout still reproduces both artifacts
+
+In a clone at `084abc9` with the two artifacts rewritten to CRLF on disk — `reports/analysis/s100/seq10_baseline_comparison.json` 6,202 B / 121 CRLF pairs, `reports/analysis/s102/seq12_data_qa.json` 84,951 B / 3,420 pairs, the sizes §104.8 measured — `compare_seq10_baselines.py --check` exits **0** and `run_seq12_candidate.py --check` exits **0** (`PASS: the Step 2 QA reproduces the committed bytes (QA status STOP)`). `git status` shows exactly those two paths modified. The text arm normalises what git would store; the binary arm hashes stored bytes.
+### 105.9 Ruling 1 — item 2's probe has two halves, and only one is orderable before §104.12 item 3
+
+**Evidence at `084abc9`.** Item 2's ordered probe reads: "a run on a tree where seq 10 is registered exits 1 with no artifact and no registry write, **and one on the registering tree publishes N = 10 / N_eval = 6**". The first half is measured twice (105.5). The second half cannot be observed on any tree this repository can hold: `data/trials/trial_registry.jsonl` contains `TRIAL-PHASE3B2-EXPANDED-010` at N = 11 and is append-only (§10.1), and a registering tree — were one constructible — would still be refused at the publish, because the committed artifact publishes `CRIT-FPR-V1-9ee0a88c…` while the live criteria compute `535e47f5…`, so **every** payload the producer emits differs from it in the same 13 paths (measured twice, 105.2 and 105.4).
+
+**Ruling.** Item 2 is satisfied at `084abc9` by (i) the registered-tree half measured end to end, and (ii) the publish path's acceptance branch measured at the function on a `timestamp_utc`-only payload (105.2, the kept row). The registering-tree half is **deferred to §104.12 item 3** and carried as a named residual — not scored as a failure of this commit and not scored as met.
+
+**What it does not change.** It moves no threshold, no window, no fold and no trial count; it does not relax item 1's refusal, which stays mandatory for every non-`timestamp_utc` payload; and it does not let anything publish. It changes one thing only: which half of item 2's probe is the acceptance test for this round.
+
+**Probe that must fail closed before item 2's second half closes.** On a tree where seq 10 is not registered, the consumer publishes `N = 10` / `N_eval = 6` and leaves `git status` clean; on a tree where it is registered, it exits 1 with the artifact and the registry's four files byte-identical. **Falsifier.** A run at `084abc9` on a registering tree that reaches its publish step — which would show the refusal depends on registry state rather than on the payload, and would make the second half reachable now. Nothing in `main()` reads the registry before the publish except this check, so the payload is the only input.
+
+**Work item.** §105.12 item 2 — §104.12 item 3, which is what this Ruling is waiting on.
+
+### 105.10 Items not taken, and `§106`'s accounting against these measurements
+
+**Not taken, measured untouched.** N-201's corpus half: corpus 75,390,706 B / `ea0b65a3…` unchanged, no corpus path in the range, `probe N-201` still `PASS`. N-199: `git ls-tree -r` still holds **0** files under `data/silver/price_bands`, `data/raw/price_bands` does not exist, nothing synthesised, the three categorical counters still `NOT RUN`, `probe N-199` still `PASS`. N-150: `probe N-150` `PASS`, `validation_folds_count` 0, no fold, config or partition path moved. Clause (d): `reports/analysis/s102/seq12_data_qa.json` is **byte-identical** at `52d4679` and `7696b34` (81,531 B, `e7885a58…`); `reports/analysis/s98/seq10_demerger_restatement.json`, both trial_010 artifacts, the s94 artifact, the corpus and the corporate-action table were last touched at `12c6dae` / `f8a7e97` (2026-11-19). §104.12 items 4–5 (Ruling 1's remaining publishing normaliser, the two binary-arm edges) are untouched: no path under `src/signal_core/` or `scripts/verify_audit_append_only.py` appears in the range. N-194 re-measured: `PASS`, both artifacts `(0, 66)` and unedited since `12c6dae`, so its closure stands on §98's replay and on nothing that runs the engine per commit.
+
+**§104.12 item 3, and whether it is needed.** It requires deciding the s94 artifact's stale criteria fingerprint — restate it by append with the fields that moved, or state in the artifact which criteria set judged it — with a probe that a committed pointer or restatement names the predecessor and the moved fingerprint, and a check that fails when an artifact's `criteria_fingerprint` is neither the live value nor named in a restatement. **It is needed, and this commit makes it the next item**: before `084abc9` the staleness was silent (the publish would have overwritten it); after it the staleness is total (the publish refuses every payload), so the consumer cannot publish anything, and Ruling 1's deferred half cannot be reached, until item 3 lands.
+
+**Confirmed against `§106`.** The 13-path refusal and its exact list; the file split of the commit; 4 fail at base with case 3 passing; 21 passing at `084abc9`; 641 of 641 and 11 of 11; N = 11 / N_eval = 6 with the head unchanged; `--check` exit 0; no ledger row; no artifact, corpus or registry value moved; the duplicate precondition stood down in memory with no tracked edit; the two post-commit runs exiting 1 with an empty tree.
+
+**Corrected, measured.** Two per-file line counts in `§106`'s "What moved": `scripts/run_seq10_candidate.py` is **+87/−6** (`git show --numstat 084abc9`), not "+93/−9", and `test_phase3b2_audit_s105_items.py` is **+7/−3**, not "+8/−4"; the file *set* is right and the total is +15,021/−9. And the fixture: `§106` gives 513,021 B / `cc4099ee…` for a file the repository stores as 498,351 B / `85f0555f…` — the first is the pre-normalisation CRLF copy, the second the committed form, and the log reports one without saying which.
+
+**Also noted, not fixed.** The unchanged half of `publish_baseline_artifact`'s docstring still reads "two consecutive runs leave the tree unchanged", which §104.4 proved a run cannot produce; the new paragraph below it states the opposite case. A docstring residual adjacent to the change, not a behaviour.
+
+### 105.11 Per-finding verdicts, and the defect this round opens
+
+| Finding | Latest status | Re-measured at `084abc9` | Verdict |
+|---|---|---|---|
+| N-194 | CLOSED (§98) | `PASS N-194`; both artifacts `(0, 66)`, last touched `12c6dae` | **holds** — residual unchanged: the restatement is attested by §98's replay, not by a per-commit computation |
+| N-199 | OPEN | `PASS N-199`; 0 files under `data/silver/price_bands`; nothing synthesised | **OPEN, still BLOCKED** (§104.12 item 6) |
+| N-201 | OPEN | `PASS N-201`; corpus bytes and header unchanged | **OPEN, untouched** — corpus half still a maintainer decision |
+| N-150 | OPEN | `PASS N-150`; no fold path, `validation_folds_count` 0 | **carried, untouched** |
+| N-152 | ACCEPTED | no path in range | **accepted, untouched** |
+
+**No row is appended.** The defect this round opens — a payload differing only in a JSON value's type is declared identical instead of refused by name (105.2) — would need a probe that **fails on `main` today**, and `verify_audit_findings.py` runs every latest row's probe on every gate run, so registering it now would turn the gate red. Same instrument gap §103.10 and §104.10 named from the other side: the row's probe is the implementer's to make green in the commit that fixes it.
+
+### 105.12 Work order (feat-s107), ordered by what it unblocks
+
+1. **Make the publish guard's equality type-strict, and say which side of `==` is intended.** Refuse a payload whose only change is a JSON number's type (`6` → `6.0`) or a boolean's (`True` → `1`) by name, rather than declaring it identical; keep the `timestamp_utc`-only case returning `False`. **Closure-mode assertion:** a payload with `evaluated_trial_count` `6.0` and `recorded` `1` raises `BaselinePublishRefused` naming both paths; the committed capture still produces the same 13 names; and a `timestamp_utc`-only payload still returns `False` with the destination bytes unchanged. Phase: §9.1 / §10.1 / §104.12 item 1.
+2. **§104.12 item 3 — decide the s94 artifact's stale criteria fingerprint.** It is now the only thing between the consumer and permanent refusal, and it is what §105.9 Ruling 1 waits on. **Probe:** a committed restatement or pointer naming `CRIT-FPR-V1-9ee0a88c…` → `535e47f5…` and the other moved cells, plus a check that fails when an artifact's `criteria_fingerprint` is neither the live value nor named in a restatement; `probe N-194` exits 0 and the artifact's new digest is recorded where the comparison reads it. Phase: §10.1 / §9.1 / §98.6.
+3. **Item 2's registering-tree half, once item 2 lands** (§105.9): a tree where seq 10 is not registered publishes `N = 10` / `N_eval = 6` and leaves `git status` clean. Do not manufacture it by deleting an append-only row. Phase: §10.1 / §8.2.
+4. **Carried unchanged:** the ordering residual in 105.3 (every registration refusal before the publish, not only the duplicate); §104.12 items 4–5; N-199 (§104.12 item 6); N-201's corpus half, N-150, clause (d)'s real-return sentence, §101.12 item 7, §99.10 items 2–3, §96.10 items 5–7.
+
+### 105.13 What would falsify this verdict
+
+- **Item 1's PASS:** any payload that differs in one cell of the committed artifact and is **copied over** it rather than refused; or a refusal that leaves the destination's bytes changed, a directory created, or a traceback instead of `OVERALL: NOT PUBLISHED`. I fed 27 payloads and 20 refusals wrote nothing. A real run's payload that *does not* move `criteria_fingerprint`, `evaluated_trial_count` and `demerger_forced_refusals` — two independent payloads moved the same 13 paths — would make the refusal list an artefact of one file.
+- **The residual's severity:** a payload of the type-equivalence class (`6.0`, `True`→`1`) that overwrote the artifact, rather than being kept. Measured: kept, destination unchanged. If a producer ever writes a float into this artifact, the class stops being unreachable and the residual becomes a §10.1 risk.
+- **Item 2's PASS:** a caller of `publish_baseline_artifact` other than `:554`, or an ordering in which the duplicate is checked after the corpus check, the dataset build or the publish — grep and line numbers say otherwise, and the controlled pair in 105.3 shows the early exit is that function's.
+- **Ruling 1:** a registering tree on which the publish step is reached with a payload the producer emits. Nothing in `main()` reads the registry between the check and the publish, so only a payload match would open that gate — which is item 3's job.
+- **The green row:** a `--force-full` at `084abc9` that is not 641/641 and 11/11, or a tree hash that is not `8bf304a2…` under an independent recomputation. Both reproduced.
+- **The test split:** a case in the new file that passes at `52d4679` for a reason other than case 3's preserved behaviour, or a modified pre-existing test other than the one named. `tests/` differs by one added and one modified file.
