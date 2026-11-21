@@ -6,7 +6,7 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | Volume | Path | Sections | Lines | Frozen | SHA-256 |
 |---|---|---|---|---|---|
 | `signal_atlas_phase1c_audit_deepseek_review_.md` | `reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md` | 1-78 | 8442 | yes | `f4ca03d58466bebb…` |
-| `volume2.md` | `reports/audit/volume2.md` | 79+ | 4228 | no | `905223db629a13d9…` |
+| `volume2.md` | `reports/audit/volume2.md` | 79+ | 4399 | no | `e8ca8e1ece93c09c…` |
 
 | Section | Title | Volume | Lines | Finding ids |
 |---|---|---|---|---|
@@ -111,5 +111,6 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | §99 | Audit of `3136783` (code commit under tag `feat-s99-b1e5fbd`): the gap now partitions the feature layer and a probe proves it, the certificate runs on the gate, and the implementer's own seq-10 column publishes two profit factors no artifact computes | `volume2.md` | 3519–3642 | N-139, N-150, N-157, N-165, N-167, N-168, N-169, N-191, N-193, N-194, N-195 |
 | §100 | Audit of `7c0957e` (tag `feat-s101-7c0957e`): the pre-registration is clean, the STOP is correct, and the QA that produced it tests the wrong thing — two of its five stops are attested ₹ dividends it excludes by rule, the miss it exists to catch is checked on the signal day only, and the artifact it writes gates no code | `volume2.md` | 3643–3793 | N-150, N-195, N-196, N-197, N-198, N-199, N-200, N-201, N-202 |
 | §101 | Audit of `46a99ec` (tag `feat-s102-46a99ec`): the cash test is stated before the count and the count is 4, the window census reproduces to the digit, and the benchmark refusal fires — while the corpus boundary, the band partition and one committed digest stay open | `volume2.md` | 3794–3992 | N-150, N-157, N-195, N-196, N-197, N-198, N-199, N-200, N-201, N-202, N-203, N-204 |
-| §102 | Audit of `325bab8` (tag `feat-s103-325bab8`): the stored bytes' digest reproduces in a clone and in the writing checkout, the 86 excluded signals and the 9-instrument detail reach recompute to the digit, and the corpus boundary is marked where it is read rather than where §101 ordered it | `volume2.md` | 3993–4228 | N-150, N-157, N-197, N-199, N-201, N-203, N-204 |
+| §102 | Audit of `325bab8` (tag `feat-s103-325bab8`): the stored bytes' digest reproduces in a clone and in the writing checkout, the 86 excluded signals and the 9-instrument detail reach recompute to the digit, and the corpus boundary is marked where it is read rather than where §101 ordered it | `volume2.md` | 3993–4229 | N-150, N-157, N-197, N-199, N-201, N-203, N-204 |
+| §103 | Audit of `1824857` (tag `feat-s104-1824857`): Ruling 1 reaches six of ten digest producers, the ratio is recomputed from the corpus bars, and both predecessor pointers verify from the blob — while a copy without history cannot publish either artifact | `volume2.md` | 4230–4399 | N-150, N-197, N-199, N-201, N-203, N-204 |
 

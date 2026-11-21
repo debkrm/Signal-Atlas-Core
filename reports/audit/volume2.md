@@ -4226,3 +4226,174 @@ N-203 and N-204 gain `CLOSED` rows with `closed_in_section: 102` and the measure
 - **The gate:** a `--force-full` run at `325bab8` that is not 11/11 and 611/611, or any tamper in §102.8 that passes besides the two I report as passing.
 - **The overall verdict:** a consumer of the QA artifact, which would make its `NOT RUN` counters gate something. There is none, and the STOP still gates no execution path.
 
+
+## §103 — Audit of `1824857` (tag `feat-s104-1824857`): Ruling 1 reaches six of ten digest producers, the ratio is recomputed from the corpus bars, and both predecessor pointers verify from the blob — while a copy without history cannot publish either artifact
+
+**Date:** 21 November 2026
+**Commit under review:** `1824857` (13 files, +510/−58; parent `c47f3ce`)
+**Baseline:** `c47f3ce` (§102, tag `audit-s102-1e3c836`)
+**Verdicts:** item 3 **PASS** · item 4 **PARTIAL** · item 5 **CLOSED** · item 6 **PASS** · item 7 **PASS** · item 8 **PASS** · N-201 **PARTIAL, held OPEN** · N-199 OPEN, still BLOCKED · N-150 carried · **no new ledger row** (§103.10), two named residuals and one instrument defect measured
+
+### 103.1 Baseline re-measured at `1824857`
+
+Everything below was executed on this host, in a clean clone whose only addition was the log files the run wrote outside the tree.
+
+| Measurement | Result |
+|---|---|
+| `scripts/verify_audit_append_only.py --force-full`, clean clone at `1824857` | exit **0**, `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Verifiers discovered / executed | **11 / 11**, every one exit 0; source tree `00af5b8c226ca0585c9617503de025ec3a663f68b8f8606342e560ea6a9684a9` |
+| Test suite | **620 of 620** collected — 619 in the parallel invocation + 1 isolated — **0 skipped, 0 xfailed** (111.3 s) |
+| `verify_audit_findings.py` | exit 0 (part of the 11); 96 rows / 56 ids, latest 52 CLOSED, 3 OPEN, 1 ACCEPTED |
+| Green row | the `--force-full` run appended **one** row (43 → 44) naming `1824857`; the plain run at `fc69bce` reuses it and appends nothing (§103.7) |
+| Trial registry | N = **11**, N_eval = **6**, manifest head `e76c249f…` |
+| Criteria | **1.1.16**, `CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470` — the library's value and my own canonicalisation agree |
+| Manifest | `MAN-FPR-V1-be45b7e791d5d3cd683ee119ae4beeae8cba3aab7728ac194d6b19521a691045`, 1,877,557 B |
+| Corpus | 75,390,706 B, sha256 `ea0b65a32a89a7b497cc9dc40cbec3fdbdcb9b582c74105e1a9ea6959d4ab1c5`; 1,089 CRLF pairs; `DATA-CTNT-V2-cb4832c0b43952c4a03d58ee65ff5b15` recomputed from 2,578,060 bars / 2,735 instruments |
+| 2024 fold / holdout | `git diff --name-only c47f3ce..1824857` matches no path containing `2024`, `2025`, `fold` or `holdout`; `data/` and `configs/` are untouched; the sealed window `2025-01-01..2026-11-11` was not read |
+| Rule files | `0fa680d` adds nine NON-NEGOTIABLES lines to `AGENTS.md`, `c47f3ce` adds two skill files: both are **ancestors of the base**, none inside the commit under review |
+| Protected trees | `git diff --stat c47f3ce..1824857` over `data/`, `configs/`, `reports/verdicts/`, `src/signal_core/research/` is **empty**; the only analysis paths that move are the two the commit was ordered to regenerate |
+
+### 103.2 Item 2 — the bypass matrix, re-measured
+
+Nine cases against `artifact_digest`, each run on a tracked checkout at `1824857`.
+
+| Case handed to the guard | Text arm | Binary arm | Reading |
+|---|---|---|---|
+| text bytes named `.gz` | **refused** (`ValueError`) | hashes stored bytes | correct |
+| gzip bytes named `.json` | **accepted**, returns the LF-mutated digest | refuses (text suffix) | **gap** — the arm is the suffix, not the payload |
+| gzip bytes named `.GZ` | **refused** (`lower()`) | hashes | correct |
+| empty file named `.gz` | refused | hashes (`e3b0c442…`) | correct |
+| directory named `.gz` | `PermissionError` | `PermissionError` | not `ValueError`; not a payload |
+| gzip bytes, no suffix | **accepted** | refuses (no binary suffix) | **gap**, same class as row 2 |
+| `.html` under `data/raw/circulars/**` (`-text` in `.gitattributes`) | **accepted**, digest of the LF form ≠ digest of stored bytes | refuses | **gap** — the glob rule is not mirrored by `BINARY_SUFFIXES` |
+| symlink to a binary path | not runnable on this host (`WinError 1314`, no symlink privilege) | — | **NOT RUN** |
+| `data/reference/historical_dataset_2018_2023.json.gz` | refused | `ea0b65a3…` | correct |
+
+`BINARY_SUFFIXES = (".gz", ".zip")` mirrors three of the four `-text` rules in `.gitattributes` — `*.csv.zip`, `*.json.gz`, `*.zip`, `*.gz` — and not the fourth, `data/raw/circulars/*/**`. **No current call passes a binary to a text arm**: 12 of the 13 remaining replacement sites outside the module operate on text, and the thirteenth (`probe_audit_findings.py`, `probe N-204`) applies the replacement to the corpus bytes deliberately, to name the value a normalising digest would publish. So no published value is wrong; the exposure is latent and is named as residual 103.12 item 2, under §102.5's own test ("not a finding, because no current call hashes a binary").
+
+### 103.3 Item 3 — the four consumers, run at both commits, compared byte-for-byte
+
+Each consumer was run to completion in a clone at `c47f3ce` and in a clone at `1824857`, on the same corpus, with stdout captured. Timing lines and absolute clone paths were the only expected differences.
+
+| Consumer | `c47f3ce` | `1824857` | Difference |
+|---|---|---|---|
+| `run_seq10_candidate.py` | exit **1** — `DuplicateTrialError: TRIAL-PHASE3B2-EXPANDED-010 is already registered`; Run A `hold_bound_forced_exits=422`, `refusals=7,309`; Run B 0 / 0 | identical exit and numbers | build time 138.1 s both; the `sha256` line differs (`4d8279bc…` vs `04129d68…`) — see below |
+| `run_seq11_candidate.py` | exit **1** — `DuplicateTrialError: TRIAL-PHASE3B2-LIQUIDITY-ATR-011`; dataset 1,425 sessions / 2,735 instruments, `DATA-CTNT-V2-cb4832c0…` | identical exit, ids and fingerprint | load 101.9 s vs 93.1 s; traceback paths |
+| `probe_seq10_candidate.py` | exit **1** in the run-dirtied checkout: "the baseline … hashes to `4d8279bc…`, not the digest the comparison records" | exit **1**, same message, `04129d68…` | on **pristine** clones both exit **0** with **byte-identical** stdout ("CERTIFIED … N = 11 … evaluation_count 6 … sealed-era run refused") |
+| `diagnose_seq10_drawdown.py` | exit **0**, 1,491 B | exit **0**, 1,491 B | build 84.2 vs 84.4 s; replay **32,112.8 s** vs **32,124.2 s**; every other line identical |
+
+**The digest difference is the artifact's own timestamp, not the commit.** `run_seq10_candidate.py` rewrites `reports/analysis/s94/seq10_baseline_2018_2023_verdict.json` in place on every execution; the two rewritten files differ in exactly **one** line, `timestamp_utc` (`2026-11-20T18:21:11.683314` vs `2026-11-20T18:20:08.018859`), and their digests differ accordingly. Both commits do it, so it is not introduced here — but it means a checkout that has run the consumer fails `compare_seq10_baselines.py --check` until the artifact is restored, and it is why the two dirty-tree probe runs fail. That is residual 103.12 item 3, not an item-3 failure. **Behaviour is preserved**: no count, fingerprint, verdict or exit code moved.
+
+### 103.4 Item 4 — Ruling 1 reaches six consumers, and four normalising producers remain outside the module
+
+The commit's `§104` says: *"Every normalising digest function in `scripts/` was **replaced** by a delegation to it, not left beside a guarded copy"*. Measured at `1824857`, six scripts import the module —
+
+`compare_seq10_baselines` (`_sha256`, `_sha256_bytes`), `run_seq12_candidate` (`_digest_text`, `_digest_bytes`), `run_seq10_candidate` (`_digest`), `run_seq11_candidate` (`_digest`), `probe_seq10_candidate` (`_digest`), `diagnose_seq10_drawdown` (`_digest`)
+
+— and their old bodies are gone. Four digest producers are **not** routed, and two of them publish the result:
+
+| Site | Produces | Published where | Applied to |
+|---|---|---|---|
+| `src/signal_core/contracts/criteria.py:29` `compute_manifest_fingerprint` | **`MAN-FPR-V1`** | every verdict artifact, the criteria pin | text (manifest) |
+| `scripts/derive_2018_2023_corpus.py:377` `corporate_actions_digest` | corpus header field | the corpus snapshot's own header | text (corporate actions) |
+| `src/signal_core/storage/circulars.py:176` | per-file circular digest | circular bundle | text (circular JSON) |
+| `scripts/probe_hold_bound_invariance.py:82` `_digest` | registry fingerprint | a probe workspace | text (registry JSONL) |
+
+So the sentence is false as written: two normalising digest **functions** in `scripts/` survive (`probe_hold_bound_invariance._digest`, and `derive_2018_2023_corpus`'s inline `corporate_actions_digest`), and the most load-bearing one of all — `MAN-FPR-V1`, which every criteria pin depends on — is in `src/`. The commit's own count is also off: it says "the nine `read_bytes().replace(b"\r\n", b"\n")` sites that remain"; I count **13** outside `artifact_digest.py` (1 derive, 4 in `probe_audit_findings` — one of which computes the mutated digest on purpose, 1 `probe_hold_bound`, 1 `verify_audit_append_only`, 2 `verify_cash_universe_coverage`, 2 `verify_phase2a`, 1 criteria, 1 circulars). Ten are parsing or probe-side text comparisons, one is the deliberate binary attack computation in `probe N-204`, and the two digest producers are the residue.
+
+**What is right and was measured:** the guard does refuse the two arms it defines (103.2 rows 1, 3, 4, 9); reverting a producer to normalise now fails at the producer rather than at a number (`t12`, 103.6); and **no published fingerprint moved** — `MAN-FPR-V1-be45b7e7…`, `CRIT-FPR-V1-535e47f5…` and `ea0b65a3…` are the values `c47f3ce` carried, and the s100/s102 artifacts gained only their pointer (§103.5). **Verdict: PARTIAL.** The rule is enforced where the defect occurred and at the two producers the order named; it is stated as universal and is not.
+
+### 103.5 Item 5 — both pointers verify from the blob, and reproduction now requires the object
+
+| Artifact | Predecessor | sha256 of the blob (`git cat-file blob`) | Moved |
+|---|---|---|---|
+| `reports/analysis/s100/seq10_baseline_comparison.json` | `eea1757f15ed1daf202eb36df7f2aa3151188a2e` | `b5c14b9f5f7b5b2e239360b6ca3e1165532f20be1c47ae2e669e9b00e58a7528` — **matches** | +2 added, 1 changed (`seq10_artifact_sha256`) |
+| `reports/analysis/s102/seq12_data_qa.json` | `46a99eccb8af5b4ba2ccd6bef003842eaa3ce17f` | `0dffff1540744f4f7e2b32e9a7ac93235721efa85cfb02d6ff6be7804f8c24b3` — **matches** | +8 added, 3 changed (`corpus`, `pre_registration`, `restates`), 0 removed |
+
+I recomputed both digests from the objects and both field lists from `(blob, committed artifact)`; the field diff `c47f3ce → 1824857` of the two artifacts is **exactly `predecessor` added, 0 values changed** (s100 +14 lines, s102 +22 lines). The commit is pinned, not `HEAD`-derived, so the pointer keeps naming the same revision after later commits — measured: `--check` exits 0 at `1824857` in three checkouts.
+
+**The cost, measured: a copy without the objects can no longer publish either artifact.** In a `--depth 1 --no-local` clone `git fetch --depth 1 1824857` leaves the commit and tree but **not** `eea1757`; in a `git archive 1824857` export there is no repository at all. Both run `compare_seq10_baselines.py --check` to exit **1** — `cannot read the predecessor blob eea1757…: the artifact must name the revision it replaced, and a checkout without that object cannot publish it` — and the tarball fails `run_seq12_candidate.py --check` the same way on `46a99ec`. That is a behaviour change: at `c47f3ce` the check needed only the tree's bytes. It fails **closed and by name**, which is the right direction, but the requirement is nowhere a reader meets it. Named limitation, 103.12 item 4. **Verdict on what was ordered: CLOSED.**
+
+### 103.6 Item 6 — fifteen tampers, fourteen refused
+
+Each case was applied to a tracked file in a clone at `1824857`, the probe or check run, and the file restored byte-identically (`git status` clean after every case).
+
+| Tamper | Probe | Result |
+|---|---|---|
+| hook file deleted | `N-203` | **FAIL** — "pinned verifier(s) missing from discovery" |
+| hook removed from the pin | `N-203` | **FAIL** |
+| `seq10_artifact_sha256` zeroed | `N-203` | **FAIL** |
+| `signals_without_a_next_session` 86 → 0 | `N-197` | **FAIL** |
+| `entry_signals_including_the_final_session` 93,525 → 93,524 | `N-197` | **FAIL** |
+| detail reach 9 → 8 | `N-197` | **FAIL** |
+| `LOOKBACK_SESSIONS` 200 → 20 | `N-197` | **FAIL** |
+| `detail_is_a_census` false → true | `N-201` | **FAIL** |
+| stamp scope rewritten | `N-201` | **FAIL** |
+| codec ratio quantised **and** artifact published `0.1007` | `N-201` | **FAIL** — "the artifact publishes ratio 0.1007, and 130.2 / 1292.54 = 0.1007318922431800950067309329 is 0.100732 at 6 dp" (attack 10, **closed**) |
+| producer quantised only | `N-201` | **PASS** — correct: the probe recomputes from the corpus bars and no longer reads the producer |
+| `_digest_bytes` made to normalise (producer only) | `N-204` | **FAIL** — the guard's own refusal (attack 12, **closed**) |
+| corpus digest mutated in the artifact | `N-204` | **FAIL** |
+| manifest's current corpus row zeroed | `N-204` | **FAIL** |
+| corpus bar tampered | `N-201` | **FAIL** |
+
+The two attacks §102.8 reported as passing now fail, and the one that still passes is the one that should: with the producer wrong **and** the artifact not republished, an independent recomputation is exactly the evidence the probe was rebuilt to be. Its blind spot is now the opposite one — an artifact that publishes a wrong ratio *and* a corpus whose bars agree with it.
+
+### 103.7 Item 7 — the gate, the green row, and the nine tests
+
+- `--force-full` at `1824857`: **620/620**, **0** skipped, **0** xfailed, **11/11** verifiers exit 0, tree `00af5b8c…`, one appended row naming `1824857`.
+- Plain `python scripts/verify_audit_append_only.py` at `fc69bce` (the commit that recorded the row): exit **0**, `[INFO] Source tree 00af5b8c… is already recorded; not appending a duplicate row`, `git status` clean — legal outcome 1/3 of the skill's three.
+- The row is the **single** append (43 → 44), its `gate_sha` is `1824857`, and its `source_tree_hash` recomputes to `00af5b8c…` from `HEAD`'s tree.
+- The nine new tests in `tests/unit/test_phase3b2_audit_s104_items.py`: **9/9 pass** at `1824857`, **9/9 fail** at `c47f3ce`; `tests/` differs by one **added** file and **0** modified ones.
+- The tree hash is computed from object ids, so a bare `git checkout` on this host cannot move it; the CRLF case is measured separately (103.8).
+
+### 103.8 Item 8 — a CRLF checkout still publishes the same digests
+
+In a clone at `1824857` with `core.autocrlf=true`, both artifacts rewritten to CRLF on disk (5,808 B and 84,557 B), `compare_seq10_baselines.py --check` and `run_seq12_candidate.py --check` both exit **0**. The text arm normalises CRLF to LF, which is what the repository stores for a text path (measured over all tracked blobs in §102.3); the binary arm hashes stored bytes, which git does not re-encode.
+
+### 103.9 Item 9 — the band partition, and what `§104` accounts for correctly
+
+**Band data: nothing was synthesised.** `data/silver/price_bands` is an empty directory (0 files), `data/raw/price_bands` does not exist, no tracked path contains `price_band`, and `data/reference/surveillance_intervals.jsonl` is three `SYNTHETIC_FIXTURE` rows dated 2024 — outside the evaluation window and not band data. The census, the exit-freeze round trip and the three categorical counters stay `NOT RUN`. N-199 stays OPEN and BLOCKED, unchanged from §102.
+
+**`§104`'s accounting against my measurements.** Confirmed: the two predecessor pointers and their field lists (103.5); the ratio `0.100732`, its distance `0.00732` from 0.1, the 699-of-774 census, the 16,194 gap pairs and the 74 `no_ratio_match` rows (103.6, table rows 8–11); the gate numbers and that the pre-commit run recorded no row. Not confirmed: "every normalising digest function in `scripts/` was replaced" and the count of nine remaining sites (103.4 — two script-level digest producers survive and the count is 13); "`BINARY_SUFFIXES` mirrors the `-text` rules" (103.2 — three of four; the `data/raw/circulars/*/**` glob is not mirrored). The `§104` log is the implementer's document; I record the difference here and do not edit it.
+### 103.10 Findings ledger after this section
+
+| | before §103 | after §103 |
+|---|---|---|
+| rows / ids | 96 / 56 | **96 / 56** |
+| latest per id | 52 CLOSED, 3 OPEN, 1 ACCEPTED | **52 CLOSED, 3 OPEN (`N-150`, `N-199`, `N-201`), 1 ACCEPTED** |
+
+**No row is added, and this is a deliberate instrument decision.** A new finding must carry a probe that fails closed (§14.2), and `verify_audit_findings.py` executes every latest row's probe on every run. A probe written to fail on this tree would turn the gate red on `main` (§12.3); a probe written to pass on this tree is the inverted-probe shape I measured in this round's own predecessor.
+
+**That defect is worth stating plainly.** `probe N-204` as first published by the audit round at `672c9d0` asserted `committed == mutated` — it **passed on the defective tree** and would have failed on the repair; the implementer had to rewrite it at `325bab8`. So an OPEN finding's registered probe is, by construction, a witness that the defect is present, not an acceptance test that the fix is real, and the gate is blind to a wrong fix until the probe is flipped. I re-ran it at `672c9d0`: `PASS N-204`, exit 0, on the tree that still published `0fdc728a…`. Under that convention the two residuals below stay residuals — they are named, measured, ordered, and carry the assertions that must exist before anyone claims them closed (§103.12 items 1–2). The next round should state the closure-mode assertion in the work order for every OPEN id, so the flip is the implementer's obligation rather than their discretion.
+
+### 103.11 Phase verdicts
+
+| Phase (§104's row in `CURRENT_STAGE_OF_WORK.md`) | Verdict | Residual |
+|---|---|---|
+| Digest provenance, text vs binary (§9.1, §10.5, §12.3) | **PARTIAL** — the two arms work and refuse the cases they define; six consumers delegate; no published value moved; `--check` exit 0 in a CRLF checkout | four normalising producers outside the module (`MAN-FPR-V1` among them), the suffix-only binary key, the `data/raw/circulars/*/**` glob, symlinks NOT RUN |
+| Behaviour parity of the four consumers (§9.1, §12.3) | **PASS** — identical exits, counts, fingerprints and verdict lines at both commits | `run_seq10_candidate` rewrites a committed s94 artifact in place; `probe_seq10` is only clean on a tree that has not just run it |
+| Restatement discipline (§10.1) | **CLOSED as ordered** — both pointers pinned, blob-verified, field lists recomputed; +14/+22 lines and nothing else | a tree without the predecessor objects cannot publish either artifact, and the requirement is unstated |
+| N-201 probe independence (§8.2, §9.1) | **PARTIAL** — the ratio, the band distance, the census and the counters are recomputed with own Decimal and own census; attacks 10 and 12 now fail | the corpus half is untaken (sealed surface, maintainer decision) |
+| Circuit freeze / band counters (§5.3, §13.2) | **BLOCKED, unchanged** — empty partition, `NOT RUN`, nothing synthesised | population and the exit-freeze round trip |
+| Verifier discovery and pins (§12.3, §12.4) | **PASS** — 11/11 exit 0, one row appended, plain run reuses it and appends nothing | the audit probe convention in 103.10 |
+| Seq 10 / seq 11 / criteria / fold / holdout | **held** — `CRIT-FPR-V1-535e47f5…` at 1.1.16, `MAN-FPR-V1-be45b7e7…`, corpus `ea0b65a3…` / `DATA-CTNT-V2-cb4832c0…`, N = 11 / N_eval = 6, no 2024/2025 path touched | `1.1.16` still labels three criteria sets (§98.6) |
+
+### 103.12 Work order (feat-s105), ordered by what it unblocks
+
+1. **N-201, the corpus half — still a maintainer decision, then one of two branches.** Either a committed corporate-action row attesting the 1:10 across `INF732E01011`→`INF204KB14I2` with a back-adjusted 2019-12-19 bar, or a corpus-header field marking `reconciliation.ratio_shaped_detail` as a filtered list. Both change the gzip → a manifest row → `MAN-FPR-V1` → `expected_manifest_fingerprint`. **The probe that must fail closed:** the existing `probe N-201` (independent Decimal recomputation, attacks 10 and 12 failing) **and** a new assertion that reads the chosen branch's marker out of the corpus buffer, not the QA artifact. Phase: §5.4 / §9.2 / §10.5.
+2. **Finish Ruling 1 by construction, or stop claiming it universally.** Route `criteria.compute_manifest_fingerprint`, `circulars`' per-file digest, `derive_2018_2023_corpus`'s `corporate_actions_digest` and `probe_hold_bound_invariance._digest` through `artifact_digest`; mirror the `data/raw/circulars/*/**` `-text` rule (glob or `git check-attr`) or amend the module docstring and `§104`'s sentence to say the key is the suffix. No published value changes. **Probe:** one case per producer passing a `.gz` and requiring the refusal, a case passing gzip bytes named `.json` and requiring the refusal, and a case on the circulars glob; `N-203`/`N-204` unchanged. Phase: §10.5 / §9.1.
+3. **Stop the seq-10 consumer rewriting a committed artifact.** `run_seq10_candidate.py` overwrites `reports/analysis/s94/seq10_baseline_2018_2023_verdict.json` with a fresh `timestamp_utc` on every execution, so the committed digest is reproducible only until the script is run. **Probe:** two consecutive runs produce the same artifact digest, and `compare_seq10_baselines.py --check` exits 0 after a run. Phase: §10.1.
+4. **State the history requirement where it is met.** The two `--check` paths now need the predecessor objects; a shallow clone and an archive export both refuse. Say so in the scripts' help text and in the artifact's `predecessor` documentation — or carry enough to verify the pointer's well-formedness without the blob, and say which of the two a reader is being given. **Probe:** the tarball case exits 1 with the named refusal, and the documented requirement is quoted by a test. Phase: §12.3 / §10.1.
+5. **Audit instrument.** For every OPEN id, the work order must carry its closure-mode assertion, and the probe must be flipped in the commit that closes it (103.10). **Probe:** `verify_audit_findings.py` fails if a CLOSED row's probe still asserts the defect. Phase: §9.1 / §14.2.
+6. **N-199 — unchanged.** Populate `data/raw/price_bands/` from a sourced per-session NSE archive for `2018-04-01..2023-12-31`, promote one session per partition, measure the exit-freeze round trip. **Probe:** the biconditional (`NOT RUN` iff the partition is empty). Phase: §5.3 / §13.2 / §13.3.
+7. Carried unchanged: `N-150`; clause (d)'s real-return sentence (`§102.14` item 2, still untaken — it lives in `configs/trial_012_candidate.yaml`, which this round may not edit); §101.12 item 7; §99.10 items 2–3; §96.10 items 5–7.
+
+### 103.13 What would falsify this verdict
+
+- **Item 4's PARTIAL:** a seventh script importing `artifact_digest`, or a fourth `-text` rule that `BINARY_SUFFIXES` does mirror after all — impossible for the glob rule as written, but if `data/raw/circulars/**` were re-declared by suffix the mirroring would hold and the residual would shrink to the two script-level producers.
+- **Item 3's PASS:** any consumer output line that differs between the two commits in anything but a timing, an absolute path, or the s94 artifact's `timestamp_utc`-derived digest. I diffed all four stdouts; the only numeric differences are 101.9 → 93.1 s and 32,112.8 → 32,124.2 s.
+- **The pointer verification:** a `git cat-file blob` of either predecessor yielding a digest other than `b5c14b9f…` / `0dffff15…`, or a field list that the blob and the committed artifact do not jointly produce. Both recomputed true.
+- **The gate:** a `--force-full` run at `1824857` that is not 620/620 and 11/11, or a plain run at `fc69bce` that appends a second row or rewrites one. Neither happened.
+- **N-201's probe:** a corpus whose bars give a different 6-dp ratio, or an artifact that publishes a value the bars contradict — attack 10 now catches the second, which is why it failed.
+- **The band verdict:** a tracked band payload anywhere under `data/` — `0` files found; any counter other than `NOT RUN` in the artifact would be fabrication.
+- **The instrument defect in 103.10:** a probe registered at an audit commit that fails on the tree it was opened against. `N-204` at `672c9d0` passes, so the defect is real; a probe that failed there would falsify it.
