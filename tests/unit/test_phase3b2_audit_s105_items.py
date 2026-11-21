@@ -159,10 +159,12 @@ def test_two_consecutive_publishes_leave_the_tracked_artifact_unchanged(tmp_path
     )
 
 
-def test_a_publish_that_changes_content_does_write(tmp_path: Path):
+def test_a_publish_that_changes_content_is_refused_by_name(tmp_path: Path):
+    """§104.12 item 1 tightened this case: a changed payload is refused, not copied over the artifact."""
     destination = tmp_path / "s94" / "seq10.json"
     destination.parent.mkdir(parents=True)
     destination.write_text(json.dumps(_verdict_payload("2026-11-19T07:19:25.918855+00:00")), encoding="utf-8")
+    committed = destination.read_bytes()
 
     changed = _verdict_payload("2026-11-20T18:21:11.683314+00:00")
     changed["summary_counts"] = {"closed_trades": 423}
@@ -170,8 +172,10 @@ def test_a_publish_that_changes_content_does_write(tmp_path: Path):
     fresh.parent.mkdir(parents=True)
     fresh.write_text(json.dumps(changed), encoding="utf-8")
 
-    assert run_seq10_candidate.publish_baseline_artifact(fresh, destination) is True
-    assert json.loads(destination.read_text(encoding="utf-8"))["summary_counts"] == {"closed_trades": 423}
+    with pytest.raises(run_seq10_candidate.BaselinePublishRefused) as refusal:
+        run_seq10_candidate.publish_baseline_artifact(fresh, destination)
+    assert "summary_counts.closed_trades" in str(refusal.value)
+    assert destination.read_bytes() == committed
 
 
 def test_the_tracked_baseline_artifact_is_the_one_its_digest_is_recorded_for():

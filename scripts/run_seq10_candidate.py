@@ -12,9 +12,10 @@ This script performs, in one process and one dataset:
 1. **Baseline** (run A) — the committed engine and criteria, 2018-04-01..2023-12-31, hold bound live,
    recording into a *copy* of the trial registry so the registry of record stays at N = 9 until the
    candidate is registered. Its verdict artifact is published at
-   `reports/analysis/s94/seq10_baseline_2018_2023_verdict.json`; when it differs from the committed
-   artifact only in `timestamp_utc` the committed bytes are kept, so a run leaves the tree unchanged
-   (Audit §103.12 item 3).
+   `reports/analysis/s94/seq10_baseline_2018_2023_verdict.json` only when it equals the committed
+   artifact apart from `timestamp_utc`, in which case the committed bytes are kept; a payload that
+   differs in any other cell is refused by name, listing the differing keys, before anything is
+   written (Audit §103.12 item 3, §104.12 item 1).
 2. **Bound-disabled counterfactual** (run B) — the same configuration with
    `max_hold_trading_sessions` raised out of reach in the loaded criteria only, which is what the
    engine did before §92 had a consumer. Not a verdict, never registered.
@@ -116,6 +117,32 @@ def _without_timestamp(payload: dict) -> dict:
     return {key: value for key, value in payload.items() if key != "timestamp_utc"}
 
 
+class BaselinePublishRefused(RuntimeError):
+    """The fresh payload is not the committed artifact, so publishing it would edit a published artifact."""
+
+
+def _differing_paths(committed, fresh, prefix: str = "") -> list[str]:
+    """Every key path whose value differs, named from the payload root (`evaluations[CRIT-OVERFIT-01].computed_value`)."""
+    if isinstance(committed, dict) and isinstance(fresh, dict):
+        paths: list[str] = []
+        for key in sorted(set(committed) | set(fresh)):
+            path = f"{prefix}.{key}" if prefix else key
+            if key not in committed or key not in fresh:
+                paths.append(path)
+            else:
+                paths.extend(_differing_paths(committed[key], fresh[key], path))
+        return paths
+    if isinstance(committed, list) and isinstance(fresh, list):
+        if len(committed) != len(fresh):
+            return [f"{prefix} (length {len(committed)} -> {len(fresh)})"]
+        paths = []
+        for index, (before, after) in enumerate(zip(committed, fresh)):
+            label = before.get("criterion_id") if isinstance(before, dict) else None
+            paths.extend(_differing_paths(before, after, f"{prefix}[{label or index}]"))
+        return paths
+    return [prefix or "<payload>"] if committed != fresh else []
+
+
 def publish_baseline_artifact(fresh: Path, destination: Path = BASELINE_ARTIFACT) -> bool:
     """Place run A's verdict artifact at the tracked baseline path; returns whether it wrote (§103.12 item 3).
 
@@ -125,15 +152,46 @@ def publish_baseline_artifact(fresh: Path, destination: Path = BASELINE_ARTIFACT
     otherwise identical therefore leaves the committed bytes alone — the timestamp records when the
     content was first published, not when it was last re-derived — so two consecutive runs leave the
     tree unchanged and the digest the s100 comparison records still names the file.
+
+    A payload that differs in any other cell is **refused by name** (Audit §104.12 item 1): the committed
+    artifact is a published restatement target, and a re-run that moved `criteria_fingerprint`,
+    `evaluated_trial_count` or `demerger_forced_refusals` is a different artifact, not a fresh timestamp.
+    Overwriting it in place is an edit of published history (§10.1) and would leave `probe_n194` to
+    witness it in CI against bytes already in the tree, so the refusal happens before the copy.
     """
     payload = json.loads(fresh.read_text(encoding="utf-8"))
     if destination.is_file():
         committed = json.loads(destination.read_text(encoding="utf-8"))
         if _without_timestamp(committed) == _without_timestamp(payload):
             return False
+        differing = _differing_paths(_without_timestamp(committed), _without_timestamp(payload))
+        raise BaselinePublishRefused(
+            f"the fresh baseline payload differs from the committed artifact "
+            f"{destination.relative_to(REPO_ROOT).as_posix() if destination.is_relative_to(REPO_ROOT) else destination} "
+            f"in {len(differing)} key path(s) other than timestamp_utc: {', '.join(differing)}. A published "
+            f"artifact is restated by append, never overwritten by a re-run (§10.1, §104.12 item 1), so "
+            f"nothing was written"
+        )
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(fresh, destination)
     return True
+
+
+def duplicate_registration_problem() -> Optional[str]:
+    """`TRIAL_ID` is one registry row; a run that would refuse at registration must publish nothing first.
+
+    The consumer used to append to its registry copy, publish an artifact counting N = 12 / N_eval = 7 and
+    only then discover the row already existed (Audit §104.4). The condition is checked before run A, so
+    the tree the run leaves behind is the tree it found (§104.12 item 2).
+    """
+    registry = walkforward.TrialRegistry(REGISTRY_PATH)
+    if any(record.trial_id == TRIAL_ID for record in registry.get_trials()):
+        return (
+            f"{TRIAL_ID} is already registered (N = {registry.total_trial_count}, "
+            f"N_eval = {registry.evaluated_trial_count}); seq 10 is registered once (§8.2, §93.5), so this "
+            f"run evaluates nothing, publishes nothing and appends nothing"
+        )
+    return None
 
 
 def _snapshot_header(path: Path) -> dict:
@@ -357,9 +415,10 @@ def _register(registry_copy: Path, criteria, dataset_fingerprint: str) -> str:
         if line.strip()
     ]
     template = rows[-1]
+    problem = duplicate_registration_problem()
+    if problem:
+        raise SystemExit(problem)
     registry = walkforward.TrialRegistry(REGISTRY_PATH)
-    if any(record.trial_id == TRIAL_ID for record in registry.get_trials()):
-        raise SystemExit(f"{TRIAL_ID} is already registered; seq 10 may not be appended twice")
     registered = registry.append_trial(
         trial_id=TRIAL_ID,
         hypothesis=HYPOTHESIS,
@@ -393,6 +452,18 @@ def main() -> int:
     print(f"Criteria: {criteria.version} | hold bound {criteria.max_hold_trading_sessions} authoritative session(s)")
     print("Registry: runs A and B record into copies; N = 9 until seq 10 is registered")
     print("=" * 96)
+
+    # §104.12 item 2: the duplicate is decided before any evaluation or publish, not after both.
+    duplicate = duplicate_registration_problem()
+    if duplicate:
+        print("=" * 96)
+        print(f"OVERALL: NOT STARTED — {duplicate}")
+        print(
+            "         No session was evaluated, no artifact was published and no row was appended: a run "
+            "that would exit 1 must not rewrite the s94 baseline artifact on its way out (§104.12 item 2)."
+        )
+        print("=" * 96)
+        return 1
 
     corpus_path, corpus_problem = locate_corporate_action_adjusted_corpus()
     if corpus_path is None:
@@ -479,7 +550,17 @@ def main() -> int:
         )
 
         # The baseline artifact is a reference, not a verdict: the candidate owns reports/verdicts/.
-        wrote = publish_baseline_artifact(root / "run_a" / "verdicts" / ARTIFACT_NAME)
+        try:
+            wrote = publish_baseline_artifact(root / "run_a" / "verdicts" / ARTIFACT_NAME)
+        except BaselinePublishRefused as refusal:
+            print("=" * 96)
+            print(f"OVERALL: NOT PUBLISHED — {refusal}")
+            print(
+                "         The committed artifact is unchanged and no candidate row was registered: a run "
+                "that would replace published cells is restated, not published (§10.1, §104.12 item 1)."
+            )
+            print("=" * 96)
+            return 1
         with open(BASELINE_ARTIFACT, encoding="utf-8") as handle:
             baseline = json.load(handle)
         print(
