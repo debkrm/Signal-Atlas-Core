@@ -3458,3 +3458,23 @@ reported, not relied on.
   with `OVERALL VERDICT: ALL 56 FINDING PROBE(S) PASSED` — including N-194, whose two artifacts still read
   `(0, 66)` because nothing in this round wrote either of them.
 - Nothing here is signed off. The next round is the auditor's.
+
+### Post-commit measurements — the two consecutive runs, and what they left behind
+
+At `199c925` (the green-row commit naming `084abc9`'s tree `8bf304a2bb07c593…`, 641 passed) with
+`git status --porcelain` empty, `python scripts/run_seq10_candidate.py` was executed twice, sequentially, in
+the background with `timeout_seconds: -1`.
+
+| Run | Command | Exit | Cause printed | `git status --porcelain` after |
+|---|---|---|---|---|
+| 1 | `python scripts/run_seq10_candidate.py` (log `/tmp/s106/run1.log`) | **1** | `OVERALL: NOT STARTED — TRIAL-PHASE3B2-EXPANDED-010 is already registered (N = 11, N_eval = 6); seq 10 is registered once (§8.2, §93.5), so this run evaluates nothing, publishes nothing and appends nothing` | **empty** |
+| 2 | same (log `/tmp/s106/run2.log`) | **1** | identical line | **empty** |
+
+Each run returned before the corpus check and the dataset build — no session evaluated, no publish line, no
+`shutil.copyfile`, no registry append — and `git status --porcelain` was empty before run 1, between the two
+runs and after run 2. The tracked artifact remained
+`f5fe3af5a1e2de836472d5d3bdbec658fd98f9cd81c33576d48004a83188072c` / 498,219 B (raw sha256 equal to
+`text_digest`, which is the value §104.4 and the trial_010 comparison record).
+
+`python scripts/probe_audit_findings.py N-194` exits **0** (`PASS N-194`) after both runs: neither artifact was
+written, so its `(0, 66)` pair still holds. The code commit is tagged `feat-s106-084abc9` by explicit sha.
