@@ -4586,3 +4586,10 @@ The defect is **not** the one the item ordered fixed, and the ordering is what m
 - **Item D's PASS:** a second added key, a changed value, or a shallow clone in which a `--check` exits 0 without the predecessor object. Both clones exit 1 by name.
 - **The test split:** a case in the new file that passes at `2d88468` for a reason other than the three stated values, or a modified pre-existing test. `tests/` differs by one added file.
 - **The gate:** a `--force-full` run at `b1c0650` that is not 637/637 and 11/11, or a green row naming a different tree than `a1b2d297…`. Neither happened.
+
+### 104.14 Post-commit gate run
+
+- `python scripts/verify_audit_findings.py` before the commit: exit **0**, `OVERALL VERDICT: ALL 56 FINDING PROBE(S) PASSED`.
+- `python scripts/generate_audit_index.py --check` before the commit: exit **0**, 104 section rows.
+- `python scripts/verify_audit_append_only.py` at `14df21b` (plain, no `--force-full`): exit **0**, `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)`, 636 in the parallel invocation + 1 isolated = **637 of 637**, and `[INFO] Source tree a1b2d297… is already recorded; not appending a duplicate row`. This is the legal outcome in which a docs-only audit commit projects to the source tree the green row `d39c519` already names, so there is no row to commit after this section and `git status --porcelain` is clean.
+- The tag is `audit-s104-14df21b`. This addendum changes `volume2.md`, so the index is regenerated and committed in the commit that follows — the same order §103.14 recorded, and the reason that run's first attempt caught a stale index rather than a text change.
