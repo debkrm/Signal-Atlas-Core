@@ -4402,3 +4402,187 @@ In a clone at `1824857` with `core.autocrlf=true`, both artifacts rewritten to C
 - `python scripts/verify_audit_append_only.py` at `9e94336` (plain, no `--force-full`): exit **0**, `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)`, and `[INFO] Source tree 00af5b8c… is already recorded; not appending a duplicate row`. This is the skill's legal outcome **3**: an audit commit is docs-only, projects to the source tree `1824857` already recorded, and appends nothing — so there is no green row to commit after this section, and `git status --porcelain` is clean.
 - The **first** post-commit run exited **1** on `[FAIL] reports/audit/INDEX.md is stale`. The index was generated before the last two wording edits in `103.2`/`103.4`, so it pinned `e8ca8e1e…` for a `volume2.md` whose committed bytes hash `dde9726d…`. The gate caught a real inconsistency rather than a text change; `INDEX.md` was regenerated, committed as `1b7633b`, and `generate_audit_index.py --check` now exits **0** with 103 section rows. No §N content changed in that commit — only the index's digest of it.
 - The pre-commit `--force-full` run on the section's tree was green: **620/620** (619 parallel + 1 isolated), 0 skipped, 0 xfailed, **11/11** verifiers, 1,009 current manifest artifacts matching, and it appended nothing because the working tree's `HEAD` tree was already recorded.
+
+## §104 — Audit of `b1c0650` (tag `feat-s105-b1c0650`): the four producers are routed and the binary key gains the payload — while the seq-10 guard keeps only a payload a real run never produces, and two completed runs republish the s94 artifact with a contradicting demerger counter
+
+**Date:** 21 November 2026
+**Commit under review:** `b1c0650` (13 files, +508/−37; parent `2d88468`)
+**Green row:** `d39c519` — the same tree plus the `source_tree_green.json` row (+21 lines, nothing else)
+**Baseline:** `2d88468` (§103, tag `audit-s103-9e94336`)
+**Verdicts:** item A **PASS** · item B **PASS** · item C **FAIL** · item D **PASS** · N-201 corpus half **held** · N-199 **OPEN, still BLOCKED** · N-150 carried · **no new ledger row** (§103.10), one defect opened in prose with its closure-mode assertion in 104.12
+
+### 104.1 Baseline re-measured at `b1c0650`
+
+Everything below was executed on this host, in a clone whose only additions were log files written outside the tree. The section was written before `§105` of `CURRENT_STAGE_OF_WORK.md` was opened; the comparison with the implementer's accounting is in 104.9.
+
+| Measurement | Result |
+|---|---|
+| `verify_audit_append_only.py --force-full`, clean clone at `b1c0650` | exit **0**, `OVERALL VERDICT: ALL REPOSITORY FOUNDATION GATES PASSED (100%)` |
+| Verifiers discovered / executed | **11 / 11**, every one exit 0; source tree `a1b2d297ecc78bed8b2715b7e5672e5c6909e994ed19e0d0e1820bd1c977d6c1`, recomputed from `b1c0650`'s tree and equal to the green row's |
+| Test suite | **637 of 637** — 636 in the parallel invocation + 1 isolated — **0 skipped, 0 xfailed** |
+| `verify_audit_findings.py` | exit 0 (part of the 11); 96 rows / 56 ids, latest 52 CLOSED, 3 OPEN, 1 ACCEPTED |
+| Green row | the `--force-full` run appended **one** row (44 → 45) naming `b1c0650`; 1,009 manifest artifacts matched byte count and sha256; index 103 section rows |
+| Trial registry | N = **11**, N_eval = **6**, manifest head `e76c249f…`; the manifest's own fingerprint `MAN-FPR-V1-be45b7e791d5d3cd683ee119ae4beeae8cba3aab7728ac194d6b19521a691045` recomputed to the pinned value, 1,877,557 B |
+| Criteria | **1.1.16**, `CRIT-FPR-V1-535e47f5a4a98569f0ecfc6f8fbf5623420192b555808e655ed000969ec8e470` |
+| Corpus | 75,390,706 B, sha256 `ea0b65a32a89a7b497cc9dc40cbec3fdbdcb9b582c74105e1a9ea6959d4ab1c5`, 1,089 CRLF pairs; header `corporate_actions_fingerprint` `d7b425e5…` equal to `text_digest(data/reference/corporate_actions.jsonl)` |
+| Commit shape | 13 paths, none under `configs/`, `data/`, `reports/verdicts/`, `reports/audit/`, `data/trials/`, `.agents/`; `tests/` differs by **one added** file and **0** modified; no `skip`/`xfail` added; no AI trailer in either commit |
+| 2024 fold / holdout | no path in `2d88468..d39c519` contains `2024`, `2025`, `fold` or `holdout`; the sealed window `2025-01-01..2026-11-11` was not read |
+
+### 104.2 Item A — four producers routed, and the binary refusal measured at each
+
+Each producer was handed a `.jsonl.gz` file and a text-named file whose bytes are gzip, on a tracked checkout at `b1c0650`.
+
+| Producer | `.jsonl.gz` | gzip bytes named `.json` | CRLF text | Published value |
+|---|---|---|---|---|
+| `criteria.compute_manifest_fingerprint` | `ValueError`, names the binary arm | `ValueError` | accepted | `MAN-FPR-V1-be45b7e7…`, equal to `expected_manifest_fingerprint` |
+| `circulars.circular_payload_digest` | `ValueError` | `ValueError` | accepted | `d4810c84…` / 2,749 B for `NSE_CMTR_36475.json`, the manifest's current row |
+| `derive_2018_2023_corpus.corporate_actions_fingerprint` | `ValueError` | `ValueError` | accepted | `d7b425e5…`, the corpus header's own value |
+| `probe_hold_bound_invariance._digest` | `ValueError` | `ValueError` | accepted | registry fingerprint unchanged |
+
+**No published value moved** — the three fingerprints and the corpus bytes are the values §103 recorded, recomputed here rather than quoted. The refusals name the arm ("binary", "Ruling 1") instead of raising a bare `ValueError`.
+
+**What is still outside the module.** Thirteen `read_bytes().replace(b"\r\n", b"\n")` sites remain outside `artifact_digest.py` (recounted at `b1c0650`, not inherited):
+
+| Site | Count | Publishes a digest? |
+|---|---|---|
+| `verify_audit_append_only.py:182` `canonical_volume_bytes` → `compute_volume_digest` | 1 | **yes** — the audit volume's own pin |
+| `probe_audit_findings.py:499,517` (disk vs blob), `:3972` (the N-203 LF digest), `:4016` (the deliberate N-204 mutation) | 4 | no — probe-side text comparisons |
+| `verify_cash_universe_coverage.py:143,371` | 2 | no |
+| `verify_phase2a_containment_and_trials.py:699,724` | 2 | no |
+| `tests/` (4 files) | 4 | no |
+
+One publishing normaliser therefore survives, and this section names it rather than repeating the §103.12 item 2 sentence as universal. None of the thirteen is applied to a binary, so no published value is at risk today.
+
+### 104.3 Item B — the circulars glob mirrored, and the magic arm's false-positive class
+
+`git check-attr text` was compared with `is_binary_path` over **every** tracked path under `data/raw/circulars` — all 42 of them. Both calls agree on **22 binary** and **20 text**: **0 false positives, 0 false negatives**. That is the measurement §103.2 lacked, and it is what makes the glob mirror real rather than documented.
+
+The attack matrix, in the same order at both arms:
+
+| Case | `is_binary_path` | Reading |
+|---|---|---|
+| UTF-8-BOM `.json` text | text | correct |
+| text file whose first bytes are `PK…` but not `PK\x03\x04` | text | correct |
+| **text** file containing `PK\x03\x04` at byte 0 named `.json` | **binary** | **false positive vs git's `text: set`** — the magic overrides the attribute |
+| empty `.json` | text | correct |
+| gzip bytes, no suffix | binary | correct — the payload decides |
+| `.GZ` / `.Gz` / `.ZIP` text bytes | binary | correct (`lower()`) |
+| `data/raw/circulars/REF/payload.html` (and deeper) | binary | correct — the glob mirror |
+| direct child of `circulars/` and top-level `*.json` | text | correct — the calendar circulars stay text |
+| `DATA/RAW/CIRCULARS/...` | text | correct on a case-sensitive match; a Windows caller reaching the same file by upper-case components gets the text arm |
+| non-existent path | raises **`FileNotFoundError`**, not `ValueError` | a caller cannot tell "missing" from "binary" by exception type |
+| backslash-separated path | resolves through `Path.parts` on Windows | correct |
+
+**Verdict: PASS.** The two clauses §103.12 item 2 asked for are measured, not asserted: the glob is mirrored at 42 of 42 paths, and gzip bytes named `.json` are refused by the text arm. Two residuals are named rather than promoted: the magic arm can overturn a `text` attribute (a text file whose first four bytes are a ZIP local-file header is classified binary, and `text_digest` on it raises), and a missing path surfaces as `FileNotFoundError`. Neither has a current call that reaches it.
+
+### 104.4 Item C — two completed runs, and the invariant does not hold
+
+`run_seq10_candidate.py` was executed twice, sequentially, in a worktree at `b1c0650` whose tree was clean before each execution (`git status --porcelain` empty, s94 digest `f5fe3af5a1e2de836472d5d3bdbec658fd98f9cd81c33576d48004a83188072c`).
+
+| Run | Engine time | Exit | Publish line | Tree after |
+|---|---|---|---|---|
+| 1 (11:09–11:32) | build 98.6 s + run A 749.6 s + run B 504.9 s = **1,353.1 s** | **1** — `TRIAL-PHASE3B2-EXPANDED-010 is already registered` | `… sha256 67a0c134f5bdf58b… written` | **dirty**, s94 → `3de9956044b088a37939c46cbf7142c2a7c190702d7f8e6920d268327bf777bd` |
+| 2 (14:10–14:24) | build 63.7 s + run A 337.8 s + run B 344.7 s = **746.2 s** | **1**, same message | `… sha256 e87023761eb8da98… written` | **dirty**, s94 → `63bd5fe1a589c18fde58343041f540e75df42881f5482b1b92867d11f13721db` |
+
+The two published files differ from each other in **`timestamp_utc` only** (diff-of-diffs identical apart from the blob ids), and both differ from the committed artifact in **eight cells** — 14 insertions, 10 deletions:
+
+| Field | Committed | Published |
+|---|---|---|
+| `criteria_fingerprint` | `CRIT-FPR-V1-9ee0a88c…` | `CRIT-FPR-V1-535e47f5…` |
+| `CRIT-OVERFIT-01.computed_value` / `.evidence` | `N = 10` | `N = 12` |
+| `CRIT-OVERFIT-02.computed_value` / `.evidence` | `0.0260` | `0.0177` |
+| `CRIT-OVERFIT-03.evidence` | `N_eval = 6` | `N_eval = 7` |
+| `evaluated_trial_count` / `_prior` | `6` / `5` | `7` / `6` |
+| `risk_per_trade_pct`, `min_median_adtv_crore`, `adtv_lookback_sessions`, `adtv_excluded_isin_sessions` | absent | `"0.01"`, `null`, `20`, `0` |
+| **`demerger_forced_refusals`** | **66** | **0** |
+| `timestamp_utc` | `2026-11-19T07:19:25…` | each run's own |
+
+Every performance cell reproduces: `hold_bound_forced_exits 422`, `hold_bound_refusals 7,309`, `protective_stop_exits 304`, `deferrals 9,746`, `observation_count 1,424`, `returns_digest RET-V1-c07328bf…`, `annualized_sharpe 0.18434277…`. What moves is the accounting: the run registers seq 10 into its own registry copy **again** (N 11 → 12, N_eval 6 → 7) before it discovers the duplicate, so the payload counts a trial that was never a second row; and the demerger counter the §97.5 replacement introduced reads 0 where the committed artifact and the restatement publish 66.
+
+**Consequence, measured.** On the run-dirtied tree, `probe_audit_findings.probe_n194()` exits **1**: *an artifact was edited rather than restated (§10.1); it now reads {trial_010: (0, 66), s94: (0, 0)}*. Restore the file and the same probe exits **0**. So a maintainer who runs the consumer and commits what it wrote turns the gate red at N-194 — the guard is fail-open at the write and fail-closed only later, in CI, against a payload already in the tree.
+
+**The clause is not measured by the check that was ordered to measure it.** `compare_seq10_baselines.py --check` exits **0 on the dirty tree as well as the restored one** (measured both ways), because it recomputes its own s100 comparison from the returns and trades, and every one of those cells reproduced. `--check` exit 0 after a run therefore attests nothing about the artifact the run rewrote.
+
+**Why the commit's own fixture cannot reach this.** `publish_baseline_artifact` keeps the committed bytes when the fresh payload equals the committed one apart from `timestamp_utc` — and that is exactly the input a real run cannot produce: the producer's payload differs in the eight cells above on every execution. The new test builds its "identical apart from timestamp" payload **from the committed artifact** and calls the publish function directly; it is green, and the consumer's output never enters it. This is the additive-fix shape §14.4 describes: a guarded path that passes a synthetic fixture beside the real path that writes.
+
+**Verdict: FAIL.** The ordered outcome was "two consecutive runs produce the same artifact digest, and `--check` exits 0 after a run" (§103.12 item 3). Two consecutive runs produce **different digests**, leave the tracked artifact modified, and republish a demerger counter the restatement contradicts. `--check` exits 0, which is the second clause satisfied by a check that does not read the cells that moved. The implementer's `§105` records this clause as **NOT RUN**, on the ground that two executions "exceed this host's 10-minute command bound"; measured here, the command completes in 746.2 s / 1,353.1 s under a generous bound, and the publish step is reached. The 10-minute bound is the implementer's own command timeout, not a property of the consumer.
+
+### 104.5 Item D — one added key each, and the requirement is now where a reader meets it
+
+- Recursive JSON diff of both regenerated artifacts, `2d88468 → b1c0650`: **exactly one added key in each**, `predecessor.verification_requires`, and **0 values changed**. The s100 artifact's blob at `eea1757` still hashes to `b5c14b9f…` and the s102 artifact's at `46a99ec` to `0dffff15…`; the pointers are unchanged.
+- The published sentence names `git cat-file blob <commit>:<path>`, the shallow clone and the `git archive` export, and cites §103.5 / §103.12 item 4.
+- Both `--check` help texts carry the requirement ("requires full git history"). `compare_seq10_baselines.py --help` prints it only under `PYTHONIOENCODING=utf-8`; the cp1252 console raises `UnicodeEncodeError` on the `→` character — **pre-existing at `2d88468`**, not introduced here.
+- Shallow clone (`--depth 1` fetch of `feat-s105-b1c0650`): both `--check` paths exit **1** and name the missing object (*cannot read the predecessor blob eea1757…: the artifact must name the revision it replaced, and a checkout without that object cannot publish it*). `git archive` export: `compare_seq10_baselines --check` and `run_seq12_candidate --check` both exit **1**, the second naming `46a99ec` and `fatal: not a git repository`.
+
+**Verdict: PASS.** The requirement is stated in the artifact, in the module docs and in the help text, and both history-less copies refuse by name rather than publish a pointer they cannot substantiate.
+
+### 104.6 The new tests at both commits, and whether the parities are vacuous
+
+`tests/unit/test_phase3b2_audit_s105_items.py`, 17 cases, no `skip`/`xfail`:
+
+- At `2d88468`, in a worktree with the base `src` first on the path (`signal_core.__file__` = `…\sa-audit-s104\base\src\signal_core\__init__.py`): **14 failed, 3 passed**.
+- At `b1c0650`: **17 passed**.
+- The three that pass at base assert values that must **not** move (manifest fingerprint, calendar circulars staying text, the recorded s94 digest) — the property this round preserves, so their passing at base is correct, not collusion.
+- Non-vacuity: tampering `expected_manifest_fingerprint` in the config fails the parity test; breaking the routed producer fails it; changing `is_captured_circular_path`'s `>= 2` to `>= 1` fails the glob test; zeroing `baseline.sha256` in `reports/verdicts/trial_010/seq10_baseline_comparison.json` fails the digest test. Each attack was reverted and the tree restored.
+- **No existing test was weakened**: `git diff --name-status 2d88468..b1c0650 -- tests/` is one **added** file, no modification, and `pyproject.toml` is untouched.
+
+The publish test is the exception 104.4 measures: it is non-vacuous (a changed payload does write) but its "unchanged" input is a hand-built payload, not one the consumer emits.
+
+### 104.7 The gate and the green row
+
+`--force-full` in the clean clone exits **0** — 637/637, 0 skipped, 0 xfailed, 11/11 verifiers, 1,009 manifest artifacts, tree `a1b2d297…`, one appended row naming `b1c0650` (44 → 45). `d39c519` adds only that row. The plain run on this host's `main` reuses the row and appends nothing.
+
+### 104.8 A CRLF checkout still reproduces both artifacts
+
+In a clone at `b1c0650` with both artifacts rewritten to CRLF on disk (6,202 B / 121 CRLF pairs; 84,951 B / 3,420 CRLF pairs), `compare_seq10_baselines.py --check` exits **0** and `run_seq12_candidate.py --check` exits **0** (the Step 2 QA reproduces and the QA status stays `STOP`). The text arm normalises what git would store; the binary arm hashes stored bytes.
+
+### 104.9 Items not taken, and `§105`'s accounting against these measurements
+
+**Not taken, and measured untouched.** N-201's corpus half: corpus bytes `ea0b65a3…` / 75,390,706 B and the header's `d7b425e5…` are unchanged, and no corpus path appears in the range. N-199: `data/silver/price_bands` holds **0** files, `data/raw/price_bands` does not exist, and no `price_band` or `surveillance` path moves — the three categorical counters stay `NOT RUN` and nothing was synthesised. N-150, clause (d)'s real-return sentence, §101.12 item 7, §99.10 items 2–3 and §96.10 items 5–7 are carried unchanged. No strategy, threshold, pre-registration, fold or registry row moved.
+
+**Confirmed against `§105`.** The four producer routings and their unchanged published values (104.2); the glob mirror including the top-level calendar circulars staying text (104.3); the s94 publish-step behaviour when handed a payload that differs only in `timestamp_utc` (measured in 104.4's fixture, and true); the one added `predecessor.verification_requires` key in each artifact and the shallow/archive refusals (104.5); the 14-fail/17-pass split (104.6); the gate numbers and that the pre-commit run recorded no row.
+
+**Contradicted.** `§105`'s item C row states the two-run probe as **NOT RUN** because two executions "exceed this host's 10-minute command bound" and that "the single attempt was killed before its publish step and wrote nothing". Measured: the command reaches and passes its publish step, writes a substantively different artifact, and exits 1, twice, in 746.2 s and 1,353.1 s. A killed attempt is a bound on the shell command, not on the consumer. `§105`'s "no ... verdict artifact or s94 artifact moved" is true of the commit and false of the consumer it changed.
+
+### 104.10 Findings ledger after this section
+
+| | before §104 | after §104 |
+|---|---|---|
+| rows / ids | 96 / 56 | **96 / 56** |
+| latest per id | 52 CLOSED, 3 OPEN, 1 ACCEPTED | **52 CLOSED, 3 OPEN (`N-150`, `N-199`, `N-201`), 1 ACCEPTED (`N-152`)** |
+
+**No row is added** — the §103.10 convention, restated because this round opens a defect rather than closing one. `verify_audit_findings.py` executes every latest row's probe on every gate run, so a row whose probe asserts "two consecutive runs leave the tree clean" would turn `main` red today. The defect is therefore recorded here, in prose, with the assertion that must exist before anyone claims it closed (104.12 item 1). It is the same instrument gap §103.10 named from the other side: an OPEN row's probe witnesses the defect, so the flip is the implementer's obligation and must be in the same commit as the fix.
+
+The defect is **not** the one the item ordered fixed, and the ordering is what makes it this round's: the guard exists, is called from one place, and its old unconditional copy is gone — but the condition it tests is unreachable from the producer, so the guard's green test is not evidence about the consumer (§14.1, §14.4).
+
+### 104.11 Phase verdicts
+
+| Phase (`CURRENT_STAGE_OF_WORK.md`'s §105 row) | Verdict | Residual |
+|---|---|---|
+| Digest provenance, text vs binary (§9.1, §10.5, §12.3) | **PASS for the four ordered producers** — each refuses `.gz` and gzip-named-`.json`, no published value moved, the circulars glob mirrors `git check-attr` at 42 of 42 paths | one publishing normaliser outside the module (`verify_audit_append_only`'s volume pin) and twelve text-only or probe-side sites; the magic arm can overturn a `text` attribute; a missing path raises `FileNotFoundError` |
+| Seq-10 consumer and the s94 artifact (§10.1, §13) | **FAIL** — two completed runs each republish the artifact with eight changed cells, exit 1, and leave the tree dirty; `--check` stays 0 and does not read those cells | the publish guard's only exercised condition is a payload the producer cannot emit; `demerger_forced_refusals 66 → 0` contradicts the §97 restatement and would redden N-194 in CI |
+| Restatement discipline for the two regenerated artifacts (§10.1) | **PASS** — one added pointer key each, 0 values changed, both pointers blob-verified, both history-less copies refuse by name | the requirement is now published but a copy without history still cannot check either artifact |
+| Test design (§9.1, §14.4) | **PARTIAL** — 14 of 17 fail at base, 17 pass here, four parities non-vacuous under tamper | the publish test's "unchanged" fixture is hand-built and the consumer never produces it |
+| Verifier discovery, pins and the green row (§12.3, §12.4) | **PASS** — 11/11 exit 0, one row appended naming `b1c0650`, tree `a1b2d297…` recomputed | — |
+| Circuit freeze / band counters (§5.3, §13.2) | **BLOCKED, unchanged** — empty partition, `NOT RUN`, nothing synthesised | population and the exit-freeze round trip |
+| Seq 10 / seq 11 / criteria / fold / holdout | **held** — `CRIT-FPR-V1-535e47f5…` at 1.1.16, `MAN-FPR-V1-be45b7e7…`, corpus `ea0b65a3…` / `DATA-CTNT-V2-cb4832c0…`, N = 11 / N_eval = 6, no 2024/2025 path touched | the committed s94 artifact still publishes `9ee0a88c…`, a criteria fingerprint the live criteria do not compute (§98.6's label problem, measured again here) |
+
+### 104.12 Work order (feat-s106), ordered by what it unblocks
+
+1. **Make the s94 publish fail closed on any payload that is not timestamp-only, and prove it with the producer's own output.** `publish_baseline_artifact` must publish only when the fresh payload equals the committed one apart from `timestamp_utc`, and otherwise **refuse by name**, listing the differing keys — including `criteria_fingerprint`, `evaluated_trial_count`, `demerger_forced_refusals` — before anything is written. The test that must exist must feed it a payload produced by a real run (or a recorded capture of one), not a hand-built copy of the committed artifact. **Probe:** two consecutive `run_seq10_candidate.py` executions exit non-zero naming the differing keys, `git status --porcelain` is empty afterwards, and the s94 digest is `f5fe3af5…`; a payload differing only in `timestamp_utc` still returns `False`. Phase: §10.1 / §9.1 / §14.4.
+2. **Check the duplicate registration before publishing, not after.** The run appends seq 10 to its registry copy, publishes the artifact that counts N = 12 / N_eval = 7, and only then discovers the row exists. Either refuse up front when the trial id is already registered, or build the artifact from the registry state the run is allowed to have. **Probe:** a run on a tree where seq 10 is registered exits 1 with no artifact and no registry write, and one on the registering tree publishes N = 10 / N_eval = 6. Phase: §10.1 / §8.2.
+3. **Decide the s94 artifact's stale criteria fingerprint.** The committed artifact publishes `CRIT-FPR-V1-9ee0a88c…` while the live criteria compute `535e47f5…`; the publish path would now silently replace it. Either restate it by append with the fields that moved, or state in the artifact which criteria set judged it. **Probe:** a committed pointer or restatement that names the predecessor and the moved fingerprint, and a check that fails when an artifact's `criteria_fingerprint` is neither the live value nor named in a restatement. Phase: §10.1 / §9.1 / §98.6.
+4. **Finish Ruling 1's list, or bound the claim to what was routed.** Route `verify_audit_append_only.compute_volume_digest` through `artifact_digest`, or state in the module and the log that the audit volume's pin is a local normaliser. **Probe:** the audit volume's digest unchanged, and a case that hands the routed producer a `.gz` and requires the refusal. Phase: §10.5 / §9.1.
+5. **Close item B's two edges.** Make the binary decision a path rule with magic as a corroborating signal rather than an override, or document that a text file whose first four bytes are `PK\x03\x04` is classified binary by design; and give the missing-path case a `ValueError` (or document `FileNotFoundError`). **Probe:** the 42-path `git check-attr` parity plus one case per edge. Phase: §10.5.
+6. **N-199 — unchanged.** A sourced per-session NSE band archive for `2018-04-01..2023-12-31` under `data/raw/price_bands/`, promoted one session per partition, and the exit-freeze round trip measured. **Probe:** the existing biconditional (`NOT RUN` iff the partition is empty). Phase: §5.3 / §13.2 / §13.3.
+7. Carried unchanged: N-201's corpus half (a maintainer decision and a sealed-surface change); `N-150`; clause (d)'s real-return sentence; §101.12 item 7; §99.10 items 2–3; §96.10 items 5–7.
+
+### 104.13 What would falsify this verdict
+
+- **Item C's FAIL:** any execution of `run_seq10_candidate.py` at `b1c0650` that leaves `git status --porcelain` empty and the s94 digest at `f5fe3af5…` after publishing — I ran two, in one worktree, cleaned between them, and both wrote. A payload whose diff against the committed artifact is `timestamp_utc` alone would falsify the eight-cell list; the diff is 14 insertions and 10 deletions, and the two runs' outputs are identical apart from the timestamp.
+- **The N-194 consequence:** a run-dirtied tree on which `probe_n194()` still exits 0. Measured exit **1** on the dirty tree, **0** after restore.
+- **Item B's PASS:** a tracked path under `data/raw/circulars` where `git check-attr text` and `is_binary_path` disagree. I found 0 of 42; one such path would falsify the mirror and put the residual in the count.
+- **Item A's PASS:** a fifth producer that publishes a digest of a binary through a local normaliser, or any published value that moved. I enumerated 14 remaining sites, one publishing, none binary.
+- **Item D's PASS:** a second added key, a changed value, or a shallow clone in which a `--check` exits 0 without the predecessor object. Both clones exit 1 by name.
+- **The test split:** a case in the new file that passes at `2d88468` for a reason other than the three stated values, or a modified pre-existing test. `tests/` differs by one added file.
+- **The gate:** a `--force-full` run at `b1c0650` that is not 637/637 and 11/11, or a green row naming a different tree than `a1b2d297…`. Neither happened.
