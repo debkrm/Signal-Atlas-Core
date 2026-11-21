@@ -6,7 +6,7 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | Volume | Path | Sections | Lines | Frozen | SHA-256 |
 |---|---|---|---|---|---|
 | `signal_atlas_phase1c_audit_deepseek_review_.md` | `reports/audit/signal_atlas_phase1c_audit_deepseek_review_.md` | 1-78 | 8442 | yes | `f4ca03d58466bebb…` |
-| `volume2.md` | `reports/audit/volume2.md` | 79+ | 4765 | no | `b3baf227f9ec6275…` |
+| `volume2.md` | `reports/audit/volume2.md` | 79+ | 4772 | no | `69e819d0ccd363ce…` |
 
 | Section | Title | Volume | Lines | Finding ids |
 |---|---|---|---|---|
@@ -114,5 +114,5 @@ hand: the volumes are the source of truth and this file is a convenience over th
 | §102 | Audit of `325bab8` (tag `feat-s103-325bab8`): the stored bytes' digest reproduces in a clone and in the writing checkout, the 86 excluded signals and the 9-instrument detail reach recompute to the digit, and the corpus boundary is marked where it is read rather than where §101 ordered it | `volume2.md` | 3993–4229 | N-150, N-157, N-197, N-199, N-201, N-203, N-204 |
 | §103 | Audit of `1824857` (tag `feat-s104-1824857`): Ruling 1 reaches six of ten digest producers, the ratio is recomputed from the corpus bars, and both predecessor pointers verify from the blob — while a copy without history cannot publish either artifact | `volume2.md` | 4230–4405 | N-150, N-197, N-199, N-201, N-203, N-204 |
 | §104 | Audit of `b1c0650` (tag `feat-s105-b1c0650`): the four producers are routed and the binary key gains the payload — while the seq-10 guard keeps only a payload a real run never produces, and two completed runs republish the s94 artifact with a contradicting demerger counter | `volume2.md` | 4406–4595 | N-150, N-152, N-194, N-199, N-201, N-203, N-204 |
-| §105 | Audit of `084abc9` (tag `feat-s106-084abc9`): the publish refuses the producer's own payload by name at all thirteen paths and the duplicate is decided before the corpus check — while a number re-typed `560.0` is still declared identical, and item 2's registering-tree half cannot be run until §104.12 item 3 is decided | `volume2.md` | 4596–4765 | N-150, N-152, N-194, N-199, N-201 |
+| §105 | Audit of `084abc9` (tag `feat-s106-084abc9`): the publish refuses the producer's own payload by name at all thirteen paths and the duplicate is decided before the corpus check — while a number re-typed `560.0` is still declared identical, and item 2's registering-tree half cannot be run until §104.12 item 3 is decided | `volume2.md` | 4596–4772 | N-150, N-152, N-194, N-199, N-201 |
 
